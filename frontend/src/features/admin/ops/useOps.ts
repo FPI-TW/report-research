@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  adminApi, type IncidentDetail, type IncidentItem, type IncidentListResponse, type JobItem, type JobListResponse,
-  type ObservationListResponse, type OpsLogsResponse, type OpsServiceDetail, type OpsServiceListResponse,
+  adminApi, type DataHealthResponse, type IncidentDetail, type IncidentItem, type IncidentListResponse, type JobItem,
+  type JobListResponse, type LlmUsageResponse, type ObservationListResponse, type OpsDependencyGraph,
+  type OpsLogsResponse,
+  type OpsServiceDetail, type OpsServiceListResponse,
 } from '../../../lib/generated/adminApi'
 
 export const OPS_KEY = ['admin', 'ops'] as const
@@ -11,6 +13,16 @@ export function useOpsServices() {
   return useQuery<OpsServiceListResponse>({
     queryKey: [...OPS_KEY, 'services'],
     queryFn: () => adminApi.listOpsServices(),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+}
+
+/** 依賴圖（catalog 的依賴＋各節點狀態，後端算好受影響的下游）。與服務清單同樣 30 秒自動重抓。 */
+export function useOpsDependencies() {
+  return useQuery<OpsDependencyGraph>({
+    queryKey: [...OPS_KEY, 'dependencies'],
+    queryFn: () => adminApi.getOpsDependencies(),
     refetchInterval: 30_000,
     retry: false,
   })
@@ -83,6 +95,27 @@ export function useOpsIncident(incidentId: string) {
     queryKey: [...OPS_KEY, 'incident', incidentId],
     queryFn: () => adminApi.getIncident(incidentId),
     enabled: incidentId !== '',
+    retry: false,
+  })
+}
+
+/**
+ * 資料健康（批次新鮮度即時判讀＋稽核與 R2 對帳的最後一次結果）。後端整份快取 60 秒，這裡不自動重抓
+ * （稽核每日、對帳每週才更新一次）；頁面有「重新整理」。
+ */
+export function useDataHealth() {
+  return useQuery<DataHealthResponse>({
+    queryKey: [...OPS_KEY, 'data-health'],
+    queryFn: () => adminApi.getDataHealth(),
+    retry: false,
+  })
+}
+
+/** 最近 `days` 天的批次 LLM 用量。`since` 在 queryFn 裡才算，query key 只帶天數（免得每次 render 換 key）。 */
+export function useLlmUsage(days: number) {
+  return useQuery<LlmUsageResponse>({
+    queryKey: [...OPS_KEY, 'llm-usage', days],
+    queryFn: () => adminApi.getLlmUsage({ since: new Date(Date.now() - days * 86_400_000).toISOString() }),
     retry: false,
   })
 }

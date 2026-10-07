@@ -47,6 +47,9 @@ chunk_index），單次數十秒量級。所以：
   uv run python scripts/db_audit.py --json
   uv run python scripts/db_audit.py --skip norm_drift      # 跳過取樣那條（最慢）
 
+每次跑完把結構化結果寫進 `data/health/db_audit.json`（`app/services/data_health.py`；寫不進去只警告、
+不影響退出碼），管理後台的資料健康頁讀它——稽核本身太重，不在 web 裡跑。
+
 退出碼：0＝乾淨；1＝有發現；2＝DB 不可用（與 1 分開：處置不同，前者去看
 `/healthz`，後者去看發現本身）。
 """
@@ -144,6 +147,31 @@ CHECKS: tuple[Check, ...] = (
         "SELECT count(*) FROM research.research_report WHERE is_research IS NULL",
         "`db/schema.sql` 已收斂成 NOT NULL；還有 NULL 就代表這座庫沒套過最新的 schema。"
         "在那之前 `= true` 與 `IS NOT FALSE` 兩種寫法的母體不同（處置：`make schema`）。",
+    ),
+    Check(
+        "upload_draft_mismatch",
+        "上傳紀錄的草稿狀態與 report_visibility 的發布狀態不一致",
+        SEVERITY_ERROR,
+        "SELECT count(*) FROM ("
+        "  SELECT u.file_hash FROM research.report_upload u"
+        "   WHERE u.state = 'draft'"
+        "     AND NOT EXISTS (SELECT 1 FROM research.report_visibility v"
+        "                      WHERE v.file_hash = u.file_hash AND v.publication = 'draft')"
+        "  UNION ALL"
+        "  SELECT v.file_hash FROM research.report_visibility v"
+        "   WHERE v.publication = 'draft'"
+        "     AND NOT EXISTS (SELECT 1 FROM research.report_upload u"
+        "                      WHERE u.file_hash = v.file_hash"
+        "                        AND (u.state = 'draft' OR (u.state = 'rejected' AND u.purged_at IS NULL)))"
+        ") d",
+        "`report_upload.state='draft'` 必須若且唯若 `report_visibility.publication='draft'`（同一個 file_hash）。"
+        "可見性只看 report_visibility，所以前一半（上傳說是草稿、visibility 卻不是）代表"
+        "**尚未審核的研報已經對所有使用者可見**；後一半（visibility 是草稿、卻沒有對應的草稿上傳）"
+        "代表研報永遠卡在不可見、管理頁也找不到可以發布它的上傳紀錄。"
+        "例外是退回後、寬限期內還沒清除的草稿（`state='rejected' AND purged_at IS NULL`）：退回刻意不動 visibility"
+        "（研報維持不可見、寬限期內可撤銷），由上傳 worker 清除時連 visibility 列一起刪。"
+        "兩邊必須在同一筆交易寫入（上傳 worker 的 pre_upsert、審核 API 的發布與退回）；"
+        "出現不一致先查 admin_audit_log 的 upload.* 與 report.* 紀錄，由人決定要補發布、退回還是改回草稿。",
     ),
     Check(
         "chunkless_report",
@@ -297,14 +325,38 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _write_result(*, exit_code: int, findings: list[Finding] | None, error: str | None,
+                  skip: frozenset[str], norm_sample: int) -> None:
+    """把這次結果寫給管理後台的資料健康頁（`data/health/db_audit.json`）。
+
+    失敗只警告（`data_health.write_result` 本身 fail-open），**不改變退出碼**——告警鏈仍以 OnFailure 為準。
+    內容只有檢查代碼、標籤、級別、違反數與說明，沒有任何資料列。
+    """
+    from datetime import datetime, timezone
+
+    from app.services import data_health
+
+    data_health.write_result(data_health.RESULT_DB_AUDIT, {
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "exit_code": exit_code,
+        "ok": exit_code == EXIT_OK,
+        "error": error,
+        "skipped": sorted(skip),
+        "norm_sample": norm_sample,
+        "findings": [asdict(f) for f in findings] if findings is not None else None,
+    })
+
+
 async def _main(args: argparse.Namespace) -> int:
+    from app.services.data_health import audit_failed
     from app.services.db import SessionFactory
 
+    skip = frozenset(args.skip)
     try:
         async with SessionFactory() as session:
             findings = await run_audit(
                 session,
-                skip=frozenset(args.skip),
+                skip=skip,
                 norm_sample=args.norm_sample,
             )
     except Exception as exc:
@@ -314,6 +366,9 @@ async def _main(args: argparse.Namespace) -> int:
             print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
         else:
             print(msg, file=sys.stderr)
+        # 結果檔只記例外型別：例外訊息可能帶連線目標，管理頁不需要。
+        _write_result(exit_code=EXIT_UNKNOWN, findings=None, error=f"DB 不可用（{type(exc).__name__}）",
+                      skip=skip, norm_sample=args.norm_sample)
         return EXIT_UNKNOWN
 
     if args.json:
@@ -325,7 +380,10 @@ async def _main(args: argparse.Namespace) -> int:
         )
     else:
         print(render(findings))
-    return EXIT_FINDINGS if any(f.count > 0 for f in findings) else EXIT_OK
+    # 「warn 也算失敗」的判斷與管理後台共用（app/services/data_health.audit_failed）。
+    rc = EXIT_FINDINGS if audit_failed(findings) else EXIT_OK
+    _write_result(exit_code=rc, findings=findings, error=None, skip=skip, norm_sample=args.norm_sample)
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:

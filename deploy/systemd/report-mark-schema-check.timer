@@ -1,0 +1,13 @@
+[Unit]
+Description=每日檢查 DB 的 schema 與 alembic 版本有沒有 drift
+
+[Timer]
+# 排在每日備份（03:30）、稽核錨定（04:15）、刪除重放（04:30）之後，上班前結果已在告警頻道與管理頁。
+OnCalendar=*-*-* 05:20:00
+# 每日一次的檢查錯過就是整天沒驗；短命、對目標唯讀、暫存庫一定清理，補跑沒有副作用。
+# 開機補跑時 DB 若還沒起來會回 3（不告警），那一天就跳過。
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

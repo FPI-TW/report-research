@@ -47,6 +47,13 @@ data/sync_hashes_retained_*.txt
 # DeepSeek 的段）。確認供應商恢復後由人刪除，或等它過期。
 data/.llm_breaker
 data/.llm_breaker.tmp
+# 研報上傳（Admin v1.5）：隔離區（app/services/quarantine.py）、掃描通過後的乾淨檔（research_report.file_path）、
+# 上傳 worker 每輪的入庫 hashes 與下游失敗時保留的那份（scripts/process_uploads.sh；補跑完由人刪除）。
+# 整輪鎖 data/.upload_worker.lock 已被上面的 data/*.lock 涵蓋。
+data/quarantine/
+data/uploads/
+data/.upload_last_hashes
+data/upload_hashes_retained_*.txt
 # 批次 LLM 用量記錄（scripts/_claude_cli.record_usage，一次呼叫一行 JSON；費用歸因用，不進版控）。
 data/llm_usage.jsonl
 # 硬體用量取樣（scripts/collect_resource_usage.py 每 20 秒一筆，約 10 MB／日，

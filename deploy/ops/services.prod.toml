@@ -3,12 +3,18 @@
 # 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
 #
 # 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
-# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile 的 run（立即執行一次，
-# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared 維持唯讀——代理與 catalog 兩層都擋，
+# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile、upload 的 run（立即執行一次，
+# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared、ClamAV 維持唯讀——代理與 catalog 兩層都擋，
 # 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
 # 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
 # 刻意不給 run：audit-anchor（錨點檔只追加，手動多跑一次無害，但失敗會以「疑似竄改」告警；要的是
 # --verify-only，而 run 不收參數）、health／incident 類探針（timer 每 2 分鐘就跑）、metrics（常駐）。
+#
+# 依賴圖（depends_on 與 [[externals]]，格式見 ops_agent/catalog.py）：這裡是服務依賴關係的唯一真相來源，
+# web 的 GET /api/admin/ops/dependencies 經代理讀它、算「上游壞掉 → 受影響的下游」，不另寫一份。
+# 方向：A 的 depends_on 有 B＝B 壞了 A 就不能正常運作。探針（*-health）刻意不依賴它探的對象（被探的東西壞了，
+# 探針照樣要能跑、能回報）；*-incident 依賴 slack（告警送不出去）。外部依賴的狀態由 probe 的最後一次退出碼
+# 判斷，沒有 probe 的是「未監控」（NAS、Slack 目前沒有專屬探針）。
 #
 # 鎖檔路徑是這台主機的部署目錄（/home/kashionz/projects/report-mark）：代理的 unit 以 BindReadOnlyPaths
 # 唯讀綁進那個 data/ 目錄（deploy/systemd/report-mark-ops-agent.service），兩邊要一致（tests/test_ops_agent_units.py）。
@@ -40,6 +46,7 @@ unit = "report-mark-web.service"
 tier = "critical"
 actions = ["status", "logs", "restart"]
 group = "web"
+depends_on = ["postgres", "r2", "deepseek"]
 description = "Web（uvicorn :8097，BGE-M3 常駐）"
 
 [[services]]
@@ -57,6 +64,7 @@ kind = "container"
 container = "deploy-nginx-1"
 tier = "critical"
 actions = ["status", "logs"]
+depends_on = ["web"]
 description = "對外邊緣 nginx（make up-edge）"
 
 [[services]]
@@ -65,6 +73,7 @@ kind = "container"
 container = "deploy-cloudflared-1"
 tier = "critical"
 actions = ["status", "logs"]
+depends_on = ["nginx"]
 description = "Cloudflare Tunnel 連接器（make up-edge）"
 
 # ── important：停了不會立刻出事，但資料或告警會開始落後 ────────────────────
@@ -81,6 +90,7 @@ actions = ["status", "logs", "run"]
 group = "llm-batch"
 flock_files = ["/home/kashionz/projects/report-mark/data/.claude_cli.lock"]
 pid_files = ["/home/kashionz/projects/report-mark/data/.sync_new_reports.lock"]
+depends_on = ["postgres", "nas", "r2", "deepseek"]
 description = "NAS 增量同步匯入（每 3 小時）"
 
 [[services]]
@@ -91,6 +101,7 @@ timer = "report-mark-backup.timer"
 tier = "important"
 actions = ["status", "logs", "run"]
 group = "backup"
+depends_on = ["postgres", "nas"]
 description = "不可重建表備份 → NAS（03:30）"
 
 [[services]]
@@ -109,6 +120,7 @@ unit = "report-mark-incident.service"
 timer = "report-mark-incident.timer"
 tier = "important"
 actions = ["status", "logs"]
+depends_on = ["slack"]
 description = "P5 事件偵測與通知（每 2 分鐘）"
 
 [[services]]
@@ -127,6 +139,7 @@ unit = "report-mark-edge-incident.service"
 timer = "report-mark-edge-incident.timer"
 tier = "important"
 actions = ["status", "logs"]
+depends_on = ["slack"]
 description = "對外邊緣事件偵測與通知（每 2 分鐘）"
 
 # ── supporting：稽核、對帳、觀測 ─────────────────────────────────────────
@@ -139,6 +152,7 @@ timer = "report-mark-freshness.timer"
 tier = "supporting"
 actions = ["status", "logs", "run"]
 group = "freshness"
+depends_on = ["postgres"]
 description = "批次停更偵測（08:30）"
 
 [[services]]
@@ -149,6 +163,7 @@ timer = "report-mark-audit.timer"
 tier = "supporting"
 actions = ["status", "logs", "run"]
 group = "audit"
+depends_on = ["postgres"]
 description = "資料完整性稽核 make db-audit（08:45）"
 
 [[services]]
@@ -158,6 +173,7 @@ unit = "report-mark-audit-anchor.service"
 timer = "report-mark-audit-anchor.timer"
 tier = "supporting"
 actions = ["status", "logs"]
+depends_on = ["postgres", "nas"]
 description = "稽核雜湊鏈外部錨定（04:15）"
 
 [[services]]
@@ -168,6 +184,7 @@ timer = "report-mark-r2-reconcile.timer"
 tier = "supporting"
 actions = ["status", "logs", "run"]
 group = "r2-reconcile"
+depends_on = ["postgres", "r2"]
 description = "R2 物件儲存對帳（週一 07:00）"
 
 [[services]]
@@ -186,6 +203,7 @@ unit = "report-mark-linebot-incident.service"
 timer = "report-mark-linebot-incident.timer"
 tier = "supporting"
 actions = ["status", "logs"]
+depends_on = ["slack"]
 description = "LINE bot 事件偵測與通知（每 2 分鐘）"
 
 [[services]]
@@ -203,6 +221,7 @@ unit = "report-mark-load-observations.service"
 timer = "report-mark-load-observations.timer"
 tier = "supporting"
 actions = ["status", "logs"]
+depends_on = ["postgres"]
 description = "監控 spool 匯入 DB（每 5 分鐘）"
 
 # ── 容器與主機探針（L4；依 tier 去抖在探針裡做，通知由各自的 P5 實例）─────────────
@@ -214,7 +233,7 @@ unit = "report-mark-container-health.service"
 timer = "report-mark-container-health.timer"
 tier = "important"
 actions = ["status", "logs"]
-description = "容器健康探針（PostgreSQL／nginx／cloudflared，每 2 分鐘）"
+description = "容器健康探針（PostgreSQL／nginx／cloudflared／ClamAV，每 2 分鐘）"
 
 [[services]]
 name = "container-incident"
@@ -223,6 +242,7 @@ unit = "report-mark-container-incident.service"
 timer = "report-mark-container-incident.timer"
 tier = "important"
 actions = ["status", "logs"]
+depends_on = ["slack"]
 description = "容器事件偵測與通知（每 2 分鐘）"
 
 [[services]]
@@ -241,6 +261,7 @@ unit = "report-mark-host-incident.service"
 timer = "report-mark-host-incident.timer"
 tier = "supporting"
 actions = ["status", "logs"]
+depends_on = ["slack"]
 description = "主機事件偵測與通知（連續越線才開事件，每 2 分鐘）"
 
 # ── 監控觀測的保留與聚合（P8）────────────────────────────────────────────────
@@ -252,6 +273,7 @@ unit = "report-mark-rollup-observations.service"
 timer = "report-mark-rollup-observations.timer"
 tier = "supporting"
 actions = ["status", "logs"]
+depends_on = ["postgres"]
 description = "監控觀測聚合與 90 天保留（每小時）"
 
 # ── 帳號刪除（L1）────────────────────────────────────────────────────────────
@@ -265,6 +287,7 @@ unit = "report-mark-delete-accounts.service"
 timer = "report-mark-delete-accounts.timer"
 tier = "important"
 actions = ["status", "logs"]
+depends_on = ["postgres", "nas"]
 description = "執行到期的帳號刪除（先寫 NAS tombstone 再刪 DB，每小時）"
 
 [[services]]
@@ -274,4 +297,111 @@ unit = "report-mark-replay-deletions.service"
 timer = "report-mark-replay-deletions.timer"
 tier = "important"
 actions = ["status", "logs"]
+depends_on = ["postgres", "nas"]
 description = "還原後重放帳號刪除（比對 NAS tombstone，資料復活就重刪並告警，每日）"
+
+# ── schema 與版本 drift（v1.5）──────────────────────────────────────────────
+# 唯讀：不給 run——完整比對會在 PostgreSQL 伺服器上建、刪暫存庫，要手動跑就 make schema-check／schema-version。
+
+[[services]]
+name = "schema-check"
+kind = "systemd"
+unit = "report-mark-schema-check.service"
+timer = "report-mark-schema-check.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["postgres"]
+description = "schema 與 alembic 版本 drift 每日檢查（05:20）"
+
+# ── 檢索回歸（v1.5）─────────────────────────────────────────────────────────
+# 唯讀：不給 run——每次會載入 BGE-M3（約 2 GiB）並自己檢查可用記憶體；要手動跑照 docs/production_resilience.md。
+
+[[services]]
+name = "retrieval-regression"
+kind = "systemd"
+unit = "report-mark-retrieval-regression.service"
+timer = "report-mark-retrieval-regression.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["postgres"]
+description = "檢索回歸檢查（凍結題集對基準，07:40，零 LLM）"
+
+# ── 上傳掃描（v1.5 PR-3）────────────────────────────────────────────────────
+# 唯讀容器（deploy/clamav/docker-compose.yml 固定 container_name；make up-clamav）。容器探針同名同 tier
+# （scripts/check_container_health.sh 的 CONTAINER_HEALTH_TARGETS 預設值，tests/test_container_host_probes.py 對帳）。
+# 依賴圖：下游是上傳 worker（upload 的 depends_on）。clamd 自己不依賴任何 catalog 節點（freshclam 連外更新
+# 病毒碼失敗時，由 worker 的 72 小時病毒碼年齡閘門 fail-closed）。
+
+[[services]]
+name = "clamav"
+kind = "container"
+container = "report-mark-clamav"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "ClamAV clamd（上傳掃描，127.0.0.1:3310；停了上傳只會留在隔離區）"
+
+# ── 上傳 worker（v1.5 PR-5）──────────────────────────────────────────────────
+# run＝立即跑一輪（設計決策 3；等同 timer 觸發，不收參數）。execution group 刻意自成一組 upload、**不併進
+# llm-batch**：worker 的互斥靠自己的整輪鎖（flock_files）；入庫段與 sync／手動 LLM 批次的互斥靠 claude 鎖
+# （撞到就 rc 75、乾淨檔留到下一輪，掃描與清除照做）。併進 llm-batch 的話，任何 LLM 批次持鎖的那幾小時
+# 「立即執行」都會被拒（連掃毒都不能立刻跑），sync 的 run 也會在每 5 分鐘一輪的 worker 執行時被拒，換不到東西。
+# 鎖檔路徑與 scripts/process_uploads.sh 的 LOCK 預設值一致（tests/test_ops_agent_actions.py 對帳）。
+
+[[services]]
+name = "upload"
+kind = "systemd"
+unit = "report-mark-upload.service"
+timer = "report-mark-upload.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "upload"
+flock_files = ["/home/kashionz/projects/report-mark/data/.upload_worker.lock"]
+depends_on = ["postgres", "clamav", "deepseek", "r2"]
+description = "上傳 worker（掃毒、草稿入庫、清除；每 5 分鐘）"
+
+# ── 外部依賴（依賴圖的節點；代理不查也不動它們）──────────────────────────────
+# 退出碼對照：scripts/check_web_health.sh（6＝R2、7＝DeepSeek 餘額低、8＝DeepSeek 不可用；優先序 8→5→6→7，
+# 被蓋住的那項判斷不出來）、scripts/check_edge_health.sh（1＝邊緣故障、3＝origin 自己壞了、4＝判不出來）、
+# scripts/check_linebot_health.sh（1＝bot 沒在跑、2＝存不了檔）。
+
+[[externals]]
+name = "r2"
+tier = "critical"
+probe = "health"
+down_exit_codes = [6]
+description = "Cloudflare R2 物件儲存（原檔、PDF；/healthz/storage）"
+
+[[externals]]
+name = "deepseek"
+tier = "critical"
+probe = "health"
+degraded_exit_codes = [7]
+down_exit_codes = [8]
+description = "DeepSeek API（問答與批次 LLM；/healthz/llm）"
+
+[[externals]]
+name = "nas"
+tier = "important"
+description = "NAS（研報來源掛載、備份與帳號刪除 tombstone；未監控）"
+
+[[externals]]
+name = "slack"
+tier = "important"
+description = "Slack 告警 webhook（P5 事件通知；未監控）"
+
+[[externals]]
+name = "public-edge"
+tier = "critical"
+depends_on = ["cloudflared"]
+probe = "edge-health"
+down_exit_codes = [1]
+description = "對外網址（Cloudflare → 隧道 → nginx；edge-health 從本機打對外 /healthz）"
+
+[[externals]]
+name = "linebot"
+tier = "supporting"
+depends_on = ["nas"]
+probe = "linebot-health"
+degraded_exit_codes = [2]
+down_exit_codes = [1]
+description = "LINE bot（Windows 主機，下載研報到 NAS）"

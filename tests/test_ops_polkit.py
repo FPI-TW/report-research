@@ -1,8 +1,9 @@
 """`deploy/polkit/10-report-mark-ops.rules`：維運代理的使用者只能對 catalog 的寫入類 unit 做 start／restart。
 
 三件事：
-1. 白名單（ALLOW）與兩份 catalog 的寫入類 action、兩個代理 unit 的 `User=` 逐項一致；dev 使用者只碰
-   `report-mark-dev-*`，prod 使用者不碰它們；PostgreSQL／nginx／cloudflared 不可能出現在裡面。
+1. 白名單（ALLOW）與三份 catalog 的寫入類 action、三個代理 unit 的 `User=` 逐項一致；dev 使用者只碰
+   `report-mark-dev-*`，prod 與 staging 使用者不碰它們；staging 不比生產寬；PostgreSQL／nginx／cloudflared
+   不可能出現在裡面。
 2. 檔案只用 polkit JS 引擎（duktape，ES5.1）認得的語法、只有一條 addRule、沒有 addAdminRule／spawn。
 3. 有 node 時，以假的 `polkit` 物件實際執行這個檔，逐一比對決策（YES／NO／NOT_HANDLED）。沒有 node 就 skip
    （CI 的 runner 有 node；本機沒有時前兩項仍然守住）。
@@ -28,6 +29,8 @@ RULES = REPO_ROOT / "deploy" / "polkit" / "10-report-mark-ops.rules"
 CATALOGS = {
     "production": (REPO_ROOT / "deploy" / "ops" / "services.prod.toml",
                    REPO_ROOT / "deploy" / "systemd" / "report-mark-ops-agent.service"),
+    "staging": (REPO_ROOT / "deploy" / "ops" / "services.staging.toml",
+                REPO_ROOT / "deploy" / "systemd" / "report-mark-ops-agent-staging.service"),
     "development": (REPO_ROOT / "deploy" / "ops" / "services.dev.toml",
                     REPO_ROOT / "deploy" / "systemd" / "report-mark-ops-agent-dev.service"),
 }
@@ -77,7 +80,7 @@ class PolkitAllowlistTests(unittest.TestCase):
         self.assertEqual(allow["report-mark-ops"]["restart"], ["report-mark-web.service"])
         self.assertEqual(sorted(allow["report-mark-ops"]["start"]), sorted([
             "report-mark-sync.service", "report-mark-backup.service", "report-mark-freshness.service",
-            "report-mark-audit.service", "report-mark-r2-reconcile.service"]))
+            "report-mark-audit.service", "report-mark-r2-reconcile.service", "report-mark-upload.service"]))
         for user, verbs in allow.items():
             for unit in itertools.chain.from_iterable(verbs.values()):
                 self.assertIsNone(FORBIDDEN_WRITE_TARGET.search(unit), unit)
@@ -87,8 +90,18 @@ class PolkitAllowlistTests(unittest.TestCase):
         allow = _allow()
         for unit in itertools.chain.from_iterable(allow["report-mark-ops-dev"].values()):
             self.assertTrue(unit.startswith("report-mark-dev-"), unit)
-        for unit in itertools.chain.from_iterable(allow["report-mark-ops"].values()):
-            self.assertFalse(unit.startswith("report-mark-dev-"), unit)
+        for user in ("report-mark-ops", "report-mark-ops-staging"):
+            for unit in itertools.chain.from_iterable(allow[user].values()):
+                self.assertFalse(unit.startswith("report-mark-dev-"), unit)
+
+    def test_staging_is_never_wider_than_production(self):
+        """staging：restart 只有 web；start 是生產白名單的子集，不含 sync（共用金鑰）與 backup（沒有 NAS）。"""
+        allow = _allow()
+        staging, prod = allow["report-mark-ops-staging"], allow["report-mark-ops"]
+        self.assertEqual(staging["restart"], ["report-mark-web.service"])
+        self.assertLessEqual(set(staging["start"]), set(prod["start"]))
+        for unit in ("report-mark-sync.service", "report-mark-backup.service", "report-mark-r2-reconcile.service"):
+            self.assertNotIn(unit, staging["start"])
 
 
 class PolkitSyntaxTests(unittest.TestCase):
@@ -138,7 +151,8 @@ class PolkitDecisionTests(unittest.TestCase):
             "cloudflared.service", "report-mark-ops-agent.service", "report-mark-health.service",
             "report-mark-sync.timer", "ssh.service", "report-mark-dev-web.service"})
         verbs = ("start", "restart", "stop", "reload", "try-restart", "reload-or-restart", "kill", "", None)
-        users = ("report-mark-ops", "report-mark-ops-dev", "kashionz", "root", "report-mark-ops-x")
+        users = ("report-mark-ops", "report-mark-ops-staging", "report-mark-ops-dev", "kashionz", "root",
+                 "report-mark-ops-x")
         systemd_actions = ("org.freedesktop.systemd1.manage-units", "org.freedesktop.systemd1.manage-unit-files",
                            "org.freedesktop.systemd1.reload-daemon", "org.freedesktop.systemd1.set-environment")
         cases, expected = [], []

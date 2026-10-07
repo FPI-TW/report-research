@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這十二張表
+### 為什麼只備這十三張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），現行備份清單共十二張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，現行備份清單共十三張。`user_session` 刻意不備（遺失只是全員重新登入）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -176,9 +176,10 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核、權限調整）；事後追查「誰做的」的唯一來源。雜湊鏈＋只能新增（revision 0002），還原時用 `pg_restore --disable-triggers` |
 | `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
 | `research.account_deletion` | 帳號刪除排程（提出人、執行時刻、取消紀錄）。遺失＝還原後尚未執行的刪除排程消失、帳號停在停用狀態卻永遠不會被刪。已執行的刪除另有 DB 之外的 tombstone（見下方「還原後重放帳號刪除」） |
-| `research.report_visibility` | 管理員隱藏的研報（以 `file_hash` 為鍵，含原因、隱藏人、時間）。重建語料不會重建它：遺失＝被隱藏的研報全部回到檢索、問答與閱讀頁 |
+| `research.report_visibility` | 管理員隱藏的研報（以 `file_hash` 為鍵，含原因、隱藏人、時間）。重建語料不會重建它：遺失＝被隱藏的研報全部回到檢索、問答與閱讀頁。0008 起另帶發布狀態（`publication`）：遺失＝未發布的上傳草稿全部變成已發布 |
+| `research.report_upload` | 管理員上傳的研報（以 `file_hash` 連到語料）：上傳人、時間、掃描引擎與病毒名、處理失敗原因、退回原因。上傳檔不在 NAS 鏡像裡，重建語料不會重建它；遺失＝說不出某份研報是誰上傳、掃描結果為何 |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十二張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十三張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 
@@ -568,9 +569,10 @@ sudo systemctl daemon-reload
 | 落點 | 讀者 | 權限 |
 |---|---|---|
 | repo 根 `.env` 的 `DEEPSEEK_API_KEY` | web（`web/server.py` 啟動時載入） | 同其他 web secret |
-| `/etc/default/report-mark-llm` | `report-mark-sync.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
+| `/etc/default/report-mark-llm` | `report-mark-sync.service` 與 `report-mark-upload.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
 
-**只有 sync unit 載入 llm 檔**，其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好。
+**只有白名單上的 unit 載入 llm 檔**（sync 與上傳 worker；後者是 2026-10-06 的設計決策 4），其他 unit 都不呼叫
+LLM——環境變數裡有金鑰的行程越少越好（`tests/test_deploy_units.py` 釘住白名單）。
 批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）與 `LLM_PROVIDER` 也放這份檔，讓手動與排程
 用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
 釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
@@ -1081,9 +1083,9 @@ tail -20 data/unit_failures.log                                     # 停更時�
 
 理由是本 repo 的完整性保證幾乎全在「寫入端很小心」，而不在 DB 的約束裡：`qa_log.conversation_id` 與 `report_brief.report_ids` 刻意無 FK、`embedding` 可 NULL、`report_signal.market` 與 `research_report.market` 是兩份各自寫入的副本。這些設計都有理由，代價是壞掉的方式全部是靜默的——孤兒列沒有任何讀取路徑會碰到、重複 `chunk_index` 只讓閱讀頁跳到錯的位置、`market` 不一致仍會算出看起來合理的共識數字。
 
-### 八條檢查
+### 九條檢查
 
-`scripts/db_audit.py` 的 `CHECKS` 有 **7 條 SQL 斷言**（各回一個違反列數，0＝通過），外加 1 條走 Python 判準的取樣比對（深度研報移除時拿掉了 `orphan_report_doc`／`orphan_report_run`／`orphan_report_rendition` 三條）：
+`scripts/db_audit.py` 的 `CHECKS` 有 **8 條 SQL 斷言**（各回一個違反列數，0＝通過），外加 1 條走 Python 判準的取樣比對（深度研報移除時拿掉了 `orphan_report_doc`／`orphan_report_run`／`orphan_report_rendition` 三條）：
 
 | 級別 | 檢查 | 為什麼要 |
 |---|---|---|
@@ -1092,6 +1094,7 @@ tail -20 data/unit_failures.log                                     # 停更時�
 | error | `duplicate_chunk_index` | 閱讀頁錨定跳錯位置，看起來只像「引文對不上」 |
 | error | `signal_market_mismatch` | 雷達把訊號歸到錯的市場，數字仍然合理 |
 | error | `is_research_null` | 未判定的研報會被 ingest 閘門與各批次靜默略過 |
+| error | `upload_draft_mismatch` | 上傳的草稿狀態（`report_upload.state`）與可見性（`report_visibility.publication`）不一致：未審核的研報已經對所有人可見，或研報卡在不可見卻沒有可發布的上傳紀錄（退回後寬限期內、尚未清除的草稿不算：退回刻意不動 visibility，清除時才一起刪） |
 | warn | `chunkless_report` | 有全文卻沒有任何 chunk＝檢索不到 |
 | warn | `takeaway_sha_disagreement` | 同一報告的摘錄存了不同的 `text_sha256` |
 | （取樣） | `norm_drift` | `content_norm` 是 GENERATED，驗「庫裡實際存的值」與 `norm_for_match()` 是否等價 |
@@ -1616,7 +1619,7 @@ sudo systemctl disable --now report-mark-load-observations.timer   # 管理頁�
 
 | 探針 | 看什麼 | tier → 去抖 | 退出碼 |
 |---|---|---|---|
-| `scripts/check_container_health.sh` | catalog 的 PostgreSQL、nginx、cloudflared 是否 running（不是 unhealthy） | 三者在 catalog 都是 critical：單次執行內重試一次（間隔 15 秒）後確認就回 1 | 0／1 CRITICAL／3 確認期／4 判不出來／9 WARNING |
+| `scripts/check_container_health.sh` | catalog 的 PostgreSQL、nginx、cloudflared、ClamAV 是否 running（不是 unhealthy） | 前三者在 catalog 是 critical：單次執行內重試一次（間隔 15 秒）後確認就回 1；ClamAV 是 supporting（連續 3 輪才回 9，見「ClamAV（上傳掃描）」） | 0／1 CRITICAL／3 確認期／4 判不出來／9 WARNING |
 | `scripts/check_host_health.sh` | 磁碟使用率 ≥ 90%（important，連續 2 輪）、MemAvailable < 5%、memory／io PSI full avg60 ≥ 10／30（supporting，連續 3 輪） | 門檻與理由在探針檔頭（保守初值，待事件投影累積分布後再調） | 0／3／4／9 |
 
 **去抖做在探針、不在 P5**：探針記每個檢查項目的連續失敗次數（`data/.health-streaks/`），還在確認期回 3，
@@ -1672,8 +1675,9 @@ rm -rf data/.incidents-container data/.incidents-host data/.health-streaks   # �
 - 每一片（1 小時）以**同一句 SQL** 先刪來源、再把被刪的列聚合後 upsert 進較粗的表，寫入失敗整句回滾、來源原封不動，
   寫入後再核對筆數，不符就 rollback 並 rc=1。重跑同一區間是 no-op（冪等）；遲到的舊觀測合併進既有的桶。
 - 每片、每批保留期刪除（每批最多 5000 列）各自一個交易並放寬 statement_timeout（`SET LOCAL`），不會長時間鎖表。
-- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。刻意不接 OnFailure 告警（理由同
-  load-observations）。
+- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。unit 接 `OnFailure` 告警，但以
+  `SuccessExitStatus=2 75` 放過這兩種（DB 掛掉已由 web 探針經 P5 去重告警；撞鎖是「不跑」不是「跑壞」），
+  只有 rc=1（筆數核對不符、SQL 錯誤）會告警。
 - **incident／incident_event 不在範圍內**（不可重建的事故歷史，列入備份）。
 - 管理頁 `/api/admin/observations` 的範圍上限放寬到 90 天，依 `since` 自動選粒度（24 小時內逐筆、7 天內 5 分鐘、
   更早 1 小時），回應的 `resolution` 標示實際用的。聚合表與原始表一樣不備份。
@@ -1707,11 +1711,165 @@ sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀
 
 停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
 
+## schema 與版本 drift 每日檢查（report-mark-schema-check）
+
+`report-mark-schema-check.timer` 每日 05:20 跑 `scripts/schema_baseline.py scheduled`，對目標庫唯讀：
+
+1. **版本 drift**：DB 的 `public.alembic_version` 對部署程式的 alembic head。完整比對以「DB 自己宣稱的
+   revision」為基準，所以「換了程式、忘了 `make schema`」的庫在完整比對裡是零 drift——只有這一步抓得到。
+   手動跑：`make schema-version`（＝`check --expect-head`，不建暫存庫、不需要 CREATEDB）。
+2. **schema drift**：版本可對應時（一致或落後），以 DB 的 revision 在**同一台伺服器**建唯一的暫存庫
+   `schema_ref_*`、套 baseline＋到該 revision 為止的 SQL、逐項比對系統目錄，比完一定刪掉並確認刪掉了
+   ——與 `make schema-check` 同一段程式，保證不變（清理失敗＝整次作廢、印手動清理指令）。
+
+退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=3` 表達）：
+
+| 退出碼 | 意思 | 告警 |
+|---|---|---|
+| 0 | 版本一致且零 drift | 否 |
+| 1 | schema drift，或 DB 落後（尚未套用的 revision 列在訊息與狀態檔） | 是 |
+| 2 | DB 超前（revision 不在程式的鏈上）、未接管、不明確、無法比對、**暫存庫清理失敗**、帳密錯或沒有 CREATEDB | 是 |
+| 3 | 目標 DB 連不上（只在第一次接觸目標時判定：連線被拒、逾時、DNS、伺服器正在啟動／關閉） | 否 |
+
+3 不告警的理由與 rollup-observations 的 rc=2 相同：DB 掛掉已由 web 探針經 P5 帶去重地告警，
+`report-mark-alert@` 沒有去重，再叫一次只是重複通知；那一天的檢查就此跳過，狀態檔記 `db_unavailable`。
+比到一半才斷線則是清理失敗或無法比對（2），照樣告警——生產伺服器上可能留了一個暫存庫。
+
+**狀態檔** `data/schema_check.json`（`SCHEMA_CHECK_STATUS_FILE` 可改；原子寫入，寫不進去只警告、不改
+退出碼——告警走退出碼，這份是給管理頁「資料健康」讀的投影）。format 1 的鍵：`format`、`checked_at`
+（含時區）、`duration_s`、`mode`（`full`／`version`）、`target`（`host:port/db`，不含帳密）、`exit_code`、
+`alert`（1、2 為 true）、`problems`（`db_unavailable`、`version_behind`、`version_ahead`、`version_unversioned`、
+`version_ambiguous`、`schema_drift`、`reference_cleanup_failed`、`check_error` 的子集）、`message`、
+`version`（`status`、`expected_head`、`db_revision`、`pending`）、`drift`（`status` 為
+`ok`／`drift`／`error`／`cleanup_failed`／`skipped`，以及 `revision`、`reference`、`drift_count`、
+`categories`、`column_order_differs`、`message`）。完整定義在該腳本的 `build_status_payload`。
+
+### staging（RDS）
+
+staging 的 app 帳號沒有 CREATEDB，完整比對每天都會以 2 告警。兩種做法擇一：
+
+- **只比版本**（建議的起點）：`/etc/default/report-mark-sync` 加 `SCHEMA_CHECK_MODE=version`。版本 drift
+  照樣每日偵測；schema drift 在每次部署前人工以下一種方式跑一次。
+- **完整比對、基準改用 master 帳號建**：另建 `/etc/default/report-mark-schema-check`（root 擁有、0600；unit 以
+  `EnvironmentFile=-` 選用載入，systemd 以 root 讀，行程照樣拿得到），內容兩行：
+  `SCHEMA_CHECK_REFERENCE_URL_ENV=SCHEMA_CHECK_REFERENCE_URL` 與
+  `SCHEMA_CHECK_REFERENCE_URL=postgresql+asyncpg://<master 帳號>:<密碼>@<RDS 端點>:5432/postgres?ssl=verify-full`。
+  暫存庫建在同一個 RDS（版本相同才能逐字比），目標的目錄仍以 app 帳號讀。帳密只放這個檔，repo 與
+  `report-mark-sync` 環境檔都不放；master 帳號權限大，評估過再用。手動跑同一件事：
+  `SCHEMA_CHECK_REFERENCE_URL=… uv run python scripts/schema_baseline.py check --reference-url-env SCHEMA_CHECK_REFERENCE_URL`。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 0) 先手動跑一次，確認現況（辦公室主機：版本應一致、零 drift；不一致就先處理，否則一啟用就告警）
+make schema-version
+make schema-check
+# 1) 辦公室主機
+sudo install -m 0644 deploy/systemd/report-mark-schema-check.service deploy/systemd/report-mark-schema-check.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-schema-check.timer
+# 1') staging：先在 /etc/default/report-mark-sync 加 SCHEMA_CHECK_MODE=version（或照上一節放 reference 檔）
+sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-schema-check.timer
+sudo systemctl enable --now report-mark-schema-check.timer
+# 2) catalog 多了 schema-check 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+驗收：`sudo systemctl start report-mark-schema-check.service` 後 `systemctl show report-mark-schema-check -p ExecMainStatus`
+為 0、`journalctl -u report-mark-schema-check -n 5` 看得到「版本一致」與「結論：零 drift」、`data/schema_check.json`
+的 `exit_code` 為 0；`scripts/verify_oneshot_ran.sh` 確認跑過。之後在伺服器上不應留下任何 `schema_ref_*` 庫
+（`docker exec report-mark-postgres psql -U postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE 'schema_ref_%'"`
+應為空）。生產庫仍停在 0001、程式已是 0007 時，啟用當天就會以「DB 落後」告警——先照部署順序套 schema。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-schema-check.timer   # 狀態檔停在最後一次的結果（看 checked_at）
+```
+
+## 檢索回歸每日檢查（report-mark-retrieval-regression）
+
+`report-mark-retrieval-regression.timer` 每日 07:40 跑 `scripts/retrieval_regression.py check`（零 LLM）：凍結題集
+`eval/ragas_questions.json` 的 18 題各跑一次 `hybrid_search`（參數同問答：`dense_scan`＝`ASK_DENSE_SCAN`），與一次性
+擷取的基準 `data/retrieval_regression/baseline.json` 比研報層級的召回，結果寫 `data/health/retrieval_regression.json`，
+管理後台「維運 → 資料健康」最下面的「檢索回歸」卡片讀它（`GET /api/admin/retrieval-regression`，web 不跑檢索）。
+量哪一層、為什麼不用 `retrieve_context`、指標與門檻的理由在 `app/services/retrieval_regression.py` 的模組 docstring。
+
+**不算劣化的三種變化**（分開計數、顯示在卡片上）：
+
+- 基準時點之後才入庫的研報（`created_at` 晚於基準的語料截點）先從完整候選清單排除再取 top-k——語料每 3 小時在長，
+  新研報擠進前段不是變差。基準裡本來就有的研報即使重新入庫（`created_at` 被重設）也不算新。
+- 基準研報被管理員隱藏（`report_visibility`）或已不在語料裡：從分母拿掉。
+- 字面路候選被 cap 截斷（`lex_truncated`）的題目，前後兩次跑的 top-k 本來就可能不同（`store._lexical_sql` 刻意不在
+  cap 前排序）；這不排除，而是由「允許少數題崩掉」吸收，並在卡片上標出來。
+
+退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=2` 表達）：
+
+| 退出碼 | 意思 | 告警 |
+|---|---|---|
+| 0 | 沒有劣化 | 否 |
+| 1 | 劣化：平均研報召回 < `RETRIEVAL_REGRESSION_MIN_MEAN_RECALL`（0.8），或研報召回 < `RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL`（0.5）的題數 > `RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS`（2） | 是 |
+| 2 | 這次略過：DB 連不上、可用記憶體 < `RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB`（4 GiB）、sync 正在跑（`data/.sync_new_reports.lock` 的行程還活著） | 否 |
+| 3 | 要人處理：還沒有基準、基準檔壞了、題集或嵌入模型與基準不同、可比較的題目不到一半（基準研報大半已下架或隱藏）、嵌入模型載不起來、非連線類的 DB 錯誤、未預期的例外 | 是 |
+
+2 不告警的理由與 rollup-observations 的 rc=2 相同：DB 掛掉已由 web 探針經 P5 帶去重地告警，記憶體與 sync 是會自己好的
+狀況。略過那次不蓋掉上一次的比對；連續略過超過 48 小時，卡片把結果標成過期（至少「注意」）。
+
+**資源與互斥**：會載 BGE-M3（行程約 2–3 GB）。不取 `scripts/_claude_lock.py` 的鎖——它不呼叫 LLM，取了反而讓同時段的
+LLM 批次（含 sync 輪內的摘要／標題／摘錄）以 rc=75 跳過；記憶體競爭改由排程避開 sync 與夜間回填、sync PID 檔守門、
+`MemAvailable` 守門與 `MemoryMax=4G` 兜底（超過就在這個 unit 裡被 OOM，SIGKILL 會走告警），CPU 以 `Nice=15`、
+`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=2` 讓路。2026-10-06 對 devdb（生產複本，15,297 篇）實跑：冷載模型＋
+18 題約 4 分鐘（模型已載入時比對約 50 秒）、行程峰值 RSS 2.03 GiB；同一刻擷取立即比對，18 題研報召回全部 1.00；相隔約兩分鐘的另一組擷取與比對，「散熱技術的進展如何？」因字面路截斷（命中 5,312 片段 > cap 2,000）只剩 0.40、其餘 17 題 1.00——這就是允許少數題崩掉的原因。
+
+**評測刻意不進 CI**：這支要真語料與真模型；CI 只跑假嵌入、假 DB 的單元測試（`tests/test_retrieval_regression.py`）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 0) 先擷取基準（一次性；在 repo 根、用部署機的 DB）。會載 BGE-M3，挑 sync 沒在跑、可用記憶體 ≥ 4 GiB 的時段
+EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py capture
+#    再手動比一次，確認是 0、研報召回接近 1（字面路截斷的題目可能不是 1.00，卡片會標出來）
+EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py check
+# 1) 辦公室主機
+sudo install -m 0644 deploy/systemd/report-mark-retrieval-regression.service deploy/systemd/report-mark-retrieval-regression.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-retrieval-regression.timer
+# 2) 辦公室主機的 catalog 多了 retrieval-regression 一項（唯讀，不給 run）：照「維運代理」的步驟 3 重新安裝 catalog、
+#    --check，再重啟代理
+# 1') staging：語料不同，要在 staging 上自己擷取基準；unit 用 install_units.sh 代換使用者與路徑
+sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-retrieval-regression.timer
+sudo systemctl enable --now report-mark-retrieval-regression.timer
+```
+
+驗收：`sudo systemctl start report-mark-retrieval-regression.service` 後 `systemctl show report-mark-retrieval-regression -p ExecMainStatus`
+為 0、`journalctl -u report-mark-retrieval-regression -n 30` 看得到逐題表格與「沒有劣化」、`data/health/retrieval_regression.json`
+的 `outcome` 為 `ok`，管理頁卡片顯示「正常」；`scripts/verify_oneshot_ran.sh` 確認跑過。沒有先擷取基準就啟用，第一次會以
+rc=3（`no_baseline`）告警。
+
+### 重新擷取基準
+
+基準是一把尺，**只在刻意改變了「什麼算正確結果」時才換**：調整檢索參數（`ASK_DENSE_SCAN`——卡片會顯示 `params_changed`
+提醒——、融合權重、索引）並確認變好之後；題集或嵌入模型改了（rc=3 `incomparable`）；基準太舊、可比較的題目不到一半
+（rc=3）。劣化告警時**不要**直接重新擷取——那等於把劣化收編成新基準；先看卡片上流失的研報與 journal 找原因。
+
+```bash
+EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py capture --force   # 覆寫；舊基準需要時先自己備份
+```
+
+`capture --as-of <ISO 時間>` 是驗證用：假裝基準是在那個時點擷取的（之後入庫的研報不進基準），用來檢查新研報排除是否有效，
+不要用它建正式基準。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-retrieval-regression.timer   # 結果檔停在最後一次（48 小時後卡片標成過期）
+```
+
 ## 維運代理（report-mark-ops-agent）
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經
 Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
-Service Catalog（`deploy/ops/services.prod.toml`；開發環境 `deploy/ops/services.dev.toml`）列出的服務與
+Service Catalog（`deploy/ops/services.prod.toml`；EC2 staging `deploy/ops/services.staging.toml`、開發環境
+`deploy/ops/services.dev.toml`）列出的服務與
 action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（v1 只有 Web）與 `run`（既有 oneshot 立即執行一次：
 sync、backup、freshness、audit、r2-reconcile）。沒有任意 shell、任意 unit、stop、timer enable/disable；
 PostgreSQL、nginx、cloudflared 永遠唯讀（catalog 載入期與代理執行前兩層都擋，PG 的 restart 尤其禁止）。
@@ -1732,9 +1890,10 @@ P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維
   換成新值（並回到 active）就是新的一輪起來了。Web 重啟期間 BGE-M3 要重新載入，這段時間整站不可用。
 - **授權靠 polkit，不靠 sudo**：代理的 unit 是 `NoNewPrivileges=yes`、沒有 capability，setuid 的 sudo 在
   裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
-  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與五個 oneshot
-  的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
-  `report-mark-dev-smoke.service` 的 start；這兩個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
+  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與六個 oneshot
+  （sync、backup、freshness、audit、r2-reconcile、upload）的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
+  `report-mark-dev-smoke.service` 的 start，`report-mark-ops-staging`（EC2）限定在 Web 的 restart 與
+freshness、audit 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
   （JS 規則；本機 Ubuntu 24.04 是 124）。
 
 **威脅模型**：代理的使用者在 `docker` 群組（讀容器狀態與日誌需要 docker socket），而 docker 群組等同
@@ -1786,8 +1945,211 @@ run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋
 本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
 （只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
 
+**EC2 staging**（尚未安裝；要啟用時照下面做，`deploy/ops/services.staging.toml` 開頭有 staging 與辦公室主機的差異）：
+使用者 `report-mark-ops-staging`、catalog `services.staging.toml`、unit `report-mark-ops-agent-staging.service`、
+socket `/run/report-mark-ops-staging/agent.sock`；staging 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（repo 根 `.env`）。
+staging 主機沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比生產窄：
+restart 只有 web，run 只有 freshness、audit；sync（共用 DeepSeek 金鑰）與 r2-reconcile（共用 R2 bucket）唯讀。
+polkit 規則同一個檔（`report-mark-ops-staging` 那組）；EC2 上不建 `report-mark-ops`，生產那組在那裡不會命中。
+catalog 以 uid 寫 `allowed_uids = [1000]`（ubuntu），先以 `id -u ubuntu` 核對。
+
+```bash
+# 在 EC2 的部署 checkout（/home/ubuntu/report-mark）repo 根執行
+sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin report-mark-ops-staging
+sudo usermod -aG systemd-journal report-mark-ops-staging      # 不加 docker
+sudo usermod -aG report-mark-ops-staging ubuntu
+sudo install -d -o root -g root -m 0755 /opt/report-mark-ops /opt/report-mark-ops/ops_agent
+sudo install -o root -g root -m 0644 ops_agent/*.py /opt/report-mark-ops/ops_agent/
+sudo install -o root -g root -m 0644 deploy/ops/services.staging.toml /opt/report-mark-ops/
+(cd /opt/report-mark-ops && /usr/bin/python3 -B -E -s -m ops_agent --catalog services.staging.toml --check)
+sudo install -o root -g root -m 0644 deploy/polkit/10-report-mark-ops.rules /etc/polkit-1/rules.d/
+sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark report-mark-ops-agent-staging.service
+sudo systemctl enable --now report-mark-ops-agent-staging.service
+sudo systemctl restart report-mark-web.service   # .env 設好 OPS_AGENT_ENVIRONMENT=staging，並讓 web 拿到群組
+```
+
+staging 的 catalog 只列已安裝的 unit（web、nginx 與 8 組 timer）；之後在 staging 裝了新的 unit（例如 Admin v1 的
+schema-check、host-health），要把它加進 `services.staging.toml`（含 `depends_on`）並重做 install＋`--check`＋重啟代理。
+
+**依賴圖**：catalog 的 `depends_on` 與 `[[externals]]`（格式見 `ops_agent/catalog.py`）是服務依賴關係的唯一真相來源，
+`--check` 會擋下指向不存在的節點、依賴自己與環。改了依賴（或新增服務時忘了寫）都照步驟 3 重新安裝 catalog、
+`--check`、重啟代理；管理頁的依賴圖（`GET /api/admin/ops/dependencies`）在代理重啟後才看得到新的關係。
+
 ### 停用
 
 ```bash
 sudo systemctl disable --now report-mark-ops-agent.service   # 管理頁的維運區塊改回 503，其他不受影響
 ```
+
+## ClamAV（上傳掃描）
+
+上傳管線（Admin v1.5）用常駐的 clamd 容器掃描上傳的 PDF：`deploy/clamav/docker-compose.yml`（獨立 compose 專案
+`report-mark-clamav`、容器 `report-mark-clamav`、官方映像 `clamav/clamav:1.4`）與 `deploy/clamav/conf/` 的
+`clamd.conf`／`freshclam.conf`。只綁 `127.0.0.1:3310`、不加入 edge 網路、病毒碼放 named volume、
+`restart: unless-stopped`、`mem_limit: 2g`。客戶端是 `app/services/clamd.py`（標準庫 socket），web 不直接連它。
+
+**這是安全閘門，fail-closed**（不適用派生功能的 fail-open）：clamd 連不上、逾時、回應看不懂、病毒碼超過
+`CLAMD_SIGNATURE_MAX_AGE_HOURS`（預設 72 小時）或日期判斷不出來，一律是**暫時性**錯誤——上傳留在隔離區、
+下一輪再試，**永不放行**；超過串流上限（`StreamMaxLength 30M`／`CLAMD_STREAM_MAX_BYTES`）或 clamd 對內容回
+其他 ERROR 是**決定性**錯誤（worker 重試 3 次後轉 blocked）。唯一放行的是 clamd 明確回 `stream: OK`。
+
+`clamd.conf` 刻意改掉的預設（每一條在檔案裡都有註解）：`StreamMaxLength 30M`（≥ 25 MB 上傳上限）、
+`AlertExceedsMax yes`（預設超過 MaxFileSize／MaxScanSize 只掃一部分就回 OK）、`AlertEncrypted yes`（預設把打不開的
+加密 PDF 當乾淨）、`ConcurrentDatabaseReload no`（預設重載時記憶體翻倍到約 3 GB，會撞上 2g 上限）。
+設定是整個 `/etc/clamav` 目錄唯讀掛進去（取代映像內建設定），刻意不掛單檔：Docker Desktop 重啟後單檔
+bind mount 可能掛不上（`docs/EXTERNAL_ACCESS.md` 的 nginx 事故）。記憶體預估與實測見 `docs/CAPACITY.md`
+「常駐元件：ClamAV」。
+
+### 安裝（人工；只在要啟用上傳時做）
+
+```bash
+# 0) 先看記憶體：常駐約 1.2–1.6 GB。可用記憶體常態低於 3 GiB 時先不要起（設計決策 1：改按需）
+free -g
+# 1) 在部署 checkout 的 repo 根啟動（首次要下載約 300 MB 病毒碼，數分鐘；health 有 6 分鐘 start-period）
+make up-clamav
+docker inspect -f '{{.State.Status}} {{.State.Health.Status}}' report-mark-clamav   # 等到 running healthy
+# 2) 冒煙：EICAR 要 FOUND、正常 PDF 要 OK（走上傳 worker 同一條 scan()；病毒碼過舊也算失敗）
+make clamav-smoke                                   # 內建最小 PDF
+make clamav-smoke SMOKE_PDF=/path/to/真實研報.pdf    # 再用一份真的研報驗一次
+# 3) catalog 多了 clamav 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+# 4) 容器探針不必重裝 unit：預設目標清單（scripts/check_container_health.sh）已含 clamav，部署目錄更新後就生效
+```
+
+`make clamav-smoke` 的退出碼：0 通過／1 結果不符（EICAR 沒被攔、PDF 沒通過、病毒碼過舊）／2 clamd 連不上。
+EICAR 字串在執行期拼出來、只存在記憶體，不會在磁碟上留下會被防毒隔離的檔案。
+
+**部署順序的陷阱**：部署目錄一更新到含 ClamAV 的版本，容器探針就會開始找 `report-mark-clamav`；還沒
+`make up-clamav` 的話它是 `missing`，連續 3 輪（約 6 分鐘）後開 WARNING 事件。暫時不啟用 ClamAV 時，在
+`/etc/default/report-mark-sync` 設 `CONTAINER_HEALTH_TARGETS`（把預設值裡的 `clamav=…` 拿掉）。
+
+### 病毒碼更新
+
+容器內的 freshclam 每天檢查 `FRESHCLAM_CHECKS` 次（compose 設 4，每 6 小時；映像 entrypoint 的預設其實是 1），
+有新病毒碼才下載並通知 clamd 重載。`ConcurrentDatabaseReload no` 下重載期間約 30–60 秒新的掃描要等（連線被接受
+但晾著），客戶端逾時（`CLAMD_TIMEOUT`，預設 120 秒）蓋得過；萬一逾時也只是暫時性錯誤。
+
+```bash
+docker exec report-mark-clamav sh -c 'echo VERSION | nc localhost 3310'   # ClamAV 1.4.x/<病毒碼版本>/<日期，UTC>
+docker logs --since 24h report-mark-clamav 2>&1 | grep -iE 'freshclam|database|error'
+docker exec report-mark-clamav freshclam --stdout   # 手動更新一次（freshclam 自己會限制頻率；不要寫成迴圈）
+```
+
+病毒碼超過 72 小時沒更新時，上傳 worker 會以 `signatures_stale` 拒掃（上傳停在隔離區）。常見原因：主機連不到
+`database.clamav.net`（被限流時 freshclam 會在日誌說 `cool-down`，等它過）、volume 空間不足。容器內的時區必須是
+UTC（compose 寫死 `TZ: Etc/UTC`）：`VERSION` 的日期是容器本地時間，被改成 UTC+8 會讓日期跑到未來，客戶端判成
+`signatures_unknown`、同樣不放行。
+
+### clamd 掛掉時
+
+| 狀況 | 看得到什麼 | 上傳的行為 | 處置 |
+|---|---|---|---|
+| 容器停了（Exited） | 容器探針 `clamav:exited`，3 輪後 WARNING；管理頁維運的 clamav 為 exited | 掃描回 `connection_refused`（暫時性），檔案留在隔離區、不放行 | `docker logs --tail 100 report-mark-clamav` 看原因，`make up-clamav` |
+| 容器 running 但 unhealthy | 探針 `clamav:unhealthy`。clamd 在容器裡是背景行程，被 OOM 或崩潰時容器不會退出，`restart: unless-stopped` 也不處理 unhealthy | 同上 | `docker inspect -f '{{.State.OOMKilled}}' report-mark-clamav`；`docker restart report-mark-clamav`（重新載入病毒碼約一分鐘）。反覆 OOM 見 `docs/CAPACITY.md` |
+| 病毒碼過舊 | worker 記 `signatures_stale` | 不掃、留在隔離區 | 見上一節 |
+| 重載中、逾時 | worker 記 `timeout` | 留在隔離區，下一輪自然重試 | 不必處置；持續發生才看 `docker stats report-mark-clamav` |
+
+**Docker Desktop 重啟後可能停在 Exited**：nginx 在 2026-09-24 就是這樣（`docs/EXTERNAL_ACCESS.md`），
+`restart: unless-stopped` 不會重試啟動失敗。ClamAV 的設定刻意掛目錄而不是單檔以避開那個成因，但 Docker Desktop
+重啟後仍要確認一次：`docker ps -a --filter name=report-mark-clamav`；是 Exited 就 `make up-clamav`
+（把既有容器再啟動）。還是起不來時重建：`docker compose -f deploy/clamav/docker-compose.yml up -d --force-recreate`
+（病毒碼在 volume 裡，不必重抓）。
+
+### 停用
+
+```bash
+make down-clamav   # 停掉並移除容器；病毒碼 volume 保留（刻意不帶 -v）
+```
+
+停掉之後上傳只會停在隔離區、不放行，其他功能不受影響。長期停用時，在 `/etc/default/report-mark-sync` 設
+`CONTAINER_HEALTH_TARGETS`（不含 clamav）避免探針持續告警；要連病毒碼一起清掉：
+`docker volume rm report-mark-clamav_clamav-db`（下次啟動要重新下載約 300 MB）。
+
+## 上傳 worker（Admin v1.5）
+
+`report-mark-upload.service`＋`.timer`（`scripts/process_uploads.sh`）：每 5 分鐘一輪，掃毒（ClamAV）→ 掃描通過的
+上傳入庫成草稿 → 本輪新草稿跑摘要、標題、摘錄 → 清除過寬限期的退回件、過保留期的感染證據、隔離區孤兒檔。
+流程與狀態機見 `docs/WORKFLOW.md`「上傳 worker」。**現況：程式在 repo 裡，unit 沒有裝、timer 沒有 enable、
+`UPLOAD_ENABLED` 維持 0**；下面的安裝要另外取得同意，順序照 AGENTS.md「過渡中狀態」（devdb 演練 → staging →
+生產；staging 沒有 clamd，維持旗標關閉、不裝這支 unit）。
+
+互斥與記憶體：
+
+- 整輪鎖 `data/.upload_worker.lock`（flock，殼取、子命令驗證）：同時只有一輪；手動跑殼或子命令也取同一把。
+- 入庫段取 claude 鎖（`data/.claude_cli.lock`），與 sync、手動 LLM 批次互斥——主機上最多「web 一份＋一支批次一份」
+  BGE-M3。撞鎖 rc=75：乾淨檔留在 `clean`，掃描與清除照做。
+- `scripts/backfill_extraction.py` 正在跑（它也載 BGE-M3、不取 claude 鎖）時只掃描、不入庫。
+- unit：`MemoryMax=4G`、`Nice=19`、`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=4`。不可信 PDF 的檢查與試抽字
+  在子行程（`RLIMIT_AS`＝`UPLOAD_PREFLIGHT_MEMORY_MB`，預設 2048；逾時 300 秒；頁數上限 300）。已知風險：
+  入庫核心會在主行程再抽一次字，pdfplumber 抽 300 頁的密集文字約 1.7 GB，加上已載入的 BGE-M3 會逼近 4G——
+  撞到時 cgroup OOM 砍掉這一輪，殘留回收把它退回 `clean`，同一份檔被中止 3 次就轉 `failed`（不會無限重試）。
+  實測 RSS 待補：上線後量一週，填進 `docs/CAPACITY.md`「批次元件：上傳 worker」。
+
+退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=2 75` 表達；分界是「會不會自己好」：
+會自己好的不告警——timer 每 5 分鐘、`report-mark-alert@` 沒有去重，算成失敗就是每 5 分鐘一則重複通知）：
+
+| 退出碼 | 意思 | 告警 |
+|---|---|---|
+| 0 | 做完了。另一輪 worker 還在跑、backfill 正在跑（只掃描）、批次斷路器有效（`clean` 標 `llm_breaker` 延後）也是 0 | 否 |
+| 1 | 自己壞了：例外、SQL 錯誤、隔離區或乾淨檔目錄的權限 | 是 |
+| 2 | 這輪不跑、會自己好：DB 連不上（web 探針經 P5 帶去重告警）。乾淨檔維持 `clean` | 否 |
+| 3 | LLM 設定或帳號錯誤、不會自己好：缺金鑰、`/etc/default/report-mark-llm` 讀不到（不存在／權限）、`LLM_PROVIDER` 拼錯、未知模型名、環境檔有重複的鍵（`require_llm_key` 拒跑），以及入庫途中的 401／402／400 升級。乾淨檔維持 `clean` | 是 |
+| 75 | 入庫段撞 claude 鎖（sync 或手動 LLM 批次在跑），乾淨檔留到下一輪；掃描與清除照做 | 否 |
+
+3 只在真的有上傳在等（有 `clean`）時才會出現，所以沒有上傳時不會每 5 分鐘告警；有上傳在等而設定沒修好時，
+每一輪都會再告警一次（刻意：上傳卡住而沒有人知道比較糟）。處置看 `journalctl -u report-mark-upload` 裡 `[llm-env]`
+那一行（缺金鑰時它會說是檔案不存在、權限，還是檔裡沒填）。clamd 由容器探針告警（掃不到只會留在隔離區，不影響
+退出碼）。偵測到感染時 worker 自己留痕：稽核 `upload.infected`（actor NULL）、journal 一行 err 優先序（`journalctl -p err -u report-mark-upload`）、
+有設 `REPORT_MARK_ALERT_WEBHOOK` 另送 webhook（unit 載入 `/etc/report-mark/alert.env`，URL 經 stdin 給 curl）。
+
+### 安裝（人工；只在要啟用上傳時做，需 sudo）
+
+前提：生產庫已套到 revision 0008（`make schema-version`）、ClamAV 已照上一節安裝且 `make clamav-smoke` 通過、
+`/etc/default/report-mark-llm` 已安裝（見「DeepSeek 金鑰落點與輪替」；白名單是 sync 與這支）。
+
+```bash
+# 0) 記憶體：入庫時會多一份 BGE-M3（與 sync 互斥）。可用記憶體常態偏低時先不要開
+free -g
+# 1) 隔離區與乾淨檔目錄的旋鈕：web（repo 根 .env）與 worker（/etc/default/report-mark-sync）要一樣，或兩邊都留預設
+#    （UPLOAD_QUARANTINE_DIR、UPLOAD_CLEAN_DIR；兩者要在同一個檔案系統，搬正才是原子的 os.replace）
+# 2) unit（在部署 checkout 的 repo 根）
+sudo cp deploy/systemd/report-mark-upload.service deploy/systemd/report-mark-upload.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+# 3) 先手動跑一輪（旗標還關著：隔離區沒有東西，應該幾秒就結束、rc=0）。是否真的跑過看 invocation，不看 Result=success
+BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-upload.service)
+sudo systemctl start report-mark-upload.service
+bash scripts/verify_oneshot_ran.sh verify report-mark-upload.service "$BASE"
+journalctl -u report-mark-upload -n 50 --no-pager
+# 4) ops catalog 多了 upload（含 run）、polkit 多了它的 start：照「維運代理」的步驟 3、4 重新安裝 catalog 與規則，
+#    --check 後重啟 report-mark-ops-agent.service
+# 5) 開排程
+sudo systemctl enable --now report-mark-upload.timer
+# 6) 經同意後才開收檔：repo 根 .env 設 UPLOAD_ENABLED=1，重啟 web
+```
+
+驗收：上傳一份真的研報 → 5 分鐘內管理頁看到 `clean` → `draft`（標題、摘要、摘錄稍後補上）；
+`make db-audit` 的 `upload_draft_mismatch` 為 0；草稿在一般使用者的檢索、問答、閱讀頁都看不到，發布後才看得到。
+
+### 日常處置
+
+| 狀況 | 看得到什麼 | 處置 |
+|---|---|---|
+| 一直停在 `quarantined`，`scan_last_error` 是 `connection_refused`／`timeout`／`signatures_stale` | 管理頁掃描器橫幅；容器探針的 clamav 事件 | 見上一節「clamd 掛掉時」；修好後下一輪自動掃 |
+| 一直停在 `clean`，`failure_kind=llm_breaker` | journal「LLM 斷路器有效」 | DeepSeek 恢復、斷路器標記過期（30 分鐘）後自動處理；確認恢復可刪 `data/.llm_breaker` |
+| 一直停在 `clean`、沒有 failure_kind | journal「claude 鎖被其他 LLM 批次佔用」（rc=75）或「抽取回填正在跑」 | 等對方結束；下一輪自動處理 |
+| 一直停在 `clean`，unit 每輪 rc=3 告警 | journal「LLM 設定錯誤」與上方 `[llm-env]` 那一行 | 照 `[llm-env]` 的提示修環境檔或金鑰（見「DeepSeek 金鑰落點與輪替」）；修好後下一輪自動處理 |
+| `blocked`、`failure_kind=scan_heuristic` | 稽核 `upload.blocked`；`scan_signature` 是 `Heuristics.*`（例如加密、超過掃描上限） | 規則攔截不是病毒，同一份檔可以在處理掉原因後重新上傳（不會被 422 擋）；證據 30 天後自動刪 |
+| `failed`（`tag_failed`／`ingest_error`／`extract_timeout`） | 管理頁失敗頁籤 | 排除原因後在管理頁「重試」（受全站處理中上限） |
+| `infected` | 稽核 `upload.infected`、journal err、webhook | 檔案在 `<隔離區>/infected/<upload_id>.bin`（0400），web 沒有任何端點取得回；確認上傳者與來源。30 天後 worker 自動刪檔（`upload.evidence_purged`），DB 那一列永久保留 |
+| 下游沒跑完（摘要、標題、摘錄缺） | journal 印出 `data/upload_hashes_retained_<時間>.txt` 與補跑指令 | 照印出的指令以 `--hashes-file` 補跑（三段都冪等） |
+
+### 停用
+
+```bash
+# 1) 先停收檔：repo 根 .env 設 UPLOAD_ENABLED=0，重啟 web（之後不會有新檔進隔離區）
+# 2) 停排程（已在跑的那一輪會跑完）
+sudo systemctl disable --now report-mark-upload.timer
+```
+
+停掉之後：隔離區的檔案與 `report_upload` 都保留，已入庫的草稿維持不可見、仍可在管理頁發布或退回（退回後的清除要
+worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
+重新安裝（「維運代理」步驟 3、4）。

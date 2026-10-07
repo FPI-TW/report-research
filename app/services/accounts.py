@@ -252,55 +252,71 @@ class AuditEntry:
 
 
 class AccountError(Exception):
-    """管理動作被拒絕的基底類別；訊息是給人看的中文，路由層直接轉成 detail。"""
+    """管理動作被拒絕的基底類別；訊息是給人看的中文，路由層直接轉成 detail。
+
+    `code` 是 API 錯誤代碼（與 `web/routers/admin.py` 的 `_STATUS` 逐字一致，`tests/test_admin_bulk_api.py` 釘住）；
+    批次的逐筆結果與稽核摘要也用它。
+    """
+
+    code = "bad_request"
 
 
 class InvalidInputError(AccountError):
-    pass
+    code = "invalid_input"
 
 
 class UsernameTakenError(AccountError):
-    pass
+    code = "username_taken"
 
 
 class UserNotFoundError(AccountError):
-    pass
+    code = "not_found"
 
 
 class LastAdminError(AccountError):
-    pass
+    code = "last_admin"
 
 
 class SelfLockoutError(AccountError):
-    pass
+    code = "self_lockout"
 
 
 class LastSuperError(AccountError):
-    pass
+    code = "last_super"
 
 
 class PermissionDeniedError(AccountError):
-    pass
+    code = "super_required"
 
 
 class AccountDeletedError(AccountError):
     """帳號已刪除（只剩 tombstone），不能再修改。"""
 
+    code = "account_deleted"
+
 
 class DeletionPendingError(AccountError):
     """帳號已有尚未執行的刪除排程。"""
+
+    code = "deletion_pending"
 
 
 class NoPendingDeletionError(AccountError):
     """沒有可以取消的刪除排程。"""
 
+    code = "no_pending_deletion"
+
 
 class DeletionWindowClosedError(AccountError):
     """撤銷窗口已過（已到執行時刻），不能再取消。"""
 
+    code = "deletion_window_closed"
+
 
 class TotpStateError(AccountError):
     """TOTP 狀態不允許這個動作（例如已啟用卻要重新設定）。"""
+
+    code = "totp_state"
 
 
 class TotpRequiredError(AccountError):
@@ -377,6 +393,38 @@ async def record_ops_action(*, actor_id: str | None, action: str, service: str, 
     async with SessionFactory() as session:
         await _audit(session, actor_id=actor_id, action=f"ops.{action}", target_type="ops_service",
                      target_id=service, detail=detail)
+        await session.commit()
+
+
+
+# 管理後台 CSV 匯出（/api/admin/export/*.csv）的種類；稽核 action 一律 `data.export`、target_id 是種類。
+EXPORT_KINDS: frozenset[str] = frozenset({"audit", "users", "reports", "incidents", "jobs"})
+_EXPORT_FILTER_MAX_CHARS = 200
+
+
+def _export_filter_value(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:_EXPORT_FILTER_MAX_CHARS]
+
+
+async def record_export(*, actor_id: str | None, kind: str, filters: dict, row_count: int,
+                        truncated: bool) -> None:
+    """一次 CSV 匯出的稽核（自己的交易、立即 commit）：誰、匯出什麼、篩選條件、筆數、是否達上限。
+
+    **不含任何匯出內容**——detail 只有種類、篩選條件（省略 None；字串截到 200 字）、筆數與 truncated。
+    路由層在把資料交出去**之前**呼叫它：寫不進稽核就不匯出。
+    """
+    if kind not in EXPORT_KINDS:
+        raise ValueError(f"未知的匯出種類：{kind!r}")
+    detail = {
+        "kind": kind, "format": "csv",
+        "filters": {str(k): _export_filter_value(v) for k, v in sorted(filters.items()) if v is not None},
+        "row_count": int(row_count), "truncated": bool(truncated),
+    }
+    async with SessionFactory() as session:
+        await _audit(session, actor_id=actor_id, action="data.export", target_type="export", target_id=kind,
+                     detail=detail)
         await session.commit()
 
 
@@ -773,44 +821,56 @@ async def update_user(user_id: str, *, role: str | None = None, enabled: bool | 
     if role is not None:
         _check_role(role)
     async with SessionFactory() as session:
-        _uid, uname, cur_role, cur_enabled, cur_super = await _lock_target(session, user_id)
-        new_role = cur_role if role is None else role
-        new_enabled = cur_enabled if enabled is None else bool(enabled)
-        effective_super = bool(cur_super) and cur_role == "admin" and cur_enabled
-        await _require_can_touch(session, actor_id, effective_super)
-        if new_enabled and not cur_enabled and await _has_pending_deletion(session, user_id):
-            raise DeletionPendingError("這個帳號已排程刪除；要重新啟用請先取消刪除")
-        losing_admin = cur_role == "admin" and cur_enabled and (new_role != "admin" or not new_enabled)
-        if losing_admin and actor_id is not None and str(actor_id) == str(user_id):
-            raise SelfLockoutError("不能停用自己，也不能拿掉自己的管理員權限")
-        if losing_admin:
-            others = (await session.execute(
-                text("SELECT count(*) FROM research.app_user WHERE role = 'admin' AND enabled AND id <> :id"),
-                {"id": user_id},
-            )).scalar_one()
-            if int(others) == 0:
-                raise LastAdminError("至少要保留一位啟用中的管理員")
-        if losing_admin and effective_super:
-            await _require_other_super(session, user_id)
-        if (new_role, new_enabled) != (cur_role, cur_enabled):
-            await session.execute(
-                text("UPDATE research.app_user SET role = :r, enabled = :e, updated_at = now() WHERE id = :id"),
-                {"r": new_role, "e": new_enabled, "id": user_id},
-            )
-            revoked = await _revoke_all(session, user_id) if not new_enabled else 0
-            if new_role != cur_role:
-                await _audit(session, actor_id=actor_id, action="user.set_role", target_type="user",
-                             target_id=str(user_id),
-                             detail={"username": uname, "from": cur_role, "to": new_role, "via": via})
-            if new_enabled != cur_enabled:
-                await _audit(session, actor_id=actor_id,
-                             action="user.enable" if new_enabled else "user.disable",
-                             target_type="user", target_id=str(user_id),
-                             detail={"username": uname, "revoked_sessions": revoked, "via": via})
-        info = await _load_user(session, user_id)
+        info, _changed = await _update_user_in(session, user_id, role=role, enabled=enabled, actor_id=actor_id,
+                                               via=via)
         await session.commit()
-    assert info is not None
     return info
+
+
+async def _update_user_in(session, user_id: str, *, role: str | None, enabled: bool | None,
+                          actor_id: str | None, via: str) -> tuple[UserInfo, bool]:
+    """update_user 的本體：在呼叫端的交易裡判規則、改資料、寫稽核（不 commit）。回 (帳號, 是否有變更)。
+
+    批次（`bulk_user_action`）在同一筆交易裡逐筆呼叫它，所以「最後一位管理員／super admin」的計數看得到
+    同一批前面幾筆已經做的變更——一次停用所有 super admin 時，輪到最後一位就會被擋。
+    """
+    _uid, uname, cur_role, cur_enabled, cur_super = await _lock_target(session, user_id)
+    new_role = cur_role if role is None else role
+    new_enabled = cur_enabled if enabled is None else bool(enabled)
+    effective_super = bool(cur_super) and cur_role == "admin" and cur_enabled
+    await _require_can_touch(session, actor_id, effective_super)
+    if new_enabled and not cur_enabled and await _has_pending_deletion(session, user_id):
+        raise DeletionPendingError("這個帳號已排程刪除；要重新啟用請先取消刪除")
+    losing_admin = cur_role == "admin" and cur_enabled and (new_role != "admin" or not new_enabled)
+    if losing_admin and actor_id is not None and str(actor_id) == str(user_id):
+        raise SelfLockoutError("不能停用自己，也不能拿掉自己的管理員權限")
+    if losing_admin:
+        others = (await session.execute(
+            text("SELECT count(*) FROM research.app_user WHERE role = 'admin' AND enabled AND id <> :id"),
+            {"id": user_id},
+        )).scalar_one()
+        if int(others) == 0:
+            raise LastAdminError("至少要保留一位啟用中的管理員")
+    if losing_admin and effective_super:
+        await _require_other_super(session, user_id)
+    if (new_role, new_enabled) != (cur_role, cur_enabled):
+        await session.execute(
+            text("UPDATE research.app_user SET role = :r, enabled = :e, updated_at = now() WHERE id = :id"),
+            {"r": new_role, "e": new_enabled, "id": user_id},
+        )
+        revoked = await _revoke_all(session, user_id) if not new_enabled else 0
+        if new_role != cur_role:
+            await _audit(session, actor_id=actor_id, action="user.set_role", target_type="user",
+                         target_id=str(user_id),
+                         detail={"username": uname, "from": cur_role, "to": new_role, "via": via})
+        if new_enabled != cur_enabled:
+            await _audit(session, actor_id=actor_id,
+                         action="user.enable" if new_enabled else "user.disable",
+                         target_type="user", target_id=str(user_id),
+                         detail={"username": uname, "revoked_sessions": revoked, "via": via})
+    info = await _load_user(session, user_id)
+    assert info is not None
+    return info, (new_role, new_enabled) != (cur_role, cur_enabled)
 
 
 async def _require_other_super(session, user_id: str) -> None:
@@ -871,21 +931,104 @@ async def reset_password(user_id: str, password: str, *, actor_id: str | None,
 async def force_logout(user_id: str, *, actor_id: str | None, via: str = "web") -> int:
     """撤銷該帳號所有 session，回撤銷數。"""
     async with SessionFactory() as session:
-        if not _valid_uuid(user_id):
-            raise UserNotFoundError("帳號不存在")
-        row = (await session.execute(
-            text("SELECT username, deleted_at FROM research.app_user WHERE id = :id"), {"id": user_id},
-        )).first()
-        if row is None:
-            raise UserNotFoundError("帳號不存在")
-        if row[1] is not None:
-            raise AccountDeletedError("帳號已刪除")
-        await _require_can_touch(session, actor_id, await _target_is_super(session, user_id))
-        revoked = await _revoke_all(session, user_id)
-        await _audit(session, actor_id=actor_id, action="user.force_logout", target_type="user",
-                     target_id=str(user_id), detail={"username": row[0], "revoked_sessions": revoked, "via": via})
+        revoked = await _force_logout_in(session, user_id, actor_id=actor_id, via=via)
         await session.commit()
     return revoked
+
+
+async def _force_logout_in(session, user_id: str, *, actor_id: str | None, via: str) -> int:
+    """force_logout 的本體：在呼叫端的交易裡判規則、撤銷 session、寫稽核（不 commit）。"""
+    if not _valid_uuid(user_id):
+        raise UserNotFoundError("帳號不存在")
+    row = (await session.execute(
+        text("SELECT username, deleted_at FROM research.app_user WHERE id = :id"), {"id": user_id},
+    )).first()
+    if row is None:
+        raise UserNotFoundError("帳號不存在")
+    if row[1] is not None:
+        raise AccountDeletedError("帳號已刪除")
+    await _require_can_touch(session, actor_id, await _target_is_super(session, user_id))
+    revoked = await _revoke_all(session, user_id)
+    await _audit(session, actor_id=actor_id, action="user.force_logout", target_type="user",
+                 target_id=str(user_id), detail={"username": row[0], "revoked_sessions": revoked, "via": via})
+    return revoked
+
+
+# ───── 批次（管理頁勾選多筆後一次停用／啟用／強制登出）─────
+
+BULK_USER_ACTIONS: tuple[str, ...] = ("disable", "enable", "logout")
+# 一次批次的帳號上限。每一筆都會鎖住全部啟用中的管理員列（`_lock_target`），整批在同一筆交易裡；
+# 帳號清單不分頁、實際規模是幾十個，100 足夠「全選」又不讓交易無限拉長。是常數不是環境旋鈕。
+BULK_MAX_USERS = 100
+BULK_VIA = "web_bulk"  # 批次裡每一筆稽核的 via：與單筆同形（同 action、同 detail 鍵），看得出來自批次
+
+
+@dataclass(frozen=True)
+class BulkUserResult:
+    """批次裡的一筆。status：ok（有變更並已寫稽核）／unchanged（已是目標狀態，與單筆一樣不寫稽核）／
+    skipped（被規則擋下，error 是單筆操作會拋的那個例外）。"""
+
+    user_id: str
+    status: Literal["ok", "unchanged", "skipped"]
+    error: AccountError | None = None
+    revoked_sessions: int | None = None
+
+
+async def bulk_user_action(user_ids: Iterable[str], action: str, *, actor_id: str | None,
+                           via: str = BULK_VIA) -> list[BulkUserResult]:
+    """一次停用（disable）、啟用（enable）或強制登出（logout）多個帳號。**逐筆套用單筆操作的本體**
+    （`_update_user_in`／`_force_logout_in`），規則不另寫一份。
+
+    交易邊界（刻意）：整批一筆交易，每一筆包在自己的 savepoint 裡。被規則擋下的那筆（不能停用自己、最後一位
+    啟用中的管理員／super admin、對 super admin 動手的不是 super admin、排程刪除中不能啟用、帳號不存在或已刪除）
+    回滾自己的 savepoint、記成 skipped，其餘照做；非規則性的失敗（DB 錯誤、稽核寫不進去）直接往上拋、整批回滾
+    （變更與稽核一起消失）。因為在同一筆交易裡，「最後一位」的計數看得到同一批前面已做的變更：一次停用所有
+    super admin 時，處理順序上的最後一位會被擋（`last_super`）——哪一位被留下取決於清單順序。
+
+    批次獨有的一條規則：**強制登出不含自己**（`SelfLockoutError`）。單筆的強制登出允許對自己做，但「全選→強制
+    登出」會連帶把操作者自己登出、看不到結果，屬於誤觸；要登出自己請用登出。
+
+    稽核：每一筆變更各寫一列（與單筆相同的 action 與 detail，`via` 是 BULK_VIA）；至少一筆 ok 時最後再寫一列
+    批次摘要 `user.bulk_action`（target_type `bulk`、target_id 是動作；detail 有要求筆數、變更數、未變更數、
+    依錯誤代碼計的略過數與變更的帳號 id，不含帳號名稱以外的任何資料）。
+
+    重複的 id 只處理一次；回傳順序與輸入（去重後）相同。
+    """
+    if action not in BULK_USER_ACTIONS:
+        raise InvalidInputError(f"不支援的批次動作：{action}")
+    ids = list(dict.fromkeys(str(u) for u in user_ids))
+    if not ids:
+        raise InvalidInputError("至少要選一個帳號")
+    if len(ids) > BULK_MAX_USERS:
+        raise InvalidInputError(f"一次最多 {BULK_MAX_USERS} 個帳號")
+    results: list[BulkUserResult] = []
+    async with SessionFactory() as session:
+        for uid in ids:
+            try:
+                async with session.begin_nested():
+                    if action == "logout":
+                        if actor_id is not None and uid == str(actor_id):
+                            raise SelfLockoutError("批次強制登出不含自己；要登出自己請用登出")
+                        revoked = await _force_logout_in(session, uid, actor_id=actor_id, via=via)
+                        results.append(BulkUserResult(uid, "ok", revoked_sessions=revoked))
+                    else:
+                        info, changed = await _update_user_in(session, uid, role=None, enabled=action == "enable",
+                                                              actor_id=actor_id, via=via)
+                        results.append(BulkUserResult(uid, "ok" if changed else "unchanged"))
+            except AccountError as exc:
+                results.append(BulkUserResult(uid, "skipped", error=exc))
+        done = [r.user_id for r in results if r.status == "ok"]
+        if done:
+            skipped: dict[str, int] = {}
+            for r in results:
+                if r.error is not None:
+                    skipped[r.error.code] = skipped.get(r.error.code, 0) + 1
+            await _audit(session, actor_id=actor_id, action="user.bulk_action", target_type="bulk", target_id=action,
+                         detail={"action": action, "requested": len(ids), "changed": len(done),
+                                 "unchanged": sum(1 for r in results if r.status == "unchanged"),
+                                 "skipped": dict(sorted(skipped.items())), "user_ids": done, "via": via})
+        await session.commit()
+    return results
 
 
 async def set_privileges(user_id: str, *, is_super: bool | None = None, scopes: Iterable[str] | None = None,

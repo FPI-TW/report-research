@@ -85,7 +85,8 @@ class _Docker:
         self.bin = self.dir / "docker"
         self.bin.write_text(_FAKE_DOCKER, encoding="utf-8")
         self.bin.chmod(0o755)
-        self.set({"report-mark-postgres": "running", "deploy-nginx-1": "running", "deploy-cloudflared-1": "running"})
+        self.set({"report-mark-postgres": "running", "deploy-nginx-1": "running", "deploy-cloudflared-1": "running",
+                  "report-mark-clamav": "running"})
 
     def set(self, states: dict, attempt: int | None = None, mode: str = ""):
         lines = "".join(f"{c} {s.replace(':', ' ')}\n" for c, s in states.items())
@@ -125,7 +126,7 @@ class ContainerProbeTests(unittest.TestCase):
 
     def test_critical_container_down_fires_on_first_confirmed_run(self):
         self.docker.set({"report-mark-postgres": "exited", "deploy-nginx-1": "running",
-                         "deploy-cloudflared-1": "running"})
+                         "deploy-cloudflared-1": "running", "report-mark-clamav": "running"})
         p = self.run_probe()
         self.assertEqual(p.returncode, EXIT_CRITICAL)
         out = parse(p.stdout)
@@ -134,18 +135,39 @@ class ContainerProbeTests(unittest.TestCase):
 
     def test_restart_window_within_one_run_is_not_a_failure(self):
         self.docker.set({"report-mark-postgres": "running", "deploy-nginx-1": "running",
-                         "deploy-cloudflared-1": "running"})
+                         "deploy-cloudflared-1": "running", "report-mark-clamav": "running"})
         self.docker.set({"report-mark-postgres": "restarting", "deploy-nginx-1": "running",
-                         "deploy-cloudflared-1": "running"}, attempt=1)
+                         "deploy-cloudflared-1": "running", "report-mark-clamav": "running"}, attempt=1)
         p = self.run_probe()
         self.assertEqual(p.returncode, EXIT_OK)
         self.assertEqual(parse(p.stdout)["attempts"], "2")
 
     def test_unhealthy_and_missing_count_as_down_not_tooling(self):
-        self.docker.set({"report-mark-postgres": "running:unhealthy", "deploy-nginx-1": "running"})
+        self.docker.set({"report-mark-postgres": "running:unhealthy", "deploy-nginx-1": "running",
+                         "report-mark-clamav": "running"})
         p = self.run_probe()
         self.assertEqual(p.returncode, EXIT_CRITICAL)
         self.assertEqual(parse(p.stdout)["down"], "postgres:unhealthy,cloudflared:missing")
+
+    def test_clamav_is_supporting_in_the_default_targets(self):
+        """ClamAV 停了只讓上傳停在隔離區：supporting，連續 3 輪才 WARNING（9），不會開 CRITICAL。"""
+        others = {"report-mark-postgres": "running", "deploy-nginx-1": "running", "deploy-cloudflared-1": "running"}
+        self.docker.set({**others, "report-mark-clamav": "exited"})
+        codes = [self.run_probe().returncode for _ in range(3)]
+        self.assertEqual(codes, [EXIT_PENDING, EXIT_PENDING, EXIT_DEGRADED])
+        self.docker.set({**others, "report-mark-clamav": "exited"})
+        self.assertEqual(parse(self.run_probe().stdout)["down"], "clamav:exited")
+
+    def test_clamav_unhealthy_while_running_counts_as_down(self):
+        """clamd 是容器裡的背景行程：它掛了容器仍 running、health 轉 unhealthy（restart 策略不管）。"""
+        others = {"report-mark-postgres": "running", "deploy-nginx-1": "running", "deploy-cloudflared-1": "running"}
+        for _ in range(2):
+            self.docker.set({**others, "report-mark-clamav": "running:unhealthy"})
+            self.assertEqual(self.run_probe().returncode, EXIT_PENDING)
+        self.docker.set({**others, "report-mark-clamav": "running:unhealthy"})
+        p = self.run_probe()
+        self.assertEqual(p.returncode, EXIT_DEGRADED)
+        self.assertEqual(parse(p.stdout)["down"], "clamav:unhealthy")
 
     def test_important_needs_two_consecutive_runs(self):
         targets = "pg=report-mark-postgres:critical edge=deploy-nginx-1:important"

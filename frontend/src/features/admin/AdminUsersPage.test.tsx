@@ -288,3 +288,81 @@ test('非 super 的管理員沒有「調整權限」；開了 2FA 的帳號有�
   expect(alice.queryByRole('button', { name: '調整權限' })).not.toBeInTheDocument()
   expect(alice.getByRole('button', { name: '重設兩步驟驗證' })).toBeEnabled()
 })
+
+const bulkPosts = (fetchMock: ReturnType<typeof mount>) =>
+  fetchMock.mock.calls.filter(([p, init]) => p === '/api/admin/users/bulk' && init?.method === 'POST')
+
+const team = () => [
+  user('me', 'root', { role: 'admin' }), user('u2', 'alice'), user('u3', 'bob', { active_sessions: 0 }),
+  user('u4', 'carol', { enabled: false, active_sessions: 0 }),
+]
+
+test('批次勾選：自己那列不可勾；全選只選別人，動作列依狀態分別計數', async () => {
+  mount({ users: team() })
+  expect((await row('root')).getByRole('checkbox')).toBeDisabled()
+  expect(screen.queryByRole('toolbar', { name: '批次操作' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('checkbox', { name: '全選' }))
+  const bar = within(await screen.findByRole('toolbar', { name: '批次操作' }))
+  expect(bar.getByText('已選 3 個帳號')).toBeInTheDocument()
+  expect(bar.getByRole('button', { name: '批次停用（2）' })).toBeEnabled()
+  expect(bar.getByRole('button', { name: '批次啟用（1）' })).toBeEnabled()
+  expect(bar.getByRole('button', { name: '批次強制登出（1）' })).toBeEnabled()
+  expect((await row('root')).getByRole('checkbox')).not.toBeChecked()
+  fireEvent.click((await row('carol')).getByRole('checkbox'))
+  expect(bar.getByRole('button', { name: '批次啟用（0）' })).toBeDisabled()
+})
+
+test('批次停用：確認框列出帳號；收到 elevation_required 驗證後自動重試，顯示逐筆結果與略過原因', async () => {
+  let elevated = false
+  const fetchMock = mount({
+    users: team(),
+    override: (p, init) => {
+      if (p === '/api/admin/users/bulk' && init?.method === 'POST') {
+        if (!elevated) return { status: 403, body: { detail: '這項操作需要重新驗證密碼', code: 'elevation_required' } }
+        return { body: { action: 'disable', requested: 2, ok: 1, unchanged: 0, skipped: 1, results: [
+          { user_id: 'u2', status: 'ok' },
+          { user_id: 'u3', status: 'skipped', code: 'last_super', detail: '至少要保留一位啟用中的 super admin' },
+        ] } }
+      }
+      if (p === '/api/admin/elevate') {
+        elevated = true
+        return { body: { elevated_until: '2026-10-06T00:10:00Z' } }
+      }
+      return undefined
+    },
+  })
+  fireEvent.click((await row('alice')).getByRole('checkbox'))
+  fireEvent.click((await row('bob')).getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: '批次停用（2）' }))
+  const confirm = within(await screen.findByRole('dialog', { name: '停用 2 個帳號？' }))
+  expect(confirm.getByText(/「alice」、「bob」/)).toBeInTheDocument()
+  fireEvent.click(confirm.getByRole('button', { name: '停用 2 個' }))
+  const elevation = await screen.findByRole('dialog', { name: '重新驗證身分' })
+  fireEvent.change(within(elevation).getByLabelText('密碼'), { target: { value: 'root-password-1' } })
+  fireEvent.click(within(elevation).getByRole('button', { name: '驗證' }))
+  const result = await screen.findByRole('status', { name: '批次結果' })
+  expect(result).toHaveTextContent('批次停用：成功 1 筆、略過 1 筆')
+  expect(result).toHaveTextContent('bob：至少要保留一位啟用中的 super admin')
+  const sent = bulkPosts(fetchMock)
+  expect(sent).toHaveLength(2)
+  expect(JSON.parse(sent[1][1]!.body as string)).toEqual({ action: 'disable', user_ids: ['u2', 'u3'] })
+  expect(screen.queryByRole('toolbar', { name: '批次操作' })).not.toBeInTheDocument()
+})
+
+test('批次操作時取消重新驗證：不送第二次、不顯示錯誤，選取保留', async () => {
+  const fetchMock = mount({
+    users: team(),
+    override: (p, init) => (p === '/api/admin/users/bulk' && init?.method === 'POST'
+      ? { status: 403, body: { detail: '這項操作需要重新驗證密碼', code: 'elevation_required' } } : undefined),
+  })
+  fireEvent.click((await row('alice')).getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: '批次強制登出（1）' }))
+  fireEvent.click(within(await screen.findByRole('dialog', { name: '強制登出 1 個帳號？' }))
+    .getByRole('button', { name: '強制登出 1 個' }))
+  const elevation = await screen.findByRole('dialog', { name: '重新驗證身分' })
+  fireEvent.click(within(elevation).getByRole('button', { name: '取消' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(bulkPosts(fetchMock)).toHaveLength(1)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('toolbar', { name: '批次操作' })).toHaveTextContent('已選 1 個帳號')
+})

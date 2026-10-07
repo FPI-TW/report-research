@@ -12,6 +12,13 @@
 array、enum、nullable、$ref、dict），而 npm 相依會進 frontend/package-lock.json 與授權守門。
 遇到不支援的型別直接失敗，不默默產生 `z.unknown()`。
 
+回應是 `text/csv` 的端點（`/api/admin/export/*.csv`，`web/csv_export.CsvResponse`）不產生 JSON client，而是在
+`adminCsvUrls` 產生帶型別 query 的下載網址建構函式（前端以 fetch 取 blob 下載，錯誤仍讀統一錯誤格式）。
+
+請求是 raw body（request body 只宣告非 JSON 的媒體型別，例如 `POST /api/admin/uploads` 的 `application/pdf`）的端點
+也不產生 JSON 呼叫函式（`jsonBody` 送不出二進位），而是在 `adminRawUploads` 產生網址建構函式、Content-Type 與回應
+schema：前端以 XHR 送檔（要上傳進度），回應照樣用產生的 zod schema 解析。
+
 輸出是決定性的（schema 依相依順序＋名稱排序、端點依路徑與方法排序），重跑不會產生 diff。
 """
 from __future__ import annotations
@@ -159,11 +166,32 @@ def collect_operations(spec: dict) -> list[tuple[str, str, dict]]:
     return ops
 
 
+def is_csv(op: dict) -> bool:
+    """2xx 回應只有 `text/csv`（沒有 JSON）＝下載端點。"""
+    for code, resp in op.get("responses", {}).items():
+        if str(code).startswith("2"):
+            content = resp.get("content", {})
+            if "text/csv" in content and "application/json" not in content:
+                return True
+    return False
+
+
+def raw_body_type(op: dict) -> str | None:
+    """request body 只有非 JSON 的媒體型別（raw body 上傳）→ 回那個媒體型別；否則 None。"""
+    content = op.get("requestBody", {}).get("content", {})
+    if not content or "application/json" in content:
+        return None
+    if len(content) != 1:
+        raise Unsupported(f"raw body 端點只支援單一媒體型別：{sorted(content)}")
+    return next(iter(content))
+
+
 def needed_components(spec: dict, ops) -> list[str]:
     components = spec.get("components", {}).get("schemas", {})
     pending = set()
     for _path, _method, op in ops:
-        pending |= refs_in(op.get("requestBody", {}))
+        if raw_body_type(op) is None:
+            pending |= refs_in(op.get("requestBody", {}))
         for code, resp in op.get("responses", {}).items():
             if str(code).startswith("2"):
                 pending |= refs_in(resp)
@@ -196,6 +224,50 @@ def response_schema(op: dict) -> dict | None:
             if "application/json" in content:
                 return content["application/json"].get("schema")
     return None
+
+
+def build_csv_url(path: str, method: str, op: dict) -> str:
+    if method != "get":
+        raise Unsupported(f"CSV 端點只支援 GET：{method.upper()} {path}")
+    name = camel(op.get("summary") or op["operationId"])
+    params = op.get("parameters", [])
+    if any(p.get("in") == "path" for p in params):
+        raise Unsupported(f"CSV 端點不支援路徑參數：{path}")
+    query_params = [p for p in params if p.get("in") == "query"]
+    summary = (op.get("summary") or "").strip()
+    doc = f"  /** GET {path}{(' — ' + summary) if summary else ''}（下載網址） */\n"
+    if not query_params:
+        return doc + f"  {name}: () => {repr_ts(path)},"
+    fields = "; ".join(f"{p['name']}?: {ts_query_type(p.get('schema', {}))}" for p in query_params)
+    return doc + f"  {name}: (query: {{ {fields} }} = {{}}) => `{path}${{qs(query)}}`,"
+
+
+def build_raw_upload(path: str, method: str, op: dict) -> str:
+    if method not in BODY_METHODS:
+        raise Unsupported(f"raw body 端點只支援 POST／PUT／PATCH：{method.upper()} {path}")
+    name = camel(op.get("summary") or op["operationId"])
+    media = raw_body_type(op)
+    resp = response_schema(op)
+    if resp is None:
+        raise Unsupported(f"{method.upper()} {path} 沒有 JSON 回應 schema（請設 response_model）")
+    params = op.get("parameters", [])
+    if any(p.get("in") == "path" for p in params):
+        raise Unsupported(f"raw body 端點不支援路徑參數：{path}")
+    query_params = [p for p in params if p.get("in") == "query"]
+    all_optional = all(not p.get("required") for p in query_params)
+    fields = "; ".join(
+        f"{p['name']}{'' if p.get('required') else '?'}: {ts_query_type(p.get('schema', {}))}" for p in query_params
+    )
+    url = f"(query: {{ {fields} }}{' = {}' if all_optional else ''}) => `{path}${{qs(query)}}`" if query_params \
+        else f"() => {repr_ts(path)}"
+    summary = (op.get("summary") or "").strip()
+    return (f"  /** {method.upper()} {path}{(' — ' + summary) if summary else ''}（raw body {media}） */\n"
+            f"  {name}: {{\n"
+            f"    method: '{BODY_METHODS[method]}',\n"
+            f"    url: {url},\n"
+            f"    contentType: {repr_ts(media)},\n"
+            f"    response: {zod(resp)},\n"
+            f"  }},")
 
 
 def build_operation(path: str, method: str, op: dict) -> str:
@@ -232,12 +304,15 @@ def build_operation(path: str, method: str, op: dict) -> str:
 
 
 def generate(spec: dict) -> str:
-    ops = collect_operations(spec)
-    if not ops:
+    all_ops = collect_operations(spec)
+    if not all_ops:
         raise Unsupported(f"OpenAPI 裡沒有 {PATH_PREFIX} 端點")
+    raw_ops = [o for o in all_ops if raw_body_type(o[2]) is not None]
+    csv_ops = [o for o in all_ops if is_csv(o[2]) and o not in raw_ops]
+    ops = [o for o in all_ops if o not in raw_ops and o not in csv_ops]
     components = spec.get("components", {}).get("schemas", {})
     out = [HEADER]
-    for name in needed_components(spec, ops):
+    for name in needed_components(spec, ops + raw_ops):
         schema = components[name]
         expr = object_body(schema) if schema.get("type") == "object" and schema.get("properties") else zod(schema)
         out.append(f"export const {ts_name(name)}Schema = {expr}\n"
@@ -250,11 +325,19 @@ def generate(spec: dict) -> str:
                "  const text = params.toString()\n"
                "  return text ? `?${text}` : ''\n"
                "}\n")
-    names = [camel(op.get("summary") or op["operationId"]) for _p, _m, op in ops]
+    names = [camel(op.get("summary") or op["operationId"]) for _p, _m, op in all_ops]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
         raise Unsupported(f"函式名稱重複：{duplicates}（調整 endpoint 函式名）")
     out.append("export const adminApi = {\n" + "\n".join(build_operation(p, m, op) for p, m, op in ops) + "\n}\n")
+    if raw_ops:
+        out.append("/** raw body 上傳端點（不是 JSON）：前端自己送檔（XHR 才有上傳進度），回應以 `response` 解析。 */\n"
+                   "export const adminRawUploads = {\n"
+                   + "\n".join(build_raw_upload(p, m, op) for p, m, op in raw_ops) + "\n}\n")
+    if csv_ops:
+        out.append("/** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */\n"
+                   "export const adminCsvUrls = {\n"
+                   + "\n".join(build_csv_url(p, m, op) for p, m, op in csv_ops) + "\n}\n")
     return "\n".join(out)
 
 

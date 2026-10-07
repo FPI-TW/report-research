@@ -19,6 +19,8 @@ const AdminUsersPage = lazy(routeLoaders.adminUsers)
 const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
 const AdminReportsPage = lazy(routeLoaders.adminReports)
+const AdminUploadsPage = lazy(routeLoaders.adminUploads)
+const AdminUploadDetailPage = lazy(routeLoaders.adminUpload)
 // 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
@@ -28,6 +30,10 @@ const OpsLogsPage = lazy(routeLoaders.adminOpsLogs)
 const OpsJobsPage = lazy(routeLoaders.adminOpsJobs)
 const OpsIncidentsPage = lazy(routeLoaders.adminOpsIncidents)
 const OpsHostPage = lazy(routeLoaders.adminOpsHost)
+const OpsDataHealthPage = lazy(routeLoaders.adminOpsDataHealth)
+const OpsLlmUsagePage = lazy(routeLoaders.adminOpsLlmUsage)
+const OpsDependenciesPage = lazy(routeLoaders.adminOpsDependencies)
+const OpsDiagnosticsPage = lazy(routeLoaders.adminOpsDiagnostics)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -74,6 +80,8 @@ export const routes = [
           { path: 'reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
           { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
           { path: 'reports', element: <Suspense><AdminReportsPage /></Suspense> },
+          { path: 'uploads', element: <Suspense><AdminUploadsPage /></Suspense> },
+          { path: 'uploads/:uploadId', element: <Suspense><AdminUploadDetailPage /></Suspense> },
           {
             path: 'operations',
             element: <Suspense><OperationsLayout /></Suspense>,
@@ -82,10 +90,14 @@ export const routes = [
               { path: 'overview', element: <Suspense><OpsOverviewPage /></Suspense> },
               { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
               { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
+              { path: 'dependencies', element: <Suspense><OpsDependenciesPage /></Suspense> },
               { path: 'logs', element: <Suspense><OpsLogsPage /></Suspense> },
               { path: 'jobs', element: <Suspense><OpsJobsPage /></Suspense> },
               { path: 'incidents', element: <Suspense><OpsIncidentsPage /></Suspense> },
               { path: 'host', element: <Suspense><OpsHostPage /></Suspense> },
+              { path: 'data-health', element: <Suspense><OpsDataHealthPage /></Suspense> },
+              { path: 'llm-usage', element: <Suspense><OpsLlmUsagePage /></Suspense> },
+              { path: 'diagnostics', element: <Suspense><OpsDiagnosticsPage /></Suspense> },
             ],
           },
           { path: '*', element: <NotFound /> },

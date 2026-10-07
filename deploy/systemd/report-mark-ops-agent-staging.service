@@ -1,0 +1,52 @@
+[Unit]
+Description=廷豐智能研報 維運代理（EC2 staging：status、logs；web 的 restart 與 freshness／audit 的 run）
+# 與 report-mark-ops-agent.service 同一支程式，差在四處：catalog（services.staging.toml）、socket 目錄
+# （/run/report-mark-ops-staging）、執行身分（report-mark-ops-staging），以及**不加 docker 群組**——staging 主機
+# 沒有任何容器（DB 是 RDS、nginx 是 apt 安裝的 systemd 服務），catalog 也沒有 container 服務，所以這支代理
+# 不必、也不該拿到等同 root 的 docker 權限。分開使用者是為了寫入類：polkit
+# （deploy/polkit/10-report-mark-ops.rules）以使用者區分，report-mark-ops-staging 只被授權
+# report-mark-web.service 的 restart 與 freshness、audit 的 start（比生產的 report-mark-ops 窄）。
+# 安裝：在 EC2 以 deploy/install_units.sh --user ubuntu --root <repo 根> 安裝（這支沒有辦公室主機的路徑，
+# 代換不影響它）；程式碼與 catalog 裝到 root 擁有的 /opt/report-mark-ops/，步驟見 docs/production_resilience.md。
+# 刻意不宣告 OnFailure=（理由見 report-mark-ops-agent.service）。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=report-mark-ops-staging
+Group=report-mark-ops-staging
+# 只要讀 journal（systemd-journal）；沒有 docker 群組（見上）。
+SupplementaryGroups=systemd-journal
+WorkingDirectory=/opt/report-mark-ops
+ExecStartPre=/usr/bin/python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.staging.toml --check
+ExecStart=/usr/bin/python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.staging.toml
+RuntimeDirectory=report-mark-ops-staging
+RuntimeDirectoryMode=0750
+UMask=0007
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+# staging catalog 沒有 flock_files／pid_files（sync 唯讀），不需要綁任何家目錄路徑進來。
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

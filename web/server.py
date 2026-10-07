@@ -49,9 +49,14 @@ from web import (
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
+from web.routers import admin_data_health as admin_data_health_routes  # noqa: E402
+from web.routers import admin_diagnostics as admin_diagnostics_routes  # noqa: E402
+from web.routers import admin_exports as admin_exports_routes  # noqa: E402
 from web.routers import admin_monitoring as admin_monitoring_routes  # noqa: E402
 from web.routers import admin_ops as admin_ops_routes  # noqa: E402
 from web.routers import admin_reports as admin_reports_routes  # noqa: E402
+from web.routers import admin_retrieval_regression as admin_retrieval_regression_routes  # noqa: E402
+from web.routers import admin_uploads as admin_uploads_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
@@ -362,6 +367,11 @@ app.include_router(admin_routes.router)
 app.include_router(admin_reports_routes.router)  # 研報隱藏／恢復（/api/admin/reports*）
 app.include_router(admin_ops_routes.router)  # /api/admin/ops/*：唯讀維運狀態，經 ops_agent 的 Unix socket
 app.include_router(admin_monitoring_routes.router)  # /api/admin/jobs、/api/admin/observations：監控投影（唯讀）
+app.include_router(admin_data_health_routes.router)  # /api/admin/data-health、/api/admin/llm-usage（唯讀）
+app.include_router(admin_retrieval_regression_routes.router)  # /api/admin/retrieval-regression（唯讀，讀結果檔）
+app.include_router(admin_diagnostics_routes.router)  # /api/admin/diagnostics：web 行程診斷快照（唯讀）
+app.include_router(admin_exports_routes.router)  # /api/admin/export/*.csv：管理清單匯出（每次寫稽核）
+app.include_router(admin_uploads_routes.router)  # /api/admin/uploads*：研報上傳的收檔與查詢（UPLOAD_ENABLED 預設關）
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

@@ -15,6 +15,7 @@ tester／testpass 的管理員——既有測試以那組帳密走 `/login`，�
 
 from __future__ import annotations
 
+import copy
 import itertools
 import uuid
 from contextlib import contextmanager
@@ -24,8 +25,10 @@ from datetime import datetime, timedelta, timezone
 from app.services import accounts, passwords, totp
 from app.services.accounts import (
     AccountDeletedError,
+    AccountError,
     AuditChainStatus,
     AuditEntry,
+    BulkUserResult,
     DeletionInfo,
     DeletionPendingError,
     DeletionResidue,
@@ -120,6 +123,9 @@ class FakeAccounts:
     GRANTABLE_SCOPES = accounts.GRANTABLE_SCOPES
     ALL_SCOPES = accounts.ALL_SCOPES
     ELEVATION_SECONDS = accounts.ELEVATION_SECONDS
+    EXPORT_KINDS = accounts.EXPORT_KINDS
+    BULK_USER_ACTIONS = accounts.BULK_USER_ACTIONS
+    BULK_MAX_USERS = accounts.BULK_MAX_USERS
 
     def __init__(self) -> None:
         self.users: dict[str, _Row] = {}
@@ -406,6 +412,53 @@ class FakeAccounts:
                     {"username": row.username, "revoked_sessions": revoked, "via": via})
         return revoked
 
+    async def bulk_user_action(self, user_ids, action, *, actor_id, via=accounts.BULK_VIA) -> list[BulkUserResult]:
+        """逐筆呼叫本物件的 update_user／force_logout（與真的那份逐筆呼叫同一個本體同理）。
+
+        真的那份整批一筆交易：非規則性的例外讓整批回滾。這裡以快照模擬——任何非 AccountError 的例外
+        都把帳號、session 與稽核還原到批次開始前，再往上拋。
+        """
+        self._check()
+        if action not in accounts.BULK_USER_ACTIONS:
+            raise InvalidInputError(f"不支援的批次動作：{action}")
+        ids = list(dict.fromkeys(str(u) for u in user_ids))
+        if not ids:
+            raise InvalidInputError("至少要選一個帳號")
+        if len(ids) > accounts.BULK_MAX_USERS:
+            raise InvalidInputError(f"一次最多 {accounts.BULK_MAX_USERS} 個帳號")
+        snapshot = copy.deepcopy((self.users, self.sessions, self.audit))
+        results: list[BulkUserResult] = []
+        try:
+            for uid in ids:
+                try:
+                    if action == "logout":
+                        if actor_id is not None and uid == str(actor_id):
+                            raise SelfLockoutError("批次強制登出不含自己；要登出自己請用登出")
+                        revoked = await self.force_logout(uid, actor_id=actor_id, via=via)
+                        results.append(BulkUserResult(uid, "ok", revoked_sessions=revoked))
+                    else:
+                        before = self.users.get(uid)
+                        prev = (before.enabled, before.role) if before else None
+                        info = await self.update_user(uid, enabled=action == "enable", actor_id=actor_id, via=via)
+                        results.append(BulkUserResult(uid, "ok" if prev != (info.enabled, info.role) else "unchanged"))
+                except AccountError as exc:
+                    results.append(BulkUserResult(uid, "skipped", error=exc))
+            done = [r.user_id for r in results if r.status == "ok"]
+            if done:
+                skipped: dict[str, int] = {}
+                for r in results:
+                    if r.error is not None:
+                        skipped[r.error.code] = skipped.get(r.error.code, 0) + 1
+                self._audit(actor_id, "user.bulk_action", action,
+                            {"action": action, "requested": len(ids), "changed": len(done),
+                             "unchanged": sum(1 for r in results if r.status == "unchanged"),
+                             "skipped": dict(sorted(skipped.items())), "user_ids": done, "via": via},
+                            target_type="bulk")
+        except Exception:
+            self.users, self.sessions, self.audit = snapshot
+            raise
+        return results
+
     async def set_privileges(self, user_id, *, is_super=None, scopes=None, actor_id, via="web") -> UserInfo:
         self._check()
         wanted = None
@@ -630,6 +683,17 @@ class FakeAccounts:
         if invocation_id:
             detail["previous_invocation_id"] = invocation_id
         self._audit(actor_id, f"ops.{action}", service, detail, "ops_service")
+
+    async def record_export(self, *, actor_id, kind, filters, row_count, truncated) -> None:
+        self._check()
+        if kind not in accounts.EXPORT_KINDS:
+            raise ValueError(f"未知的匯出種類：{kind!r}")
+        detail = {
+            "kind": kind, "format": "csv",
+            "filters": {str(k): accounts._export_filter_value(v) for k, v in sorted(filters.items()) if v is not None},
+            "row_count": int(row_count), "truncated": bool(truncated),
+        }
+        self._audit(actor_id, "data.export", kind, detail, "export")
 
     async def list_audit(self, limit: int = 50, offset: int = 0):
         self._check()

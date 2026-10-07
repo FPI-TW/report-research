@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { JobItem } from '../../../lib/generated/adminApi'
+import { adminCsvUrls, type JobItem } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
+import { ExportCsvButton } from '../ExportCsvButton'
 import { OpsQueryError } from './OpsShared'
 import { fmtDuration } from './opsLabels'
 import { JOBS_PAGE_SIZE, useOpsJobs } from './useOps'
@@ -50,7 +51,10 @@ export default function OpsJobsPage() {
 
   return (
     <section className={adminStyles.card} aria-labelledby="ops-jobs-title">
-      <h2 id="ops-jobs-title" className={adminStyles.ctitle}>排程工作</h2>
+      <div className={adminStyles.cardHead}>
+        <h2 id="ops-jobs-title" className={adminStyles.ctitle}>排程工作</h2>
+        <ExportCsvButton href={adminCsvUrls.exportJobs({ state: state || undefined })} what="排程工作" />
+      </div>
       <div className={adminStyles.form}>
         <label className={adminStyles.field}>
           狀態

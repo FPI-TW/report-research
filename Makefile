@@ -11,6 +11,8 @@ DB_PORT ?= 5436
 Q ?= AI 伺服器散熱需求
 MARKET ?=
 EDGE_COMPOSE ?= deploy/docker-compose.yml
+# 上傳掃描的 clamd：獨立 compose 專案（理由見該檔檔頭），不與邊緣共用。
+CLAMAV_COMPOSE ?= deploy/clamav/docker-compose.yml
 # eval-compare 的預設容忍值；BASE/CAND 刻意沒有預設，兩份結果檔必須由呼叫者指名
 # （三套評測的形狀不同，猜錯就是拿 RAGAS 去比檢索）。
 TOL ?= 0.03
@@ -18,6 +20,8 @@ TOL ?= 0.03
 DURATION ?= 3600
 SINCE ?=
 BENCH_ARGS ?= --dry-run
+# make clamav-smoke 的「正常 PDF」；空＝用程式內產生的最小 PDF。
+SMOKE_PDF ?=
 # migration 的目標確認（host:port/dbname，逐字）。刻意沒有預設：對已有資料的庫做變更必須由
 # 呼叫者親手寫出目標，見 app/services/schema_migrations.py。
 CONFIRM ?=
@@ -32,12 +36,12 @@ DUMP_CONTAINER ?= $(DB_CONTAINER)
 DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v docker.exe >/dev/null 2>&1; then echo docker.exe; else echo docker; fi)
 COMPOSE := $(DOCKER) compose
 
-.PHONY: help deps db schema schema-check schema-stamp-baseline setup sample extract worklist prep tag-info \
+.PHONY: help deps db schema schema-check schema-version schema-stamp-baseline setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align boilerplate \
         serve serve-dev serve-preview search build-web \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
         eval-compare \
-        up-edge down-edge edge-logs edge-reload \
+        up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
         sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
 
@@ -67,6 +71,9 @@ schema: db  ## 套用 DB migration（alembic upgrade head；已有資料的庫�
 
 schema-check:  ## 嚴格比對 DB 結構與 migration 基準（零 drift＝0、有 drift＝1；會在同伺服器建刪暫存庫）
 	uv run python scripts/schema_baseline.py check
+
+schema-version:  ## 只比 DB 的 alembic 版本與程式的 head（唯讀、不建暫存庫；0 一致／1 落後／2 超前或無法判斷／3 連不上）
+	uv run python scripts/schema_baseline.py check --expect-head
 
 schema-stamp-baseline:  ## 既有庫導入 Alembic：零 drift＋全庫備份才 stamp（CONFIRM=… DUMP_DIR=…）
 	$(if $(CONFIRM),REPORT_MARK_MIGRATE_CONFIRM="$(CONFIRM)" ,)uv run python scripts/schema_baseline.py stamp \
@@ -202,6 +209,22 @@ edge-logs:  ## 跟看對外邊緣日誌
 # 只有重建同時滿足兩者。
 edge-reload:  ## 重新套用邊緣設定（重建 nginx 容器）
 	$(COMPOSE) -f $(EDGE_COMPOSE) up -d --force-recreate nginx
+
+# ───── 上傳掃描（ClamAV clamd，只綁 127.0.0.1:3310）─────
+# 首次啟動要下載約 300 MB 病毒碼，健康檢查有 6 分鐘的 start-period；之前 smoke 會連不上，屬正常。
+# 常駐約 1.2–1.6 GB（mem_limit 2g），起之前先看主機可用記憶體（docs/CAPACITY.md「常駐元件：ClamAV」）。
+up-clamav:  ## 啟動上傳掃描用的 clamd 容器（report-mark-clamav；首次會下載病毒碼數分鐘）
+	$(COMPOSE) -f $(CLAMAV_COMPOSE) up -d
+	@echo "等 health 轉 healthy 再跑 make clamav-smoke：$(DOCKER) inspect -f '{{.State.Health.Status}}' report-mark-clamav"
+
+# 刻意不帶 -v：病毒碼 named volume 留著，下次啟動不必重抓。停掉期間上傳只會停在隔離區、不放行。
+down-clamav:  ## 停掉 clamd 容器（保留病毒碼 volume；上傳會停在隔離區）
+	$(COMPOSE) -f $(CLAMAV_COMPOSE) down
+
+# EICAR 要 FOUND、正常 PDF 要 OK（同一條 scan()：病毒碼過舊也算失敗）。EICAR 在執行期拼出來，不落地。
+# SMOKE_PDF＝改用一份真實 PDF；rc 0 通過／1 結果不符／2 clamd 連不上。
+clamav-smoke:  ## 上傳掃描冒煙（EICAR→FOUND、PDF→OK；可帶 SMOKE_PDF=…）
+	uv run python scripts/clamav_smoke.py $(if $(SMOKE_PDF),--pdf "$(SMOKE_PDF)")
 
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟

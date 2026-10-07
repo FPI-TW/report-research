@@ -46,6 +46,8 @@ LOCKED_SCRIPTS = [
     "extract_takeaways.py",
     "extract_signals.py",
     "sync_new_reports.py",
+    # 上傳 worker：ingest 子命令的行內標註（_ingest_core）取鎖；cleanup 刪語料時也取（與 sync 的入庫互斥）。
+    "process_uploads.py",
     # 每日簡報：取鎖的位置與其他支不同（在 generate() 內、只包住那一次 CLI 呼叫，
     # 不在 main 進入點）——排程每 3 小時叫它一次而真正呼叫 LLM 的只有一天一次，
     # 在入口取鎖會讓其餘七次 no-op 撞鎖 rc=75、把 unit_failures 灌成雜訊。
@@ -322,6 +324,18 @@ class WiringTests(unittest.TestCase):
         src = (REPO_ROOT / "scripts" / "_claude_cli.py").read_text(encoding="utf-8")
         self.assertNotIn("claude_cli_lock", src)
         # 只看 import（docstring 會提到 tests/test_claude_lock.py 這個檔名）
+        imported = {
+            n.module if isinstance(n, ast.ImportFrom) else a.name
+            for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))
+            for a in n.names
+        }
+        self.assertFalse({m for m in imported if m and "_claude_lock" in m}, imported)
+
+    def test_ingest_core_never_takes_the_lock(self):
+        """`scripts/_ingest_core.py`（sync 與上傳 worker 共用的單篇入庫）在入口 main 已持有的鎖裡被呼叫：
+        理由同上，再取一次會在同一行程裡等自己。鎖只在入口的 main 取。"""
+        src = (REPO_ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8")
+        self.assertNotIn("claude_cli_lock", src)
         imported = {
             n.module if isinstance(n, ast.ImportFrom) else a.name
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))

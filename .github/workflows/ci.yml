@@ -286,6 +286,14 @@ jobs:
       - name: schema drift 自我一致
         run: uv run python scripts/schema_baseline.py check
 
+      # 版本 drift：剛 upgrade head 的庫必須與程式的 head 一致；每日檢查（版本＋完整比對＋狀態檔）必須回 0。
+      - name: 版本 drift 與每日檢查
+        run: |
+          uv run python scripts/schema_baseline.py check --expect-head
+          uv run python scripts/schema_baseline.py scheduled --status-file "$RUNNER_TEMP/schema_check.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['exit_code']==0 and d['problems']==[], d" \
+            "$RUNNER_TEMP/schema_check.json"
+
       # 既有庫導入 Alembic 的完整演練（P0-ops 的同一條路）：以舊流程（psql 套 baseline）建庫
       # → upgrade 必須拒絕（baseline 只接受空庫）→ 零 drift → stamp → 讀回 0001。
       - name: 既有庫 stamp 演練
@@ -301,6 +309,9 @@ jobs:
           uv run python scripts/schema_baseline.py check
           uv run python scripts/schema_baseline.py stamp --no-dump
           test "$(uv run alembic current 2>/dev/null | awk '{print $1}')" = 0001
+          # stamp 成 0001 的庫對程式的 head 是「落後」（退出碼 1），不可回 0。
+          set +e; uv run python scripts/schema_baseline.py check --expect-head; rc=$?; set -e
+          test "$rc" = 1 || { echo "::error::stamp 成 0001 的庫 --expect-head 應回 1（落後），實際 $rc"; exit 1; }
 
       # 這兩支測試在本機一律走 skip 路徑（沒有 CI 的 DB 就驗不到），所以它們
       # 存在但等於沒跑。這個 job 就是為了讓它們真的跑起來。
@@ -338,6 +349,16 @@ jobs:
       - name: 研報可見性
         run: uv run pytest -q tests/test_report_visibility_db.py
 
+      # 單篇入庫核心的 pre_upsert hook 與 upsert_report 同一個交易：upsert 失敗時 hook 的寫入
+      # 一起 rollback、hook 之前沒有任何 commit（上傳 worker 的草稿標記靠這一點）。
+      - name: 入庫 hook 同交易
+        run: uv run pytest -q tests/test_ingest_core_db.py
+
+      # 字面路可重現：命中超過 cap 時取 chunk id 最小的 cap 列、距離平手以 id 決勝，在 generic
+      # plan 與強迫平行掃描下結果也逐列相同（假 session 只釘得到 SQL 字串，planner 要真的庫）。
+      - name: 字面路可重現
+        run: uv run pytest -q tests/test_lexical_determinism_db.py
+
       # 監控投影：同一份 spool 匯入兩次不重複、批次 running → finished／lost 只前進不倒退、
       # 被 CHECK 拒絕的列只略過那一列。
       - name: 監控觀測與批次執行紀錄
@@ -347,6 +368,23 @@ jobs:
       # 90 天以前清除、24h 內原封不動；重跑結果相同；聚合寫入失敗時原始觀測不被刪除。
       - name: 監控觀測保留與聚合
         run: uv run pytest -q tests/test_ops_rollup_db.py
+
+      # 研報上傳的收檔：partial unique index 擋同一 hash 兩筆進行中（撞 index 轉 409）、語料／進行中／曾感染
+      # 的重複判定、每日與全站處理中配額、INSERT 與稽核 upload.create 同交易（稽核失敗紀錄不留）。
+      - name: 研報上傳收檔
+        run: uv run pytest -q tests/test_admin_uploads_db.py
+
+      # 研報上傳的審核：發布前草稿在混合檢索查不到、發布後查得到；每個寫入端點的狀態閘門；狀態與稽核同交易
+      # （稽核失敗狀態不變）；退回後草稿仍不可見；撤銷退回推導回正確狀態；兩個交易並發只有一個成功
+      # （並發那組要 commit，只在語料與上傳表皆空的拋棄式庫上跑——這個 job 的庫正是）；清除守門。
+      - name: 研報上傳審核
+        run: uv run pytest -q tests/test_upload_review_db.py
+
+      # 研報上傳 worker：掃描、入庫、清除的狀態轉移全集；每一次 commit 當下從另一條連線確認草稿不可見、
+      # upload_draft_mismatch 不成立；清除守門（已發布過的研報不會被刪）。整組都會 commit，只在語料與上傳表
+      # 皆空的拋棄式庫上跑（非空即 skip、REQUIRE_DB=1 時紅）——這個 job 的庫正是。
+      - name: 研報上傳 worker
+        run: uv run pytest -q tests/test_upload_worker_db.py
 
   secrets:
     name: secret 掃描（gitleaks）

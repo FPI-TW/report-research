@@ -1,25 +1,41 @@
-"""研報可見性：管理員隱藏／恢復研報（`research.report_visibility`，revision 0004）。
+"""研報可見性：管理員隱藏／恢復研報與上傳研報的草稿／發布（`research.report_visibility`，revision 0004、0008）。
 
 兩件事放在同一個模組，因為它們必須講同一種語言：
 
 1. **讀取路徑的過濾片段**（`visible_report_sql`／`visible_report_id_sql`）。所有面向使用者的
    讀取（混合檢索兩路、檢索頁瀏覽、問答選篇、閱讀頁、相似研報、觀點雷達、總覽、每日簡報的
-   來源選取與來源連結、原檔 presign）都經這裡產生的 `NOT EXISTS (...)` 排除被隱藏的研報。
-   不另寫第二份條件：哪天可見性多了一種狀態，只改這裡。`tests/test_visibility_guard.py`
+   來源選取與來源連結、原檔 presign）都經這裡產生的 `NOT EXISTS (...)` 排除**被隱藏或尚未發布**
+   的研報。不另寫第二份條件：哪天可見性多了一種狀態，只改這裡。`tests/test_visibility_guard.py`
    以 AST 掃描那些模組，查 `research.research_report`／`research.report_chunk` 的函式或常數
    沒有呼叫這兩個函式（也不在豁免清單）就紅。
-2. **管理端的查詢與寫入**（`list_reports`／`set_visibility`）。`/api/admin/reports*` 呼叫。
+2. **管理端的查詢與寫入**（`list_reports`／`set_visibility`／`bulk_set_visibility`）。`/api/admin/reports*` 呼叫。
+
+可見＝這份研報**沒有** visibility 列，或那一列 `hidden = false AND publication = 'published'`。
+
+草稿語意（revision 0008，Admin v1.5 上傳管線）：
+
+- 管理員上傳的研報入庫後是**草稿**（`publication='draft'`）：已抽字、標註、嵌入，chunk 也在索引裡，
+  只是被這個片段濾掉——對所有使用者讀取路徑等於不存在（閱讀頁與原檔 404），發布當下立即可被檢索，
+  不必重嵌。sync 從 NAS 進來的研報沒有這一列，等同已發布（「自動同步直接發布」零改動）。
+- 草稿標記以 **file_hash** 為鍵：`store.upsert_report` 重新入庫（先刪後插、換新 report_id）之後
+  草稿標記仍在，研報仍不可見。上傳 worker 在 upsert 之前、同一個 session 先寫標記，由 upsert 的
+  那次 commit 一起落庫，所以不會有「已入庫但還沒標成草稿」的可見空窗。
+- **NAS 送來與現存草稿同 hash 的檔**：sync 判 `skip_exists`（`store.report_exists` 不看可見性），
+  維持草稿，不會因此被發布。退回清除時連 visibility 列一起刪，之後 NAS 再送來就照 NAS 規則直接發布。
+- 隱藏與發布是兩件事：管理端的隱藏／恢復**拒絕**對草稿操作（`ReportIsDraftError`，API 回 409），
+  恢復永遠不會順手發布；發布只走上傳審核（`published_at`／`published_by` 由它寫）。
 
 刻意的範圍：
 
 - **鍵是 file_hash**，不是 report_id：`store.upsert_report` 重新入庫會換 report_id，旗標若掛在
   report_id 上就會在下一次重新入庫時靜默消失。
-- **批次照常處理隱藏的研報**（摘要、標題、摘錄、訊號擷取都不看這張表）：恢復時立即完整
-  回來，不必重跑任何批次。代價是隱藏期間批次仍會為它花 LLM 費用——隱藏是少數例外，划算。
-- **管理面不過濾**：待複核佇列、監控計數看的是全庫現況。
+- **批次照常處理隱藏的研報與草稿**（摘要、標題、摘錄、訊號擷取都不看這張表）：恢復或發布時立即
+  完整回來，不必重跑任何批次。代價是隱藏期間批次仍會為它花 LLM 費用——隱藏是少數例外，划算。
+- **管理面不過濾**：待複核佇列、監控計數看的是全庫現況（含草稿）。
 - 片段寫成 `NOT EXISTS` 而不是 `LEFT JOIN ... IS NULL`：它是可以直接 AND 進任何 WHERE 的
   單一布林運算式，不改 FROM、不影響既有 join 與欄位位置；planner 對小表的 anti-join 走主鍵
-  索引，對 HNSW 檢索的計畫沒有影響（實測見 PR 說明）。
+  索引，對 HNSW 檢索的計畫沒有影響（實測見 PR 說明；0008 加上 publication 條件後在 devdb 重測，
+  dense 仍是 HNSW index scan、字面仍是 trgm GIN bitmap scan）。
 
 bind 參數一律 `CAST(:x AS ...)`，不寫 `:x::type`（見 reading/queries.py 檔頭）。
 """
@@ -41,15 +57,27 @@ _COLUMN_EXPR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$"
 _FILE_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 REASON_MAX_CHARS = 500
+# 一次批次隱藏／恢復的上限。與 GET /api/admin/reports 的 limit 上限（200）相同：管理頁「全選本頁」在
+# 任何頁大小下都放得進一次請求；再多就該分批——整批在同一筆交易裡、逐筆鎖列並寫稽核，交易不該無限拉長。
+# 不是環境旋鈕（沒有需要在部署時調的理由），所以是常數而不在 app/config.py。
+BULK_MAX_REPORTS = 200
+
+# report_visibility.publication 的詞彙（與 revision 0008 的 CHECK 逐字一致）。
+PUBLICATION_DRAFT = "draft"
+PUBLICATION_PUBLISHED = "published"
+PUBLICATIONS: tuple[str, ...] = (PUBLICATION_DRAFT, PUBLICATION_PUBLISHED)
+
+# 「這一列讓研報不可見」的條件：被隱藏，或尚未發布。兩個片段共用這一份。
+_INVISIBLE_ROW = "(rvis.hidden OR rvis.publication <> 'published')"
 
 
 def visible_report_sql(alias: str = "r") -> str:
-    """`alias` 指向 research.research_report 的那個別名 → 「這份研報沒有被隱藏」的布林運算式。"""
+    """`alias` 指向 research.research_report 的那個別名 → 「這份研報沒有被隱藏、且已發布」的布林運算式。"""
     if not _IDENT.match(alias):
         raise ValueError(f"visible_report_sql：不合法的別名 {alias!r}")
     return (
         "NOT EXISTS (SELECT 1 FROM research.report_visibility rvis "
-        f"WHERE rvis.file_hash = {alias}.file_hash AND rvis.hidden)"
+        f"WHERE rvis.file_hash = {alias}.file_hash AND {_INVISIBLE_ROW})"
     )
 
 
@@ -63,7 +91,7 @@ def visible_report_id_sql(report_id_expr: str) -> str:
     return (
         "NOT EXISTS (SELECT 1 FROM research.research_report rvis_r "
         "JOIN research.report_visibility rvis ON rvis.file_hash = rvis_r.file_hash "
-        f"WHERE rvis_r.id = {report_id_expr} AND rvis.hidden)"
+        f"WHERE rvis_r.id = {report_id_expr} AND {_INVISIBLE_ROW})"
     )
 
 
@@ -75,15 +103,29 @@ def valid_file_hash(value: str) -> bool:
 
 
 class VisibilityError(Exception):
-    """管理操作的可預期錯誤；訊息是給管理員看的中文。"""
+    """管理操作的可預期錯誤；訊息是給管理員看的中文。`code` 是 API 錯誤代碼（批次結果與稽核摘要也用它）。"""
+
+    code = "bad_request"
 
 
 class ReportNotFoundError(VisibilityError):
-    pass
+    code = "not_found"
 
 
 class InvalidReasonError(VisibilityError):
-    pass
+    code = "invalid_input"
+
+
+class InvalidBulkRequestError(VisibilityError):
+    """批次請求本身不合法（空清單、超過上限）：整批不做。"""
+
+    code = "invalid_input"
+
+
+class ReportIsDraftError(VisibilityError):
+    """草稿（尚未發布的上傳研報）不能隱藏或恢復：發布與退回只走上傳審核，免得兩種狀態互相覆蓋。"""
+
+    code = "report_is_draft"
 
 
 @dataclass(frozen=True)
@@ -100,6 +142,7 @@ class AdminReportRow:
     reason: Optional[str]
     updated_by: Optional[str]  # 帳號名；舊列或帳號查不到時 None
     updated_at: Optional[datetime]
+    publication: str = PUBLICATION_PUBLISHED  # 沒有 visibility 列＝已發布
 
 
 @dataclass(frozen=True)
@@ -116,7 +159,8 @@ _LIKE_ESC = str.maketrans({"%": r"\%", "_": r"\_", "\\": r"\\"})
 _ADMIN_COLS = (
     "r.id::text, r.file_hash, r.file_name, r.title, r.source, r.market, r.report_date, r.created_at, "
     "COALESCE(v.hidden, false), v.reason, "
-    "(SELECT u.username FROM research.app_user u WHERE u.id = v.updated_by), v.updated_at"
+    "(SELECT u.username FROM research.app_user u WHERE u.id = v.updated_by), v.updated_at, "
+    "COALESCE(v.publication, 'published')"
 )
 _ADMIN_FROM = (
     "FROM research.research_report r "
@@ -131,8 +175,11 @@ async def list_reports(
     hidden: Optional[bool] = None,
     limit: int = 50,
     offset: int = 0,
+    publication: Optional[str] = None,
 ) -> tuple[int, list[AdminReportRow]]:
-    """管理頁的研報清單：依標題／檔名／券商關鍵字（ILIKE，`%`／`_` 視為字面）與是否隱藏篩選。
+    """管理頁的研報清單：依標題／檔名／券商關鍵字（ILIKE，`%`／`_` 視為字面）、是否隱藏與發布狀態篩選。
+
+    `publication`：`draft`／`published`／None（全部）。沒有 visibility 列的研報（sync 進來的）算已發布。
 
     **不套 is_research 條件**：非研究檔本來就不進使用者路徑，但管理員可能正是要找它。
     排序：入庫新→舊，id 當決勝鍵讓翻頁穩定。
@@ -146,6 +193,11 @@ async def list_reports(
         conds.append("COALESCE(v.hidden, false)")
     elif hidden is False:
         conds.append("NOT COALESCE(v.hidden, false)")
+    if publication is not None:
+        if publication not in PUBLICATIONS:
+            raise ValueError(f"list_reports：不合法的 publication {publication!r}")
+        conds.append("COALESCE(v.publication, 'published') = :publication")
+        params["publication"] = publication
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     total = (await session.execute(text(f"SELECT count(*) {_ADMIN_FROM} {where}"), params)).scalar_one()
     rows = (
@@ -161,10 +213,20 @@ async def list_reports(
         AdminReportRow(
             report_id=r[0], file_hash=r[1], file_name=r[2], title=r[3], source=r[4], market=r[5],
             report_date=r[6], created_at=r[7], hidden=bool(r[8]), reason=r[9], updated_by=r[10],
-            updated_at=r[11],
+            updated_at=r[11], publication=r[12],
         )
         for r in rows
     ]
+
+
+def _check_reason(hidden: bool, reason: Optional[str]) -> Optional[str]:
+    """隱藏必須給原因（去頭尾空白後非空）；原因上限 REASON_MAX_CHARS 字。回整理過的原因（空字串→None）。"""
+    note = (reason or "").strip() or None
+    if hidden and not note:
+        raise InvalidReasonError("隱藏研報必須填寫原因")
+    if note and len(note) > REASON_MAX_CHARS:
+        raise InvalidReasonError(f"原因最多 {REASON_MAX_CHARS} 字")
+    return note
 
 
 async def set_visibility(
@@ -178,6 +240,10 @@ async def set_visibility(
     """設定一份研報的可見性，並在**同一筆交易**寫稽核。呼叫端負責 commit。
 
     - 研報必須存在於 research_report（以 file_hash 查）；不存在拋 ReportNotFoundError。
+    - 草稿（`publication='draft'`）拒絕隱藏與恢復，拋 ReportIsDraftError：恢復不可順手發布，
+      隱藏草稿也沒有意義（它本來就不可見）。寫入的 UPSERT 另以 `WHERE publication = 'published'`
+      再守一次，先查後寫之間就算有人把它改成草稿，也不會蓋掉。
+    - 只動 hidden／reason／updated_*，**永遠不碰 publication／published_*。**
     - 隱藏必須給原因（去頭尾空白後非空）；原因上限 REASON_MAX_CHARS 字。
     - 稽核 detail 只記狀態變化、檔名與「有沒有寫原因」，**不記原因全文與研報內文**
       （與待複核的註記同一條規則）。
@@ -187,15 +253,11 @@ async def set_visibility(
 
     if not valid_file_hash(file_hash):
         raise ReportNotFoundError("研報不存在")
-    note = (reason or "").strip() or None
-    if hidden and not note:
-        raise InvalidReasonError("隱藏研報必須填寫原因")
-    if note and len(note) > REASON_MAX_CHARS:
-        raise InvalidReasonError(f"原因最多 {REASON_MAX_CHARS} 字")
+    note = _check_reason(hidden, reason)
     report = (
         await session.execute(
             text(
-                "SELECT r.file_name, v.hidden FROM research.research_report r "
+                "SELECT r.file_name, v.hidden, v.publication FROM research.research_report r "
                 "LEFT JOIN research.report_visibility v ON v.file_hash = r.file_hash "
                 "WHERE r.file_hash = :h"
             ),
@@ -205,6 +267,8 @@ async def set_visibility(
     if report is None:
         raise ReportNotFoundError("研報不存在")
     file_name, previous = report[0], report[1]
+    if report[2] == PUBLICATION_DRAFT:
+        raise ReportIsDraftError("這份研報是尚未發布的草稿，請到上傳審核發布或退回")
     row = (
         await session.execute(
             text(
@@ -212,12 +276,15 @@ async def set_visibility(
                 "VALUES (:h, :hidden, :reason, CAST(:actor AS uuid)) "
                 "ON CONFLICT (file_hash) DO UPDATE SET hidden = EXCLUDED.hidden, reason = EXCLUDED.reason, "
                 "updated_by = EXCLUDED.updated_by, updated_at = now() "
+                "WHERE research.report_visibility.publication = 'published' "
                 "RETURNING updated_at, "
                 "(SELECT u.username FROM research.app_user u WHERE u.id = CAST(:actor AS uuid))"
             ),
             {"h": file_hash, "hidden": hidden, "reason": note, "actor": actor_id},
         )
     ).first()
+    if row is None:  # 先查後寫之間變成了草稿：UPSERT 的 WHERE 擋下、沒有回傳列
+        raise ReportIsDraftError("這份研報是尚未發布的草稿，請到上傳審核發布或退回")
     await record_audit(
         session, actor_id=actor_id, action="report.hide" if hidden else "report.restore",
         target_type="report", target_id=file_hash,
@@ -229,3 +296,77 @@ async def set_visibility(
         },
     )
     return VisibilityState(file_hash=file_hash, hidden=hidden, reason=note, updated_by=row[1], updated_at=row[0])
+
+
+# ── 批次隱藏／恢復 ─────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BulkVisibilityResult:
+    """批次裡的一筆：成功時 state 有值；被規則擋下（不存在、草稿）時 error 是 set_visibility 拋的那個例外。"""
+
+    file_hash: str
+    state: Optional[VisibilityState] = None
+    error: Optional[VisibilityError] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+async def bulk_set_visibility(
+    session: AsyncSession,
+    file_hashes: list[str],
+    *,
+    hidden: bool,
+    reason: Optional[str],
+    actor_id: Optional[str],
+) -> list[BulkVisibilityResult]:
+    """一次隱藏或恢復多份研報：**逐筆呼叫 `set_visibility`**，規則與單筆完全相同，不另寫一份。呼叫端負責 commit。
+
+    交易邊界（刻意）：
+    - 整批共用呼叫端的**一筆交易**；每一筆包在自己的 savepoint 裡。被規則擋下的那筆（不存在、草稿）
+      回滾自己的 savepoint、記成略過，其餘照做——「勾了 50 筆、其中 2 筆是草稿」不該讓另外 48 筆白做。
+    - 非規則性的失敗（DB 錯誤、稽核寫不進去）**直接往上拋**：呼叫端不 commit，整批連同已寫的稽核一起回滾，
+      不會留下「改了一半」或「改了卻沒稽核」。
+    - 原因在動任何一筆之前先驗（隱藏必填、上限 REASON_MAX_CHARS）：原因不合法是整批共同的錯，拋
+      InvalidReasonError，什麼都不寫。
+
+    稽核：每一筆變更由 set_visibility 各寫一列（`report.hide`／`report.restore`，detail 與單筆操作同形）。
+    至少一筆成功時，最後再寫**一列批次摘要** `report.bulk_visibility`（target_id 是動作），讓稽核頁看得出
+    這些列來自同一次操作、當時要求幾筆、略過幾筆與原因代碼；摘要同樣不含原因全文。
+
+    重複的 file_hash 只處理一次；回傳順序與輸入（去重後）相同。
+    """
+    from app.services.accounts import record_audit
+
+    note = _check_reason(hidden, reason)
+    hashes = list(dict.fromkeys(file_hashes))
+    if not hashes:
+        raise InvalidBulkRequestError("至少要選一份研報")
+    if len(hashes) > BULK_MAX_REPORTS:
+        raise InvalidBulkRequestError(f"一次最多 {BULK_MAX_REPORTS} 份研報")
+    results: list[BulkVisibilityResult] = []
+    for file_hash in hashes:
+        try:
+            async with session.begin_nested():
+                state = await set_visibility(session, file_hash, hidden=hidden, reason=note, actor_id=actor_id)
+        except (ReportNotFoundError, ReportIsDraftError) as exc:
+            results.append(BulkVisibilityResult(file_hash=file_hash, error=exc))
+            continue
+        results.append(BulkVisibilityResult(file_hash=file_hash, state=state))
+    done = [r.file_hash for r in results if r.ok]
+    if done:
+        skipped: dict[str, int] = {}
+        for r in results:
+            if r.error is not None:
+                skipped[r.error.code] = skipped.get(r.error.code, 0) + 1
+        await record_audit(
+            session, actor_id=actor_id, action="report.bulk_visibility", target_type="bulk",
+            target_id="hide" if hidden else "restore",
+            detail={
+                "hidden": hidden, "requested": len(hashes), "changed": len(done),
+                "skipped": dict(sorted(skipped.items())), "has_reason": note is not None, "file_hashes": done,
+            },
+        )
+    return results

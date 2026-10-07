@@ -3,8 +3,11 @@ import type { ComponentType } from 'react'
 export type RouteKey =
   | 'search' | 'ask' | 'monitor' | 'radar' | 'brief' | 'help' | 'report'
   | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
+  | 'adminUploads' | 'adminUpload'
   | 'adminOps' | 'adminOpsOverview' | 'adminOpsServices' | 'adminOpsService' | 'adminOpsLogs'
-  | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost'
+  | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost' | 'adminOpsDataHealth' | 'adminOpsLlmUsage'
+  | 'adminOpsDependencies'
+  | 'adminOpsDiagnostics'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -22,6 +25,8 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminReviews: () => import('../features/admin/AdminReviewsPage'),
   adminAudit: () => import('../features/admin/AdminAuditPage'),
   adminReports: () => import('../features/admin/AdminReportsPage'),
+  adminUploads: () => import('../features/admin/AdminUploadsPage'),
+  adminUpload: () => import('../features/admin/AdminUploadDetailPage'),
   adminOps: () => import('../features/admin/ops/OperationsLayout'),
   adminOpsOverview: () => import('../features/admin/ops/OpsOverviewPage'),
   adminOpsServices: () => import('../features/admin/ops/OpsServicesPage'),
@@ -30,6 +35,10 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminOpsJobs: () => import('../features/admin/ops/OpsJobsPage'),
   adminOpsIncidents: () => import('../features/admin/ops/OpsIncidentsPage'),
   adminOpsHost: () => import('../features/admin/ops/OpsHostPage'),
+  adminOpsDataHealth: () => import('../features/admin/ops/OpsDataHealthPage'),
+  adminOpsLlmUsage: () => import('../features/admin/ops/OpsLlmUsagePage'),
+  adminOpsDependencies: () => import('../features/admin/ops/OpsDependenciesPage'),
+  adminOpsDiagnostics: () => import('../features/admin/ops/OpsDiagnosticsPage'),
 }
 
 const started = new Set<RouteKey>()

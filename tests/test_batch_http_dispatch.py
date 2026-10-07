@@ -52,6 +52,8 @@ et = _load_script("extract_takeaways")
 es = _load_script("extract_signals")
 tac = _load_script("tag_all_cli")
 snr = _load_script("sync_new_reports")
+# 行內標註的呼叫點（_tag_via_cli → run_claude）在 sync 與上傳 worker 共用的入庫核心裡
+ic = importlib.import_module("scripts._ingest_core")
 gb = _load_script("generate_brief")
 
 
@@ -260,7 +262,7 @@ class HttpMixin:
         if name == "sync":
             async def fake_run(args):
                 for h in [f"h{i}" for i in range(1, N_ITEMS + 1)]:
-                    snr._tag_via_cli(f"{h}.pdf", "內文", model=DS, file_hash=h)
+                    ic._tag_via_cli(f"{h}.pdf", "內文", model=DS, file_hash=h)
 
             p(mock.patch.object(snr, "_run", fake_run))
             p(mock.patch.object(snr, "require_llm_key"))
@@ -391,10 +393,10 @@ class HttpSuccessThroughBatchesTests(HttpMixin, unittest.IsolatedAsyncioTestCase
         tag = ('{"market":"TW","is_research":true,"confidence":0.9,"instrument_types":["equity"],'
                '"relates_stock":true,"relates_futures":false,"stock_targets":["2330"],"futures_targets":[]}')
         self.install(ok(tag))
-        got, err = snr._tag_via_cli("x.pdf", "內文", model=DS, file_hash="h1")
+        got, err = ic._tag_via_cli("x.pdf", "內文", model=DS, file_hash="h1")
         self.assertIsNotNone(got)
         self.assertIsNone(err)
-        self.assertEqual(self.body()["max_tokens"], snr.TAG_MAX_TOKENS)
+        self.assertEqual(self.body()["max_tokens"], ic.TAG_MAX_TOKENS)
 
         self.install(ok("## 今日重點\n- 一"))
         raw, err = gb.call_cli("素材", DS)
@@ -815,14 +817,14 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
             delta=str(delta), all_local=False, dry_run=False, limit=None, batch_size=32,
             hashes_out=str(self.hashes_out),
         )
-        real_tag = snr._tag_via_cli
+        real_tag = ic._tag_via_cli
         with contextlib.ExitStack() as st:
             p = st.enter_context
             p(mock.patch.object(snr, "SRC_LOCAL", src))
             p(mock.patch.object(snr, "TAGS_DIR", self.tmp / "tags"))
             p(mock.patch.object(snr, "FAIL_LOG", self.tmp / "sync_failures.log"))
             p(mock.patch.object(snr, "STATS_FILE", self.tmp / "stats"))
-            p(mock.patch.object(snr, "_tag_via_cli", lambda *a, **k: real_tag(*a, model=model, **k)))
+            p(mock.patch.object(ic, "_tag_via_cli", lambda *a, **k: real_tag(*a, model=model, **k)))
             p(mock.patch("app.services.extract.extract_text", fake_extract))
             p(mock.patch("app.services.db.SessionFactory", lambda: _Sess()))
             p(mock.patch("app.services.store.report_exists", mock.AsyncMock(return_value=False)))
@@ -895,7 +897,7 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         """期限型截斷（timeout_streamed）不是 skip_truncated：記 skip_untagged、階段 tag（補救指令會撈），
         跳過名單記 timeout_streamed。歸 tag_truncated 的話 DeepSeek 暫時變慢一次，那幾篇就永遠不重放。"""
         timed_out = cc.CliResult(None, lh.error_string(lh.TIMEOUT_STREAMED, "已吐字 12 字後超過總期限"))
-        with mock.patch.object(snr, "run_claude", return_value=timed_out):
+        with mock.patch.object(ic, "run_claude", return_value=timed_out):
             rec = await self._run()
         st = self.stats()
         self.assertEqual((st["skip_untagged"], st["skip_truncated"]), ("2", "0"))

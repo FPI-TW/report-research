@@ -157,6 +157,13 @@ class FragmentTests(unittest.TestCase):
         by_id = visibility.visible_report_id_sql("report_signal.report_id")
         self.assertIn("rvis_r.id = report_signal.report_id", by_id)
 
+    def test_fragments_exclude_hidden_and_unpublished(self):
+        """隱藏或尚未發布（上傳草稿，revision 0008）都不可見；兩個片段講同一種語言。"""
+        cond = "(rvis.hidden OR rvis.publication <> 'published')"
+        self.assertIn(cond, visibility.visible_report_sql("r"))
+        self.assertIn(cond, visibility.visible_report_id_sql("s.report_id"))
+        self.assertEqual(visibility.PUBLICATIONS, ("draft", "published"))
+
     def test_fragment_rejects_non_identifiers(self):
         for bad in ("", "r; DROP TABLE x", "r.file_hash", "1r", "r)"):
             with self.subTest(bad=bad), self.assertRaises(ValueError):

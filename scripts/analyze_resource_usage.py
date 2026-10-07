@@ -52,7 +52,16 @@ DISK_STEPS_GB = (20, 50, 100, 200, 300, 500, 1000, 2000)
 # 批次型元件（oneshot unit）。壓測窗期若撞上它們，「邊際成本」會把批次的 CPU
 # 算到請求頭上——2026-08-28 首次壓測就正好撞上 12:00 的 sync，web 與 sync 各吃
 # 約 10 核、把 20 核機器打滿。**這種污染必須被偵測並標示，不能只出現在數字裡。**
-BATCH_COMPONENTS = ("sync", "backup", "audit", "freshness")
+# upload＝上傳 worker（report-mark-upload.service；收集器依 unit 名自動命名）：入庫時載 BGE-M3、跑抽字與嵌入。
+BATCH_COMPONENTS = ("sync", "backup", "audit", "freshness", "upload")
+
+# 線上路徑的**固定開銷**：只要服務在就一直佔著、與請求量無關的常駐元件（鍵是取樣器解析出的容器名）。
+# 分組沿用上面的規則（不在 BATCH_COMPONENTS 就算線上），這裡另外點名，是為了在報表上把它們那一份
+# 單獨加總、標出來：選型時這一塊不會因為流量變少而消失，也不能拿「每條請求的邊際成本」去攤。
+# ClamAV（上傳掃描的 clamd，deploy/clamav/）：病毒碼整份在記憶體，約 1.2–1.6 GB，不隨上傳量變化。
+ONLINE_FIXED_COMPONENTS = {
+    "report-mark-clamav": "ClamAV（病毒碼常駐，不隨上傳量變化）",
+}
 
 # headroom 係數。分開列而不是寫成一個「安全係數」：三者的理由不同，
 # 未來要調整時該調哪一個必須看得出來。
@@ -195,6 +204,7 @@ def build_report(meta, samples, caps, bad) -> dict:
     online_cpu: list[float] = []
     batch_cpu: list[float] = []
     online_anon: list[float] = []
+    online_fixed_anon: list[float] = []
     batch_active = 0
     svc_anon: list[float] = []
     svc_mem: list[float] = []
@@ -264,6 +274,9 @@ def build_report(meta, samples, caps, bad) -> dict:
                 if not is_aggregate(n) and n not in BATCH_COMPONENTS
             )
         )
+        online_fixed_anon.append(
+            sum(float(c.get("anon") or 0.0) for n, c in comp.items() if n in ONLINE_FIXED_COMPONENTS)
+        )
         if batch > 0.1:
             batch_active += 1
         svc_cpu.append(cpu_sum)
@@ -325,6 +338,7 @@ def build_report(meta, samples, caps, bad) -> dict:
     online_cpu_q = quantiles(online_cpu)
     batch_cpu_q = quantiles(batch_cpu)
     online_anon_q = quantiles(online_anon)
+    online_fixed_anon_q = quantiles(online_fixed_anon)
     sizing = {
         "online_cpu": online_cpu_q,
         "batch_cpu": batch_cpu_q,
@@ -334,6 +348,9 @@ def build_report(meta, samples, caps, bad) -> dict:
             max(online_anon_q["max"] * RAM_HEADROOM / GIB + 1, 2), RAM_STEPS_GIB
         ),
         "batch_active_share": batch_active / len(samples) if samples else 0.0,
+        # 線上 anon 裡屬於固定開銷（ONLINE_FIXED_COMPONENTS）的那一份；已含在 online_ram_pick_gib 裡，不另加。
+        "online_fixed_anon": online_fixed_anon_q,
+        "online_fixed_present": sorted(n for n in leaf_names if n in ONLINE_FIXED_COMPONENTS),
         "vcpu_measured_p99": svc_cpu_q["p99"],
         "vcpu_measured_max": svc_cpu_q["max"],
         "vcpu_need": vcpu_need,
@@ -546,7 +563,7 @@ def render_text(r: dict) -> str:
         # 「這東西整天都吃這麼多」。
         note = "" if presence > 0.95 else f"← 批次；分位數僅涵蓋其執行中的 {presence * 100:.1f}% 樣本"
         rows.append((f"　　{name}", _cells(c["cpu"]), note))
-    rows.append(("　線上路徑合計（web＋DB＋邊緣）", _cells(r["sizing"]["online_cpu"]), ""))
+    rows.append(("　線上路徑合計（web＋DB＋邊緣＋ClamAV）", _cells(r["sizing"]["online_cpu"]), ""))
     rows.append(("　批次路徑合計（sync 等）", _cells(r["sizing"]["batch_cpu"]), ""))
     rows.append(("　非服務（開發／系統）", _cells(r["nonservice"]["cpu"]), ""))
     rows.append(("　　其中 iowait", _cells(r["host"]["iowait"]), ""))
@@ -561,8 +578,17 @@ def render_text(r: dict) -> str:
         ("　服務合計 常駐 anon", _cells(r["service"]["anon"], GIB), ""),
     ]
     for name, c in sorted(r["components"].items(), key=lambda kv: -kv[1]["anon"]["max"]):
+        note = f"cgroup 歷史峰值 {c['peak_max'] / GIB:.2f}"
+        if name in ONLINE_FIXED_COMPONENTS:
+            note += f"｜線上固定開銷：{ONLINE_FIXED_COMPONENTS[name]}"
+        rows.append((f"　　{name} anon", _cells(c["anon"], GIB), note))
+    if r["sizing"].get("online_fixed_present"):
         rows.append(
-            (f"　　{name} anon", _cells(c["anon"], GIB), f"cgroup 歷史峰值 {c['peak_max'] / GIB:.2f}")
+            (
+                "　線上固定開銷 anon",
+                _cells(r["sizing"]["online_fixed_anon"], GIB),
+                "＝" + "＋".join(r["sizing"]["online_fixed_present"]) + "（已含在線上 RAM 選型內）",
+            )
         )
     rows.append(("swap 已用", _cells(r["host"]["swap_used"], GIB), ""))
     out.append("")

@@ -25,6 +25,7 @@ from ops_agent.server import Agent, serve
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROD_TOML = REPO_ROOT / "deploy" / "ops" / "services.prod.toml"
 DEV_TOML = REPO_ROOT / "deploy" / "ops" / "services.dev.toml"
+STAGING_TOML = REPO_ROOT / "deploy" / "ops" / "services.staging.toml"
 NOW = datetime(2026, 10, 6, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -112,7 +113,7 @@ class CatalogFileTests(unittest.TestCase):
                      "report-mark-r2-reconcile.service", "report-mark-health.service",
                      "report-mark-incident.service", "report-mark-edge-health.service"):
             self.assertIn(unit, targets)
-        for container in ("report-mark-postgres", "deploy-nginx-1", "deploy-cloudflared-1"):
+        for container in ("report-mark-postgres", "deploy-nginx-1", "deploy-cloudflared-1", "report-mark-clamav"):
             self.assertIn(container, targets)
 
     def test_prod_catalog_units_exist_in_deploy_dir(self):
@@ -251,6 +252,175 @@ class BindingTests(unittest.TestCase):
             self.assertEqual(server.main(["--catalog", str(toml), "--check"]), 0)
 
 
+class StagingCatalogTests(unittest.TestCase):
+    """EC2 staging：RDS（不是容器）、沒有 NAS、apt 的 nginx；restart 只有 web，run 只有 freshness／audit。"""
+
+    def test_staging_catalog_loads_with_its_own_socket(self):
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        self.assertEqual((staging.environment, staging.socket_path),
+                         ("staging", "/run/report-mark-ops-staging/agent.sock"))
+        validate_binding(staging, protocol.CANONICAL_SOCKETS["staging"])
+
+    def test_staging_permissions(self):
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        writes = {s.name: [a for a in s.actions if a in protocol.WRITE_ACTIONS] for s in staging.services}
+        self.assertEqual({n: a for n, a in writes.items() if a},
+                         {"web": ["restart"], "freshness": ["run"], "audit": ["run"]})
+        self.assertNotIn("run", staging.get("sync").actions)  # 共用 DeepSeek 金鑰：手動多跑一輪就是多一份費用
+        self.assertNotIn("run", staging.get("r2-reconcile").actions)  # 共用 bucket
+        self.assertEqual([s.name for s in staging.services if s.kind == "container"], [])
+
+    def test_staging_has_no_office_only_things(self):
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        names = {s.name for s in staging.services} | {e.name for e in staging.externals}
+        for absent in ("postgres", "cloudflared", "backup", "nas", "linebot", "linebot-health", "metrics"):
+            self.assertNotIn(absent, names)
+        self.assertIn("rds", names)
+        self.assertEqual(staging.get("nginx").unit, "nginx.service")
+        systemd_dir = REPO_ROOT / "deploy" / "systemd"
+        missing = [t for s in staging.services for t in (s.unit, s.timer)
+                   if t and t.startswith("report-mark-") and not (systemd_dir / t).exists()]
+        self.assertEqual(missing, [])
+
+    def test_staging_cannot_list_dev_things(self):
+        raw = _raw("staging", services=[{"name": "devdb", "kind": "container", "container": "report-mark-devdb",
+                                         "tier": "critical", "actions": ["status"]}])
+        with self.assertRaisesRegex(CatalogError, "staging catalog 不得列開發用"):
+            parse_catalog(raw)
+
+    def test_staging_socket_cannot_be_overridden_or_crossed(self):
+        staging = parse_catalog(_raw("staging"))
+        with self.assertRaisesRegex(CatalogError, "staging 代理只能綁"):
+            validate_binding(staging, "/tmp/somewhere.sock")
+        with self.assertRaisesRegex(CatalogError, "拒絕以 production 的 socket"):
+            validate_binding(staging, protocol.CANONICAL_SOCKETS["production"])
+        prod = parse_catalog(_raw("production"))
+        with self.assertRaisesRegex(CatalogError, "拒絕以 staging 的 socket"):
+            validate_binding(prod, protocol.CANONICAL_SOCKETS["staging"])
+
+
+def _svc(name, deps=(), **extra) -> dict:
+    return {"name": name, "kind": "systemd", "unit": f"report-mark-{name}.service", "tier": "important",
+            "actions": ["status"], "depends_on": list(deps), **extra}
+
+
+class DependencyGraphTests(unittest.TestCase):
+    """depends_on 與 [[externals]]：引用存在、不自我依賴、無環；probe 只能指向有 status 的 systemd 服務。"""
+
+    def _parse(self, services, externals=None):
+        raw = _raw(services=services)
+        if externals is not None:
+            raw["externals"] = externals
+        return parse_catalog(raw)
+
+    def test_repo_catalogs_declare_dependencies(self):
+        prod = load_catalog(PROD_TOML, resolve_user=_uid)
+        self.assertEqual(set(prod.get("web").depends_on), {"postgres", "r2", "deepseek"})
+        self.assertEqual({e.name for e in prod.externals},
+                         {"r2", "deepseek", "nas", "slack", "public-edge", "linebot"})
+        self.assertIn("nas", prod.get("sync").depends_on)
+        dev = load_catalog(DEV_TOML, resolve_user=_uid)
+        self.assertEqual(dev.get("dev-web").depends_on, ("devdb",))
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        self.assertEqual(set(staging.get("web").depends_on), {"rds", "r2", "deepseek"})
+
+    def test_valid_graph_with_externals(self):
+        cat = self._parse([_svc("web", ["r2"]), _svc("health")],
+                          [{"name": "r2", "tier": "critical", "probe": "health", "down_exit_codes": [6]},
+                           {"name": "edge", "tier": "critical", "depends_on": ["web"]}])
+        self.assertEqual(cat.externals[0].ok_exit_codes, (0,))
+        self.assertEqual(cat.externals[0].public()["kind"], "external")
+        self.assertEqual(cat.get("web").public()["depends_on"], ["r2"])
+        self.assertIsNone(cat.get("r2"), "外部依賴不是服務：代理不會對它做 status／logs")
+
+    def test_unknown_reference_rejected(self):
+        with self.assertRaisesRegex(CatalogError, "不存在的節點 'postgres'"):
+            self._parse([_svc("web", ["postgres"])])
+        with self.assertRaisesRegex(CatalogError, "不存在的節點"):
+            self._parse([_svc("web")], [{"name": "edge", "tier": "critical", "depends_on": ["nginx"]}])
+
+    def test_self_dependency_rejected(self):
+        with self.assertRaisesRegex(CatalogError, "不得依賴自己"):
+            self._parse([_svc("web", ["web"])])
+        with self.assertRaisesRegex(CatalogError, "不得依賴自己"):
+            self._parse([_svc("web")], [{"name": "r2", "tier": "critical", "depends_on": ["r2"]}])
+
+    def test_cycles_rejected_with_the_path(self):
+        with self.assertRaisesRegex(CatalogError, "依賴圖有環：a → b → c → a"):
+            self._parse([_svc("a", ["b"]), _svc("b", ["c"]), _svc("c", ["a"])])
+        with self.assertRaisesRegex(CatalogError, "有環"):  # 經過外部依賴的環也算
+            self._parse([_svc("web", ["edge"])], [{"name": "edge", "tier": "critical", "depends_on": ["web"]}])
+
+    def test_find_cycle_handles_long_chains_without_recursion(self):
+        from ops_agent.catalog import find_cycle
+
+        chain = {f"n{i}": (f"n{i + 1}",) for i in range(5000)}
+        chain["n5000"] = ()
+        self.assertIsNone(find_cycle(chain))
+        chain["n5000"] = ("n0",)
+        self.assertEqual(len(find_cycle(chain)), 5002)
+        self.assertIsNone(find_cycle({"a": ("b", "c"), "b": ("c",), "c": ()}))  # 菱形不是環
+
+    def test_depends_on_shape(self):
+        for bad in ("postgres", ["Postgres"], ["a", "a"], [1], [f"n{i}" for i in range(17)]):
+            with self.subTest(bad=bad), self.assertRaises(CatalogError):
+                self._parse([{**_svc("web"), "depends_on": bad}])
+
+    def test_names_are_shared_between_services_and_externals(self):
+        with self.assertRaisesRegex(CatalogError, "命名空間"):
+            self._parse([_svc("web")], [{"name": "web", "tier": "critical"}])
+
+    def test_external_validation(self):
+        base = [_svc("health"), _svc("web")]
+        bad = [
+            ({"name": "r2", "tier": "critical", "unit": "x.service"}, "不認得"),
+            ({"name": "r2", "tier": "urgent"}, "tier"),
+            ({"name": "R2", "tier": "critical"}, "name"),
+            ({"name": "r2", "tier": "critical", "down_exit_codes": [6]}, "沒有 probe"),
+            ({"name": "r2", "tier": "critical", "probe": "health"}, "至少要寫"),
+            ({"name": "r2", "tier": "critical", "probe": "health", "down_exit_codes": [0]}, "同時屬於"),
+            ({"name": "r2", "tier": "critical", "probe": "health", "down_exit_codes": [256]}, "0–255"),
+            ({"name": "r2", "tier": "critical", "probe": "health", "down_exit_codes": [True]}, "0–255"),
+            ({"name": "r2", "tier": "critical", "probe": "nope", "down_exit_codes": [6]}, "不存在的服務"),
+        ]
+        for ext, msg in bad:
+            with self.subTest(ext=ext), self.assertRaisesRegex(CatalogError, msg):
+                self._parse(base, [ext])
+        with self.assertRaisesRegex(CatalogError, "systemd 服務"):
+            self._parse([*base, {"name": "pg", "kind": "container", "container": "report-mark-postgres",
+                                 "tier": "critical", "actions": ["status"]}],
+                        [{"name": "r2", "tier": "critical", "probe": "pg", "down_exit_codes": [1]}])
+        with self.assertRaisesRegex(CatalogError, "systemd 服務"):
+            self._parse([_svc("health", actions=["logs"]), _svc("web")],
+                        [{"name": "r2", "tier": "critical", "probe": "health", "down_exit_codes": [6]}])
+        with self.assertRaisesRegex(CatalogError, "externals"):
+            raw = _raw()
+            raw["externals"] = {"name": "r2"}
+            parse_catalog(raw)
+
+    def test_check_cli_reports_graph_size_and_rejects_cycles(self):
+        import contextlib
+        import io
+
+        from ops_agent import server
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(server.main(["--catalog", str(STAGING_TOML), "--check"]), 0)
+        self.assertIn("environment=staging", out.getvalue())
+        self.assertIn("externals=5", out.getvalue())
+        with tempfile.TemporaryDirectory() as tmp:
+            toml = Path(tmp) / "c.toml"
+            web_deps = 'depends_on = ["rds", "r2", "deepseek"]\ndescription = "Web'
+            text = STAGING_TOML.read_text(encoding="utf-8")
+            self.assertIn(web_deps, text)
+            toml.write_text(text.replace(web_deps, 'depends_on = ["nginx"]\ndescription = "Web'), encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(server.main(["--catalog", str(toml), "--check"]), 2)
+            self.assertIn("依賴圖有環", err.getvalue())
+
+
 # ── 參數邊界 ─────────────────────────────────────────────────────────────
 
 
@@ -352,6 +522,30 @@ class AgentRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(items["postgres"]["container"]["finished_at"])
         self.assertEqual(items["nginx"]["summary"], "not_found")
 
+    async def test_list_carries_dependencies_and_externals_without_running_anything_for_them(self):
+        import dataclasses
+
+        from ops_agent.catalog import External
+
+        base = _catalog()
+        services = tuple(dataclasses.replace(s, depends_on=("postgres", "r2")) if s.name == "web" else s
+                         for s in base.services)
+        cat = dataclasses.replace(base, services=services, externals=(
+            External(name="r2", tier="critical", probe="audit", down_exit_codes=(6,), description="R2"),))
+        runner = FakeRunner(_status_handler)
+        resp = await self._call(Agent(cat, runner), _req("list"))
+        self.assertTrue(resp["ok"], resp)
+        items = {i["name"]: i for i in resp["result"]["items"]}
+        self.assertEqual(items["web"]["depends_on"], ["postgres", "r2"])
+        self.assertEqual(items["sync"]["depends_on"], [])
+        self.assertEqual(resp["result"]["externals"], [{
+            "name": "r2", "kind": "external", "tier": "critical", "depends_on": [], "probe": "audit",
+            "ok_exit_codes": [0], "degraded_exit_codes": [], "down_exit_codes": [6], "description": "R2"}])
+        self.assertEqual(len(runner.calls), 2)  # 外部依賴不多跑任何指令
+        self.assertNotIn("r2", json.dumps([c["argv"] for c in runner.calls]))
+        r = await self._call(Agent(cat, runner), _req("status", "r2"))
+        self.assertEqual(r["error"]["code"], "unknown_service")
+
     async def test_no_environment_or_health_log_leaks(self):
         resp = await self._call(Agent(_catalog(), FakeRunner(_status_handler)), _req("list"))
         text = json.dumps(resp)
@@ -422,7 +616,7 @@ class AgentRequestTests(unittest.IsolatedAsyncioTestCase):
             b'{"v":2,"env":"production","op":"list"}\n': "bad_request",
             b'{"v":true,"env":"production","op":"list"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"list","cmd":"rm -rf /"}\n': "bad_request",
-            b'{"v":1,"env":"staging","op":"list"}\n': "bad_request",
+            b'{"v":1,"env":"qa","op":"list"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"list","service":"web"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"status"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"status","service":"web","params":{"lines":5}}\n': "invalid_params",

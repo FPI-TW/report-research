@@ -116,6 +116,21 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _positive_int(name: str, default: int, *, upper: int | None = None) -> int:
+    """正整數；空值、非整數、≤0 或超過 upper 退回預設並警告（同 `_positive_float` 的理由：拼錯不可靜默變 0）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0 or (upper is not None and value > upper):
+        logging.getLogger(__name__).warning("%s=%r 不是合法的正整數，退回 %d", name, raw, default)
+        return default
+    return value
+
+
 def _budget_currency() -> str:
     """`/healthz/llm` 只讀 `balance_infos` 裡這個幣別的那一筆；三個英文字母，其餘退回 CNY 並警告。"""
     raw = (os.getenv("LLM_BUDGET_CURRENCY") or "").strip().upper()
@@ -131,6 +146,7 @@ def _budget_currency() -> str:
 # 逐字相同（tests/test_admin_ops_api.py 釘住）；這裡不 import ops_agent，是為了讓設定層不依賴代理套件。
 _OPS_SOCKETS = {
     "production": "/run/report-mark-ops/agent.sock",
+    "staging": "/run/report-mark-ops-staging/agent.sock",
     "development": "/run/report-mark-ops-dev/agent.sock",
 }
 
@@ -151,6 +167,36 @@ def _ops_agent_environment() -> str:
 def _ops_agent_socket(environment: str) -> str:
     """有設 OPS_AGENT_SOCKET 就用它（本機冒煙的臨時 socket）；否則用該環境的固定路徑。"""
     return (os.getenv("OPS_AGENT_SOCKET") or "").strip() or _OPS_SOCKETS.get(environment, "")
+
+
+def _ratio(name: str, default: float) -> float:
+    """(0, 1] 之間的比例；空值、非數字、nan 或超出範圍退回預設並警告（門檻打錯不可變成永遠不告警）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or not 0 < value <= 1:
+        logging.getLogger(__name__).warning("%s=%r 不在 (0, 1]，退回 %g", name, raw, default)
+        return default
+    return value
+
+
+def _int_at_least(name: str, default: int, minimum: int) -> int:
+    """整數且不小於 minimum；空值、非整數或太小退回預設並警告。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = minimum - 1
+    if value < minimum:
+        logging.getLogger(__name__).warning("%s=%r 不是 ≥%d 的整數，退回 %d", name, raw, minimum, default)
+        return default
+    return value
 
 
 # 問答抽查逾時的預設值依 judge 走哪條路而定（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
@@ -291,6 +337,52 @@ class Settings:
     ops_agent_environment: str = "production"
     ops_agent_socket: str = _OPS_SOCKETS["production"]
     ops_agent_timeout: float = 20.0
+    # 檢索回歸檢查（app/services/retrieval_regression.py、scripts/retrieval_regression.py；零 LLM）。
+    # k 只在擷取基準時用（比對一律用基準記下的 k）；三個門檻決定 rc=1（告警）；可用記憶體不足就略過
+    # 那一次（rc=2）而不是硬載 BGE-M3 跟 web 搶。基準檔路徑空字串＝repo 根 data/retrieval_regression/baseline.json。
+    retrieval_regression_k: int = 10
+    retrieval_regression_min_mean_recall: float = 0.8
+    retrieval_regression_min_question_recall: float = 0.5
+    retrieval_regression_max_degraded_questions: int = 2
+    retrieval_regression_min_available_gib: float = 4.0
+    retrieval_regression_baseline: str = ""
+    # ClamAV clamd（app/services/clamd.py；上傳管線的病毒掃描閘門，deploy/clamav/）。安全閘門一律 fail-closed：
+    # 連不上、逾時、病毒碼太舊或判斷不出來都不放行（不適用派生功能的 fail-open）。容器只綁 127.0.0.1:3310。
+    # 逾時是每一次 socket 操作的期限（連線、送一塊、等結果）：clamd 收完整份串流才開始掃，25 MB 的 PDF
+    # 掃描本身可達數十秒；`ConcurrentDatabaseReload no` 時重載病毒碼的 30–60 秒內新連線會被晾著，
+    # 120 秒讓重載中的掃描自然等過去，而不是每次都記一筆逾時。
+    clamd_host: str = "127.0.0.1"
+    clamd_port: int = 3310
+    clamd_timeout: float = 120.0
+    # 病毒碼（VERSION 回應裡的日期）超過這個年齡就不掃、回暫時性錯誤 signatures_stale（設計決策 12：72 小時）。
+    clamd_signature_max_age_hours: float = 72.0
+    # 客戶端自己的串流上限，與 deploy/clamav/conf/clamd.conf 的 `StreamMaxLength 30M` 一致
+    # （tests/test_clamav_deploy.py 對帳）。超過就不再送、直接判「超限＝未通過」，不依賴 clamd 怎麼回。
+    clamd_stream_max_bytes: int = 30 * 1024 * 1024
+    # 研報上傳的收檔（web/routers/admin_uploads.py、app/services/quarantine.py；Admin v1.5）。
+    # 旗標預設關閉：worker（掃毒、入庫）上線並經同意之前，收檔端點一律 503 `uploads_disabled`。
+    # 大小上限 25 MiB（語料最大 19.5 MB、p99 5.3 MB）；nginx 那條 location 給 30m，比這裡寬，
+    # 所以超過上限的請求由 App 回統一格式的 413，而不是 nginx 的 HTML 錯誤頁。
+    # 隔離區空字串＝repo 根 data/quarantine/。配額：每人每日（台北時間的日曆日）與全站處理中
+    # （quarantined／scanning／clean／processing）的件數；剩餘空間低於門檻（MiB）就不收（503）。
+    upload_enabled: bool = False
+    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_quarantine_dir: str = ""
+    upload_daily_quota: int = 30
+    upload_max_in_flight: int = 50
+    upload_min_free_mb: int = 1024
+    # 研報上傳的審核（web/routers/admin_uploads.py、app/services/upload_review.py）：退回後的清除寬限期（小時）。
+    # 期間內管理員可撤銷退回；過期後由上傳 worker 清除語料與檔案（設計決策 13：24 小時，與刪帳一致）。
+    upload_reject_grace_hours: int = 24
+    # 研報上傳 worker（scripts/process_uploads.py、app/services/upload_worker.py）。兩個都是路徑，空字串＝repo 根預設：
+    # - 整輪鎖（非阻塞 flock，忙就 rc 0 退出）：data/.upload_worker.lock。殼與 Python 子命令共用同一個檔。
+    # - 掃描通過後的乾淨檔：data/uploads/clean/<hash>/<原始檔名>（research_report.file_path；必須與隔離區同一個
+    #   檔案系統，os.replace 才是原子的——不同時 worker 退回「複製＋驗 SHA＋刪來源」）。
+    upload_worker_lock_file: str = ""
+    upload_clean_dir: str = ""
+    # 入庫前檢查子行程（app/services/pdf_preflight.py）的虛擬記憶體上限（MiB）：300 頁的密集文字 PDF 以
+    # pdfplumber 試抽字實測 RSS 1.68 GB，2048 通過、1536 不通過。調高前先算 worker unit 的 MemoryMax=4G 放不放得下。
+    upload_preflight_memory_mb: int = 2048
 
 
 def _load() -> Settings:
@@ -464,6 +556,27 @@ def _load() -> Settings:
         ops_agent_environment=(ops_env := _ops_agent_environment()),
         ops_agent_socket=_ops_agent_socket(ops_env),
         ops_agent_timeout=_positive_float("OPS_AGENT_TIMEOUT", 20.0),
+        retrieval_regression_k=_int_at_least("RETRIEVAL_REGRESSION_K", 10, 1),
+        retrieval_regression_min_mean_recall=_ratio("RETRIEVAL_REGRESSION_MIN_MEAN_RECALL", 0.8),
+        retrieval_regression_min_question_recall=_ratio("RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL", 0.5),
+        retrieval_regression_max_degraded_questions=_int_at_least("RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS", 2, 0),
+        retrieval_regression_min_available_gib=_positive_float("RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB", 4.0),
+        retrieval_regression_baseline=(os.getenv("RETRIEVAL_REGRESSION_BASELINE") or "").strip(),
+        clamd_host=(os.getenv("CLAMD_HOST") or "").strip() or "127.0.0.1",
+        clamd_port=_positive_int("CLAMD_PORT", 3310, upper=65535),
+        clamd_timeout=_positive_float("CLAMD_TIMEOUT", 120.0),
+        clamd_signature_max_age_hours=_positive_float("CLAMD_SIGNATURE_MAX_AGE_HOURS", 72.0),
+        clamd_stream_max_bytes=_positive_int("CLAMD_STREAM_MAX_BYTES", 30 * 1024 * 1024),
+        upload_enabled=_flag("UPLOAD_ENABLED", "0"),
+        upload_max_bytes=_int_at_least("UPLOAD_MAX_BYTES", 25 * 1024 * 1024, 1),
+        upload_quarantine_dir=(os.getenv("UPLOAD_QUARANTINE_DIR") or "").strip(),
+        upload_daily_quota=_int_at_least("UPLOAD_DAILY_QUOTA", 30, 1),
+        upload_max_in_flight=_int_at_least("UPLOAD_MAX_IN_FLIGHT", 50, 1),
+        upload_min_free_mb=_int_at_least("UPLOAD_MIN_FREE_MB", 1024, 0),
+        upload_reject_grace_hours=_int_at_least("UPLOAD_REJECT_GRACE_HOURS", 24, 1),
+        upload_worker_lock_file=(os.getenv("UPLOAD_WORKER_LOCK_FILE") or "").strip(),
+        upload_clean_dir=(os.getenv("UPLOAD_CLEAN_DIR") or "").strip(),
+        upload_preflight_memory_mb=_int_at_least("UPLOAD_PREFLIGHT_MEMORY_MB", 2048, 256),
     )
 
 

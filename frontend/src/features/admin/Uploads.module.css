@@ -1,0 +1,89 @@
+/* 研報上傳（清單與詳情）。卡片、按鈕、表格基本樣式沿用 Admin.module.css，這裡只放上傳特有的部分。 */
+
+/* ── 拖放區 ── */
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  border: 1.5px dashed var(--tf-border); border-radius: var(--tf-radius-md); padding: 22px 16px;
+  background: var(--tf-fill-subtle); transition: border-color var(--tf-dur-1) var(--tf-ease-out), background var(--tf-dur-1) var(--tf-ease-out);
+}
+.dropzoneOver { border-color: var(--tf-graphite); background: var(--tf-gold-tint); }
+.dropTitle { margin: 0; font-size: 14px; color: var(--tf-text-1); }
+
+/* ── 上傳佇列 ── */
+.queue { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.queueItem { border: 1px solid var(--tf-border-weak); border-radius: 6px; padding: 8px 10px; min-width: 0; }
+.queueHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.queueName { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; color: var(--tf-text-1); font-weight: 500; }
+.queueNote { margin: 6px 0 0; font-size: 12.5px; color: var(--tf-text-2); overflow-wrap: anywhere; }
+.queueError { margin: 6px 0 0; font-size: 12.5px; color: var(--tf-error-text); overflow-wrap: anywhere; }
+.queueFoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; font-size: 12.5px; }
+.progress { position: relative; height: 18px; margin-top: 8px; border-radius: var(--tf-radius-pill); background: var(--tf-fill-subtle); overflow: hidden; }
+.progressBar { position: absolute; inset: 0 auto 0 0; background: var(--tf-gold-line); transition: width var(--tf-dur-1) linear; }
+.progressText { position: relative; display: block; text-align: center; font-size: 11.5px; line-height: 18px; font-variant-numeric: tabular-nums; color: var(--tf-text-1); }
+
+/* ── 掃描器橫幅 ── */
+.banner {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; color: var(--tf-text-2);
+  background: var(--tf-surface); border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs); padding: 10px 16px;
+  overflow-wrap: anywhere;
+}
+.bannerError { background: var(--tf-error-bg); color: var(--tf-error-text); border: 1px solid var(--tf-error-border); box-shadow: none; }
+.bannerDetail { flex: 1 1 100%; font-size: 12.5px; }
+
+/* ── 分頁籤 ── */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-pill);
+  background: var(--tf-surface); color: var(--tf-text-2); font: inherit; font-size: 12.5px; padding: 5px 12px; cursor: pointer;
+}
+.tab:hover { border-color: var(--tf-graphite); }
+.tabOn { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
+.tabCount { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; border-radius: var(--tf-radius-pill); padding: 0 6px; background: var(--tf-gold-tint); color: var(--tf-gold-text); }
+.tabPanel { min-width: 0; }
+
+/* ── 清單：寬螢幕是表格，窄的卡片（手機）改成一筆一塊、欄名在前 ── */
+.listWrap { container-type: inline-size; }
+/* 要蓋過 Admin.module.css 的 `.table td { white-space: nowrap }`，特異度得比它高（不能用重複類名）。 */
+.listTable td.nameCell { white-space: normal; min-width: 200px; max-width: 420px; overflow-wrap: anywhere; }
+.listTable td.wrap { white-space: normal; max-width: 320px; overflow-wrap: anywhere; }
+.danger { color: var(--tf-error-text); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+@container (max-width: 560px) {
+  .listTable thead { display: none; }
+  .listTable, .listTable tbody, .listTable tr, .listTable td { display: block; width: 100%; }
+  .listTable tr { border-bottom: 1px solid var(--tf-border-weak); padding: 8px 0; }
+  .listTable tr:last-child { border-bottom: none; }
+  .listTable td[data-label] { border-bottom: none; padding: 3px 0; white-space: normal; min-width: 0; max-width: none; overflow-wrap: anywhere; }
+  .listTable td[data-label]::before { content: attr(data-label); display: block; font-size: 11.5px; color: var(--tf-text-4); }
+}
+
+/* ── 詳情 ── */
+.back { font-size: 13px; color: var(--tf-text-2); }
+.titleRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.titleRow h1 { overflow-wrap: anywhere; min-width: 0; }
+.actionsBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.actionNote { font-size: 12.5px; color: var(--tf-text-muted-aa); flex: 1 1 100%; margin: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 13px; }
+.dl dt { color: var(--tf-text-4); }
+.dl dd { margin: 0; color: var(--tf-text-1); overflow-wrap: anywhere; min-width: 0; }
+.mono { font-family: var(--tf-mono); font-size: 12px; word-break: break-all; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.pending { color: var(--tf-text-4); font-style: italic; }
+.takeaways { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--tf-text-1); }
+.takeaways li { overflow-wrap: anywhere; }
+.quote { display: block; margin-top: 3px; font-size: 12.5px; color: var(--tf-text-2); border-left: 2px solid var(--tf-gold-line); padding-left: 8px; }
+.textBox summary { cursor: pointer; font-size: 13px; color: var(--tf-text-2); }
+.text {
+  margin: 10px 0 0; max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--tf-sans);
+  font-size: 13px; line-height: 1.7; color: var(--tf-text-1); background: var(--tf-fill-subtle); border-radius: 6px; padding: 12px;
+}
+/* 檢視器的 .root 是 flex:1，舞台必須是 flex 容器且給定高度，否則塌成 0（同 PdfPane 的 .stageViewer）。 */
+.pdfStage { display: flex; height: min(78vh, 900px); min-height: 420px; border: 1px solid var(--tf-border-weak); border-radius: 6px; overflow: hidden; position: relative; }
+.pdfFrame { width: 100%; height: 100%; border: 0; }
+.pdfBar { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 8px; font-size: 12.5px; }
+
+@media (max-width: 600px) {
+  .dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .dl dd { margin-bottom: 6px; }
+  .pdfStage { height: 70vh; min-height: 320px; }
+}

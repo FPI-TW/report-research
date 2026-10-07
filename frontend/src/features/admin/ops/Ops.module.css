@@ -64,3 +64,39 @@
 /* P7 寫入類操作：按鈕列與頁內確認列。 */
 .opsActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .opsConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* 資料健康表格的長說明：包一層 div 才蓋得過 `.table td` 的 nowrap（td 上的 class 選擇器權重不夠） */
+.cellText { white-space: normal; min-width: 200px; max-width: 460px; overflow-wrap: anywhere; line-height: 1.5; }
+
+/* 依賴圖（OpsDependenciesPage）：手寫分層 SVG。顏色只用 token；窄螢幕隱藏圖、只留清單。 */
+.depAllOk { font-size: 13px; color: var(--tf-success-text); background: var(--tf-fill-subtle); border-radius: 6px; padding: 8px 12px; margin: 0; }
+.depAlert { border-left: 3px solid var(--tf-error); background: var(--tf-error-bg); border-radius: 6px; padding: 10px 12px; }
+.depAlertTitle { font-size: 13.5px; color: var(--tf-error-text); margin: 0; overflow-wrap: anywhere; }
+.depAlertText { font-size: 12.5px; color: var(--tf-text-1); margin: 6px 0 0; overflow-wrap: anywhere; }
+.depLegend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 8px; padding: 0; font-size: 12px; color: var(--tf-text-2); }
+.depLegend li { display: inline-flex; align-items: center; gap: 6px; }
+.depSwatch { display: inline-block; width: 14px; height: 10px; border-radius: 3px; border: 1.5px solid; }
+.depGraphWrap { overflow-x: auto; margin: 0 0 16px; }
+.depGraph { display: block; max-width: none; }
+.depNode { stroke-width: 1.5; }
+.depOk { fill: var(--tf-surface); stroke: var(--tf-success-line); border-color: var(--tf-success-line); background: var(--tf-surface); }
+.depDegraded { fill: var(--tf-warn-bg); stroke: var(--tf-warn); border-color: var(--tf-warn); background: var(--tf-warn-bg); }
+.depDown { fill: var(--tf-error-bg); stroke: var(--tf-error); stroke-width: 2.5; border-color: var(--tf-error); background: var(--tf-error-bg); }
+.depUnknown { fill: var(--tf-fill-subtle); stroke: var(--tf-graphite-line); stroke-dasharray: 4 3; border-color: var(--tf-graphite-line); background: var(--tf-fill-subtle); border-style: dashed; }
+.depAffected { fill: var(--tf-warn-bg); stroke: var(--tf-error); stroke-dasharray: 5 3; border-color: var(--tf-error); background: var(--tf-warn-bg); border-style: dashed; }
+.depNodeName { font-size: 12.5px; font-weight: 600; fill: var(--tf-text-1); }
+.depNodeSub { font-size: 11px; fill: var(--tf-text-3); }
+.depEdge { fill: none; stroke: var(--tf-graphite-line); stroke-width: 1.4; }
+.depEdgeBroken { fill: none; stroke: var(--tf-error); stroke-width: 2; }
+.depArrow { fill: var(--tf-graphite-line); }
+.depArrowBroken { fill: var(--tf-error); }
+.depIsolated { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--tf-text-3); margin: 10px 0 0; }
+.depList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.depItem { border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 8px 12px; font-size: 12.5px; min-width: 0; }
+.depItemHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.depItemText { color: var(--tf-text-2); margin-top: 4px; overflow-wrap: anywhere; }
+.depItemImpact { color: var(--tf-error-text); margin-top: 4px; overflow-wrap: anywhere; }
+.depAffectedPill { background: var(--tf-warn-bg); color: var(--tf-error-text); }
+@media (max-width: 720px) {
+  .depGraphWrap, .depLegend { display: none; }
+}

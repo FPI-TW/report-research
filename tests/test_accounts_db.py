@@ -542,6 +542,127 @@ async def scenario_ops_action_audit(api) -> None:
                               "result": "already_running"}, mine[0].detail
 
 
+
+async def scenario_export_audit(api) -> None:
+    """CSV 匯出的稽核：只有種類、篩選條件、筆數與 truncated；None 的篩選條件省略；未知種類直接拒絕。"""
+    admin = await api.create_user(_name("Export"), PW, "admin", actor_id=None)
+    await api.record_export(actor_id=admin.id, kind="reports", filters={"q": "台積電", "hidden": None, "limit": 10},
+                            row_count=3, truncated=False)
+    await _expect(ValueError, api.record_export(actor_id=admin.id, kind="qa_log", filters={}, row_count=0,
+                                                truncated=False))
+    _total, entries = await api.list_audit(limit=200)
+    mine = [e for e in entries if e.actor_user_id == admin.id and e.action == "data.export"]
+    assert len(mine) == 1, mine
+    assert (mine[0].target_type, mine[0].target_id) == ("export", "reports"), mine[0]
+    assert mine[0].detail == {"kind": "reports", "format": "csv", "filters": {"limit": 10, "q": "台積電"},
+                              "row_count": 3, "truncated": False}, mine[0].detail
+
+# ───── 批次（bulk_user_action）─────
+
+
+async def scenario_bulk_disable_enable_logout(api) -> None:
+    boss = await api.create_user(_name("BBoss"), PW, "admin", actor_id=None, is_super=True)
+    u1 = await api.create_user(_name("Bu1"), PW, "user", actor_id=None)
+    u2 = await api.create_user(_name("Bu2"), PW, "user", actor_id=None)
+    off = await api.create_user(_name("Boff"), PW, "user", actor_id=None)
+    await api.update_user(off.id, enabled=False, actor_id=None)
+    sid = await api.create_session(u1.id, max_age_seconds=3600)
+    missing = str(uuid.uuid4())
+    res = await api.bulk_user_action([u1.id, u2.id, off.id, boss.id, missing, "bad", u1.id], "disable",
+                                     actor_id=boss.id)
+    got = [(r.user_id, r.status, r.error.code if r.error else None) for r in res]
+    assert got == [(u1.id, "ok", None), (u2.id, "ok", None), (off.id, "unchanged", None),
+                   (boss.id, "skipped", "self_lockout"), (missing, "skipped", "not_found"),
+                   ("bad", "skipped", "not_found")], got
+    assert await api.resolve_session(sid) is None
+    assert not (await api.get_user(u1.id)).enabled and not (await api.get_user(u2.id)).enabled
+    _total, entries = await api.list_audit(limit=200)
+    disables = [e for e in entries if e.action == "user.disable" and e.target_id in (u1.id, u2.id, off.id)]
+    # off 只有批次前那一筆（via=web）：已停用再停用是 unchanged，與單筆一樣不寫稽核。
+    assert sorted((e.target_id, e.detail.get("via")) for e in disables) == sorted(
+        [(u1.id, "web_bulk"), (u2.id, "web_bulk"), (off.id, "web")]), disables
+    assert all(set(e.detail) == {"username", "revoked_sessions", "via"} for e in disables), disables
+    summary = [e for e in entries if e.action == "user.bulk_action" and e.actor_user_id == boss.id]
+    assert len(summary) == 1 and summary[0].target_id == "disable", summary
+    assert summary[0].detail["user_ids"] == [u1.id, u2.id]
+    assert summary[0].detail["skipped"] == {"not_found": 2, "self_lockout": 1}
+    assert summary[0].detail["unchanged"] == 1 and summary[0].detail["requested"] == 6
+    res = await api.bulk_user_action([u1.id, u2.id], "enable", actor_id=boss.id)
+    assert [r.status for r in res] == ["ok", "ok"]
+    s2 = await api.create_session(u2.id, max_age_seconds=3600)
+    res = await api.bulk_user_action([u2.id, boss.id], "logout", actor_id=boss.id)
+    assert [(r.status, r.revoked_sessions) for r in res[:1]] == [("ok", 1)], res
+    assert res[1].status == "skipped" and res[1].error.code == "self_lockout"
+    assert await api.resolve_session(s2) is None
+    assert (await api.verify_audit_chain()).ok
+
+
+async def scenario_bulk_rules(api) -> None:
+    boss = await api.create_user(_name("RBoss"), PW, "admin", actor_id=None, is_super=True)
+    plain = await api.create_user(_name("RPlain"), PW, "admin", actor_id=None)
+    member = await api.create_user(_name("RMem"), PW, "user", actor_id=None)
+    res = await api.bulk_user_action([boss.id, member.id], "disable", actor_id=plain.id)
+    assert [(r.status, r.error.code if r.error else None) for r in res] == [("skipped", "super_required"),
+                                                                             ("ok", None)], res
+    await api.request_deletion(member.id, actor_id=boss.id)
+    res = await api.bulk_user_action([member.id], "enable", actor_id=boss.id)
+    assert res[0].status == "skipped" and res[0].error.code == "deletion_pending", res
+    too_many = [str(uuid.uuid4()) for _ in range(accounts.BULK_MAX_USERS + 1)]
+    for ids, action in (([], "disable"), (too_many, "disable"), ([member.id], "delete")):
+        await _expect(accounts.InvalidInputError, api.bulk_user_action(ids, action, actor_id=boss.id))
+    # 重複的 id 只處理一次
+    res = await api.bulk_user_action([plain.id, plain.id], "logout", actor_id=boss.id)
+    assert len(res) == 1 and res[0].status == "ok", res
+
+
+async def scenario_bulk_last_super(api) -> None:
+    """只在「庫裡沒有別的啟用中 super admin」時有意義（CI 的空庫、假帳號庫）：同一批停用全部 super admin 時，
+    處理順序上的最後一位被擋——計數看得到同一批前面已做的變更。"""
+    a = await api.create_user(_name("BSupA"), PW, "admin", actor_id=None, is_super=True)
+    b = await api.create_user(_name("BSupB"), PW, "admin", actor_id=None, is_super=True)
+    c = await api.create_user(_name("BSupC"), PW, "admin", actor_id=None, is_super=True)
+    await api.create_user(_name("BHelper"), PW, "admin", actor_id=None)
+    res = await api.bulk_user_action([a.id, b.id, c.id], "disable", actor_id=None)
+    got = [(r.status, r.error.code if r.error else None) for r in res]
+    assert got == [("ok", None), ("ok", None), ("skipped", "last_super")], got
+    assert (await api.get_user(c.id)).enabled
+
+
+async def scenario_bulk_rolls_back_on_unexpected_error(api) -> None:
+    """第二筆的稽核寫不進去（非規則性失敗）：整批回滾，第一筆的變更與稽核都不留。"""
+    boss = await api.create_user(_name("XBoss"), PW, "admin", actor_id=None, is_super=True)
+    u1 = await api.create_user(_name("Xu1"), PW, "user", actor_id=None)
+    u2 = await api.create_user(_name("Xu2"), PW, "user", actor_id=None)
+    _t, before = await api.list_audit(limit=500)
+    orig = api._audit
+    calls = {"n": 0}
+
+    def _tick():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("稽核寫不進去")
+
+    if asyncio.iscoroutinefunction(orig):
+        async def boom(*a, **kw):
+            _tick()
+            return await orig(*a, **kw)
+    else:
+        def boom(*a, **kw):
+            _tick()
+            return orig(*a, **kw)
+    with mock.patch.object(api, "_audit", boom):
+        try:
+            await api.bulk_user_action([u1.id, u2.id], "disable", actor_id=boss.id)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("非規則性失敗應往上拋")
+    assert (await api.get_user(u1.id)).enabled and (await api.get_user(u2.id)).enabled
+    _t, after = await api.list_audit(limit=500)
+    assert {e.id for e in after} == {e.id for e in before}, "回滾時稽核也不留"
+    assert (await api.verify_audit_chain()).ok
+
+
 SCENARIOS = [
     scenario_login,
     scenario_duplicate_username_case_insensitive,
@@ -570,12 +691,17 @@ SCENARIOS = [
     scenario_deletion_execute_purges,
     scenario_deletion_replay,
     scenario_ops_action_audit,
+    scenario_export_audit,
+    scenario_bulk_disable_enable_logout,
+    scenario_bulk_rules,
+    scenario_bulk_rolls_back_on_unexpected_error,
 ]
 
 
 class FakeParityTests(unittest.TestCase):
     def test_scenarios(self):
-        for scenario in [*SCENARIOS, scenario_last_admin, scenario_last_super, scenario_last_admin_cannot_be_deleted]:
+        for scenario in [*SCENARIOS, scenario_last_admin, scenario_last_super, scenario_last_admin_cannot_be_deleted,
+                         scenario_bulk_last_super]:
             with self.subTest(scenario.__name__):
                 asyncio.run(scenario(FakeAccounts()))
 
@@ -667,6 +793,19 @@ class AccountsDbTests(unittest.TestCase):
             if supers > 0:
                 raise unittest.SkipTest("庫裡已有啟用中的 super admin，最後一位 super 的情境驗不到（CI 空庫會跑）")
             await scenario_last_super(accounts)
+
+        try:
+            asyncio.run(_in_rolled_back_transaction(go))
+        except (unittest.SkipTest, AssertionError, accounts.AccountError):
+            raise
+        except Exception as exc:
+            _skip_or_raise(exc, "DB 不可用或尚未套 schema")
+
+    def test_bulk_last_super_guard(self):
+        async def go():
+            if await accounts.count_enabled_supers() > 0:
+                raise unittest.SkipTest("庫裡已有啟用中的 super admin，批次的最後一位 super 驗不到（CI 空庫會跑）")
+            await scenario_bulk_last_super(accounts)
 
         try:
             asyncio.run(_in_rolled_back_transaction(go))

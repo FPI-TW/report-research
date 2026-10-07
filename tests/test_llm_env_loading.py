@@ -27,8 +27,11 @@ PROJECT_ROOTS = {"app", "web", "scripts", "eval"}
 
 # 「會呼叫 LLM」的判準：import 了呼叫層（線上串流、HTTP 客戶端、批次 CLI 包裝、批次鎖、評測 judge）。
 # generate_brief.py 自帶 call_cli（DeepSeek 分支才交給 run_claude），也靠 `_claude_lock` 被掃到。
+# scripts._ingest_core 是 sync 與上傳 worker 共用的單篇入庫核心：它自己不是入口（不取鎖、不載 llm 檔），
+# 但 import 它的入口一樣會打行內標註、在 import 期解析 TAG_MODEL，所以算直接呼叫層。
 DIRECT_LLM_MODULES = {
     "app.services.llm", "app.services.llm_http", "scripts._claude_cli", "scripts._claude_lock", "eval.judge",
+    "scripts._ingest_core",
 }
 # 間接呼叫 LLM 的服務層（審查低 4）：問答受控重播這類入口不直接 import 呼叫層，只 import
 # answer／retrieval_pipeline 等，模型常數卻一樣在 import 期解析——漏掃就會用「沒讀到 llm 檔」的設定。
@@ -37,12 +40,13 @@ INDIRECT_SUBMODULES = {
 }
 INDIRECT_LLM_MODULES = {f"app.services.{m}" for m in INDIRECT_SUBMODULES}
 LLM_MODULES = DIRECT_LLM_MODULES | INDIRECT_LLM_MODULES
-LLM_SUBMODULE_NAMES = {"llm", "llm_http", "_claude_cli", "_claude_lock", "judge"} | INDIRECT_SUBMODULES
+DIRECT_SUBMODULE_NAMES = {"llm", "llm_http", "_claude_cli", "_claude_lock", "judge", "_ingest_core"}
+LLM_SUBMODULE_NAMES = DIRECT_SUBMODULE_NAMES | INDIRECT_SUBMODULES
 LLM_SYMBOLS = {"run_claude", "stream_completion"}
 KNOWN_ENTRIES = {
     "scripts/sync_new_reports.py", "scripts/tag_all_cli.py", "scripts/generate_summaries.py",
     "scripts/generate_titles.py", "scripts/extract_takeaways.py", "scripts/extract_signals.py",
-    "scripts/generate_brief.py", "eval/run_ragas.py",
+    "scripts/generate_brief.py", "eval/run_ragas.py", "scripts/process_uploads.py",
 }
 # 被間接層判準掃到、但**不呼叫 LLM** 的入口：只從間接層取常數或純函式。逐檔列出允許取用的名稱
 # （含經模組別名取用的屬性）；一旦取用了其他名稱（例如 answer_question），豁免失效、測試紅，
@@ -193,6 +197,19 @@ class LoadOrderAstTests(unittest.TestCase):
                 self.assertTrue(_imports_llm(ast.parse(src + main)))
         self.assertFalse(_imports_llm(ast.parse("from app.services.db import SessionFactory" + main)))
 
+    def test_scanner_treats_ingest_core_importers_as_entries(self):
+        """之後的上傳 worker 只 import 入庫核心（不直接碰 _claude_cli）也必須被當成 LLM 入口。"""
+        main = "\nif __name__ == '__main__':\n    pass\n"
+        for src in ("from scripts._ingest_core import ingest_one", "from scripts import _ingest_core"):
+            with self.subTest(src=src):
+                self.assertTrue(_imports_llm(ast.parse(src + main)))
+
+    def test_ingest_core_is_not_an_entry(self):
+        """入庫核心沒有 main guard、不呼叫 load_llm_env：載入與預檢是 import 它的入口的責任。"""
+        tree = ast.parse((REPO_ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8"))
+        self.assertFalse(_has_main_guard(tree))
+        self.assertEqual(_calls(tree, "load_llm_env"), [])
+
     def test_non_llm_exemptions_are_exact_and_still_non_llm(self):
         """豁免的入口：必須仍被掃到（否則清單過期）、不 import 直接呼叫層、只取用列出的名稱。"""
         scanned = _scanned_files()
@@ -201,7 +218,7 @@ class LoadOrderAstTests(unittest.TestCase):
                 self.assertIn(rel, scanned, "不再被掃到就從 NON_LLM_ENTRIES 移除")
                 tree = scanned[rel]
                 self.assertFalse(
-                    _imports_llm(tree, DIRECT_LLM_MODULES, {"llm", "llm_http", "_claude_cli", "_claude_lock", "judge"}),
+                    _imports_llm(tree, DIRECT_LLM_MODULES, DIRECT_SUBMODULE_NAMES),
                     "import 了直接呼叫層就不是「不呼叫 LLM」",
                 )
                 self.assertLessEqual(_indirect_names(tree), allowed, "取用了清單外的名稱：改為照規矩載入與預檢")

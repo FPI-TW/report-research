@@ -11,7 +11,7 @@ uid 白名單是第二道：群組多加了誰，也還要 catalog 點名。
 CLI：
     python3 -m ops_agent --catalog /opt/report-mark-ops/services.prod.toml            # 常駐（systemd 用）
     python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/x.sock  # dev 冒煙，臨時 socket
-    python3 -m ops_agent --catalog deploy/ops/services.prod.toml --check              # 只驗 catalog
+    python3 -m ops_agent --catalog deploy/ops/services.prod.toml --check              # 只驗 catalog（含依賴圖）
 
 退出碼：0 正常收場（含 SIGTERM）；2 catalog／綁定設定錯誤（拒絕啟動）；1 其他啟動失敗。
 """
@@ -161,8 +161,10 @@ class Agent:
                     row = {**svc.public(), "summary": "unknown", "error": "此服務不允許 status",
                            "systemd": None, "container": None, "timer_state": None}
                 items.append(row)
+            # externals：依賴圖的外部節點（代理不查它們，只照 catalog 轉交；判讀在 web）。
             return {"environment": self.catalog.environment, "host": socket.gethostname(),
-                    "checked_at": checked_at, "items": items}
+                    "checked_at": checked_at, "items": items,
+                    "externals": [ext.public() for ext in self.catalog.externals]}
         if op == "status":
             svc = self._service(req["service"], OPS[op])
             row = (await backends.query_status(self.catalog, self.runner, [svc]))[0]
@@ -328,8 +330,10 @@ def main(argv=None) -> int:
         print(f"拒絕啟動：{exc}", file=sys.stderr)
         return 2
     if args.check:
+        edges = sum(len(n.depends_on) for n in (*catalog.services, *catalog.externals))
         print(f"catalog OK：environment={catalog.environment} socket={socket_path} "
-              f"services={len(catalog.services)} allowed_uids={sorted(catalog.agent.allowed_uids)}")
+              f"services={len(catalog.services)} externals={len(catalog.externals)} dependencies={edges} "
+              f"allowed_uids={sorted(catalog.agent.allowed_uids)}")
         return 0
 
     async def _run() -> None:

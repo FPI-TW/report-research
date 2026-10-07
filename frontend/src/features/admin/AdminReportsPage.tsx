@@ -4,11 +4,16 @@ import { ConfirmDialog } from '../../components/primitives/ConfirmDialog'
 import { Modal } from '../../components/primitives/Modal'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import { displayTitle } from '../../lib/displayTitle'
-import type { AdminReportItem } from '../../lib/generated/adminApi'
+import { adminCsvUrls, type AdminReportItem } from '../../lib/generated/adminApi'
 import { AdminHeader } from './AdminHeader'
+import { BulkResultPanel, SelectAllBox } from './BulkParts'
+import { ExportCsvButton } from './ExportCsvButton'
 import { fmtDateTime } from './auditLabels'
 import { RequireScope } from './RequireScope'
-import { REPORTS_PAGE_SIZE, useAdminReports, useReportVisibility, type HiddenFilter } from './useAdminReports'
+import {
+  REPORTS_PAGE_SIZE, useAdminReports, useBulkReportVisibility, useReportVisibility, type HiddenFilter,
+} from './useAdminReports'
+import { namesPreview, useSelection, type BulkOutcome } from './useSelection'
 import styles from './Admin.module.css'
 
 // 與後端 app/services/visibility.py 的 REASON_MAX_CHARS 相同；這裡只是提早提示，後端仍會再驗一次。
@@ -62,6 +67,56 @@ function HideDialog({ report, onClose, onDone }: {
   )
 }
 
+/** 批次隱藏：列出對象（最多 5 個名稱）並要求原因；原因規則與單筆相同，後端仍會再驗一次。 */
+function BulkHideDialog({ targets, onClose, onSubmit }: {
+  targets: AdminReportItem[] | null; onClose: () => void; onSubmit: (reason: string) => Promise<void>
+}) {
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const close = () => { setReason(''); setError(null); onClose() }
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    const note = reason.trim()
+    if (!note) { setError('隱藏研報必須填寫原因'); return }
+    if (note.length > REASON_MAX) { setError(`原因最多 ${REASON_MAX} 字`); return }
+    setError(null)
+    setBusy(true)
+    try {
+      await onSubmit(note)
+      setReason('')
+      onClose()
+    } catch (err) {
+      setError(messageOf(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open={targets != null} onClose={close} title={targets ? `批次隱藏 ${targets.length} 份研報` : ''}>
+      <form className={styles.dialogForm} onSubmit={submit} noValidate>
+        {targets && <p className={styles.bulkTargets}>{namesPreview(targets.map(r => displayTitle(r)))}</p>}
+        <p className={styles.hint}>
+          隱藏後所有使用者都看不到這些研報；同一個原因套用到每一份，每一份各留一筆操作紀錄。
+          草稿或已不存在的研報會逐筆略過，其餘照常處理。
+        </p>
+        <label className={styles.field}>原因（必填，最多 {REASON_MAX} 字；只有管理員看得到）
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} maxLength={REASON_MAX * 2} />
+        </label>
+        {error && <p className={styles.error} role="alert">{error}</p>}
+        <div className={styles.dialogActions}>
+          <button type="button" className={styles.action} onClick={close}>取消</button>
+          <button type="submit" className={styles.primary} disabled={busy}>
+            {busy ? '隱藏中…' : `隱藏 ${targets?.length ?? 0} 份`}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) => void }) {
   const [draft, setDraft] = useState('')
   const [q, setQ] = useState('')
@@ -71,8 +126,34 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
   const [restoreFor, setRestoreFor] = useState<AdminReportItem | null>(null)
   const reports = useAdminReports({ q, hidden, offset })
   const visibility = useReportVisibility()
+  const bulk = useBulkReportVisibility()
+  const sel = useSelection()
+  const [bulkHideFor, setBulkHideFor] = useState<AdminReportItem[] | null>(null)
+  const [bulkRestoreFor, setBulkRestoreFor] = useState<AdminReportItem[] | null>(null)
+  const [outcome, setOutcome] = useState<BulkOutcome | null>(null)
 
-  const search = (e: FormEvent) => { e.preventDefault(); setQ(draft); setOffset(0) }
+  // 勾選只作用在目前這一頁：換頁、改篩選就清掉。草稿不能隱藏也不能恢復，不給勾。
+  const items = reports.data?.items ?? []
+  const selectable = items.filter(r => r.publication !== 'draft').map(r => r.file_hash)
+  const chosen = items.filter(r => sel.selected.has(r.file_hash) && r.publication !== 'draft')
+  const toHide = chosen.filter(r => !r.hidden)
+  const toRestore = chosen.filter(r => r.hidden)
+
+  const search = (e: FormEvent) => { e.preventDefault(); setQ(draft); setOffset(0); sel.clear() }
+  const goTo = (next: number) => { setOffset(next); sel.clear() }
+  /** 送出批次並把逐筆結果整理成給人看的清單；錯誤（含 422）往上拋給對話框或通知列顯示。 */
+  const runBulk = async (targets: AdminReportItem[], hide: boolean, reason?: string) => {
+    const names = new Map(targets.map(r => [r.file_hash, displayTitle(r)]))
+    const res = await bulk.mutateAsync({ fileHashes: targets.map(r => r.file_hash), hidden: hide, reason })
+    sel.clear()
+    setOutcome({
+      title: hide ? '批次隱藏' : '批次恢復',
+      ok: res.ok,
+      skipped: res.results.filter(r => r.status === 'skipped').map(r => ({
+        name: names.get(r.file_hash) ?? r.file_hash.slice(0, 12), detail: r.detail ?? r.code ?? '略過',
+      })),
+    })
+  }
   const restore = (r: AdminReportItem) => {
     setRestoreFor(null)
     visibility.mutate({ fileHash: r.file_hash, hidden: false }, {
@@ -83,13 +164,19 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
 
   return (
     <section className={styles.card} aria-labelledby="admin-reports-title">
-      <h2 id="admin-reports-title" className={styles.ctitle}>研報清單</h2>
+      <div className={styles.cardHead}>
+        <h2 id="admin-reports-title" className={styles.ctitle}>研報清單</h2>
+        <ExportCsvButton
+          href={adminCsvUrls.exportReports({ q: q || undefined, hidden: hidden === 'all' ? undefined : hidden === 'hidden' })}
+          what="研報清單"
+        />
+      </div>
       <form className={styles.form} onSubmit={search} role="search">
         <label className={styles.field}>關鍵字（標題／檔名／券商）
           <input type="search" value={draft} onChange={e => setDraft(e.target.value)} maxLength={200} />
         </label>
         <label className={styles.field}>狀態
-          <select value={hidden} onChange={e => { setHidden(e.target.value as HiddenFilter); setOffset(0) }}>
+          <select value={hidden} onChange={e => { setHidden(e.target.value as HiddenFilter); goTo(0) }}>
             <option value="all">全部</option>
             <option value="visible">顯示中</option>
             <option value="hidden">已隱藏</option>
@@ -98,6 +185,19 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
         <button type="submit" className={styles.primary}>搜尋</button>
       </form>
       <div className={styles.spacer} />
+      <BulkResultPanel outcome={outcome} onClose={() => setOutcome(null)} />
+      {chosen.length > 0 && (
+        <div className={styles.bulkBar} role="toolbar" aria-label="批次操作">
+          <span className={styles.bulkCount}>已選 {chosen.length} 筆</span>
+          <button type="button" className={`${styles.action} ${styles.danger}`}
+            disabled={toHide.length === 0 || bulk.isPending} onClick={() => setBulkHideFor(toHide)}
+            title={toHide.length === 0 ? '選取的研報都已隱藏' : undefined}>批次隱藏（{toHide.length}）</button>
+          <button type="button" className={styles.action}
+            disabled={toRestore.length === 0 || bulk.isPending} onClick={() => setBulkRestoreFor(toRestore)}
+            title={toRestore.length === 0 ? '選取的研報都是顯示中' : undefined}>批次恢復（{toRestore.length}）</button>
+          <button type="button" className={styles.action} onClick={sel.clear}>清除選取</button>
+        </div>
+      )}
       {reports.isPending ? (
         <p className={styles.idle}>載入中…</p>
       ) : reports.isError ? (
@@ -109,13 +209,27 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
-                <tr><th>研報</th><th>券商／市場</th><th>報告日／入庫</th><th>狀態</th><th>操作</th></tr>
+                <tr>
+                  <th className={styles.checkCell}>
+                    <SelectAllBox ids={selectable} selected={sel.selected} onChange={on => sel.setAll(selectable, on)} />
+                  </th>
+                  <th>研報</th><th>券商／市場</th><th>報告日／入庫</th><th>狀態</th><th>操作</th>
+                </tr>
               </thead>
               <tbody>
-                {reports.data.items.map(r => (
+                {reports.data.items.map(r => {
+                  // 上傳後尚未發布的草稿：一般頁面看不到（閱讀頁 404），隱藏／恢復也不適用（後端回 409）。
+                  const isDraft = r.publication === 'draft'
+                  return (
                   <tr key={r.file_hash}>
+                    <td className={styles.checkCell}>
+                      <input type="checkbox" className={styles.rowCheck} aria-label={`選取「${displayTitle(r)}」`}
+                        checked={!isDraft && sel.selected.has(r.file_hash)} disabled={isDraft}
+                        title={isDraft ? '草稿不能隱藏或恢復，請到上傳審核發布或退回' : undefined}
+                        onChange={() => sel.toggle(r.file_hash)} />
+                    </td>
                     <td className={styles.wrapCell}>
-                      {r.hidden ? displayTitle(r) : <Link to={`/report/${r.file_hash}`}>{displayTitle(r)}</Link>}
+                      {r.hidden || isDraft ? displayTitle(r) : <Link to={`/report/${r.file_hash}`}>{displayTitle(r)}</Link>}
                       {r.title && <div className={styles.muted}>{r.file_name}</div>}
                     </td>
                     <td>{r.source || '—'}<div className={styles.muted}>{r.market || '—'}</div></td>
@@ -124,7 +238,11 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                       <div className={styles.muted} title="入庫">{fmtDateTime(r.created_at)}</div>
                     </td>
                     <td className={styles.wrapCell}>
-                      <span className={`${styles.badge} ${r.hidden ? styles.badgeOff : ''}`}>{r.hidden ? '已隱藏' : '顯示中'}</span>
+                      {isDraft
+                        // 沒有 file_hash → upload_id 的查詢端點：連到上傳清單的「待審草稿」分頁籤。
+                        ? <Link to="/admin/uploads?tab=draft" className={`${styles.badge} ${styles.badgeOff}`}
+                            title="到上傳審核發布或退回">草稿</Link>
+                        : <span className={`${styles.badge} ${r.hidden ? styles.badgeOff : ''}`}>{r.hidden ? '已隱藏' : '顯示中'}</span>}
                       {r.hidden && r.hidden_reason && <div className={styles.reason}>{r.hidden_reason}</div>}
                       {r.visibility_updated_at && (
                         <div className={styles.muted}>
@@ -133,7 +251,9 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                       )}
                     </td>
                     <td>
-                      {r.hidden ? (
+                      {isDraft ? (
+                        <Link to="/admin/uploads?tab=draft" className={styles.muted}>到上傳審核</Link>
+                      ) : r.hidden ? (
                         <button type="button" className={styles.action} disabled={visibility.isPending}
                           onClick={() => setRestoreFor(r)}>恢復</button>
                       ) : (
@@ -142,16 +262,17 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                       )}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
           <div className={styles.pager}>
             <button type="button" className={styles.action} disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - REPORTS_PAGE_SIZE))}>上一頁</button>
+              onClick={() => goTo(Math.max(0, offset - REPORTS_PAGE_SIZE))}>上一頁</button>
             <span>{`第 ${offset + 1}–${offset + reports.data.items.length} 筆，共 ${reports.data.total} 筆`}</span>
             <button type="button" className={styles.action} disabled={reports.data.next_offset == null}
-              onClick={() => { if (reports.data.next_offset != null) setOffset(reports.data.next_offset) }}>下一頁</button>
+              onClick={() => { if (reports.data.next_offset != null) goTo(reports.data.next_offset) }}>下一頁</button>
           </div>
         </>
       )}
@@ -167,6 +288,22 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
         onConfirm={() => { if (restoreFor) restore(restoreFor) }}
         onCancel={() => setRestoreFor(null)}
       />
+      <BulkHideDialog targets={bulkHideFor} onClose={() => setBulkHideFor(null)}
+        onSubmit={reason => runBulk(bulkHideFor ?? [], true, reason)} />
+      <ConfirmDialog
+        open={bulkRestoreFor != null}
+        title={bulkRestoreFor ? `批次恢復 ${bulkRestoreFor.length} 份研報？` : ''}
+        body={bulkRestoreFor
+          ? `${namesPreview(bulkRestoreFor.map(r => displayTitle(r)))}。恢復後所有使用者立刻又能看到這些研報；每一份各留一筆操作紀錄。`
+          : ''}
+        confirmLabel={`恢復 ${bulkRestoreFor?.length ?? 0} 份`}
+        onConfirm={() => {
+          const targets = bulkRestoreFor ?? []
+          setBulkRestoreFor(null)
+          runBulk(targets, false).catch(err => onNotice(`批次恢復失敗：${messageOf(err)}`, true))
+        }}
+        onCancel={() => setBulkRestoreFor(null)}
+      />
     </section>
   )
 }
@@ -179,7 +316,7 @@ function AdminReports() {
       <div className={styles.inner}>
         <AdminHeader
           title="研報管理"
-          subtitle="查研報、隱藏不該出現的研報（必填原因）或恢復；每一筆操作都會留在「操作紀錄」。"
+          subtitle="查研報、隱藏不該出現的研報（必填原因）或恢復，可勾選多筆一次處理；每一筆操作都會留在「操作紀錄」。"
         />
         {notice && (
           <p className={notice.isError ? styles.error : styles.ok} role={notice.isError ? 'alert' : 'status'}>{notice.msg}</p>

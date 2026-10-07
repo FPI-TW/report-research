@@ -126,7 +126,6 @@ tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, t
 import errno
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
@@ -137,9 +136,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from app.services import llm_failures, llm_http
+from app.services import llm_failures, llm_http, llm_usage
 from app.services.llm_models import is_http_model, looks_like_cli_auth_error
-from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path, sync_round_id
+from scripts._llm_env import BREAKER_TTL_S, breaker_path, sync_round_id
 
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
 # 「usage: unknown flag」「Credit balance too low」這類真正有資訊量的那一行。
@@ -477,8 +476,11 @@ _usage_warned = False
 
 
 def usage_log_path() -> Path:
-    """`LLM_USAGE_LOG` 只給測試用（conftest 指到 os.devnull）；生產一律 `data/llm_usage.jsonl`。"""
-    return Path(os.environ.get("LLM_USAGE_LOG") or ROOT / "data" / "llm_usage.jsonl")
+    """`LLM_USAGE_LOG` 只給測試用（conftest 指到 os.devnull）；生產一律 `data/llm_usage.jsonl`。
+
+    路徑的唯一定義在 `app/services/llm_usage.py`（管理後台的用量頁讀同一份檔）。
+    """
+    return llm_usage.usage_log_path()
 
 
 def _tokens(usage: Optional[dict]) -> Optional[dict]:

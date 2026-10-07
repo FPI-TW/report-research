@@ -1,0 +1,32 @@
+/* 維運 → 診斷頁。卡片、按鈕、狀態膠囊沿用 Admin.module.css／Ops.module.css；這裡只有鍵值網格與換行規則。 */
+
+/* 摘要燈號：窄時自動換行成多列 */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.summaryItem {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 10px 12px;
+}
+.summaryLabel { font-size: 12px; color: var(--tf-text-4); }
+.summaryDetail { font-size: 11.5px; color: var(--tf-text-3); overflow-wrap: anywhere; }
+
+/* 兩欄網格：卡片多時並排，手機單欄 */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.grid > section { min-width: 0; }
+
+/* 鍵值清單：長字串（commit、路徑、bundle 檔名）一律換行，不撐出橫捲軸 */
+.kv { display: grid; grid-template-columns: minmax(96px, max-content) minmax(0, 1fr); gap: 6px 14px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--tf-text-4); }
+.kv dd { margin: 0; color: var(--tf-text-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.mono { font-family: var(--tf-mono); font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.sub { font-size: 13px; font-weight: 600; color: var(--tf-text-2); margin: 16px 0 8px; }
+.errNote { font-size: 12px; color: var(--tf-error-text); margin: 4px 0 0; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.copyOk { font-size: 12px; color: var(--tf-text-3); }
+.copyFail { font-size: 12px; color: var(--tf-error-text); }
+.manual { width: 100%; min-height: 160px; margin-top: 10px; font-family: var(--tf-mono); font-size: 11.5px; resize: vertical; box-sizing: border-box; }
+
+@media (max-width: 560px) {
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .kv dd { margin-bottom: 8px; }
+}

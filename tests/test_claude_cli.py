@@ -431,7 +431,8 @@ class BatchCallSiteMaxTokensTests(unittest.TestCase):
         ("scripts/extract_takeaways.py", "TASK_TAKEAWAY"): 4096,
         ("scripts/extract_signals.py", "llm_failures.TASK_SIGNAL"): 16384,
         ("scripts/tag_all_cli.py", "TASK_TAG"): 1024,
-        ("scripts/sync_new_reports.py", "TASK_TAG"): 1024,
+        # sync 的行內標註；呼叫點在 sync 與上傳 worker 共用的入庫核心（值與 tag_all_cli 相同）
+        ("scripts/_ingest_core.py", "TASK_TAG"): 1024,
         ("scripts/generate_brief.py", "TASK_BRIEF"): 8192,
     }
 
@@ -735,7 +736,7 @@ class DeadlineTests(_HttpCase):
 
     def test_batch_call_sites_keep_their_timeouts(self):
         """沿用各批次現行 timeout（摘要／標題／摘錄／訊號 180、標註 150、簡報 300）當總期限。"""
-        from test_batch_http_dispatch import es, et, gb, gs, gt, snr, tac
+        from test_batch_http_dispatch import es, et, gb, gs, gt, ic, tac
 
         seen = {}
 
@@ -751,7 +752,7 @@ class DeadlineTests(_HttpCase):
             et.call_cli("p", "deepseek-flash")
             es.call_cli("p", "deepseek-flash")
             tac.call_cli("p")
-            snr._tag_via_cli("x.pdf", "t", model="deepseek-flash")
+            ic._tag_via_cli("x.pdf", "t", model="deepseek-flash")
             gb.call_cli("p", "deepseek-flash")
         self.assertEqual(seen, {
             "summary": 180.0, "title": 180.0, "takeaway": 180.0, "signal": 180.0, "tag": 150.0, "brief": 300.0,

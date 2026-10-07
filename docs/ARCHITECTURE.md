@@ -114,7 +114,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 ## 4. 檢索
 
 - `hybrid_search(session, q, query_embedding, *, k, 篩選…, dense_scan, lex_limit, lex_cap, …)` 回 `[(tier, fused, row)]`，**只以 `(tier, fused)` 排序**。tier 是硬保證：`TIER_PHRASE=2`（整串命中，bonus 0.25）＞ `TIER_ALL_TERMS=1`（至少兩詞且全部命中，0.15）＞ `TIER_SEMANTIC=0`（部分命中，0.05 × 覆蓋率）。`fused = min(0.999, dense_sim + bonus)`。
-- lexical 走 `pg_trgm` over 生成欄 `content_norm`；純中文查詢 lexical 空命中時以 `cjk_affix_candidates` ＋ `store.pick_title_lead_term` 重探；挑中後 `phrase`／`terms` 一併換成該詞算 tier（只補召回不補排序等於沒補）。`k` 只在沒給 `dense_scan` 時決定掃描量（`max(120, k×8)`）；問答一律傳 `ASK_DENSE_SCAN`，所以請求的 `k` 與 `ASK_RETRIEVAL_K` 不影響問答的候選數。`distance` 為 NULL 的列跳過並計數，不拋例外。
+- lexical 走 `pg_trgm` over 生成欄 `content_norm`；命中超過 cap（問答 `LEX_CAP` 2000、檢索頁 `LEX_CAP_SEARCH` 8000）時取 chunk id 最小的 cap 列、距離平手以 id 決勝，同一語料同一查詢結果相同；查詢前 `SET LOCAL plan_cache_mode = force_custom_plan`（兩字詞抽不出 trigram，generic plan 下會掃整棵 GIN 或走主鍵順掃，實測數秒到數十秒）。取捨與實測數字在 `store._lexical_sql` docstring；純中文查詢 lexical 空命中時以 `cjk_affix_candidates` ＋ `store.pick_title_lead_term` 重探；挑中後 `phrase`／`terms` 一併換成該詞算 tier（只補召回不補排序等於沒補）。`k` 只在沒給 `dense_scan` 時決定掃描量（`max(120, k×8)`）；問答一律傳 `ASK_DENSE_SCAN`，所以請求的 `k` 與 `ASK_RETRIEVAL_K` 不影響問答的候選數。`distance` 為 NULL 的列跳過並計數，不拋例外。
 - 選篇分**兩條互不共用**：檢索頁走 `retrieval.rank_reports`（`relevance`／`date_desc`／`date_asc`，相關度以 `BAND_WIDTH=0.05` 分帶再看日期），消費端 `web/routers/search.py`；問答走 `answer.select_reports`（聚合 → 排序 → 過舊軟截斷 → 相關度下限 → 過舊配額 → 字數預算；相關度下限與過舊配額在湊滿 `ASK_MIN_REPORTS` 篇之後才生效，比的是 rerank 前的 `best_gate`，tier ≥ `TIER_ALL_TERMS` 一律放行。MMR 分支 `_mmr_pick` 目前沒有呼叫端傳 `mmr_lambda`，原消費端已隨深度研報移除，生產恆走一般迴圈）。調問答新近度改 `rank_reports` 沒有作用。
 - `retrieval_pipeline.retrieve_context`：短連線做檢索，rerank 前拍 `gate_scores` 快照；rerank 未實際套用時 `gate_scores` 不傳。多子查詢扇出（`retrieve_context_multi`／`merge_scored`）已隨深度研報移除，agentic 補查（M5）逐子查詢各自呼叫 `retrieve_context`。
 - rerank 的 fail-open 契約：所有 fail-open 路徑回傳**輸入的同一 list 物件**，成功路徑回新 list；`_rerank_stage` 以 `reranked is not scored` 判 `applied`。逾時用 `asyncio.shield`，結果由 callback 消費。只重排前 `top_m` 筆，以 sigmoid 分覆蓋 fused、tier 保留、尾段保留 fused（所以要拍 `gate_scores` 快照）；並行名額 `REPORT_MARK_RERANK_WORKERS`（3），逾時預算含排隊時間，被放棄的工作靠 deadline 在每 16 筆的批次邊界收手。冷載入實測 44–52 秒，所以 lifespan 暖機。
@@ -234,6 +234,7 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 | 測試不得寫 repo 根 `.env` | `tests/conftest.py`、`tests/test_env_loading.py` |
 | `llm.py` 不取批次 flock | `tests/test_claude_lock.py` |
 | `rows.ChunkRow` 新欄位插中段不 append | `app/services/rows.py` |
+| 字面路 cap 前以 `c.id` 排序、查詢前強迫 custom plan | `app/services/store.py` 的 `_lexical_sql` docstring 與 `search_chunks_lexical` 註解、`tests/test_lexical_determinism_db.py` |
 | `ASK_*` 逾時、`DB_*` 逾時的數字 | `app/config.py` 逐條註解 |
 | `zh_hant.py` 的判別法與門檻、`faithfulness.is_numeric_claim`、`reading/queries.py` 的 `_SIMILAR_SQL`、`ASK_RERANK_CANDIDATES` | `zh_hant.py` 模組 docstring、`faithfulness.py` 的 `_NUMERIC_RE` 上方、`reading/queries.py` 的 `_SIMILAR_SQL` 周邊註解、`docs/CAPACITY.md` |
 | 抽取層不用 PyMuPDF、不用 LLM 評分、快取不存 bbox | `docs/EXTRACTION.md` |

@@ -40,7 +40,9 @@ _SCANNED = [
     )
 ] + [
     REPO_ROOT / "web" / "routers" / p
-    for p in ("search.py", "reading.py", "radar.py", "brief.py", "report_file.py", "ask.py", "qa_history.py")
+    for p in (
+        "search.py", "reading.py", "radar.py", "brief.py", "report_file.py", "ask.py", "qa_history.py", "external.py",
+    )
 ]
 
 _CORPUS_SQL = re.compile(

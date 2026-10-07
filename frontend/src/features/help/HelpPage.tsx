@@ -5,7 +5,6 @@ import { Icon } from '../../components/primitives/Icon'
 import browseImg from '../../assets/help/browse.png'
 import resultsImg from '../../assets/help/results.png'
 import askImg from '../../assets/help/ask.png'
-import monitorImg from '../../assets/help/monitor.png'
 import styles from './HelpPage.module.css'
 
 const ACCESS_URL = 'http://192.168.1.128:8097/'
@@ -42,7 +41,6 @@ const TOC: [string, string][] = [
   ['full', '查看完整報告（閱讀頁）'],
   ['ask', '智能問答（向 AI 提問）'],
   ['radar', '券商觀點'],
-  ['monitor', '導入監控（進階）'],
   ['ai', 'AI 生成內容與資料處理'],
 ]
 
@@ -294,27 +292,11 @@ export default function HelpPage() {
           </ul>
         </section>
 
-        <section id="monitor" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>8</span>導入監控（進階）</h2>
-          <p><strong>導入監控</strong>主要給<strong>管理者</strong>查看資料導入狀況（一般使用者用不到）：</p>
-          <ul className={styles.bul}>
-            <li><strong>已導入報告數、總片段、標註進度、摘要進度</strong>等即時數字。</li>
-            <li><strong>市場分佈</strong>長條圖，與四條背景管線（網頁／導入／標註／摘要）是否執行中。</li>
-            <li>數字會定時自動刷新。</li>
-          </ul>
-          <div className={styles.note}>畫面上的「<strong>—</strong>」代表資料載入中或暫無數值，連上後會自動帶入。</div>
-          <Figure
-            src={monitorImg}
-            alt="導入監控畫面"
-            caption="導入監控：已導入報告／片段／標註／摘要進度、四條處理管線狀態，與市場分佈長條圖"
-          />
-        </section>
-
         {/* AI 生成揭露（DeepSeek 遷移 PR-U）：DeepSeek 條款要求向終端使用者揭露並標示 AI 生成。
             只寫確定的事實：哪些功能由它生成、資料會送去哪裡；供應商怎麼處理以其條款為準，這裡不代為承諾。
             供應商寫成「目前為」：既有的摘要、標題、摘錄與標註多半是遷移前由 Claude 產出，不能說全部出自 DeepSeek。 */}
         <section id="ai" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>9</span>AI 生成內容與資料處理</h2>
+          <h2 className={styles.h2}><span className={styles.no}>8</span>AI 生成內容與資料處理</h2>
           <p>本站以下內容由<strong>大型語言模型</strong>（目前為 DeepSeek）<strong>自動生成</strong>，不是人工撰寫：</p>
           <ul className={styles.bul}>
             <li><strong>智能問答</strong>的回答。</li>

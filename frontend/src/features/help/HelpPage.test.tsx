@@ -35,3 +35,12 @@ test('說明頁揭露 AI 生成內容與資料送往模型供應商', () => {
   expect(section.textContent).toMatch(/大型語言模型（目前為 DeepSeek）自動生成/)
   expect(section.textContent).toMatch(/提問、回答與相關的研報內容會送往模型供應商（目前為 DeepSeek）處理/)
 })
+
+// 導入監控已搬進管理後台（限管理員）：說明頁是給一般使用者的，不再教一個看不到的頁面。
+test('說明頁沒有導入監控章節，章節編號連續', () => {
+  render(<HelpPage />)
+  expect(document.getElementById('monitor')).toBeNull()
+  expect(screen.queryByText(/導入監控/)).toBeNull()
+  const nos = [...document.querySelectorAll('section h2')].map(h => h.textContent?.match(/^\d+/)?.[0])
+  expect(nos).toEqual(nos.map((_, i) => String(i + 1)))
+})

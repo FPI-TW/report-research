@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { EvalSource } from '../monitor/progressSchema'
+import type { EvalSource } from '../../lib/progressSchema'
 import { ReviewQueuePanel } from './ReviewQueuePanel'
 import { reasonText } from './reviewReasons'
 

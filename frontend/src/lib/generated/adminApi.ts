@@ -685,7 +685,7 @@ export type PasswordRequest = z.infer<typeof PasswordRequestSchema>
 
 export const PrivilegesRequestSchema = z.object({
   is_super: z.boolean().nullable().optional(),
-  scopes: z.array(z.enum(['qa_content.read', 'ops.operate'])).nullable().optional(),
+  scopes: z.array(z.enum(['qa_content.read', 'ops.operate', 'api_clients.manage'])).nullable().optional(),
 })
 export type PrivilegesRequest = z.infer<typeof PrivilegesRequestSchema>
 
@@ -834,7 +834,7 @@ export const UserItemSchema = z.object({
   last_seen_at: z.string().nullable().optional(),
   active_sessions: z.number().int().optional(),
   is_super: z.boolean().optional(),
-  scopes: z.array(z.enum(['qa_content.read', 'ops.operate'])).optional(),
+  scopes: z.array(z.enum(['qa_content.read', 'ops.operate', 'api_clients.manage'])).optional(),
   totp_enabled: z.boolean().optional(),
   deletion_execute_after: z.string().nullable().optional(),
 })

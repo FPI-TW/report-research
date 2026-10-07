@@ -51,7 +51,7 @@ router = APIRouter(dependencies=[Depends(authz.require_admin)])
 
 Role = Literal["admin", "user"]
 # 與 accounts.GRANTABLE_SCOPES 逐字一致（tests/test_admin_api.py 釘住）；OpenAPI 與產生的前端 client 靠它列舉。
-GrantableScope = Literal["qa_content.read", "ops.operate"]
+GrantableScope = Literal["qa_content.read", "ops.operate", "api_clients.manage"]
 
 _ACCOUNTS = Depends(authz.require_scope("accounts.manage"))
 _AUDIT = Depends(authz.require_scope("audit.read"))

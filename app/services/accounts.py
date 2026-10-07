@@ -70,7 +70,7 @@ ADMIN_DEFAULT_SCOPES: frozenset[str] = frozenset({
     SCOPE_ADMIN, "accounts.manage", "audit.read", "review.manage", "ops.read", "reports.manage",
 })
 # 必須另外授予的 scope。改這組要寫 revision 改 research.user_scope 的 CHECK（db/expected_constraints.txt）。
-GRANTABLE_SCOPES: frozenset[str] = frozenset({"qa_content.read", "ops.operate"})
+GRANTABLE_SCOPES: frozenset[str] = frozenset({"qa_content.read", "ops.operate", "api_clients.manage"})
 ALL_SCOPES: frozenset[str] = ADMIN_DEFAULT_SCOPES | GRANTABLE_SCOPES
 # 重新驗證密碼後的權限提升視窗（user_session.elevated_until）。
 ELEVATION_SECONDS = 600

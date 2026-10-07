@@ -194,6 +194,153 @@
 /* end:keyframes */
 
 /* region:anim-js (lane login-anim-js)：01 問答、02 檢索 */
+  /* 01 問答、02 檢索。元素的基本樣式＝最終（完成）狀態：沒有 JS 或減少動態時直接看到完成畫面；
+     JS 時間軸只切 class（is-typing／is-active／is-pending／is-lit／qa-off／srch-off）與少量 transform。
+     出現動畫靠 display:none → 顯示時重新觸發 animation。 */
+  .anim-qa .qa, .anim-qa .qa *, .anim-search .srch, .anim-search .srch * { box-sizing: border-box; }
+  .anim-qa .qa {
+    height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 18px;
+    color: #1d1d1f;
+  }
+  .anim-qa .qa-pill, .anim-search .srch-bar {
+    flex: none; height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 7px 0 18px;
+    border-radius: 999px; background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+  }
+  .anim-qa .qa-pill-text, .anim-search .srch-text {
+    flex: 1; min-width: 0; font-size: 15px; color: #1d1d1f; white-space: pre; overflow: hidden;
+  }
+  .anim-qa .qa-caret, .anim-search .srch-caret {
+    display: inline-block; width: 2px; height: 1.1em; margin-left: 3px; vertical-align: -.18em;
+    background: #8a5a0f; animation: tfBlink 1.1s steps(1) infinite;
+  }
+  .anim-qa .qa-caret { display: none; }
+  .anim-qa .qa.is-typing .qa-caret { display: inline-block; }
+  .anim-qa .qa-send, .anim-search .srch-enter {
+    flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
+    padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .anim-qa .qa-send { color: #8a5a0f; background: #f8f1e0; transition: background-color .2s, color .2s; }
+  .anim-qa .qa.is-typing .qa-send { color: #6b6b66; background: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
+  .anim-search .srch-enter { color: #6b6b66; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
+
+  /* 流程軸 */
+  .anim-qa .qa-rail { position: relative; display: flex; flex-direction: column; gap: 12px; padding-left: 28px; }
+  .anim-qa .qa-row { position: relative; display: flex; flex-direction: column; gap: 8px; }
+  .anim-qa .qa-line {
+    position: absolute; left: -21px; top: 21px; bottom: -12px; width: 2px; border-radius: 1px;
+    background: #e3e1da; overflow: hidden;
+  }
+  .anim-qa .qa-line-fill { display: block; width: 100%; height: 100%; background: #ae7415; transform-origin: top; }
+  .anim-qa .qa-node {
+    position: absolute; left: -28px; top: 2px; width: 16px; height: 16px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    background: #ae7415; border: 2px solid #ae7415; color: #ffffff;
+    transition: background-color .25s, border-color .25s;
+  }
+  .anim-qa .qa-node svg { display: block; width: 10px; height: 10px; }
+  .anim-qa .qa-node-dot { display: none; width: 5px; height: 5px; border-radius: 999px; background: #ae7415; }
+  .anim-qa .qa-row.is-active .qa-node {
+    background: #ffffff; border: 2px solid #ae7415; animation: tfPulse 1.4s ease-out infinite;
+  }
+  .anim-qa .qa-row.is-pending .qa-node { background: #ffffff; border: 1.5px solid #d6d4cd; }
+  .anim-qa .qa-row.is-active .qa-node svg, .anim-qa .qa-row.is-pending .qa-node svg { display: none; }
+  .anim-qa .qa-row.is-active .qa-node-dot { display: block; }
+  .anim-qa .qa-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-height: 20px; }
+  .anim-qa .qa-step { font-size: 13.5px; font-weight: 600; color: #1d1d1f; transition: color .25s; }
+  .anim-qa .qa-row.is-pending .qa-step { color: #8e8e93; }
+  .anim-qa .qa-status {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px;
+    letter-spacing: .06em; color: #6b6b66; white-space: nowrap;
+  }
+  .anim-qa .qa-status-active { display: none; color: #8a5a0f; }
+  .anim-qa .qa-row.is-active .qa-status-active { display: inline; }
+  .anim-qa .qa-row.is-active .qa-status-done, .anim-qa .qa-row.is-pending .qa-status-done { display: none; }
+  .anim-qa .qa-body-intent { min-height: 24px; }
+  .anim-qa .qa-body-found { min-height: 22px; }
+  .anim-qa .qa-body-read { min-height: 18px; }
+  .anim-qa .qa-body-answer { min-height: 112px; }
+
+  /* 步驟內容 */
+  .anim-qa .qa-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .anim-qa .qa-intent {
+    display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+    font-size: 12px; font-weight: 600; color: #1d1d1f; white-space: nowrap;
+    animation: tfPopIn .35s ease-out both;
+  }
+  .anim-qa .qa-intent:nth-child(2) { animation-delay: .12s; }
+  .anim-qa .qa-intent:nth-child(3) { animation-delay: .24s; }
+  .anim-qa .qa-intent-k {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
+    font-weight: 400; color: #6b6b66;
+  }
+  /* 來源 chip：外層負責淡入（animation 的 transform 會蓋過 class），內層負責亮起時的金框與上移 */
+  .anim-qa .qa-src { display: inline-flex; animation: tfFadeUp .35s ease-out both; }
+  .anim-qa .qa-src:nth-child(2) { animation-delay: .1s; }
+  .anim-qa .qa-src:nth-child(3) { animation-delay: .2s; }
+  .anim-qa .qa-src:nth-child(4) { animation-delay: .3s; }
+  .anim-qa .qa-src-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border-radius: 999px;
+    background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+    transition: box-shadow .25s, transform .25s;
+  }
+  .anim-qa .qa-src-chip.is-lit { box-shadow: inset 0 0 0 1.5px #ae7415; transform: translateY(-2px); }
+  .anim-qa .qa-src-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
+    letter-spacing: .06em; color: #5d5d58;
+  }
+  .anim-qa .qa-cite {
+    flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
+    font-weight: 700; line-height: 1.5; padding: 0 6px; border-radius: 999px;
+    background: #f8f1e0; color: #8a5a0f; transition: background-color .25s, color .25s;
+  }
+  .anim-qa .qa-cite.is-lit { background: #8a5a0f; color: #ffffff; }
+  .anim-qa .qa-read { display: flex; flex-direction: column; gap: 7px; padding: 3px 0; }
+  .anim-qa .qa-read-mark { position: relative; display: block; height: 4px; width: 94%; }
+  .anim-qa .qa-read-hl {
+    position: absolute; left: -3px; right: -3px; top: -3px; bottom: -3px; border-radius: 3px;
+    background: #faedc4; transform-origin: left center;
+  }
+  .anim-qa .qa-read-text { position: relative; display: block; height: 4px; border-radius: 2px; background: #c9b48a; }
+  .anim-qa .qa-read-line { display: block; height: 4px; width: 66%; border-radius: 2px; background: #e3e1da; }
+  .anim-qa .qa-answer {
+    border-radius: 10px; background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;
+    animation: tfFadeUp .35s ease-out both;
+  }
+  .anim-qa .qa-ans-row { display: flex; align-items: center; gap: 6px; min-height: 16px; }
+  .anim-qa .qa-ans-track { flex: 1; min-width: 0; }
+  .anim-qa .qa-ans-bar {
+    display: block; height: 5px; border-radius: 3px; background: #d9d7d0; transform-origin: left center;
+  }
+  .anim-qa .qa-ans-cite { display: inline-flex; animation: tfPopIn .3s ease-out both; }
+  .anim-qa .qa-grounded { flex: none; height: 18px; }
+  .anim-qa .qa-grounded-in {
+    height: 18px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5d5d58;
+    animation: tfFadeUp .3s ease-out both;
+  }
+  .anim-qa .qa-grounded-in svg { display: block; flex: none; width: 14px; height: 14px; color: #ae7415; }
+  .anim-qa .qa .qa-off { display: none; }
+
+  /* 02 檢索 */
+  .anim-search .srch { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; }
+  .anim-search .srch-results { flex: none; height: 46px; }
+  .anim-search .srch-list { display: flex; flex-direction: column; gap: 8px; }
+  .anim-search .srch-row { display: flex; align-items: center; gap: 10px; animation: tfFadeUp .45s ease-out both; }
+  .anim-search .srch-row + .srch-row { animation-delay: .12s; }
+  .anim-search .srch-code {
+    flex: none; min-width: 48px; text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
+    letter-spacing: .06em; color: #5d5d58; padding: 3px 6px; border-radius: 999px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.1);
+  }
+  .anim-search .srch-title { flex: 1; min-width: 0; }
+  .anim-search .srch-title-bar { display: block; height: 5px; border-radius: 3px; background: #dcdad3; }
+  .anim-search .srch-rel {
+    flex: none; position: relative; width: 48px; height: 4px; border-radius: 2px; background: #e7e5df; overflow: hidden;
+  }
+  .anim-search .srch-rel-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: #ae7415; }
+  .anim-search .srch .srch-off { display: none; }
 /* end:anim-js */
 
 /* region:anim-css (lane login-anim-css)：03 閱讀頁、04 觀點雷達、05 每日簡報 */
@@ -359,6 +506,63 @@
 <!-- end:intro-head -->
     <div class="tile-anim anim-qa" id="anim-qa" aria-hidden="true">
 <!-- region:anim-qa (lane login-anim-js) -->
+      <div class="qa" id="qa-flow">
+        <div class="qa-pill">
+          <span class="qa-pill-text"><span id="qa-typed">台積電先進製程的最新展望如何？</span><span class="qa-caret"></span></span>
+          <span class="qa-send">提問 ↵</span>
+        </div>
+        <div class="qa-rail">
+          <div class="qa-row" data-step="0">
+            <span class="qa-line"><span class="qa-line-fill"></span></span>
+            <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
+            <div class="qa-row-head"><span class="qa-step">理解問題</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-body qa-body-intent">
+              <div class="qa-chips qa-content">
+                <span class="qa-intent"><span class="qa-intent-k">標的</span>台積電</span>
+                <span class="qa-intent"><span class="qa-intent-k">主題</span>先進製程</span>
+                <span class="qa-intent"><span class="qa-intent-k">時間</span>最新</span>
+              </div>
+            </div>
+          </div>
+          <div class="qa-row" data-step="1">
+            <span class="qa-line"><span class="qa-line-fill"></span></span>
+            <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
+            <div class="qa-row-head"><span class="qa-step">檢索研報</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-body qa-body-found">
+              <div class="qa-chips qa-content">
+                <span class="qa-src"><span class="qa-src-chip" data-src="1"><span class="qa-src-code">TW</span><span class="qa-cite" data-cite="1">1</span></span></span>
+                <span class="qa-src"><span class="qa-src-chip" data-src="2"><span class="qa-src-code">TW</span><span class="qa-cite" data-cite="2">2</span></span></span>
+                <span class="qa-src"><span class="qa-src-chip" data-src="3"><span class="qa-src-code">US</span><span class="qa-cite" data-cite="3">3</span></span></span>
+                <span class="qa-src"><span class="qa-src-chip" data-src="4"><span class="qa-src-code">TW</span><span class="qa-cite" data-cite="4">4</span></span></span>
+              </div>
+            </div>
+          </div>
+          <div class="qa-row" data-step="2">
+            <span class="qa-line"><span class="qa-line-fill"></span></span>
+            <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
+            <div class="qa-row-head"><span class="qa-step">閱讀整理</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-body qa-body-read">
+              <div class="qa-read qa-content">
+                <span class="qa-read-mark"><span class="qa-read-hl" id="qa-read-hl"></span><span class="qa-read-text"></span></span>
+                <span class="qa-read-line"></span>
+              </div>
+            </div>
+          </div>
+          <div class="qa-row" data-step="3">
+            <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
+            <div class="qa-row-head"><span class="qa-step">生成回答</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-body qa-body-answer">
+              <div class="qa-answer qa-content">
+                <div class="qa-ans-row"><span class="qa-ans-track"><span class="qa-ans-bar" style="width:100%"></span></span><span class="qa-ans-cite"><span class="qa-cite" data-cite="1">1</span></span><span class="qa-ans-cite"><span class="qa-cite" data-cite="2">2</span></span></div>
+                <div class="qa-ans-row"><span class="qa-ans-track"><span class="qa-ans-bar" style="width:82%"></span></span><span class="qa-ans-cite"><span class="qa-cite" data-cite="3">3</span></span></div>
+                <div class="qa-ans-row"><span class="qa-ans-track"><span class="qa-ans-bar" style="width:94%"></span></span></div>
+                <div class="qa-ans-row"><span class="qa-ans-track"><span class="qa-ans-bar" style="width:54%"></span></span><span class="qa-ans-cite"><span class="qa-cite" data-cite="4">4</span></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="qa-grounded"><div class="qa-grounded-in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg>依據 4 篇研報，每段附出處</div></div>
+      </div>
 <!-- end:anim-qa -->
     </div>
 <!-- region:intro-foot (lane login-shell) -->
@@ -381,6 +585,18 @@
 <!-- end:search-head -->
       <div class="tile-anim anim-search" id="anim-search" aria-hidden="true">
 <!-- region:anim-search (lane login-anim-js) -->
+        <div class="srch" id="srch-flow">
+          <div class="srch-bar">
+            <span class="srch-text"><span id="srch-typed">AI 伺服器散熱</span><span class="srch-caret"></span></span>
+            <span class="srch-enter">Enter ↵</span>
+          </div>
+          <div class="srch-results">
+            <div class="srch-list" id="srch-list">
+              <div class="srch-row"><span class="srch-code">TW</span><span class="srch-title"><span class="srch-title-bar" style="width:78%"></span></span><span class="srch-rel"><span class="srch-rel-fill" style="width:92%"></span></span></div>
+              <div class="srch-row"><span class="srch-code">TW</span><span class="srch-title"><span class="srch-title-bar" style="width:62%"></span></span><span class="srch-rel"><span class="srch-rel-fill" style="width:84%"></span></span></div>
+            </div>
+          </div>
+        </div>
 <!-- end:anim-search -->
       </div>
     </article>
@@ -523,6 +739,175 @@
 </script>
 <script>
 /* region:anim-js-script (lane login-anim-js)：01 問答、02 檢索的時間軸 */
+/* 一個 40ms 計時器以「經過時間」推算兩條時間軸的狀態，只切 class 與少量 style、不重建 DOM。
+   分頁隱藏時暫停、回來從暫停點續播；減少動態時不啟動計時器，直接畫最終狀態。
+   任何錯誤都吞掉並停下計時器：這段不能影響上面的登入 script。 */
+(function () {
+  "use strict";
+  try {
+    var qaRoot = document.getElementById("anim-qa");
+    var srRoot = document.getElementById("anim-search");
+    var qaEl = qaRoot ? qaRoot.querySelector(".qa") : null;
+    var srEl = srRoot ? srRoot.querySelector(".srch") : null;
+    if (!qaEl && !srEl) return;
+
+    function setClass(el, name, on) {
+      on = !!on;
+      var k = "_tf_c_" + name;
+      if (el[k] === on) return;
+      el[k] = on;
+      if (on) el.classList.add(name); else el.classList.remove(name);
+    }
+    function setStyle(el, prop, val) {
+      var k = "_tf_s_" + prop;
+      if (el[k] === val) return;
+      el[k] = val;
+      el.style[prop] = val;
+    }
+    function setText(el, val) {
+      if (el._tf_t === val) return;
+      el._tf_t = val;
+      el.textContent = val;
+    }
+    function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+    function each(list, fn) { for (var i = 0; i < list.length; i++) fn(list[i], i); }
+
+    /* ---- 01 問答：約 10.7 秒一輪 ---- */
+    var qa = null;
+    if (qaEl) {
+      var Q = "台積電先進製程的最新展望如何？";
+      var T = { type: 300, typeMs: 50, send: 1350, s: [1350, 2050, 3150, 3850], stream: 3950, lineMs: 520 };
+      var LINE_CITES = [[1, 2], [3], [], [4]];
+      T.done = T.stream + LINE_CITES.length * T.lineMs + 200;
+      T.fade = T.done + 4000;
+      T.cycle = T.fade + 500;
+      var citeAt = {};
+      each(LINE_CITES, function (cs, i) {
+        each(cs, function (c, j) { citeAt[c] = T.stream + (i + 1) * T.lineMs + j * 90; });
+      });
+      qa = {
+        T: T,
+        typed: qaEl.querySelector("#qa-typed"),
+        rows: qaEl.querySelectorAll(".qa-row"),
+        contents: qaEl.querySelectorAll(".qa-content"),
+        hl: qaEl.querySelector("#qa-read-hl"),
+        bars: qaEl.querySelectorAll(".qa-ans-bar"),
+        ansCites: qaEl.querySelectorAll(".qa-ans-cite"),
+        cites: qaEl.querySelectorAll(".qa-cite"),
+        srcs: qaEl.querySelectorAll(".qa-src-chip"),
+        grounded: qaEl.querySelector(".qa-grounded-in")
+      };
+      qa.render = function (t) {
+        var typing = t < T.send;
+        var n = t < T.type ? 0 : Math.min(Q.length, Math.floor((t - T.type) / T.typeMs));
+        setText(qa.typed, typing ? Q.slice(0, n) : Q);
+        setClass(qaEl, "is-typing", typing);
+        each(qa.rows, function (row, i) {
+          var end = i < 3 ? T.s[i + 1] : T.done;
+          setClass(row, "is-active", t >= T.s[i] && t < end);
+          setClass(row, "is-pending", t < T.s[i]);
+          var fill = row.querySelector(".qa-line-fill");
+          if (fill) setStyle(fill, "transform", "scaleY(" + clamp01((t - T.s[i]) / (end - T.s[i])).toFixed(3) + ")");
+        });
+        each(qa.contents, function (el, i) { setClass(el, "qa-off", t < T.s[i]); });
+        if (qa.hl) setStyle(qa.hl, "transform", "scaleX(" + clamp01((t - T.s[2]) / (T.s[3] - T.s[2])).toFixed(3) + ")");
+        each(qa.bars, function (bar, i) {
+          setStyle(bar, "transform", "scaleX(" + clamp01((t - (T.stream + i * T.lineMs)) / T.lineMs).toFixed(3) + ")");
+        });
+        each(qa.ansCites, function (el) {
+          var c = el.firstElementChild.getAttribute("data-cite");
+          setClass(el, "qa-off", t < citeAt[c]);
+        });
+        each(qa.cites, function (el) {
+          var c = el.getAttribute("data-cite");
+          setClass(el, "is-lit", t >= citeAt[c] && t < citeAt[c] + 900);
+        });
+        each(qa.srcs, function (el) {
+          var c = el.getAttribute("data-src");
+          setClass(el, "is-lit", t >= citeAt[c] && t < citeAt[c] + 900);
+        });
+        if (qa.grounded) setClass(qa.grounded, "qa-off", t < T.done + 150);
+        setStyle(qaEl, "opacity", t >= T.fade ? String(Math.max(0, 1 - (t - T.fade) / 500).toFixed(3)) : "");
+      };
+    }
+
+    /* ---- 02 檢索：四個查詢逐字打、停、刪、換題 ---- */
+    var sr = null;
+    if (srEl) {
+      var QUERIES = ["AI 伺服器散熱", "台積電 先進封裝", "美國 升息", "台指期 部位策略"];
+      var CODES = [["TW", "TW"], ["TW", "US"], ["US", "MACRO"], ["WTX", "TW"]];
+      var S = { typeMs: 120, hold: 1900, delMs: 40, gap: 420 };
+      var spans = [], total = 0;
+      each(QUERIES, function (q) {
+        var d = q.length * S.typeMs + S.hold + q.length * S.delMs + S.gap;
+        spans.push(d);
+        total += d;
+      });
+      sr = {
+        typed: srEl.querySelector("#srch-typed"),
+        list: srEl.querySelector("#srch-list"),
+        codes: srEl.querySelectorAll(".srch-code")
+      };
+      sr.show = function (qi, chars, results) {
+        setText(sr.typed, QUERIES[qi].slice(0, chars));
+        if (results) each(sr.codes, function (el, i) { setText(el, CODES[qi][i]); });
+        if (sr.list) setClass(sr.list, "srch-off", !results);
+      };
+      sr.render = function (e) {
+        var t = e % total, qi = 0;
+        while (t >= spans[qi]) { t -= spans[qi]; qi++; }
+        var L = QUERIES[qi].length, typeEnd = L * S.typeMs, holdEnd = typeEnd + S.hold;
+        if (t < typeEnd) sr.show(qi, Math.min(L, Math.floor(t / S.typeMs) + 1), false);
+        else if (t < holdEnd) sr.show(qi, L, true);
+        else sr.show(qi, Math.max(0, L - 1 - Math.floor((t - holdEnd) / S.delMs)), false);
+      };
+    }
+
+    function renderAt(e) {
+      if (qa) qa.render(e % qa.T.cycle);
+      if (sr) sr.render(e);
+    }
+    function renderFinal() {
+      if (qa) qa.render(qa.T.fade - 1);
+      if (sr) sr.show(0, QUERIES[0].length, true);
+    }
+
+    var mq = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+    var iv = null, last = 0, elapsed = 0;
+    function now() { return window.performance && performance.now ? performance.now() : Date.now(); }
+    function stop() {
+      if (iv !== null) { clearInterval(iv); iv = null; }
+    }
+    function tick() {
+      try {
+        var n = now(), dt = n - last;
+        last = n;
+        /* 計時器被節流時不要一口氣跳很遠 */
+        elapsed += dt < 0 ? 0 : dt > 200 ? 200 : dt;
+        renderAt(elapsed);
+      } catch (err) {
+        stop();
+      }
+    }
+    function sync() {
+      if (mq && mq.matches) { stop(); renderFinal(); return; }
+      if (document.hidden) { stop(); return; }
+      if (iv !== null) return;
+      last = now();
+      renderAt(elapsed);
+      iv = setInterval(tick, 40);
+    }
+    document.addEventListener("visibilitychange", sync);
+    if (mq) {
+      var onMotionChange = function () { stop(); elapsed = 0; sync(); };
+      if (mq.addEventListener) mq.addEventListener("change", onMotionChange);
+      else if (mq.addListener) mq.addListener(onMotionChange);
+    }
+    sync();
+  } catch (err) {
+    /* 動畫只是示意，失敗時保留靜態的最終畫面 */
+  }
+})();
 /* end:anim-js-script */
 </script>
 <script>

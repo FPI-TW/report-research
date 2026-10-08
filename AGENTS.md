@@ -151,7 +151,7 @@ uv run python scripts/ingest_all.py
 
 ## 生產維運
 
-- 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制不是效能旋鈕。
+- 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h；EC2 以 R2 inbox 取檔、錯開到 :20，見 `deploy/aws/README.md`「研報導入」）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制不是效能旋鈕。
 - 補救：單篇失敗用 `scripts/failures_to_delta.py` 轉 delta 重放，不要 `--all-local`；只有匯入撞鎖（rc=75）或上一輪被砍且 delta 不可靠時才用 `--all-local`。整段中止時照 log 印出的指令重放：匯入段（rc 非 0／75）重放保留的 delta，下游段 rc=2 以保留的 hashes 檔跑 `--hashes-file`；這兩種都不可用 `failures_to_delta.py`／`--all-local`（細節見 `docs/WORKFLOW.md`）。
 - LLM 批次（清單見 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS`）以 `scripts/_claude_lock.py` 的 flock 互斥——名稱是 CLI 時代的遺留，現在防的是重複計費、摘錄覆寫互撞與 DB 連線數。除簡報外都在 main 進入點取鎖；撞鎖 rc=75 是「不跑」不是「跑壞」。從 worktree 跑批次不與主 checkout 互斥。`llm.py` 刻意不在 flock 範圍內（`tests/test_claude_lock.py` 釘住）。
 - 批次斷路器 `data/.llm_breaker` 觸發後，手動跑的批次 30 分鐘內 rc=2 拒跑；sync 輪內只擋同一輪後段（標記綁 `SYNC_ROUND_ID`、跨輪放行），且只擋會用到 DeepSeek 的段；`data/llm_usage.jsonl` 是費用歸因依據。

@@ -98,7 +98,8 @@ def guard_problem(*, identity: str, has_state: bool, mutating: bool, confirm: st
     return (
         f"目標 DB {identity} 已有資料，對它做 migration 必須明確確認。\n"
         f"確認目標無誤後重跑：{CONFIRM_ENV}={identity}（make 指令用 CONFIRM={identity}）。\n"
-        "本機預設庫就是生產庫；在 worktree 開發請把 REPORT_MARK_DB_URL 指向 devdb。"
+        "沒設 REPORT_MARK_DB_URL 時預設連 localhost:5436/research，那是辦公室主機上有真實資料的庫；"
+        "在 worktree 開發請把 REPORT_MARK_DB_URL 指向 devdb。"
     )
 
 

@@ -1988,7 +1988,7 @@ P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維
   （sync、backup、freshness、audit、r2-reconcile、upload、db-snapshot、analytics-rollup）的 start，
   `report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
   `report-mark-dev-smoke.service` 的 start，`report-mark-ops-staging`（EC2）限定在 Web 的 restart 與
-freshness、audit 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
+freshness、audit、db-snapshot、analytics-rollup 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
   （JS 規則；本機 Ubuntu 24.04 是 124）。
 
 **威脅模型**：代理的使用者在 `docker` 群組（讀容器狀態與日誌需要 docker socket），而 docker 群組等同
@@ -2045,7 +2045,7 @@ run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋
 使用者 `report-mark-ops-staging`、catalog `services.staging.toml`、unit `report-mark-ops-agent-staging.service`、
 socket `/run/report-mark-ops-staging/agent.sock`；staging 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（repo 根 `.env`）。
 staging 主機沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比生產窄：
-restart 只有 web，run 只有 freshness、audit；sync（共用 DeepSeek 金鑰）與 r2-reconcile（共用 R2 bucket）唯讀。
+restart 只有 web，run 只有 freshness、audit 與 Admin v2 的 db-snapshot、analytics-rollup；sync（共用 DeepSeek 金鑰）與 r2-reconcile（共用 R2 bucket）唯讀。
 polkit 規則同一個檔（`report-mark-ops-staging` 那組）；EC2 上不建 `report-mark-ops`，生產那組在那裡不會命中。
 catalog 以 uid 寫 `allowed_uids = [1000]`（ubuntu），先以 `id -u ubuntu` 核對。
 
@@ -2495,10 +2495,9 @@ Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額
    4. `report-mark-security-retention`：排在備份與稽核錨定之後，見「安全維運」的保留期清除一節。
 4. **ops catalog 與 polkit 重新安裝、重啟維運代理**（「維運代理」的步驟 3、4）。辦公室主機的 `deploy/ops/services.prod.toml`
    已列上面五項：`db-snapshot`、`analytics-rollup` 可以「立即執行」，三個 security 項目唯讀（理由寫在 catalog 註解），
-   polkit 的 `report-mark-ops` 多這兩個 unit 的 start。EC2 的 `deploy/ops/services.staging.toml` 只列已安裝的 unit：
-   在 EC2 裝了 v2 unit 之後，才把同樣的五項加進去（`postgres` 換成 `rds`；給 run 的兩項同步加進 polkit 的
-   `report-mark-ops-staging`），再 `--check`、重啟 `report-mark-ops-agent-staging.service`。還沒裝代理的主機，第一次安裝時
-   直接用新版 catalog。
+   polkit 的 `report-mark-ops` 多這兩個 unit 的 start。EC2 的 `deploy/ops/services.staging.toml` 也已列同樣的五項
+   （`postgres` 換成 `rds`；給 run 的兩項同列在 polkit 的 `report-mark-ops-staging`）：照「維運代理」的 staging 一節重新安裝
+   catalog 與規則、`--check`，再重啟 `report-mark-ops-agent-staging.service`。還沒裝代理的主機，第一次安裝時直接用新版 catalog。
 5. **確認旗標與政策維持預設**（兩台主機的 repo 根 `.env`）：
    - `ADMIN_MFA_REQUIRED` 不設或設 0：預設關，TOTP 依個人設定開關（2026-10-07 定案更新）。這是環境變數，不是 DB 旗標。
    - `QUOTA_ENFORCE=0`：配額影子模式，只計數、記錄「本來會擋」，不回 429。正式阻擋要等觀察兩週、依 P50/P95 決定（使用者定案 5）。
@@ -2529,4 +2528,4 @@ RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動�
 | `report-mark-db-snapshot`（DB 趨勢） | 安裝 unit | 安裝 | 安裝 | 權限不足的段落記在 `stats.errors`、趨勢上是空點 |
 | 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 經同意後，在維護窗口改設定並重啟 DB 容器 | 經同意後，以 master 帳號 `CREATE EXTENSION` | 不綁 v2 部署；沒做時頁面只顯示原因 |
 | 事件趨勢（`incident`、`job_execution`） | 隨 web | 開 | 開，但會是空的 | 資料來自監控收集與事件投影；EC2 沒裝 |
-| ops catalog 的 v2 項目與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` 已列 | 裝了 v2 unit 後才加進 `services.staging.toml` | 維運代理要已安裝；「立即執行」只給 db-snapshot、analytics-rollup |
+| ops catalog 的 v2 項目與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` 已列 | `services.staging.toml` 已列 | 維運代理要已安裝；「立即執行」只給 db-snapshot、analytics-rollup |

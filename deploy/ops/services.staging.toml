@@ -13,12 +13,12 @@
 # - 這裡只列已安裝的 unit：2026-10-02 起的 web、nginx 與 8 組 timer，加上 2026-10-07 部署 Admin v1.5 時裝的
 #   schema-check（`SCHEMA_CHECK_MODE=version`：app 帳號沒有 CREATEDB）。其餘 Admin v1 的 unit（load-observations、
 #   host-health……）裝到 staging 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
-# - Admin v2 的 unit（db-snapshot、analytics-rollup、security-health、security-incident、security-retention）尚未安裝到
-#   EC2：v2 unit 安裝到 EC2 時再加，項目與 prod catalog 相同（依賴把 postgres 換成 rds；給 run 的兩項同步加進 polkit 的
-#   report-mark-ops-staging）。
+# - Admin v2 的 unit（db-snapshot、analytics-rollup、security-health、security-incident、security-retention）於 2026-10-08
+#   安裝到 EC2：項目與 prod catalog 相同，依賴把 postgres 換成 rds；給 run 的兩項同步列在 polkit 的 report-mark-ops-staging。
 #
 # 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 staging 也有、而且沒有副作用疑慮的
-# freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔）。刻意唯讀：
+# freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔），以及 Admin v2 的 db-snapshot、analytics-rollup（純 SQL、零 LLM、
+# 無外部費用，理由同 services.prod.toml 的 v2 段）。刻意唯讀：
 # - sync：staging 與生產共用 DeepSeek 金鑰，手動多跑一輪就是多一份費用；它的鎖檔也還沒在 staging 驗證過。
 # - r2-reconcile：staging 與生產共用同一個 R2 bucket，對帳的 orphan 判讀以 staging 的 DB 為準，結果容易誤讀。
 # 改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules 的 report-mark-ops-staging（tests/test_ops_polkit.py 對帳）。
@@ -160,6 +160,61 @@ tier = "supporting"
 actions = ["status", "logs"]
 depends_on = ["rds"]
 description = "alembic 版本 drift 每日檢查（05:20；只比版本）"
+
+# ── Admin v2：DB 統計快照、使用分析彙總、安全告警與保留期清除 ──────────────────────
+# 與 services.prod.toml 的 v2 段相同（run 的逐項判斷寫在那裡），只把 postgres 換成 rds。EC2 的差異：沒有應用層 NAS 備份，
+# security-retention 刪的 auth_event 只靠 RDS 自動備份保留；沒有監控收集與事件投影，security-incident 的事件只送 Slack。
+
+[[services]]
+name = "db-snapshot"
+kind = "systemd"
+unit = "report-mark-db-snapshot.service"
+timer = "report-mark-db-snapshot.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "db-snapshot"
+depends_on = ["rds"]
+description = "DB 統計快照（系統目錄→db_stat_snapshot，每小時 :40，零 LLM）"
+
+[[services]]
+name = "analytics-rollup"
+kind = "systemd"
+unit = "report-mark-analytics-rollup.service"
+timer = "report-mark-analytics-rollup.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "analytics-rollup"
+depends_on = ["rds"]
+description = "使用分析每晚彙總（analytics_daily，02:20，零 LLM）"
+
+[[services]]
+name = "security-health"
+kind = "systemd"
+unit = "report-mark-security-health.service"
+timer = "report-mark-security-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "安全事件探針（/healthz/security，每 2 分鐘）"
+
+[[services]]
+name = "security-incident"
+kind = "systemd"
+unit = "report-mark-security-incident.service"
+timer = "report-mark-security-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["slack"]
+description = "安全事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "security-retention"
+kind = "systemd"
+unit = "report-mark-security-retention.service"
+timer = "report-mark-security-retention.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["rds"]
+description = "登入事件與已結束 session 的保留期清除（04:45）"
 
 # ── 外部依賴 ─────────────────────────────────────────────────────────────
 # 退出碼對照同 services.prod.toml。RDS 沒有專屬探針：health 的 1（/healthz 非 200）分不出是 web 還是 DB 壞了，

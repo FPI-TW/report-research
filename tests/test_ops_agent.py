@@ -253,7 +253,10 @@ class BindingTests(unittest.TestCase):
 
 
 class StagingCatalogTests(unittest.TestCase):
-    """EC2 staging：RDS（不是容器）、沒有 NAS、apt 的 nginx；restart 只有 web，run 只有 freshness／audit。"""
+    """EC2 staging：RDS（不是容器）、沒有 NAS、apt 的 nginx。
+
+    restart 只有 web，run 只有 freshness／audit 與 v2 的 db-snapshot／analytics-rollup。
+    """
 
     def test_staging_catalog_loads_with_its_own_socket(self):
         staging = load_catalog(STAGING_TOML, resolve_user=_uid)
@@ -265,7 +268,8 @@ class StagingCatalogTests(unittest.TestCase):
         staging = load_catalog(STAGING_TOML, resolve_user=_uid)
         writes = {s.name: [a for a in s.actions if a in protocol.WRITE_ACTIONS] for s in staging.services}
         self.assertEqual({n: a for n, a in writes.items() if a},
-                         {"web": ["restart"], "freshness": ["run"], "audit": ["run"]})
+                         {"web": ["restart"], "freshness": ["run"], "audit": ["run"],
+                          "db-snapshot": ["run"], "analytics-rollup": ["run"]})
         self.assertNotIn("run", staging.get("sync").actions)  # 共用 DeepSeek 金鑰：手動多跑一輪就是多一份費用
         self.assertNotIn("run", staging.get("r2-reconcile").actions)  # 共用 bucket
         self.assertEqual([s.name for s in staging.services if s.kind == "container"], [])

@@ -128,7 +128,7 @@ test('建立：送出設定後顯示一次性金鑰，可複製；關閉後金�
   fireEvent.click(within(form).getByRole('button', { name: '建立' }))
 
   const keyDialog = await screen.findByRole('dialog', { name: '「外部系統 C」的 API 金鑰' })
-  expect(keyDialog).toHaveTextContent('只會顯示這一次')
+  expect(keyDialog).toHaveTextContent('請立即複製並妥善保存，關閉後將無法再次查看。')
   expect(within(keyDialog).getByLabelText('API 金鑰')).toHaveTextContent(RAW_KEY)
   const [path, init] = writes(fetchMock)[0]
   expect(path).toBe('/api/admin/api-clients')
@@ -137,9 +137,15 @@ test('建立：送出設定後顯示一次性金鑰，可複製；關閉後金�
     entitlements: { market: ['TW', 'HK'], source: ['元大', '凱基'] }, note: null,
   })
 
-  fireEvent.click(within(keyDialog).getByRole('button', { name: '複製金鑰' }))
-  expect(await within(keyDialog).findByText('已複製到剪貼簿')).toBeInTheDocument()
+  // 複製鈕是金鑰欄位右側的 icon：成功後同一顆按鈕的 icon 換成勾勾，不另顯示文字訊息。
+  const keyField = within(keyDialog).getByLabelText('API 金鑰').parentElement!
+  const copyBtn = within(keyField).getByRole('button', { name: '複製金鑰' })
+  expect(copyBtn.querySelector('.lucide-copy')).not.toBeNull()
+  fireEvent.click(copyBtn)
+  await waitFor(() => expect(copyBtn.querySelector('.lucide-check')).not.toBeNull())
   expect(copyText).toHaveBeenCalledWith(RAW_KEY)
+  expect(within(keyDialog).getAllByRole('button', { name: '複製金鑰' })).toHaveLength(1)
+  expect(keyDialog).not.toHaveTextContent('已複製到剪貼簿')
 
   fireEvent.click(within(keyDialog).getByRole('button', { name: '我已妥善保存，關閉' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

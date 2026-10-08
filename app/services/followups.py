@@ -6,6 +6,7 @@ import logging
 import os
 import re
 
+from app.services import zh_hant
 from app.services.llm import stream_completion
 from app.services.llm_models import TASK_ASK_FOLLOWUP, resolve_model
 from app.services.locale import DEFAULT_LOCALE
@@ -85,7 +86,9 @@ async def generate_followups(
             max_tokens=512, task="ask_followup",
         ):
             parts.append(chunk)
+        questions = _parse_array("".join(parts))[:3]
+        # 英文模式保留原文專有名詞；其餘沿用中文 fallback 與共用字形門檻。
+        return questions if locale == "en" else [zh_hant.to_traditional(q) for q in questions]
     except Exception:
         logger.info("generate_followups failed; returning []", exc_info=True)
         return []
-    return _parse_array("".join(parts))[:3]

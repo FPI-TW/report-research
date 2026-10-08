@@ -3618,6 +3618,58 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
              ans.generate_followups) = orig
         self.assertNotIn("followups", [k for k, _ in events])
 
+    async def test_followups_written_to_qa_log_are_traditional(self):
+        """追到落庫點：用真的 generate_followups（conftest 預設 stub 掉），模型分段吐簡體，
+        寫進 qa_log.followups 的 JSON 與 followups 事件都必須已是繁體。"""
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+        from app.services import followups as fu
+
+        followup_writes = []
+
+        class _RecordingSession(_FakeSession):
+            async def execute(self, stmt, params=None, *a, **k):
+                if "SET followups" in str(stmt):
+                    followup_writes.append(params)
+                return None
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
+
+        async def fake_followup_stream(*a, **k):
+            # 「资本开支」跨兩段：轉換必須在整串組好之後
+            yield '["台积电的资本'
+            yield '开支如何影响营收？", "联发科的竞争优势是什么？"]'
+
+        expected = ["台積電的資本開支如何影響營收？", "聯發科的競爭優勢是什麼？"]
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+                ans.generate_followups, fu.stream_completion)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _RecordingSession()
+        ans.classify_non_overview = fake_route
+        ans.generate_followups = fu.generate_followups
+        fu.stream_completion = fake_followup_stream
+        try:
+            events = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+             ans.generate_followups, fu.stream_completion) = orig
+
+        self.assertEqual(len(followup_writes), 1)
+        self.assertEqual(json.loads(followup_writes[0]["f"]), expected)
+        self.assertEqual(next(p for k, p in events if k == "followups"), expected)
+
 
 class RegenerateTests(unittest.IsolatedAsyncioTestCase):
     async def test_regenerate_failure_does_not_deactivate_old_answer(self):

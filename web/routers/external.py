@@ -39,7 +39,6 @@ from app.services.original_file_url import (
     mint_original_url,
 )
 from app.services.retrieval import DENSE_SCAN_SEARCH, LEX_CAP_SEARCH
-from app.services.textnorm import clean_text
 from app.services.visibility import visible_report_sql
 from web import deps
 from web.errors import AppError
@@ -175,13 +174,9 @@ async def _search_file_urls(report_ids: list[str], ent: Entitlement) -> dict[str
     return out
 
 
-def _report_payload(group, passages: int) -> dict:
+def _report_payload(group) -> dict:
+    # 刻意不回命中段落（passages）：對外回應只給研報層級的欄位，要內文請取原檔。
     mr = group.meta_row
-    ps = []
-    for score, prow in group.passages[:passages]:
-        cleaned = clean_text(prow.content)
-        if cleaned:
-            ps.append({"score": score, "chunk_index": int(prow.chunk_index), "content": cleaned})
     return {
         "report_id": mr.report_id,
         "title": mr.title,
@@ -194,7 +189,6 @@ def _report_payload(group, passages: int) -> dict:
         "instrument_types": list(mr.instrument_types) if mr.instrument_types else None,
         "summary": mr.summary,
         "score": group.best_score,
-        "passages": ps,
     }
 
 
@@ -202,8 +196,7 @@ def _report_payload(group, passages: int) -> dict:
 async def external_search(
     q: str = Query(..., min_length=1, max_length=SEARCH_QUERY_MAX_CHARS),
     limit: int = Query(10, ge=1, le=20),
-    offset: int = Query(0, ge=0),
-    passages: int = Query(3, ge=1, le=3),
+    page: int = Query(1, ge=1),
     sort: Literal["relevance", "date_desc", "date_asc"] = Query("relevance"),
     market: str | None = Query(None),
     source: str | None = Query(None),
@@ -220,7 +213,8 @@ async def external_search(
         report_type=_clean_filter(report_type),
         instrument_type=_clean_filter(instrument_type),
     )
-    body = {"query": q, "total": 0, "offset": offset, "limit": limit, "results": []}
+    # page 從 1 起算，每頁 limit 篇；超過最後一頁回空的 results（total 照常）。
+    body = {"query": q, "total": 0, "page": page, "limit": limit, "results": []}
     if narrowed is None:
         return body
     qvec = await asyncio.to_thread(deps.embed_query_cached, q)
@@ -236,15 +230,15 @@ async def external_search(
             entitlement=narrowed,
         )
     ranked = deps.rank_reports(scored, sort=sort)
-    page = ranked[offset: offset + limit]
-    results = [_report_payload(g, passages) for g in page]
+    start = (page - 1) * limit
+    results = [_report_payload(g) for g in ranked[start: start + limit]]
     if FILE_SCOPE in client.scopes and results:
         urls = await _search_file_urls([r["report_id"] for r in results], ent)
         for r in results:
             r["file_url"], r["file_url_expires_at"] = urls.get(r["report_id"], (None, None))
     logger.info(
-        "external search client_id=%s key_prefix=%s total=%d offset=%d limit=%d sort=%s",
-        client.id, client.key_prefix, len(ranked), offset, limit, sort,
+        "external search client_id=%s key_prefix=%s total=%d page=%d limit=%d sort=%s",
+        client.id, client.key_prefix, len(ranked), page, limit, sort,
     )
     body.update(total=len(ranked), results=results)
     return body

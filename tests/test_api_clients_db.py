@@ -163,7 +163,8 @@ async def scenario_audit_without_secrets(_api) -> None:
                                      "api_client.rotate"], rows
     secrets = {raw, raw2, api_clients.hash_key(raw), api_clients.hash_key(raw2)}
     for secret in secrets:
-        for secret_part in (secret, secret.split("_")[-1]):
+        # 只切前兩個 `_`：祕密段（token_urlsafe）本身可能含 `_`，切到底只剩幾個字的尾巴，會在 detail 裡誤命中。
+        for secret_part in (secret, secret.split("_", 2)[-1]):
             assert all(secret_part not in d for _a, d in rows), "稽核 detail 不得含原始金鑰或 key_hash"
     assert client.key_prefix in rows[0][1] and client.name in rows[0][1]
     # 值沒變的更新不寫、不記稽核

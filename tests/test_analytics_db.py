@@ -10,8 +10,8 @@
 - 台北時間切日、延遲百分位與 nearest-rank 相同、停止列不計延遲；路由分布、上傳與稽核週量、活躍人數（問答 ∪ 計數）。
 
 所有資料都落在 2000–2001 年（`today_` 參數固定在 2001-03-31），不碰真實日期的列。跑在 CI 的「schema 契約」job；
-本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——本機預設連到的是生產庫；彙總要
-commit 的地方用綁在外層交易上、commit 只釋放 savepoint 的 session（同 tests/test_usage_events_db.py）。
+本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫；
+彙總要 commit 的地方用綁在外層交易上、commit 只釋放 savepoint 的 session（同 tests/test_usage_events_db.py）。
 """
 
 from __future__ import annotations

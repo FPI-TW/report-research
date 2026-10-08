@@ -12,7 +12,7 @@
   要對每張表取 AccessShareLock，碰上 VACUUM FULL／ALTER 這類排他鎖時不該把管理頁卡到 60 秒。SET LOCAL 只活到
   交易結束（連線池化，SET 會流到下一個借用者，理由見 `db.relax_statement_timeout`）。
 - **每段獨立**：五段（database／tables／unused_indexes／connections／activity）各包一個 SAVEPOINT，失敗只
-  回滾那一段並在該段回 `error`（`permission_denied`／`timeout`／`error`），其餘照常——staging 的 RDS 帳號
+  回滾那一段並在該段回 `error`（`permission_denied`／`timeout`／`error`），其餘照常——正式環境（EC2）的 RDS 帳號
   權限較窄，不能讓一段權限不足就整頁 500。錯誤訊息是固定文字，不回原始例外（可能帶 SQL）。
 - **權限較窄時的連線數**：沒有 `pg_read_all_stats` 的帳號看別人的 session 時 `state` 與 `backend_type`
   都是 NULL。這些列（`datname` 非 NULL＝連到某個庫的 client）計入 `hidden`，不是丟掉——總數照樣對得上上限。

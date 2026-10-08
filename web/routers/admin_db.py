@@ -3,7 +3,7 @@
 授權：router 層掛 `authz.require_admin`＋`ops.read`（`tests/test_authz.py` 結構性檢查）。三條端點都唯讀：
 
 - `GET /api/admin/db/overview`：即時快照，只查系統目錄、受短 statement_timeout／lock_timeout 約束（SET LOCAL）。
-  五段各自降級：權限不足、逾時只讓那一段回 `error`，不讓整頁 500（staging 的 RDS 帳號權限較窄）。
+  五段各自降級：權限不足、逾時只讓那一段回 `error`，不讓整頁 500（正式環境 EC2 的 RDS 帳號權限較窄）。
 - `GET /api/admin/db/slow-queries`：`pg_stat_statements` 的 top N。執行期偵測，不可用時 `available=false` 與
   `reason`（`extension_missing`／`not_preloaded`／`permission_denied`／`timeout`／`error`）。**不寫進 migration、
   程式也不 CREATE EXTENSION**（使用者定案 13：獨立的維護步驟）。查詢文字壓空白後截斷 200 字；查詢文字理論上可能

@@ -8,7 +8,7 @@
   再驗合起來的 `hybrid_search`）。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0008）就 skip，`REPORT_MARK_REQUIRE_DB=1`
-時改成失敗。**一律 rollback、絕不 commit**——本機預設連到的是生產庫。`upsert_report` 本身會 commit，
+時改成失敗。**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫。`upsert_report` 本身會 commit，
 測試把那個 session 的 commit 換成 flush。斷言只針對自己塞進去的列（以 file_hash／report_id 辨識），
 不假設庫是空的：向量用與查詢完全相同的方向（距離 ≈ 0）、字面用語料裡不存在的詞。
 """

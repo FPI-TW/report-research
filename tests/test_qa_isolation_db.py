@@ -8,7 +8,7 @@
 刪不到另外兩串，`/api/ask`、`/api/ask/stop` 參照它們時在串流前就 404；免登入開發模式
 （user_id=None）看得到的只有 NULL 那串。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或生產庫還沒套 user_id 欄位）就 skip。
+跑在 CI 的「schema 契約」job；本機沒有 DB（或本機的庫還沒套 user_id 欄位）就 skip。
 **一律 rollback、絕不 commit**：服務層自己會 commit，所以把 `answer.SessionFactory` 與
 `web.deps.SessionFactory` 換成綁在一條外層交易上、commit 只釋放 savepoint 的 session
 （SQLAlchemy `join_transaction_mode="create_savepoint"`），最後整條交易 rollback。HTTP 走

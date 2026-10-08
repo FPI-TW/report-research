@@ -1,10 +1,10 @@
-# report-mark 維運代理的 Service Catalog（EC2 staging：research.tingfong.com）。格式與驗證規則見 ops_agent/catalog.py。
-# 注意：檔名與 unit 名稱裡的 staging 是歷史命名——EC2（research.tingfong.com）實際上是正式環境（AGENTS.md「過渡中狀態」）。
+# report-mark 維運代理的 Service Catalog（EC2 正式環境：research.tingfong.com）。格式與驗證規則見 ops_agent/catalog.py。
+# 注意：檔名與 unit 名稱裡的 staging 是歷史命名——EC2（research.tingfong.com）實際上是正式環境（AGENTS.md「環境角色與資料安全」；部署紀錄見 docs/DEPLOYMENT_STATUS.md）。
 # 部署：複製到 EC2 的 /opt/report-mark-ops/services.staging.toml（root 擁有、0644），代理 unit 是
-# deploy/systemd/report-mark-ops-agent-staging.service，步驟見 docs/production_resilience.md「維運代理」的 staging 一節。
+# deploy/systemd/report-mark-ops-agent-staging.service，步驟見 docs/production_resilience.md「維運代理」的 EC2 一節。
 # web 那端設 OPS_AGENT_ENVIRONMENT=staging（socket 固定是 /run/report-mark-ops-staging/agent.sock）。
 #
-# staging 與辦公室主機的差別（README「非辦公室主機」、deploy/aws/README.md）：
+# EC2 與辦公室主機的差別（README「非辦公室主機」、deploy/aws/README.md）：
 # - DB 是 RDS（不是容器）→ 外部依賴 rds，沒有 postgres 容器；主機上沒有任何 Docker workload，所以這裡沒有
 #   container 服務，代理 unit 也不加 docker 群組。
 # - 沒有 NAS：新研報走 SYNC_SOURCE=r2-inbox；不裝 report-mark-backup（RDS 自動備份）、report-mark-linebot-*、
@@ -12,15 +12,15 @@
 # - 對外是 Cloudflare 橘雲 A record → EIP:443 → apt 安裝的 nginx（systemd 的 nginx.service）→ web；沒有 cloudflared。
 # - 這裡只列已安裝的 unit：2026-10-02 起的 web、nginx 與 8 組 timer，加上 2026-10-07 部署 Admin v1.5 時裝的
 #   schema-check（`SCHEMA_CHECK_MODE=version`：app 帳號沒有 CREATEDB）。其餘 Admin v1 的 unit（load-observations、
-#   host-health……）裝到 staging 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
+#   host-health……）裝到 EC2 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
 # - Admin v2 的 unit（db-snapshot、analytics-rollup、security-health、security-incident、security-retention）於 2026-10-08
 #   安裝到 EC2：項目與 prod catalog 相同，依賴把 postgres 換成 rds；給 run 的兩項同步列在 polkit 的 report-mark-ops-staging。
 #
-# 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 staging 也有、而且沒有副作用疑慮的
+# 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 EC2 也有、而且沒有副作用疑慮的
 # freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔），以及 Admin v2 的 db-snapshot、analytics-rollup（純 SQL、零 LLM、
 # 無外部費用，理由同 services.prod.toml 的 v2 段）。刻意唯讀：
-# - sync：staging 與生產共用 DeepSeek 金鑰，手動多跑一輪就是多一份費用；它的鎖檔也還沒在 staging 驗證過。
-# - r2-reconcile：staging 與生產共用同一個 R2 bucket，對帳的 orphan 判讀以 staging 的 DB 為準，結果容易誤讀。
+# - sync：EC2 與辦公室主機共用 DeepSeek 金鑰，手動多跑一輪就是多一份費用；它的鎖檔也還沒在 EC2 驗證過。
+# - r2-reconcile：EC2 與辦公室主機共用同一個 R2 bucket，對帳的 orphan 判讀以 EC2 的 DB 為準，結果容易誤讀。
 # 改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules 的 report-mark-ops-staging（tests/test_ops_polkit.py 對帳）。
 #
 # 依賴圖的方向與判讀同 services.prod.toml 開頭的說明。
@@ -30,7 +30,7 @@ environment = "staging"
 socket_path = "/run/report-mark-ops-staging/agent.sock"
 
 [agent]
-# staging 的 web 以 ubuntu 執行（report-mark-web.service 經 deploy/install_units.sh --user ubuntu 安裝）。
+# EC2 的 web 以 ubuntu 執行（report-mark-web.service 經 deploy/install_units.sh --user ubuntu 安裝）。
 # 寫 uid 而不是使用者名稱：這份 catalog 也要能在辦公室主機與 CI 上 --check（那裡沒有 ubuntu 這個使用者）。
 # Ubuntu 雲端映像的 ubuntu 是 1000；安裝前在 EC2 以 `id -u ubuntu` 核對，不同就改這裡。
 allowed_uids = [1000]
@@ -149,7 +149,7 @@ timer = "report-mark-r2-reconcile.timer"
 tier = "supporting"
 actions = ["status", "logs"]
 depends_on = ["rds", "r2"]
-description = "R2 物件儲存對帳（週一 07:00；bucket 與生產共用，唯讀）"
+description = "R2 物件儲存對帳（週一 07:00；bucket 與辦公室主機共用，唯讀）"
 
 [[services]]
 name = "schema-check"
@@ -230,7 +230,7 @@ name = "r2"
 tier = "critical"
 probe = "health"
 down_exit_codes = [6]
-description = "Cloudflare R2 物件儲存（與生產共用 bucket；/healthz/storage）"
+description = "Cloudflare R2 物件儲存（與辦公室主機共用 bucket；/healthz/storage）"
 
 [[externals]]
 name = "deepseek"
@@ -238,7 +238,7 @@ tier = "critical"
 probe = "health"
 degraded_exit_codes = [7]
 down_exit_codes = [8]
-description = "DeepSeek API（與生產共用金鑰；/healthz/llm）"
+description = "DeepSeek API（與辦公室主機共用金鑰；/healthz/llm）"
 
 [[externals]]
 name = "slack"

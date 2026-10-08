@@ -1,5 +1,7 @@
 # 生產韌性：重啟策略、健康檢查、失敗告警、unit 還原
 
+> **用語**：EC2（`research.tingfong.com`）是正式環境；辦公室主機（本機，`research.kashionzarchive.com`）是開發與測試環境，見 `AGENTS.md`「環境角色與資料安全」。本文較早的事故、實測與紀錄寫於 EC2 上線（2026-10-02）之前，那些段落裡的「生產」指當時唯一的部署環境，也就是現在的辦公室主機。EC2 相關的資源名、catalog、unit 與使用者名稱裡的 staging 是歷史命名。
+
 本文對應 2026-07-28 的 P3 工作。要解決的是**一個偵測不到的複合故障**，不是四件無關的雜事。
 
 ## 故障是怎麼串起來的
@@ -235,7 +237,7 @@ DUMP=/mnt/nas-backup/report-mark-db/daily/report-mark-critical-20260730_033000.d
 #    以 `could not open input file "-"` 失敗。它在沒有檔名引數時就讀 stdin。
 docker exec -i report-mark-postgres pg_restore -l < "$DUMP"
 
-# 2) 還原到臨時 DB 驗過，再碰生產
+# 2) 還原到臨時 DB 驗過，再碰線上的庫
 docker exec -i report-mark-postgres psql -U postgres -c 'CREATE DATABASE restore_check;'
 docker exec -i report-mark-postgres psql -U postgres -d restore_check \
   -c 'CREATE SCHEMA IF NOT EXISTS research;'
@@ -263,7 +265,7 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
 # 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 5，
 # 多於 5 就要查）。2026-07-30 量到 2；2026-10-06 加入稽核觸發器後重新量測為 5。
 
-# 3) 確認筆數合理後才動生產。單張表被誤刪／誤清時只還原那一張（例如 qa_log；review_state 亦可用同法）：
+# 3) 確認筆數合理後才動線上的庫。單張表被誤刪／誤清時只還原那一張（例如 qa_log；review_state 亦可用同法）：
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges -t qa_log < "$DUMP"
 # 還原了 qa_log／app_user 之後一定要重放帳號刪除（見下方「還原後重放帳號刪除」）：
@@ -558,7 +560,7 @@ sudo systemctl daemon-reload
 **兩個變數不是同一件事。** `NOTIFY_SENT` ＝這一輪有沒有送出（`emit` 的 `notified` 欄位用它）；
 `NOTIFY_OK` ＝有沒有「該送而沒送到」的通知（狀態機的推進閘用它）。**未設定 webhook 時
 `NOTIFY_SENT=no` 但 `NOTIFY_OK=yes`**——沒有東西要送，就沒有東西沒送到。若讓狀態機改看
-`NOTIFY_SENT`，未設定 webhook 的部署（＝目前生產）會永遠關不掉事件，**偵測功能被通知
+`NOTIFY_SENT`，未設定 webhook 的部署會永遠關不掉事件，**偵測功能被通知
 功能反噬**。`test_without_webhook_the_incident_still_closes` 釘住這條。
 
 兩個容易寫錯的地方：
@@ -587,7 +589,7 @@ LLM——環境變數裡有金鑰的行程越少越好（`tests/test_deploy_unit
 批次經 `scripts/_claude_cli.run_claude` 依白名單分派（`generate_brief` 的 DeepSeek 分支也交給它）：
 DeepSeek 名稱走 HTTP、`claude-*` 走 CLI。切換批次＝改這份檔的 `LLM_PROVIDER` 或個別旋鈕，下一輪
 sync 生效。**沒有回退**：claude CLI 已於 2026-09-23 永久放棄（OAuth 過期、不再修復登入），`claude_cli`
-與遷移期的 `claude_only` 在生產上都等於 LLM 段全部停擺，生產一律 `LLM_PROVIDER=deepseek`。HTTP 路徑
+與遷移期的 `claude_only` 在部署主機上都等於 LLM 段全部停擺，兩個部署環境一律 `LLM_PROVIDER=deepseek`。HTTP 路徑
 遇到 401／402／模型不存在一律整批 **rc=2** 中止（不記跳過名單、不改走 Claude），處置見下方「DeepSeek
 帳號告警與 402／401 處置」與「整批中止後的重放」。
 
@@ -741,7 +743,7 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 門檻 `FAITHFULNESS_MIN` 0.9 與 F>0.9／CP>0.8／AR>0.55 數值不變）。CLI 失效期間生產以
 `ASK_FAITHFULNESS_ENABLED=0` 暫停抽查；**部署含 PR-26/27 的版本之後**要把它打開：
 
-1. 確認生產沒有覆寫 judge：repo 根 `.env` 裡**不該**有 `FAITHFULNESS_MODEL=claude-…`（有的話刪掉那一行；
+1. 確認部署主機沒有覆寫 judge：repo 根 `.env` 裡**不該**有 `FAITHFULNESS_MODEL=claude-…`（有的話刪掉那一行；
    CLI 已放棄，留著只會每次抽查記一筆 degraded）。`ASK_FAITHFULNESS_TIMEOUT` 若還設著 240 也一併刪掉，
    讓它用 DeepSeek judge 的預設 90（未設時依 judge 決定，Claude CLI judge 才是 240）。
 2. 從 repo 根 `.env` **移除** `ASK_FAITHFULNESS_ENABLED=0` 這一行（預設就是開）。
@@ -1791,7 +1793,7 @@ sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不�
   ```
 
   若 `shared_preload_libraries` 原本已有其他值，`ALTER SYSTEM` 要把舊值一起列上（逗號分隔），否則會被蓋掉。
-- **正式環境（EC2＋RDS；AWS 資源名稱與部分文件仍寫 staging）**：參數群組
+- **正式環境（EC2＋RDS；AWS 資源名稱沿用 staging 這個歷史命名）**：參數群組
   `report-research-staging-dbparametergroup-…` 已含 `pg_stat_statements,pg_tle`（static、in-sync），**不需要
   reboot**；只要以 master 帳號（`rds_superuser`）在 app 用的庫執行一次
   `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`（2026-10-08 已執行）。app 帳號若沒有 `pg_read_all_stats`，頁面看得到
@@ -1827,7 +1829,7 @@ sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不�
 
 3 不告警的理由與 rollup-observations 的 rc=2 相同：DB 掛掉已由 web 探針經 P5 帶去重地告警，
 `report-mark-alert@` 沒有去重，再叫一次只是重複通知；那一天的檢查就此跳過，狀態檔記 `db_unavailable`。
-比到一半才斷線則是清理失敗或無法比對（2），照樣告警——生產伺服器上可能留了一個暫存庫。
+比到一半才斷線則是清理失敗或無法比對（2），照樣告警——受檢的 DB 伺服器上可能留了一個暫存庫。
 
 **狀態檔** `data/schema_check.json`（`SCHEMA_CHECK_STATUS_FILE` 可改；原子寫入，寫不進去只警告、不改
 退出碼——告警走退出碼，這份是給管理頁「資料健康」讀的投影）。format 1 的鍵：`format`、`checked_at`
@@ -1838,9 +1840,9 @@ sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不�
 `ok`／`drift`／`error`／`cleanup_failed`／`skipped`，以及 `revision`、`reference`、`drift_count`、
 `categories`、`column_order_differs`、`message`）。完整定義在該腳本的 `build_status_payload`。
 
-### staging（RDS）
+### 正式環境（EC2 的 RDS）
 
-staging 的 app 帳號沒有 CREATEDB，完整比對每天都會以 2 告警。兩種做法擇一：
+EC2 的 RDS app 帳號沒有 CREATEDB，完整比對每天都會以 2 告警。兩種做法擇一：
 
 - **只比版本**（建議的起點）：`/etc/default/report-mark-sync` 加 `SCHEMA_CHECK_MODE=version`。版本 drift
   照樣每日偵測；schema drift 在每次部署前人工以下一種方式跑一次。
@@ -1862,7 +1864,7 @@ make schema-check
 sudo install -m 0644 deploy/systemd/report-mark-schema-check.service deploy/systemd/report-mark-schema-check.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-schema-check.timer
-# 1') staging：先在 /etc/default/report-mark-sync 加 SCHEMA_CHECK_MODE=version（或照上一節放 reference 檔）
+# 1') EC2（正式環境）：先在 /etc/default/report-mark-sync 加 SCHEMA_CHECK_MODE=version（或照上一節放 reference 檔）
 sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-schema-check.timer
 sudo systemctl enable --now report-mark-schema-check.timer
 # 2) catalog 多了 schema-check 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
@@ -1872,7 +1874,7 @@ sudo systemctl enable --now report-mark-schema-check.timer
 為 0、`journalctl -u report-mark-schema-check -n 5` 看得到「版本一致」與「結論：零 drift」、`data/schema_check.json`
 的 `exit_code` 為 0；`scripts/verify_oneshot_ran.sh` 確認跑過。之後在伺服器上不應留下任何 `schema_ref_*` 庫
 （`docker exec report-mark-postgres psql -U postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE 'schema_ref_%'"`
-應為空）。生產庫仍停在 0001、程式已是 0007 時，啟用當天就會以「DB 落後」告警——先照部署順序套 schema。
+應為空）。目標主機的庫仍停在 0001、程式已是 0007 時，啟用當天就會以「DB 落後」告警——先照部署順序套 schema。
 
 ### 停用
 
@@ -1911,7 +1913,7 @@ sudo systemctl disable --now report-mark-schema-check.timer   # 狀態檔停在�
 **資源與互斥**：會載 BGE-M3（行程約 2–3 GB）。不取 `scripts/_claude_lock.py` 的鎖——它不呼叫 LLM，取了反而讓同時段的
 LLM 批次（含 sync 輪內的摘要／標題／摘錄）以 rc=75 跳過；記憶體競爭改由排程避開 sync 與夜間回填、sync PID 檔守門、
 `MemAvailable` 守門與 `MemoryMax=4G` 兜底（超過就在這個 unit 裡被 OOM，SIGKILL 會走告警），CPU 以 `Nice=15`、
-`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=2` 讓路。2026-10-06 對 devdb（生產複本，15,297 篇）實跑：冷載模型＋
+`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=2` 讓路。2026-10-06 對 devdb（辦公室主機資料庫的複本，15,297 篇）實跑：冷載模型＋
 18 題約 4 分鐘（模型已載入時比對約 50 秒）、行程峰值 RSS 2.03 GiB；同一刻擷取立即比對，18 題研報召回全部 1.00；相隔約兩分鐘的另一組擷取與比對，「散熱技術的進展如何？」因字面路截斷（命中 5,312 片段 > cap 2,000）只剩 0.40、其餘 17 題 1.00——這就是允許少數題崩掉的原因。
 
 **評測刻意不進 CI**：這支要真語料與真模型；CI 只跑假嵌入、假 DB 的單元測試（`tests/test_retrieval_regression.py`）。
@@ -1929,7 +1931,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-retrieval-regression.timer
 # 2) 辦公室主機的 catalog 多了 retrieval-regression 一項（唯讀，不給 run）：照「維運代理」的步驟 3 重新安裝 catalog、
 #    --check，再重啟代理
-# 1') staging：語料不同，要在 staging 上自己擷取基準；unit 用 install_units.sh 代換使用者與路徑
+# 1') EC2（正式環境）：語料不同，要在 EC2 上自己擷取基準；unit 用 install_units.sh 代換使用者與路徑
 sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-retrieval-regression.timer
 sudo systemctl enable --now report-mark-retrieval-regression.timer
 ```
@@ -1962,7 +1964,7 @@ sudo systemctl disable --now report-mark-retrieval-regression.timer   # 結果�
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經
 Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
-Service Catalog（`deploy/ops/services.prod.toml`；EC2 staging `deploy/ops/services.staging.toml`、開發環境
+Service Catalog（`deploy/ops/services.prod.toml`；EC2（正式環境）`deploy/ops/services.staging.toml`、開發環境
 `deploy/ops/services.dev.toml`）列出的服務與
 action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（只有 Web）與 `run`（既有 oneshot 立即執行一次：
 sync、backup、freshness、audit、r2-reconcile、upload，以及 Admin v2 的 db-snapshot、analytics-rollup）。
@@ -2044,10 +2046,10 @@ run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋
 **EC2（正式環境；名稱裡的 staging 是歷史命名）**（2026-10-07 隨 Admin v1.5 安裝；重裝或更新時照下面做，
 `deploy/ops/services.staging.toml` 開頭有 EC2 與辦公室主機的差異）：
 使用者 `report-mark-ops-staging`、catalog `services.staging.toml`、unit `report-mark-ops-agent-staging.service`、
-socket `/run/report-mark-ops-staging/agent.sock`；staging 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（repo 根 `.env`）。
-staging 主機沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比生產窄：
+socket `/run/report-mark-ops-staging/agent.sock`；EC2 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（值是歷史命名）（repo 根 `.env`）。
+EC2 沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比辦公室主機那組窄：
 restart 只有 web，run 只有 freshness、audit 與 Admin v2 的 db-snapshot、analytics-rollup；sync（共用 DeepSeek 金鑰）與 r2-reconcile（共用 R2 bucket）唯讀。
-polkit 規則同一個檔（`report-mark-ops-staging` 那組）；EC2 上不建 `report-mark-ops`，生產那組在那裡不會命中。
+polkit 規則同一個檔（`report-mark-ops-staging` 那組）；EC2 上不建 `report-mark-ops`，辦公室主機那組在那裡不會命中。
 catalog 以 uid 寫 `allowed_uids = [1000]`（ubuntu），先以 `id -u ubuntu` 核對。
 
 ```bash
@@ -2166,9 +2168,9 @@ make down-clamav   # 停掉並移除容器；病毒碼 volume 保留（刻意不
 
 `report-mark-upload.service`＋`.timer`（`scripts/process_uploads.sh`）：每 5 分鐘一輪，掃毒（ClamAV）→ 掃描通過的
 上傳入庫成草稿 → 本輪新草稿跑摘要、標題、摘錄 → 清除過寬限期的退回件、過保留期的感染證據、隔離區孤兒檔。
-流程與狀態機見 `docs/WORKFLOW.md`「上傳 worker」。**現況：程式在 repo 裡，unit 沒有裝、timer 沒有 enable、
-`UPLOAD_ENABLED` 維持 0**；下面的安裝要另外取得同意，順序照 AGENTS.md「過渡中狀態」（devdb 演練 → staging →
-生產；staging 沒有 clamd，維持旗標關閉、不裝這支 unit）。
+流程與狀態機見 `docs/WORKFLOW.md`「上傳 worker」。部署紀錄與待確認事項見 `docs/DEPLOYMENT_STATUS.md`，
+安裝前先核對目標主機的 unit、timer 與 `UPLOAD_ENABLED`。下面的安裝要另外取得同意，
+站序為 devdb 演練 → 測試環境（辦公室主機）→ 正式環境（EC2）；正式環境未具備 ClamAV 前維持旗標關閉、不裝上傳 worker。
 
 互斥與記憶體：
 
@@ -2201,7 +2203,7 @@ make down-clamav   # 停掉並移除容器；病毒碼 volume 保留（刻意不
 
 ### 安裝（人工；只在要啟用上傳時做，需 sudo）
 
-前提：生產庫已套到 revision 0008（`make schema-version`）、ClamAV 已照上一節安裝且 `make clamav-smoke` 通過、
+前提：目標主機的庫已套到 revision 0008（`make schema-version`）、ClamAV 已照上一節安裝且 `make clamav-smoke` 通過、
 `/etc/default/report-mark-llm` 已安裝（見「DeepSeek 金鑰落點與輪替」；白名單是 sync 與這支）。
 
 ```bash
@@ -2409,7 +2411,7 @@ sudo systemctl disable --now report-mark-analytics-rollup.timer
 保留。恢復時重新 `enable --now`，並手動跑一次 `scripts/analytics_rollup.py --backfill 90` 補回還在窗期內的缺口
 （已離開窗期、`qa_log` 仍在的日子也能以更大的 N 補，但被硬刪的問答補不回來）。
 
-## 功能開關與 staging 啟用矩陣（Admin v2）
+## 功能開關與啟用矩陣（Admin v2）
 
 功能旗標（`app/services/feature_flags.py`、管理後台「功能旗標」頁、`/api/admin/flags*`）讓管理員在**環境變數允許的
 範圍內**暫停或限定派生功能，不必改環境檔、不必重啟。語意（使用者定案 11、12、16）：
@@ -2479,8 +2481,10 @@ Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額
    - 備份：測試環境照「備份與還原」先跑一次 `make db-backup`；正式環境先做 RDS 手動快照。
    - 部署 checkout 先更新到含 Admin v2 的版本（migration 檔在新版裡），**web 先不要重啟**：執行中的仍是舊程式。
    - 套之前 `make schema-version` 應回 1（落後），而且零 drift：辦公室主機跑 `make schema-check`；EC2 的 app 帳號沒有
-     CREATEDB，照「schema 與版本 drift 每日檢查」的 staging（RDS）一節以 master 帳號建基準。
-   - `make schema CONFIRM=<host:port/db>`（逐字確認目標），套完 `make schema-version` 回 0、再做一次零 drift 比對。
+     CREATEDB，照「schema 與版本 drift 每日檢查」的「正式環境（EC2 的 RDS）」一節以 master 帳號建基準。
+   - 套 migration（逐字確認目標）：DB 在容器的辦公室主機 `make schema CONFIRM=<host:port/db>`；EC2 的 RDS 用
+     `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`（`make schema` 會先啟動 Docker 的 PostgreSQL，
+     不適用 RDS；同下方「v2 功能的啟用矩陣」）。套完 `make schema-version` 回 0、再做一次零 drift 比對。
    - 每日 schema 檢查（`report-mark-schema-check`）已啟用的主機，套 schema 與換程式要在同一個維護窗口內做完，
      否則當天的檢查會以版本不一致告警。
 2. **換程式**：`make build-web`，緊接著重啟 web。v2 沒有新增 Python 或前端相依，
@@ -2497,13 +2501,13 @@ Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額
 4. **ops catalog 與 polkit 重新安裝、重啟維運代理**（「維運代理」的步驟 3、4）。辦公室主機的 `deploy/ops/services.prod.toml`
    已列上面五項：`db-snapshot`、`analytics-rollup` 可以「立即執行」，三個 security 項目唯讀（理由寫在 catalog 註解），
    polkit 的 `report-mark-ops` 多這兩個 unit 的 start。EC2 的 `deploy/ops/services.staging.toml` 也已列同樣的五項
-   （`postgres` 換成 `rds`；給 run 的兩項同列在 polkit 的 `report-mark-ops-staging`）：照「維運代理」的 staging 一節重新安裝
+   （`postgres` 換成 `rds`；給 run 的兩項同列在 polkit 的 `report-mark-ops-staging`）：照「維運代理」的 EC2 一節重新安裝
    catalog 與規則、`--check`，再重啟 `report-mark-ops-agent-staging.service`。還沒裝代理的主機，第一次安裝時直接用新版 catalog。
 5. **確認旗標與政策維持預設**（兩台主機的 repo 根 `.env`）：
    - `ADMIN_MFA_REQUIRED` 不設或設 0：預設關，TOTP 依個人設定開關（2026-10-07 定案更新）。這是環境變數，不是 DB 旗標。
    - `QUOTA_ENFORCE=0`：配額影子模式，只計數、記錄「本來會擋」，不回 429。正式阻擋要等觀察兩週、依 P50/P95 決定（使用者定案 5）。
    - 功能旗標：`feature_flag` 沒有任何覆寫時，行為與 v1.5 相同（`ask.web_search` 預設關、其餘派生功能預設開，實際值仍受
-     環境變數上限限制）。七個上限變數照「功能開關與 staging 啟用矩陣」的啟用矩陣核對；部署時不設任何覆寫。
+     環境變數上限限制）。七個上限變數照「功能開關與啟用矩陣」的啟用矩陣核對；部署時不設任何覆寫。
 6. **`pg_stat_statements` 不在這個順序裡**：它是獨立的維護步驟，個別放行（使用者定案 13），兩個環境都已於 2026-10-08 啟用；
    步驟見「DB 統計快照與慢查詢」的「啟用 pg_stat_statements」（重建或換主機時用）。沒做時「慢查詢」區塊只顯示原因，其他頁面
    不受影響。
@@ -2512,11 +2516,11 @@ Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額
 
 測試環境＝辦公室主機（`research.kashionzarchive.com`），正式環境＝EC2（`research.tingfong.com`）。兩者的差異：EC2 的 DB 是
 RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動備份）、沒有監控收集與事件投影（`report-mark-load-observations`
-等）、沒有稽核錨定、沒有 ClamAV 與上傳 worker。功能旗標各項的上限與覆寫建議另見「功能開關與 staging 啟用矩陣」。
+等）、沒有稽核錨定、沒有 ClamAV 與上傳 worker。功能旗標各項的上限與覆寫建議另見「功能開關與啟用矩陣」。
 
 | 項目 | 怎麼啟用 | 測試環境（辦公室主機） | 正式環境（EC2） | 前提與差異 |
 |---|---|---|---|---|
-| schema 0011 | `make schema CONFIRM=…` | 套用 | 套用 | 一律先於換程式；v1、v1.5 已在該主機驗收 |
+| schema 0011 | 依 DB 類型執行 migration | `make schema CONFIRM=<host:port/db>` | `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`（RDS） | 一律先於換程式；v1、v1.5 已在該主機驗收 |
 | 使用量收集（`usage_daily`、`usage_counter`） | 隨 web | 開 | 開 | 不必安裝；只記次數與主題彙總，不記搜尋字串 |
 | 使用分析頁＋`report-mark-analytics-rollup` | 安裝 unit | 安裝 | 安裝 | 沒裝時最近 90 天照常即時顯示，更早的日子是「沒有資料」 |
 | 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`：EC2 沒裝，顯示沒有結果或過期 |
@@ -2524,7 +2528,7 @@ RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動�
 | `report-mark-security-retention` | 安裝 unit | 安裝 | 安裝 | EC2 沒有應用層 NAS 備份：`auth_event` 只靠 RDS 自動備份 |
 | 配額（`QUOTA_ENFORCE`） | 環境變數 | 0（影子模式） | 0（影子模式） | 兩週觀察後再決定；先在測試環境驗 429 |
 | 管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`） | 環境變數 | 不設（關） | 不設（關） | 現階段依個人設定開關；開啟前先確認每位管理員都已設定 TOTP |
-| 功能旗標頁與 `/api/features` | 隨 web | 開，不設覆寫 | 開，不設覆寫 | 各旗標的上限見「功能開關與 staging 啟用矩陣」 |
+| 功能旗標頁與 `/api/features` | 隨 web | 開，不設覆寫 | 開，不設覆寫 | 各旗標的上限見「功能開關與啟用矩陣」 |
 | DB 即時快照（`/api/admin/db/overview`） | 隨 web | 開 | 開 | RDS 帳號沒有 `pg_monitor`／`pg_read_all_stats` 時，相關段落顯示「權限不足」 |
 | `report-mark-db-snapshot`（DB 趨勢） | 安裝 unit | 安裝 | 安裝 | 權限不足的段落記在 `stats.errors`、趨勢上是空點 |
 | 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 已啟用（2026-10-08，預載＋重啟容器） | 已啟用（2026-10-08，master 帳號 `CREATE EXTENSION`；`pg_read_all_stats` 未授予） | 不綁 v2 部署；沒做時頁面只顯示原因 |

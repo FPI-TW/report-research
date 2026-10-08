@@ -3,8 +3,9 @@ llm_usage.summarize_online）。
 
 兩組測試：
 
-- `QuotaDbTests`：**一律 rollback、絕不 commit**——本機預設連到的是生產庫。服務函式都吃 session_factory，這裡給綁在
-  外層交易上、commit 只釋放 savepoint 的 session（同 tests/test_usage_events_db.py）。驗原子遞增在上限封頂、超額記
+- `QuotaDbTests`：**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫。
+  服務函式都吃 session_factory，這裡給綁在外層交易上、commit 只釋放 savepoint 的 session
+  （同 tests/test_usage_events_db.py）。驗原子遞增在上限封頂、超額記
   `<kind>_over`、上限 0 連第一次都不插入、NULL＝不限、調低上限後立即生效；覆寫寫入與同交易的 `quota.update` 稽核
   （detail 不含理由全文與帳號名稱）、沒有變動不寫稽核、不限只有 super admin、super admin 的配額只有 super admin 能改；
   管理總覽、自己的用量、P50／P95 的 SQL；上傳的個人覆寫；線上 LLM 用量的日彙總。

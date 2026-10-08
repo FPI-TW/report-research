@@ -25,7 +25,7 @@ super admin（才能授予 scope）：`--super` 明確指定；**庫裡沒有任
 每個動作都寫進 `research.admin_audit_log`（actor 為 NULL、detail.via＝cli）。
 
 **連的是 repo 根 `.env` 的 `REPORT_MARK_DB_URL`**（與 web 同一個庫；未設時是程式預設的本機庫）。
-這台機器的主 checkout 就是部署目錄，所以在這裡跑就是在改生產帳號。
+辦公室主機的主 checkout 就是測試環境的部署目錄，在那裡跑就是在改測試環境的真實帳號（正式環境的帳號在 EC2 的 RDS 裡）。
 
 退出碼：0 成功（含 --from-env 的「已存在」）、1 輸入或帳號狀態不允許、2 DB 不可用。
 """

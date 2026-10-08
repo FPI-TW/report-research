@@ -5,7 +5,7 @@
   靠那份假物件，它的語意若與真的 SQL 分歧，那些測試的綠燈就不可信。
 - `AccountsDbTests`：對真的 PostgreSQL（CI 的「schema 契約」job；本機連不上就 skip）。
 
-**一律 rollback、絕不 commit**——本機預設連到的是生產庫。accounts 的函式自己會 commit，
+**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫。accounts 的函式自己會 commit，
 所以這裡把 `accounts.SessionFactory` 換成「綁在一條外層交易上、commit 只釋放 savepoint」
 的 session（SQLAlchemy 的 `join_transaction_mode="create_savepoint"`），最後整條交易 rollback。
 帳號名稱一律帶隨機尾碼，不假設庫是空的。

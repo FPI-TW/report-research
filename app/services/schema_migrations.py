@@ -5,8 +5,8 @@
 
 四件事：
 
-1. **目標識別**（`target_identity`）：`host:port/dbname`，不含帳密。本機預設庫**就是生產庫**，
-   從 worktree 跑 migration 而沒改 `REPORT_MARK_DB_URL`，動到的就是生產——所以對「已有
+1. **目標識別**（`target_identity`）：`host:port/dbname`，不含帳密。本機預設庫**是測試環境的真實資料庫**，
+   從 worktree 跑 migration 而沒改 `REPORT_MARK_DB_URL`，動到的就是那份真實資料——所以對「已有
    資料的庫」做變更，必須在 `REPORT_MARK_MIGRATE_CONFIRM` 逐字寫出這個識別。空庫（新機器、
    CI）免確認：那裡沒有東西可以弄壞。
 2. **baseline 凍結**：revision 0001 就是 `db/schema.sql` 原文，以 SHA-256 釘住。0001 只接受
@@ -36,7 +36,7 @@ BASELINE_SHA256 = "090a727844b2e9817e633aba5e619ddf6576de63e8c0444c8453445e18351
 CONFIRM_ENV = "REPORT_MARK_MIGRATE_CONFIRM"
 # 額外受保護的目標（逗號分隔的 host:port/dbname）。staging 在自己的環境檔設 RDS 的識別。
 PROTECTED_ENV = "REPORT_MARK_PROTECTED_DB_TARGETS"
-# 本機生產庫（report-mark-postgres 容器，host port 5436）。受保護＝stamp 必須先做全庫備份。
+# 辦公室主機（測試環境）的真實資料庫（report-mark-postgres 容器，host port 5436）。受保護＝stamp 必須先做全庫備份。
 DEFAULT_PROTECTED = frozenset({"localhost:5436/research", "127.0.0.1:5436/research"})
 
 # 會寫入 DB 的 alembic 指令。其餘（current、history）唯讀，不需確認。

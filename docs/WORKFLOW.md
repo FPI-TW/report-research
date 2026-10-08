@@ -40,7 +40,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | 引文錨定、訊號正規化與狀態判定、共識聚合、窗期 | 摘錄與訊號擷取、簡報撰寫 |
 | 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 是 `deepseek-flash`，自 2026-09 起的新量尺；舊的 haiku 分數歸「其他 judge」） |
 
-批次以檔案 `file_hash` 為鍵、冪等可續跑；失敗寫 `data/*_failures.log`，不阻斷其他檔。
+批次以檔案 `file_hash` 為鍵、可重複執行；失敗寫 `data/*_failures.log`，不阻斷其他檔。能不能從上次進度接續依入口而定（`scripts/extract_all.py` 每次全量重抽，`scripts/ingest_all.py` 跳過已入庫的 hash），以各腳本的 docstring 為準。
 
 ## 資料層
 
@@ -53,11 +53,11 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |
 | `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state` | 執行期日誌、心跳、本輪狀態 | 否 |
-| `research.*`（Postgres ＋ pgvector，容器 `report-mark-postgres`，host port 5436） | 7 張表，`db/schema.sql` | 是 |
+| `research.*`（Postgres ＋ pgvector；測試環境是容器 `report-mark-postgres`、host port 5436，正式環境是 RDS） | 由 Alembic migration 管理（`db/migrations/`），`db/schema.sql` 是凍結的 baseline | 是 |
 
 `data/` 在 `.gitignore` 是逐項忽略而非整目錄；新增執行期檔案要同步加一行，因為 repo 禁止 `git add -A`。
 
-深度研報生成（`report_doc`／`report_run`／`report_section`／`report_rendition` 四張表、`data/reports/`、bucket 的 `generated/` 前綴）已於 2026-09 移除。`db/schema.sql` 只 `CREATE IF NOT EXISTS`，對既有庫是 no-op，四張表要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`；執行前確認 `make db-audit` 全綠，備份從未涵蓋這四張）。在生產庫執行 DROP 之前，`tests/test_schema_constraints.py` 對著生產庫跑會因多出 `report_run`／`report_section` 的兩條 CHECK 而紅，這是預期的，DROP 後自然轉綠，不要為此重生 `db/expected_constraints.txt`。bucket 裡舊的 `generated/` 生成 PDF 不再算 orphan、由人手動清；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀（新名 `FAITHFULNESS_MIN`）。
+**歷史清理事項**（各庫是否已執行見 `docs/DEPLOYMENT_STATUS.md`）：深度研報生成（`report_doc`／`report_run`／`report_section`／`report_rendition` 四張表、`data/reports/`、bucket 的 `generated/` 前綴）已於 2026-09 移除。`db/schema.sql` 只 `CREATE IF NOT EXISTS`，對既有庫是 no-op，四張表要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`；執行前確認 `make db-audit` 全綠，備份從未涵蓋這四張）。在既有庫執行 DROP 之前，`tests/test_schema_constraints.py` 對著該庫跑會因多出 `report_run`／`report_section` 的兩條 CHECK 而紅，這是預期的，DROP 後自然轉綠，不要為此重生 `db/expected_constraints.txt`。bucket 裡舊的 `generated/` 生成 PDF 不再算 orphan、由人手動清；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀（新名 `FAITHFULNESS_MIN`）。
 
 ## 逐階段說明
 
@@ -174,7 +174,7 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 1. 補記上一輪異常收場；系統關機中或 lock 被佔用退出 0；找不到 `uv` 退出 1。
 2. drvfs 唯讀掛載 NAS（`/usr/local/sbin/mount-nas-research`，sudoers 免密碼）；失敗退出 1。
 3. `rsync -rt --size-only` 到 `研報自動匯入/`，delta 寫 `data/sync_delta_<時間>.txt`。`SYNC_INBOX_PUSH=1` 時接著以 `scripts/r2_inbox.py push` 把本輪新檔連同相對路徑與 mtime 推到 R2 的 `inbox/`（best-effort，失敗不擋匯入）。推送失敗會保留 `data/inbox_delta_retained_<時間>.txt`，log 與告警紀錄提供 `push --delta` 補傳指令；補傳成功後刪掉該份 delta。
-   碰不到 NAS 的部署（EC2 staging）設 `SYNC_SOURCE=r2-inbox`：第 2、3 段改成 `scripts/r2_inbox.py pull`，把本地鏡像沒有或大小不同的 inbox 物件拉回 `研報自動匯入/`（保留 mtime）並寫同格式的 delta，第 4 段起完全相同。部分失敗仍匯入已落地的檔，失敗檔下一輪重拉；拉取／推送有失敗時均記告警並抑制完整成功心跳。`originals/` 不能拿來代替 inbox：那裡只有 SHA256 與 sha256 metadata，沒有檔名與 mtime。
+   碰不到 NAS 的部署（EC2，正式環境）設 `SYNC_SOURCE=r2-inbox`：第 2、3 段改成 `scripts/r2_inbox.py pull`，把本地鏡像沒有或大小不同的 inbox 物件拉回 `研報自動匯入/`（保留 mtime）並寫同格式的 delta，第 4 段起完全相同。部分失敗仍匯入已落地的檔，失敗檔下一輪重拉；拉取／推送有失敗時均記告警並抑制完整成功心跳。`originals/` 不能拿來代替 inbox：那裡只有 SHA256 與 sha256 metadata，沒有檔名與 mtime。
 4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest（單篇流程在 `scripts/_ingest_core.py` 的 `ingest_one`，sync 依它回的結果計數、寫失敗紀錄與跳過名單），每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。匯入 rc 不是 0 也不是 75 時 delta 保留在 `data/`，殼依時間序列出所有保留的 delta 與 `--delta … --hashes-out data/sync_hashes_retained_<時間>.txt` 重放指令（`--hashes-out` 讓每份重放的 hashes 各寫一份，不覆寫 `data/.sync_last_hashes`；只列殼產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`）。中途中止前已入庫的篇，importer 寫到 `<hashes_out>.partial`，殼改名保留成 `data/sync_hashes_retained_<時間>_partial.txt` 並印三段補跑指令（重放時它們會變 `skip_exists`，不會進重放的 hashes）。
 5. 以 `--hashes-file data/.sync_last_hashes` 依序跑摘要、標題、摘錄。**不可改成 `--since-days`**：它濾的是 `report_date`，會漏掉近九成。
 6. 訊號 `--limit ${SYNC_SIGNAL_LIMIT:-100}`，排跨全語料積壓，`--limit` 是安全機制不是效能旋鈕（不限量會佔住 CLI 鎖 80 小時以上）。
@@ -183,9 +183,9 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 
 第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪 4b 剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。逾時、CLI 非零退出這類環境型失敗不記。走 DeepSeek 時，審查擋下、截斷、空回應、400、已吐字後逾時（`timeout_streamed`，期限型截斷：連續 3 輪才跳過、計入斷路器、可重放）也照原因記入（`API[...]` 錯誤不在腳本層重試）；行內標註被審查擋下的研報不入庫、計 `skip_blocked`（異常）、被 `max_tokens` 截斷的計 `skip_truncated`（異常），兩者 `failures_to_delta.py` 預設都不撈（期限型截斷記 `skip_untagged`、會撈），由人處置（`docs/production_resilience.md`「DeepSeek 批次的失敗處置」）。批次斷路器的標記綁定 sync 輪次（殼每輪 export `SYNC_ROUND_ID`）：只擋同一輪後面用到 DeepSeek 的段。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（nvm 沒有 `current` 連結，寫錯會讓 claude 找不到而無聲漏跑）、`EXTRACTOR`、備份與 R2 變數、`SYNC_SOURCE`／`SYNC_INBOX_PUSH`；DB 不在本機時另設 `REPORT_MARK_DB_URL` 與 `PGSSLROOTCERT`（批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
 
-## 研報上傳：收檔、worker 與審核（Admin v1.5，功能旗標預設關閉、尚未部署）
+## 研報上傳：收檔、worker 與審核（Admin v1.5，功能旗標預設關閉）
 
-管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`）；worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器都還沒裝上主機，旗標要等上線步驟（`docs/production_resilience.md`「上傳 worker」）走完並經同意後才開。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。
+管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`）；worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器要先裝好（各主機現況見 `docs/DEPLOYMENT_STATUS.md`），旗標要等上線步驟（`docs/production_resilience.md`「上傳 worker」）走完並經同意後才開。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。
 
 `POST /api/admin/uploads?filename=&last_modified=`（`web/routers/admin_uploads.py`，管理員＋`reports.manage`）：
 
@@ -334,7 +334,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 ```bash
 # 基礎建設（一次）
 make setup                                   # uv sync + pgvector 容器 + 套 schema
-cp .env.example .env                         # 填 REPORT_MARK_SESSION_SECRET
+[ -e .env ] || cp .env.example .env          # 只在新 checkout 建立、不覆蓋既有 .env；新建後換掉 REPORT_MARK_SESSION_SECRET 的佔位值
 uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（之後在管理頁建其他帳號）
 
 # 全語料三支（初次建庫或補歷史）

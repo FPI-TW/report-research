@@ -1,4 +1,6 @@
-# AWS staging 基礎設施
+# AWS 基礎設施（正式環境）
+
+> 這套 EC2 與 RDS 是**正式環境**（`research.tingfong.com`）。stack、RDS、參數檔、標籤與 IAM 政策檔名裡的 staging 是建置當時的歷史命名，沿用不改；環境角色見 `AGENTS.md`「環境角色與資料安全」。
 
 此目錄只建立 `report-research-staging` 的 EC2、RDS PostgreSQL 與必要網路，並驗證 EC2 能透過 TLS
 連上 RDS。它**不會** clone/build/run 專案、不套用 `db/schema.sql`、不搬資料，也不建立 Web、批次、
@@ -6,7 +8,7 @@ nginx、Cloudflare 或排程服務。
 
 ## CloudFormation 管理方式
 
-本 staging 基礎設施由 AWS CloudFormation 以宣告式範本管理，stack 名稱為 `report-research-staging`。
+本基礎設施由 AWS CloudFormation 以宣告式範本管理，stack 名稱為 `report-research-staging`。
 `infrastructure.yaml` 描述 VPC、子網與路由、安全群組、EC2 與 Elastic IP、EC2 IAM role／instance profile，
 以及 RDS subnet group、parameter group 和 PostgreSQL 執行個體。EC2 的範本 bootstrap 會安裝連線驗收所需工具；
 這不代表應用程式已部署。
@@ -24,7 +26,7 @@ outputs 作為資源 ID、RDS endpoint 與 managed secret ARN 的來源。既有
 Cloudflare DNS 由 Cloudflare 控制台另行管理。應用程式、服務、`db/schema.sql` 與語料／狀態資料也在此 stack
 之外部署或處理；修改這些部分不會因 CloudFormation stack 更新而自動完成。
 
-## Staging 更新與驗收紀錄（2026-10-05）
+## 更新與驗收紀錄（2026-10-05）
 
 本節是 2026-10-05 的操作紀錄；以下通過項目不代表所有上線待辦都已完成。
 
@@ -121,7 +123,7 @@ EC2 instance role 可以讀取這一個 RDS managed master secret，因此具備
 
 ## 部署狀態紀錄（2026-10-01）
 
-以下保留 2026-10-01 在帳號 `607063196781`、新加坡 `ap-southeast-1` 完成 staging 建置與驗收時的觀察，
+以下保留 2026-10-01 在帳號 `607063196781`、新加坡 `ap-southeast-1` 完成建置與驗收（當時以 staging 名義建置）時的觀察，
 不是即時狀態；後續操作前須重新確認：
 
 - Stack `report-research-staging`：`UPDATE_COMPLETE`，termination protection 已啟用。
@@ -190,7 +192,7 @@ Cloudflare 到來源站的網路放行，再驗收代理流量。
 [Cloudflare Origin CA 的代理前提](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/)。
 
 以下是 2026-10-02 核對時尚未執行的部署待辦；入口已於後續選定 A record＋橘雲（見「對外入口決定」），
-應用與 AWS 即時狀態仍須以此次部署驗收為準：
+應用與 AWS 即時狀態仍須以此次部署驗收為準。EC2 現已是正式環境，下列清單保留作為當時的紀錄：
 
 1. Cloudflare 控制台的來源記錄及 SSL/TLS 模式仍待核對；AWS 帳號、stack outputs、Elastic IP
    綁定、EC2／SSM 與安全群組的唯讀核對已完成。

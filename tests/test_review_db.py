@@ -5,7 +5,7 @@
 窗期、以及 count 與當頁是同一個條件。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB 就 skip。**一律 rollback、絕不 commit**——本機
-連到的是生產庫。斷言只針對自己塞進去的列（以 id 辨識），不假設庫是空的。
+連到的是測試環境的真實資料庫。斷言只針對自己塞進去的列（以 id 辨識），不假設庫是空的。
 """
 
 from __future__ import annotations

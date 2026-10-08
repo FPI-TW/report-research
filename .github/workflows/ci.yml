@@ -322,7 +322,7 @@ jobs:
         run: uv run pytest -q tests/test_schema_constraints.py
 
       # E1b：extraction_log 的 upsert 與 research_report 新欄位，只有套完 schema 的乾淨庫
-      # 驗得到；本機連到的是生產庫，測試一律 rollback。
+      # 驗得到；本機預設連到的是測試環境的真實資料庫，測試一律 rollback。
       - name: extraction_log 與抽取欄位對帳
         run: uv run pytest -q tests/test_extraction_log_db.py
 
@@ -336,7 +336,7 @@ jobs:
         run: uv run pytest -q tests/test_review_db.py
 
       # 個別帳號：大小寫不分的唯一帳號、session 撤銷與停用立即生效、最後一位管理員的
-      # 列鎖、稽核與變更同交易。空庫才驗得到「最後一位管理員」那一題（本機生產庫會 skip）。
+      # 列鎖、稽核與變更同交易。空庫才驗得到「最後一位管理員」那一題（本機那個真實資料庫會 skip）。
       - name: 帳號與 session
         run: uv run pytest -q tests/test_accounts_db.py
 

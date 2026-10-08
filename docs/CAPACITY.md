@@ -83,7 +83,7 @@ make metrics-once
 # 前景取樣一小時（臨時量測用）
 make metrics-collect DURATION=3600
 
-# 常駐取樣（生產用；真相來源在 deploy/，改完要 cp 過去）
+# 常駐取樣（辦公室主機用；真相來源在 deploy/，改完要 cp 過去）
 sudo cp deploy/systemd/report-mark-metrics.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-metrics.service
@@ -235,7 +235,7 @@ HTTP 那一層，繞過去就量不到。題目取自同一份凍結題集 `eval
 
 ## 問答 rerank 延遲重測（2026-09-29）
 
-從正式庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離 PostgreSQL；在本工作樹
+從辦公室主機的語料庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離 PostgreSQL；在本工作樹
 `127.0.0.1:8099` 啟動單 worker API，載入既有 DeepSeek 設定，對同一組前 8 題各送
 一次真實登入後的 `/api/ask` SSE 請求。依序量單併發、三併發，再把預設
 `ASK_RERANK_CANDIDATES` 從 50 改為 16，重跑相同兩輪；其餘設定、語料和主機不變。
@@ -324,7 +324,7 @@ freshclam timer，執行時才暫時多約 1 GB、每輪多 20–40 秒載入病
 
 ## 批次元件：上傳 worker
 
-`report-mark-upload.service`（Admin v1.5，`scripts/process_uploads.sh`，timer 每 5 分鐘；**尚未部署**）。取樣器依 unit
+`report-mark-upload.service`（Admin v1.5，`scripts/process_uploads.sh`，timer 每 5 分鐘；各主機是否安裝見 `docs/DEPLOYMENT_STATUS.md`）。取樣器依 unit
 名自動把它記成元件 `upload`，分析器列在 `BATCH_COMPONENTS`（批次，不算線上路徑）。每輪大多只是幾個空查詢；有乾淨檔
 要入庫時才延遲載入 BGE-M3，入庫段取 claude 鎖、與 sync 互斥，主機尖峰維持「web 一份＋一支批次一份」。
 backfill（`scripts/backfill_extraction.py`，也載 BGE-M3、不取 claude 鎖）正在跑時只掃描、不入庫。

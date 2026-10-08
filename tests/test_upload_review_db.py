@@ -7,7 +7,7 @@ unique index 轉 409；重試只限可重試類；預覽與原檔指標；清除
 
 兩組測試：
 
-- `UploadReviewDbTests`：**一律 rollback、絕不 commit**——本機預設連到的是生產庫。`store.upsert_report`
+- `UploadReviewDbTests`：**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫。`store.upsert_report`
   本身會 commit，測試把那個 session 的 commit 換成 flush。斷言只針對自己塞進去的列（隨機 file_hash）。
 - `UploadReviewConcurrencyTests`：兩個交易真的並發（第二個在 report_upload 的列鎖上等，第一個 commit 後
   條件式 UPDATE 影響 0 列）。另一個連線看得到的資料必須先 commit，所以這組**只在拋棄式的庫上跑**：
@@ -561,7 +561,7 @@ class UploadReviewDbTests(unittest.TestCase):
 
     def test_retry_respects_in_flight_quota(self):
         """使用者決策：重試也受全站處理中上限（與收檔同一套計數）。上限以「這個庫此刻的處理中件數」為準，
-        不假設庫是空的（本機預設庫是生產庫）。"""
+        不假設庫是空的（本機預設庫是測試環境的真實資料庫）。"""
         async def body(session):
             from app.services.upload_intake import QuotaExceededError
 

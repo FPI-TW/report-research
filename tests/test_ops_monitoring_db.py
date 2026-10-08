@@ -7,7 +7,7 @@
 清單的重疊時間篩選與詳情的事件順序、journal 片段。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0005）就 skip。**一律 rollback、
-絕不 commit**——本機預設連到的是生產庫。斷言只針對自己塞進去的列（以隨機 host 辨識），不假設庫是空的。
+絕不 commit**——本機預設連到的是測試環境的真實資料庫。斷言只針對自己塞進去的列（以隨機 host 辨識），不假設庫是空的。
 """
 
 from __future__ import annotations

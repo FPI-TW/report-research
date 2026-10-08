@@ -121,10 +121,9 @@ _CTX_SPLIT_RE = re.compile(r"(?=^\[\d+\] )", re.MULTILINE)
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
 # 生成端的逾時。沿用 stream_completion 的預設值（改它等於改被評的東西）。
-# n_truncated 取自 stream_completion 的 `meta["truncated"]`：CLI 路徑逾時後對已吐出的文字
-# fail-open、不拋例外，唯一的訊號是「成功的那次嘗試撞到了這個上限」（每次嘗試各自計時，
-# 529 重試花掉的時間不算）。它只抓得到逾時截斷；輸出長度上限造成的截斷 CLI 看不到，
-# PR-11 接 HTTP 後改用 finish_reason（length）。
+# n_truncated 是非 error 題中 gen_truncated 為真的題數，值來自 stream_completion 的 `meta["truncated"]`：
+# HTTP 路徑涵蓋輸出長度上限、總時限、讀取逾時與網路中斷（原因在 `meta["truncated_reason"]`，這裡只記布林）；
+# 吐字後遇到內容審查會拋 LLMUnavailableError(partial=True)，該題記成 error，不計入此數。
 GEN_TIMEOUT = 120.0
 
 # judge 出錯的型別：只有這些讓「該指標」記 None（M8）。其他例外（程式錯誤、嵌入失敗）
@@ -232,7 +231,7 @@ async def _generate_answer(
 ) -> tuple[str, bool]:
     """以 build_user_prompt + stream_completion 生成答案（跳過 SEARCH_EVENT 控制標記）。
 
-    回 (答案, 是否被逾時截斷)。截斷的判準見 GEN_TIMEOUT 旁的註解。
+    回 (答案, 是否被截斷)。截斷的判準見 GEN_TIMEOUT 旁的註解。
     """
     prompt = build_user_prompt(question, context)
     parts: list[str] = []
@@ -422,7 +421,7 @@ def aggregate(per_q: list[dict]) -> dict:
     n_no_context 只計「F 為 None 且不是 judge 出錯」的題：judge 出錯另計 n_judge_errors，
     混在一起會把量尺故障讀成檢索沒找到東西。
     citation_rate／simplified_residual_rate 是「答案帶有效引用」「答案整份判為簡體」的
-    題數比例（分母＝有該欄位的非 error 題）；n_truncated 是生成被逾時截斷的題數。
+    題數比例（分母＝有該欄位的非 error 題）；n_truncated 是非 error 題中生成被截斷的題數。
     n_effective_<指標>／judged_ids_sha：三個 judge 指標各自實際入均值的題數與題目集合的雜湊
     （eval_compare 據此判定兩份是不是在同一組題目上算的均值）。
     """

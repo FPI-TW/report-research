@@ -7,7 +7,7 @@
 跑在 CI 的「schema 契約」job；本機沒有 DB 就 skip（`REPORT_MARK_REQUIRE_DB` 設定時改成
 紅燈，與 tests/test_extraction_log_db.py 同一套語意）。
 
-**一律 rollback、絕不 commit**：這支測試在本機會連到生產庫。測試資料以一個隨機標記字串
+**一律 rollback、絕不 commit**：這支測試在本機會連到測試環境的真實資料庫。測試資料以一個隨機標記字串
 做搜尋條件，所以不受庫裡既有對話影響，也不假設庫是空的。
 """
 

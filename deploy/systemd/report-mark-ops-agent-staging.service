@@ -5,7 +5,7 @@ Description=廷豐智能研報 維運代理（EC2 staging：status、logs；web 
 # 沒有任何容器（DB 是 RDS、nginx 是 apt 安裝的 systemd 服務），catalog 也沒有 container 服務，所以這支代理
 # 不必、也不該拿到等同 root 的 docker 權限。分開使用者是為了寫入類：polkit
 # （deploy/polkit/10-report-mark-ops.rules）以使用者區分，report-mark-ops-staging 只被授權
-# report-mark-web.service 的 restart 與 freshness、audit 的 start（比生產的 report-mark-ops 窄）。
+# report-mark-web.service 的 restart 與 freshness、audit 的 start（比辦公室主機的 report-mark-ops 窄）。
 # 安裝：在 EC2 以 deploy/install_units.sh --user ubuntu --root <repo 根> 安裝（這支沒有辦公室主機的路徑，
 # 代換不影響它）；程式碼與 catalog 裝到 root 擁有的 /opt/report-mark-ops/，步驟見 docs/production_resilience.md。
 # 刻意不宣告 OnFailure=（理由見 report-mark-ops-agent.service）。

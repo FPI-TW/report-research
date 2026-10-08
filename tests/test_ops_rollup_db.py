@@ -7,7 +7,7 @@
 另一份持有 advisory lock 時批次 rc=75。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0007）就 skip。**一律 rollback、
-絕不 commit**——本機預設連到的是生產庫：`run_rollup` 的 commit 換成 no-op，而且以 `hosts=[隨機 host]`
+絕不 commit**——本機預設連到的是測試環境的真實資料庫：`run_rollup` 的 commit 換成 no-op，而且以 `hosts=[隨機 host]`
 圈住只處理自己塞的列，不假設庫是空的。
 """
 
@@ -335,7 +335,7 @@ class OpsRollupDbTests(unittest.TestCase):
                     self.assertTrue(got)
                     try:
                         other = create_async_engine(DATABASE_URL)
-                        # dry-run：萬一沒擋住也不會改資料（本機預設庫就是生產庫）
+                        # dry-run：萬一沒擋住也不會改資料（本機預設庫是測試環境的真實資料庫）
                         return await asyncio.to_thread(
                             ro.run, Namespace(dry_run=True, max_slices=1, batch_size=1), other,
                             async_sessionmaker(other))

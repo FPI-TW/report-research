@@ -1,12 +1,12 @@
 # report-mark 維運代理的 Service Catalog（開發環境）。格式與驗證規則見 ops_agent/catalog.py。
 #
 # development catalog 只能列 report-mark-dev-* 的 unit 與 report-mark-dev* 的容器（代理載入時檢查），
-# socket 也和生產不同（/run/report-mark-ops-dev/agent.sock）：dev 代理結構上碰不到生產服務。
+# socket 也和辦公室主機的 prod catalog 不同（/run/report-mark-ops-dev/agent.sock）：dev 代理結構上碰不到部署中的服務。
 # 本機冒煙可用 --socket 指到臨時路徑（只有 development 允許覆寫）。
 #
-# 依賴圖（depends_on）與生產同一套格式（ops_agent/catalog.py）；dev 沒有外部依賴節點。
+# 依賴圖（depends_on）與 prod catalog 同一套格式（ops_agent/catalog.py）；dev 沒有外部依賴節點。
 #
-# 寫入類與生產同一套規則（restart 只給 web 類、run 只給 oneshot、容器唯讀），對象只限開發用的 unit：
+# 寫入類與 prod catalog 同一套規則（restart 只給 web 類、run 只給 oneshot、容器唯讀），對象只限開發用的 unit：
 # dev-web 可 restart，dev-smoke（deploy/systemd/report-mark-dev-smoke.service，只 sleep 的 oneshot）可 run，
 # 用來在不碰任何真東西的前提下驗 run、409 already_running 與輪詢。polkit 只授權 report-mark-ops-dev
 # 對這兩個 unit 做 restart／start（deploy/polkit/10-report-mark-ops.rules）。
@@ -35,7 +35,7 @@ kind = "container"
 container = "report-mark-devdb"
 tier = "critical"
 actions = ["status", "logs"]
-description = "開發驗證庫（生產複本，127.0.0.1:5437）"
+description = "開發驗證庫（辦公室主機資料庫的複本，127.0.0.1:5437）"
 
 # 開發用 web 目前是手動起的 uvicorn，還沒有 unit；裝了 report-mark-dev-web.service 之前這列回 not_found。
 [[services]]

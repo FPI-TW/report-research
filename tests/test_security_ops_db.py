@@ -6,7 +6,8 @@
 - 管理員撤銷單一 session：稽核寫不進去時撤銷一起 rollback（同交易）。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——
-本機預設連到的是生產庫。security_ops 吃 session_factory 參數，accounts 換掉模組的 SessionFactory，兩者都綁在
+本機預設連到的是測試環境的真實資料庫。
+security_ops 吃 session_factory 參數，accounts 換掉模組的 SessionFactory，兩者都綁在
 外層交易上、commit 只釋放 savepoint（同 tests/test_accounts_db.py）。
 """
 

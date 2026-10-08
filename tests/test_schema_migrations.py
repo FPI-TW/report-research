@@ -9,7 +9,7 @@
    `alembic upgrade head` 直接失敗。合併前就要紅。
 3. **revision 不寫 SQL 常數**。`schema_source_text()` 靠 `UPGRADE_SQL` 把 baseline＋各 revision
    串成一份原文，既有的靜態契約測試（索引、生成欄運算式）掃的是它。
-4. **守門規則**：對已有資料的庫做變更必須逐字確認目標（本機預設庫就是生產庫）。
+4. **守門規則**：對已有資料的庫做變更必須逐字確認目標（本機預設庫是測試環境的真實資料庫）。
 """
 import hashlib
 import re

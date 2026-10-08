@@ -2,8 +2,8 @@
 -- 執行後 `make schema-check` 必須零 drift，才可 `make schema-stamp-baseline`。
 --
 -- 為什麼會有這些差異：導入 Alembic 前 db/schema.sql 只靠 `CREATE ... IF NOT EXISTS`，
--- 對既有庫既刪不掉東西、也改不了同名物件的定義。2026-10-05 的 drift 檢查在生產庫與
--- devdb 都找到下面三項（staging 由生產 pg_dump 還原，預期相同；以檢查結果為準）。
+-- 對既有庫既刪不掉東西、也改不了同名物件的定義。2026-10-05 的 drift 檢查在辦公室主機的庫與
+-- devdb 都找到下面三項（EC2 的 RDS 由辦公室主機的 pg_dump 還原，預期相同；以檢查結果為準）。
 --
 -- 冪等：重跑不會出錯、也不會動到已經正確的物件。兩支 DROP 用 CONCURRENTLY（不鎖寫入），
 -- 所以**不可**包交易（不要加 psql -1）。

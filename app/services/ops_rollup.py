@@ -200,7 +200,7 @@ def _merge_set(table: str) -> str:
 
 
 def _host_filter(alias: str, hosts: Sequence[str] | None) -> str:
-    # 只給 DB 測試用（以隨機 host 圈住自己塞的列；本機預設庫就是生產庫）。正式批次一律全部主機。
+    # 只給 DB 測試用（以隨機 host 圈住自己塞的列；本機預設庫是測試環境的真實資料庫）。正式批次一律全部主機。
     return f" AND {alias}.host = ANY(CAST(:hosts AS text[]))" if hosts is not None else ""
 
 

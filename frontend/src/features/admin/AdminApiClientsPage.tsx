@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { ConfirmDialog } from '../../components/primitives/ConfirmDialog'
 import { Modal } from '../../components/primitives/Modal'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
-import { copyText } from '../../lib/clipboard'
+import { CopyButton } from '../../components/animate-ui/components/buttons/copy'
 import { adminApi, type ApiClientEntitlements } from '../../lib/generated/adminApi'
 import { MARKET_ORDER, marketLabel } from '../../lib/meta'
 import { useMe } from '../../lib/useMe'
@@ -206,27 +206,26 @@ function ClientForm({ client, busy, onCancel, onSubmit }: {
  * 前端沒有任何地方能再取得——後端只存 hash，遺失只能輪替。
  */
 function KeyDialog({ shown, onClose }: { shown: { name: string; key: string } | null; onClose: () => void }) {
-  const [copy, setCopy] = useState<'idle' | 'ok' | 'failed'>('idle')
-  const close = () => { setCopy('idle'); onClose() }
-  const doCopy = () => {
-    if (!shown) return
-    copyText(shown.key).then(() => setCopy('ok'), () => setCopy('failed'))
-  }
   return (
-    <Modal open={shown != null} onClose={close} title={shown ? `「${shown.name}」的 API 金鑰` : ''}>
+    <Modal open={shown != null} onClose={onClose} title={shown ? `「${shown.name}」的 API 金鑰` : ''} className={local.keyModal}>
       <div className={styles.dialogForm}>
         <p className={local.keyWarn} role="note">
-          這把金鑰<strong>只會顯示這一次</strong>。關閉這個視窗後無法再取得（系統只保存雜湊值）；
-          請立即複製並以安全的管道交給對方。遺失時只能輪替成新的金鑰。
+          請立即複製並妥善保存，關閉後將<strong>無法再次查看</strong>。
         </p>
-        <code className={local.keyBox} aria-label="API 金鑰">{shown?.key}</code>
-        {copy === 'ok' && <p className={styles.ok} role="status">已複製到剪貼簿</p>}
-        {copy === 'failed' && (
-          <p className={styles.error} role="alert">無法自動複製，請手動選取上方金鑰複製</p>
-        )}
+        {/* 複製失敗時 CopyButton 不翻成勾勾（勾勾是「已複製」的承諾）；金鑰框可整段選取，手動複製仍可行。 */}
+        <div className={local.keyField}>
+          <code className={local.keyBox} aria-label="API 金鑰">{shown?.key}</code>
+          <CopyButton
+            content={shown?.key ?? ''}
+            variant="ghost"
+            size="sm"
+            className={local.keyCopy}
+            aria-label="複製金鑰"
+            title="複製金鑰"
+          />
+        </div>
         <div className={styles.dialogActions}>
-          <button type="button" className={styles.action} onClick={doCopy}>複製金鑰</button>
-          <button type="button" className={styles.primary} onClick={close}>我已妥善保存，關閉</button>
+          <button type="button" className={styles.primary} onClick={onClose}>我已妥善保存，關閉</button>
         </div>
       </div>
     </Modal>

@@ -11,11 +11,12 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-# stats/progress 及其快取、進度解析 helper 已拆到 web.routers.monitor；服務綁定
-# （SessionFactory）仍在 web.deps。故 handler/快取/常數的覆寫指向 monitor 模組。
+# stats/progress 與 runtime 快取、進度解析 helper 在 web.routers.monitor；DB 快照與它的快取、
+# M8 查核欄位在 web.stats_snapshot（review 的判定尺端點也讀它）；服務綁定（SessionFactory）
+# 在 web.deps。覆寫各自指向定義它的模組。
 from app.services.accounts import DEV_USER  # noqa: E402
-from web import deps  # noqa: E402
-from web.routers import monitor  # noqa: E402
+from web import deps, stats_snapshot  # noqa: E402
+from web.routers import monitor, review  # noqa: E402
 
 
 class _ScalarResult:
@@ -316,8 +317,8 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         其中兩條是全表 GROUP BY，15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime
         區塊仍每次更新，觀感幾乎無差。下界仍守著「不能拿掉快取」。
         """
-        self.assertGreaterEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 3.0)
-        self.assertLessEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 15.0)
+        self.assertGreaterEqual(stats_snapshot.DB_STATS_CACHE_TTL_SECONDS, 3.0)
+        self.assertLessEqual(stats_snapshot.DB_STATS_CACHE_TTL_SECONDS, 15.0)
 
     def test_runtime_and_tag_count_have_their_own_ttl(self):
         """DB 快照拉長只解一半：runtime 區塊（log tail + /proc + tag 檔數）原本
@@ -334,8 +335,9 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         # conftest 的 autouse fixture 已經清過三個快取；這裡保留是為了讓本檔單獨
         # 以 unittest 執行（不經 pytest）時行為一致。
         monitor.reset_caches()
+        stats_snapshot.reset_cache()
 
-    async def test_stats_and_progress_share_one_db_snapshot_within_ttl(self):
+    async def test_stats_progress_and_judge_scale_share_one_db_snapshot_within_ttl(self):
         calls = []
         eval_params: dict = {}
 
@@ -373,13 +375,13 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                         ("log_latest", "2026-09-03", 0),
                     ])
                 if "count(evaluation)" in sql:
-                    # kind + monitor._EVAL_COLUMNS 的欄位（依宣告順序）。
+                    # kind + stats_snapshot._EVAL_COLUMNS 的欄位（依宣告順序）。
                     vals = {
                         "total": 40, "checked": 5, "judge_checked": 3, "degraded": 1, "below_min": 1,
                         "avg_score": 0.5634, "avg_n": 2, "latest": date(2026, 7, 28),
                         "judge_since": date(2026, 7, 2), "other_judge_checked": 2,
                     }
-                    return _RowsResult([("qa", *(vals[k] for k, _sql in monitor._EVAL_COLUMNS))])
+                    return _RowsResult([("qa", *(vals[k] for k, _sql in stats_snapshot._EVAL_COLUMNS))])
                 if "unnest(instrument_types)" in sql:
                     return _RowsResult([("equity", 5)])
                 if "GROUP BY report_type" in sql:
@@ -411,15 +413,21 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         try:
             stats = await monitor.stats(DEV_USER)
             progress = await monitor.progress()
+            scale = await review.judge_scale()
         finally:
             deps.SessionFactory = orig_session_factory
             monitor._gather_runtime = orig_gather_runtime
 
         # 11 = 原本 6 + takeaway/signal 覆蓋率各一 + M8 查核統計一（兩張表以 UNION ALL
         # 併成單次查詢，刻意不拆成兩次）+ 券商分佈一 + E1 抽取品質一（同樣 UNION ALL
-        # 併成單次）。這個數字守的是「stats 與 progress 共用 _DB_STATS_CACHE、TTL 內
-        # 只打一次 DB」（見 monitor.py docstring）。
+        # 併成單次）。這個數字守的是「stats、progress 與待複核的判定尺共用 _DB_STATS_CACHE、
+        # TTL 內只打一次 DB」（見 web/stats_snapshot.py docstring）。
         self.assertEqual(len(calls), 11)
+        # 判定尺是 evaluation.qa 的子集（issue #348）：同一份快照、不另寫查詢，只挑三個鍵。
+        self.assertEqual(
+            scale.model_dump(),
+            {"judge_model": stats_snapshot._JUDGE_MODEL, "judge_since": "2026-07-02", "other_judge_checked": 2},
+        )
         ext = progress["extraction"]
         self.assertEqual(ext["backfill"]["done"], 0 if ext["target_version"] != "ext-2026-09-02.v3" else 2)
         self.assertEqual(ext["backfill"]["total"], 6)
@@ -455,14 +463,14 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(qa["judge_checked"], 3)
         self.assertEqual(qa["avg_n"], 2)
         self.assertEqual(qa["avg_score"], 0.5634)
-        self.assertEqual(qa["judge_model"], monitor._JUDGE_MODEL)
+        self.assertEqual(qa["judge_model"], stats_snapshot._JUDGE_MODEL)
         self.assertEqual(qa["judge_since"], "2026-07-02")
         self.assertEqual(qa["other_judge_checked"], 2)
         self.assertEqual(qa["latest"], "2026-07-28")
-        self.assertEqual(eval_params["judge_model"], monitor._JUDGE_MODEL)
+        self.assertEqual(eval_params["judge_model"], stats_snapshot._JUDGE_MODEL)
         eval_sql = next(c for c in calls if "count(evaluation)" in c)
         # 送出的 SQL 就是 _EVAL_COLUMNS 逐欄組成的（逐欄的過濾條件由下面的測試核對）
-        for key, col_sql in monitor._EVAL_COLUMNS:
+        for key, col_sql in stats_snapshot._EVAL_COLUMNS:
             self.assertIn(col_sql, eval_sql, key)
 
 
@@ -470,20 +478,20 @@ class EvalColumnsJudgeFilterTests(unittest.TestCase):
     """審查 L8：只斷言整條 SQL 有 `:judge_model`，漏掉任何一欄的條件都照樣綠。逐欄核對。"""
 
     def _cols(self) -> dict[str, str]:
-        return dict(monitor._EVAL_COLUMNS)
+        return dict(stats_snapshot._EVAL_COLUMNS)
 
     def test_score_columns_are_exactly_the_expected_set(self):
         self.assertEqual(
-            monitor._EVAL_CURRENT_JUDGE_KEYS,
+            stats_snapshot._EVAL_CURRENT_JUDGE_KEYS,
             {"judge_checked", "degraded", "below_min", "avg_score", "avg_n", "judge_since"},
         )
-        self.assertLessEqual(monitor._EVAL_CURRENT_JUDGE_KEYS, set(self._cols()))
+        self.assertLessEqual(stats_snapshot._EVAL_CURRENT_JUDGE_KEYS, set(self._cols()))
 
     def test_every_score_column_filters_on_the_current_judge(self):
         from app.services.judge_schema import CURRENT_JUDGE_SQL
 
         cols = self._cols()
-        for key in sorted(monitor._EVAL_CURRENT_JUDGE_KEYS):
+        for key in sorted(stats_snapshot._EVAL_CURRENT_JUDGE_KEYS):
             with self.subTest(key=key):
                 sql = cols[key]
                 self.assertIn("FILTER (WHERE ", sql)
@@ -506,7 +514,7 @@ class EvalColumnsJudgeFilterTests(unittest.TestCase):
         cols = self._cols()
         for key in ("avg_score", "avg_n"):
             with self.subTest(key=key):
-                self.assertIn(monitor._EVAL_NOT_DEGRADED_SQL, cols[key])
+                self.assertIn(stats_snapshot._EVAL_NOT_DEGRADED_SQL, cols[key])
 
 
 if __name__ == "__main__":

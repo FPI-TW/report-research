@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import AdminReviewsPage from './AdminReviewsPage'
 
 afterEach(() => vi.unstubAllGlobals())
 
-test('管理員看到待複核頁首與佇列；/api/progress 只取一次、不輪詢', async () => {
+const judgeScaleCalls = (f: { mock: { calls: unknown[][] } }) => f.mock.calls.filter(([u]) => u === '/api/review/judge-scale').length
+
+test('管理員看到待複核頁首與佇列；判定尺取不到（500）也照常；判定尺只取一次、不打 /api/progress', async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'root', role: 'admin' }), { status: 200 })
     if (url.startsWith('/api/review/queue')) {
@@ -27,7 +29,37 @@ test('管理員看到待複核頁首與佇列；/api/progress 只取一次、不
   expect(await screen.findByText('沒有待複核的項目')).toBeInTheDocument()
   // 切頁導覽在外殼（AdminShell），頁面本身只有標題
   expect(screen.getByRole('heading', { name: '待複核', level: 1 })).toBeInTheDocument()
-  expect(fetchMock.mock.calls.filter(([u]) => u === '/api/progress')).toHaveLength(1)
+  await waitFor(() => expect(judgeScaleCalls(fetchMock)).toBe(1))
+  // 判定尺只是附註：取不到就不標，不擋佇列；完整管線資料（/api/progress，要 ops.read）不碰
+  expect(screen.queryByText(/新量尺/)).not.toBeInTheDocument()
+  expect(fetchMock.mock.calls.filter(([u]) => u === '/api/progress')).toHaveLength(0)
+})
+
+test('判定尺剛換成 DeepSeek → 忠實度分頁標新量尺（資料來自 /api/review/judge-scale）', async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'root', role: 'admin' }), { status: 200 })
+    if (url === '/api/review/judge-scale') {
+      return new Response(JSON.stringify({
+        judge_model: 'deepseek-flash', judge_since: '2026-09-25', other_judge_checked: 6,
+      }), { status: 200 })
+    }
+    if (url.startsWith('/api/review/queue')) {
+      return new Response(JSON.stringify({
+        kind: 'faithfulness', total: 0, limit: 10, offset: 0, has_more: false, next_offset: null, min_score: 0.9, items: [],
+      }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ detail: 'x' }), { status: 500 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/admin/reviews']}><AdminReviewsPage /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText(/判定尺 deepseek-flash 是新量尺（自 2026-09-25 起，DeepSeek）/)).toBeInTheDocument()
+  expect(judgeScaleCalls(fetchMock)).toBe(1)
+  expect(fetchMock.mock.calls.filter(([u]) => u === '/api/progress')).toHaveLength(0)
 })
 
 function mountWithMe(me: Record<string, unknown>) {

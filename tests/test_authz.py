@@ -3,9 +3,10 @@
 兩層：
 - HTTP 層：user 角色打 /api/review/*（以及 /api/admin/*，見 tests/test_admin_api.py）回 403；
   缺 scope、不是 super admin、沒有重新驗證，各自回帶 code 的 403。
-- 結構層：app 上**每一條** /api/admin/*、/api/review/* 路由的 dependency 樹裡都要有
-  `authz.require_admin`，而且至少一個帶 `__scope__` 的 dependency（`require_scope`／`require_super`）。
-  新增管理端點時忘了掛，這裡會紅——不必等有人想到要寫 403 測試。
+- 結構層：app 上**每一條** /api/admin/*、/api/review/* 路由，以及 `_ADMIN_PATHS` 逐條列出的
+  舊路徑（目前是 /api/progress），dependency 樹裡都要有 `authz.require_admin`，而且至少一個帶
+  `__scope__` 的 dependency（`require_scope`／`require_super`）。新增管理端點時忘了掛，這裡會紅——
+  不必等有人想到要寫 403 測試。
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ except ImportError:
     iter_route_contexts = None
 
 _ADMIN_PREFIXES = ("/api/admin/", "/api/review/")
+# 不在上面前綴底下、但同樣只給管理員的舊路徑（issue #348：/api/progress 原本只受登入保護，
+# 結構檢查只看前綴，於是漏查）。逐條寫明，改名或刪除時 test_explicit_admin_paths_still_exist 會紅。
+_ADMIN_PATHS = frozenset({"/api/progress"})
 
 
 def _iter_api_routes(routes):
@@ -56,9 +60,36 @@ def _client():
 
 class AdminRouteStructureTests(unittest.TestCase):
     def _guarded(self):
-        guarded = [r for r in _iter_api_routes(app.routes) if r.path.startswith(_ADMIN_PREFIXES)]
+        guarded = [
+            r for r in _iter_api_routes(app.routes)
+            if r.path.startswith(_ADMIN_PREFIXES) or r.path in _ADMIN_PATHS
+        ]
         self.assertTrue(guarded, "找不到任何管理端點——路由前綴改了？")
         return guarded
+
+    @staticmethod
+    def _scopes(route) -> set[str]:
+        return set().union(*(getattr(c, "__scope__", frozenset()) for c in _dependency_calls(route.dependant)))
+
+    def test_explicit_admin_paths_still_exist(self):
+        """逐條列出的舊路徑必須真的在 app 上，否則上面兩條檢查對它靜默空轉。"""
+        self.assertEqual({r.path for r in self._guarded() if r.path in _ADMIN_PATHS}, set(_ADMIN_PATHS))
+
+    def test_progress_requires_ops_read_but_stats_stays_open(self):
+        """完整管線資料要 ops.read；守門掛在路由上，同一支 router 的 /api/stats 仍給一般使用者。"""
+        by_path = {r.path: r for r in _iter_api_routes(app.routes)}
+        self.assertIn("ops.read", self._scopes(by_path["/api/progress"]))
+        stats_calls = set(_dependency_calls(by_path["/api/stats"].dependant))
+        self.assertNotIn(authz.require_admin, stats_calls)
+        self.assertIn(authz.current_user, stats_calls)
+
+    def test_judge_scale_needs_review_manage_not_ops_read(self):
+        """待複核頁的判定尺沿用 review router 的 review.manage，不因此要求（或給出）ops.read。"""
+        route = next(r for r in self._guarded() if r.path == "/api/review/judge-scale")
+        self.assertEqual(route.methods, {"GET"})
+        scopes = self._scopes(route)
+        self.assertIn("review.manage", scopes)
+        self.assertNotIn("ops.read", scopes)
 
     def test_every_admin_route_requires_admin(self):
         missing = [

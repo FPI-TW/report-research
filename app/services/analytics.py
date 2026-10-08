@@ -33,7 +33,7 @@
 不會補進已彙總的日子（`--force` 重算會更新，但也會讓被硬刪的問答從彙總裡消失）。
 
 **忠實度**一律經 `app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`（只計現行 judge），分數 SQL 與
-`web/routers/monitor.py` 的 `_EVAL_COLUMNS` 同一套（jsonb 先 `jsonb_typeof` 再 cast，degraded 不計分）。
+`web/stats_snapshot.py` 的 `_EVAL_COLUMNS` 同一套（jsonb 先 `jsonb_typeof` 再 cast，degraded 不計分）。
 這裡刻意不 import 監控 router：彙總腳本不得把 web 與抽取層拖進來。彙總把 judge 名稱寫在 dim，讀的時候只取
 現行 judge 那一格——換 judge 之後舊尺的分數不會混進趨勢。
 
@@ -319,7 +319,7 @@ def top_list(merged: dict[str, tuple[float, int | None]], *, k: int, limit: int,
 
 _DAY = f"(q.created_at AT TIME ZONE '{TZ_NAME}')::date"
 _RANGE = "q.created_at >= :start_ts AND q.created_at < :end_ts"
-# 與 web/routers/monitor.py 的 _EVAL_SCORE_SQL／_EVAL_NOT_DEGRADED_SQL 同義。
+# 與 web/stats_snapshot.py 的 _EVAL_SCORE_SQL／_EVAL_NOT_DEGRADED_SQL 同義。
 _SCORE = ("CASE WHEN jsonb_typeof(q.evaluation->'faithfulness_score') = 'number' "
           "THEN (q.evaluation->>'faithfulness_score')::float END")
 _NOT_DEGRADED = "q.evaluation->'degraded' IS DISTINCT FROM 'true'::jsonb"

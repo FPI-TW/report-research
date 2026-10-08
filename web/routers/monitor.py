@@ -1,13 +1,15 @@
 # web/routers/monitor.py
 """監控資料 API：/api/stats（語料統計）與 /api/progress（匯入/標註即時進度）。
 
-從 web/server.py 拆出（第三步）。/api/stats 供檢索頁的全庫市場計數；/api/progress 供管理後台
-的管線分頁（/app/admin/operations/pipeline）與待複核頁的判定尺附註。
+從 web/server.py 拆出（第三步）。/api/stats 供檢索頁的全庫市場計數，一般登入者可用；
+/api/progress 只供管理後台的管線分頁（/app/admin/operations/pipeline），**在路由上**掛
+`require_admin`＋`ops.read`（不能掛在 router 層：同一支 router 的 /api/stats 要維持
+一般使用者可用）。待複核頁的判定尺改走 `/api/review/judge-scale`（web/routers/review.py），
+不再為了一個附註拿到整份 runtime 與管線資訊（issue #348）。
 
-**stats 與 progress 共用 _DB_STATS_CACHE**：兩者都經 _db_stats_snapshot 取語料
-快照，TTL 內只打一次 DB。這是它們必須同模組的原因——快取是模組級狀態，拆到兩
-個模組會分裂成兩份，TTL 去重失效（test_server_stats 的「6 次 execute」斷言即
-守此）。
+**DB 快照與它的快取在 `web/stats_snapshot.py`**：stats、progress 與 review 的判定尺端點
+都經 `stats_snapshot.db_stats_snapshot()` 取同一份快照，TTL 內只打一次 DB。放在 router
+之外，是因為 router 之間不互相 import。
 
 進度解析（log tail + /proc 掃描）是同步工作，progress 以 asyncio.to_thread 執行
 _gather_runtime，不阻塞事件迴圈。
@@ -16,7 +18,7 @@ _gather_runtime，不阻塞事件迴圈。
 乘上開著頁面的分頁數；TanStack Query 在視窗失焦時會停 interval，所以成立條件是
 「管線分頁開著且在前景」）：
 
-  _DB_STATS_CACHE    10 條 DB 查詢。15 秒，與前端輪詢間隔對齊。
+  _DB_STATS_CACHE    10 條 DB 查詢。15 秒，與前端輪詢間隔對齊（web/stats_snapshot.py）。
   _RUNTIME_CACHE     整個 runtime 區塊（log tail + /proc + tag 檔數）。
   _TAG_COUNT_CACHE   `data/tags/` 的 scandir，**這裡真正的熱點**：本機實測
                      15,852 個檔、冷 412 ms／熱 117 ms，而三次 `_proc_alive`
@@ -28,7 +30,6 @@ _gather_runtime，不阻塞事件迴圈。
 """
 import asyncio
 import glob as _glob
-import logging
 import os
 import re
 import time
@@ -36,63 +37,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
 
-from app.config import get_settings
 from app.services.accounts import User
-from app.services.extraction import EXTRACTION_VERSION
-from app.services.filename import source_display
-from app.services.judge_schema import CURRENT_JUDGE_SQL
-from web import authz, deps
-
-logger = logging.getLogger(__name__)
+from web import authz, stats_snapshot
 
 router = APIRouter()
-
-# 「待複核」的分數門檻與離線評測（scripts/eval_faithfulness.py）共用 FAITHFULNESS_MIN，
-# 避免監控頁自成一套標準。
-_FAITHFULNESS_MIN = get_settings().faithfulness_min
-# 現行生產 judge。分數類統計只計它量的列（app/services/judge_schema.py），與待複核佇列、
-# scripts/eval_faithfulness.py 同一條規則。
-_JUDGE_MODEL = get_settings().faithfulness_model
-
-# M8 查核統計的欄位：(回應鍵, SQL 聚合)。抽成常數讓測試逐欄核對過濾條件——只斷言
-# 「整條 SQL 有 :judge_model」的話，漏掉任何一欄的條件都照樣綠。
-#
-# 兩種語意刻意分開：
-# - **覆蓋率類**（total、checked、latest）計所有 judge：換 judge 之後「有沒有在查」這件事
-#   沒有變，主數字不能因為換尺就驟降，看起來像抽查路徑崩了。
-# - **分數類**（judge_checked、degraded、below_min、avg_score、avg_n、judge_since）只計現行
-#   judge（CURRENT_JUDGE_SQL，缺 judge_model 的舊列視為 claude-haiku-4-5）：兩把尺的分數混著
-#   平均、混著排待複核就沒有意義。avg_score 與它的樣本數 avg_n 另排除 degraded 列（沒有分數）。
-# other_judge_checked＝checked − judge_checked，卡片據此說明有多少筆不計入分數類統計。
-_EVAL_SCORE_SQL = (
-    "CASE WHEN jsonb_typeof(evaluation->'faithfulness_score') = 'number' "
-    "THEN (evaluation->>'faithfulness_score')::float END"
-)
-_EVAL_NOT_DEGRADED_SQL = "evaluation->'degraded' IS DISTINCT FROM 'true'::jsonb"
-_EVAL_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("total", "count(*)"),
-    ("checked", "count(evaluation)"),
-    ("judge_checked", f"count(evaluation) FILTER (WHERE {CURRENT_JUDGE_SQL})"),
-    ("degraded", f"count(*) FILTER (WHERE evaluation->'degraded' = 'true'::jsonb AND {CURRENT_JUDGE_SQL})"),
-    ("below_min", f"count(*) FILTER (WHERE ({_EVAL_SCORE_SQL}) < :fmin AND {CURRENT_JUDGE_SQL})"),
-    ("avg_score", f"avg({_EVAL_SCORE_SQL}) FILTER (WHERE {CURRENT_JUDGE_SQL} AND {_EVAL_NOT_DEGRADED_SQL})"),
-    ("avg_n", f"count({_EVAL_SCORE_SQL}) FILTER (WHERE {CURRENT_JUDGE_SQL} AND {_EVAL_NOT_DEGRADED_SQL})"),
-    ("latest", "max(created_at::date) FILTER (WHERE evaluation IS NOT NULL)"),
-    ("judge_since", f"min(created_at::date) FILTER (WHERE evaluation IS NOT NULL AND {CURRENT_JUDGE_SQL})"),
-    ("other_judge_checked", f"count(evaluation) FILTER (WHERE NOT ({CURRENT_JUDGE_SQL}))"),
-)
-# 只計現行 judge 的欄位（測試逐一核對它們的 SQL 帶 CURRENT_JUDGE_SQL、其餘不帶）。
-_EVAL_CURRENT_JUDGE_KEYS = frozenset(
-    {"judge_checked", "degraded", "below_min", "avg_score", "avg_n", "judge_since"}
-)
-
-# 15 秒（原 5 秒）：前端每 5 秒輪詢，這一塊是 9 條 DB 查詢，其中市場分佈與商品類型
-# 是全表 GROUP BY。拉到 15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime 區塊仍每次
-# 更新，觀感幾乎無差——這些數字本來就是「幾萬篇語料的累計量」，秒級沒有意義。
-DB_STATS_CACHE_TTL_SECONDS = 15.0
-_DB_STATS_CACHE: dict[str, object] = {"data": None, "expires_at": 0.0}
 
 # runtime 區塊（log tail + /proc 掃描 + tag 檔數）。10 秒 ⇒ 兩次輪詢只掃一次。
 RUNTIME_CACHE_TTL_SECONDS = 10.0
@@ -119,283 +68,20 @@ def _cached(store: dict, ttl: float, produce):
 
 
 def reset_caches() -> None:
-    """清空本模組所有 TTL 快取。
+    """清空本模組所有 TTL 快取（DB 快照的快取在 `web/stats_snapshot.py`，由它的 `reset_cache` 清）。
 
     **測試用**：模組級快取會跨測試存活，於是「A 測試 patch 掉 `_gather_runtime`
     後呼叫 progress」會把假值留給 B 測試（形狀相同時完全看不出來）。由
     `tests/conftest.py` 的 autouse fixture 每題前後各清一次。
     """
-    for store in (_DB_STATS_CACHE, _RUNTIME_CACHE, _TAG_COUNT_CACHE):
+    for store in (_RUNTIME_CACHE, _TAG_COUNT_CACHE):
         store["data"] = None
         store["expires_at"] = 0.0
 
 
-async def _fetch_db_stats_snapshot() -> dict:
-    async with deps.SessionFactory() as session:
-        total_reports = (
-            await session.execute(text("SELECT count(*) FROM research.research_report"))
-        ).scalar_one()
-        total_chunks = (
-            await session.execute(text("SELECT count(*) FROM research.report_chunk"))
-        ).scalar_one()
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT market, count(*) c FROM research.research_report "
-                    "GROUP BY market ORDER BY c DESC"
-                )
-            )
-        ).all()
-        instr_rows = (
-            await session.execute(
-                text(
-                    "SELECT unnest(instrument_types) it, count(*) c "
-                    "FROM research.research_report "
-                    "WHERE instrument_types IS NOT NULL "
-                    "GROUP BY it ORDER BY c DESC"
-                )
-            )
-        ).all()
-        type_rows = (
-            await session.execute(
-                text(
-                    "SELECT report_type, count(*) c "
-                    "FROM research.research_report "
-                    "WHERE report_type IS NOT NULL "
-                    "GROUP BY report_type ORDER BY c DESC"
-                )
-            )
-        ).all()
-        # 券商分佈。**刻意不濾 is_research／full_text**，與上面的 market/instrument
-        # 分面一致——三者的分母都要等於 db.reports，否則監控頁上兩張分佈卡的百分比
-        # 會各自對到不同的總數，而且沒有任何地方看得出來。
-        #
-        # 一併取 max(report_date) 是因為這頁是「導入」監控：光有篇數看不出某家券商
-        # 是不是早就停止供稿（實測 masterlink 3,814 篇、最新一篇停在一年前）。
-        # NULL source 那一列刻意保留：未辨識券商本身就是導入品質的訊號。
-        source_rows = (
-            await session.execute(
-                text(
-                    "SELECT source, count(*) c, max(report_date) latest "
-                    "FROM research.research_report "
-                    "GROUP BY source ORDER BY c DESC, source"
-                )
-            )
-        ).all()
-        s_done, s_total = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FILTER (WHERE summary IS NOT NULL), count(*) "
-                    "FROM research.research_report "
-                    "WHERE full_text IS NOT NULL AND is_research IS NOT FALSE"
-                )
-            )
-        ).first()
-        # 派生資產的新鮮度（近 30 天窗口）。
-        #
-        # **為什麼是近 30 天而非全表**：takeaway/signal 都刻意只跑子集（前者近 90 天、
-        # 後者「子集先行」），全表覆蓋率永遠很低、無法當訊號。真正要偵測的是「批次
-        # 停跑」——那會表現為近期窗口的覆蓋率驟降與 latest 日期不再前進。
-        #
-        # 先前這裡**只量 summary，而 summary 恰好是唯一有排程的**；真正在腐化的兩張表
-        # （2026-07 實測 takeaway 停更 8 天、signal 停更 12 天）零量測。缺席時閱讀頁
-        # 整區不進 DOM（優雅降級），所以症狀是「最新研報靜默少一個功能」，
-        # 永遠不會有人回報。
-        tk_done, tk_total, tk_latest = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FILTER (WHERE t.report_id IS NOT NULL), count(*), "
-                    "       (SELECT max(created_at)::date FROM research.report_takeaway) "
-                    "FROM research.research_report r "
-                    "LEFT JOIN (SELECT DISTINCT report_id FROM research.report_takeaway) t "
-                    "       ON t.report_id = r.id "
-                    "WHERE r.report_date > current_date - 30 "
-                    "  AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
-                )
-            )
-        ).first()
-        sig_done, sig_total, sig_latest = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FILTER (WHERE s.report_id IS NOT NULL), count(*), "
-                    "       (SELECT max(created_at)::date FROM research.report_signal) "
-                    "FROM research.research_report r "
-                    "LEFT JOIN (SELECT DISTINCT report_id FROM research.report_signal) s "
-                    "       ON s.report_id = r.id "
-                    "WHERE r.report_date > current_date - 30 "
-                    "  AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
-                )
-            )
-        ).first()
-
-        # M8 忠實度查核（qa_log.evaluation）的健康度。
-        #
-        # **這裡看的不是覆蓋率**：問答端有取樣率、且只查含金融數字的回答，
-        # 所以「有 evaluation 的比例」天生就不該是 100%，拿它當訊號只會
-        # 一直亮紅燈（同 takeaway/signal 的教訓）。真正的訊號是另外三個：
-        #   degraded  judge 異常時 fail-open 會寫 degraded=true、分數留 None。
-        #             這條若衝高，代表查核**還在跑但全部沒查到東西**——最像
-        #             「一切正常」的故障樣態。
-        #   below_min 分數低於門檻＝該筆待人工複核（實測有 0.208 這種數字）。
-        #   latest    最後一次真的查核的日期；不再前進＝整條路徑停了。
-        #
-        # jsonb 一律用 jsonb_typeof 過濾後才 cast：畸形一列就讓監控頁 500，
-        # 而監控頁恰恰是故障時唯一還想得到要打開的東西。
-        #
-        # 哪些欄位只計現行 judge、哪些計所有 judge：見模組頂端的 _EVAL_COLUMNS。
-        # judge_since 是窗期內現行 judge 最早的一筆——切換後頭幾天樣本很小，卡片要讓人看得出來。
-        _eval_cols = ", ".join(sql for _key, sql in _EVAL_COLUMNS)
-        eval_rows = (
-            await session.execute(
-                text(
-                    f"SELECT 'qa' kind, {_eval_cols} FROM research.qa_log "
-                    "WHERE created_at > now() - interval '30 days'"
-                ),
-                {"fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL},
-            )
-        ).all()
-
-        # 抽取品質與回填進度（E1，docs/EXTRACTION.md §7）。**單一查詢**，
-        # 三段 UNION ALL 併成 (kind, key, count) 列——與上面 M8 那條同一個理由：stats 與
-        # progress 共用同一份快照、TTL 內只打一次 DB，查詢數是測試釘住的契約。
-        #
-        # **放在最後、且包 try**：schema 還沒套（E1b 合併後到 make schema 之間）時
-        # extraction_log 不存在，這條會炸；監控頁恰恰是故障時唯一還想打開的東西，
-        # 所以缺表只讓這一張卡降級（extraction=None），不讓整頁 500。放最後是因為
-        # 例外會讓交易進入 aborted 狀態，後面的查詢全部跟著失敗。
-        extraction_rows: list | None
-        try:
-            extraction_rows = (
-                await session.execute(
-                    text(
-                        "SELECT 'version' kind, coalesce(extraction_version, '(unknown)') k, count(*) "
-                        "FROM research.research_report GROUP BY 2 "
-                        "UNION ALL "
-                        "SELECT 'stopped_at', stopped_at, count(*) FROM research.extraction_log GROUP BY 2 "
-                        "UNION ALL "
-                        "SELECT 'flag', 'needs_review', count(*) FILTER (WHERE needs_review) "
-                        "FROM research.research_report "
-                        "UNION ALL "
-                        "SELECT 'flag', 'pages_failed', "
-                        "count(*) FILTER (WHERE coalesce(array_length(pages_failed, 1), 0) > 0) "
-                        "FROM research.research_report "
-                        "UNION ALL "
-                        "SELECT 'log_latest', coalesce(max(updated_at)::date::text, ''), 0 "
-                        "FROM research.extraction_log"
-                    )
-                )
-            ).all()
-        except Exception as exc:  # noqa: BLE001 — 缺表／缺欄：降級成 None，不讓整頁 500
-            logger.warning("extraction stats unavailable (schema not applied?): %s", exc)
-            await session.rollback()
-            extraction_rows = None
-
-    def _d(v) -> str | None:
-        return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
-
-    extraction = _extraction_block(extraction_rows, int(total_reports))
-
-    def _eval_block(row) -> dict:
-        v = dict(zip((key for key, _sql in _EVAL_COLUMNS), row[1:]))
-        return {
-            # 覆蓋率類：所有 judge。
-            "total": int(v["total"]),
-            "checked": int(v["checked"]),
-            "latest": _d(v["latest"]),
-            # 分數類：只計現行 judge（judge_model）。
-            "judge_model": _JUDGE_MODEL,
-            "judge_checked": int(v["judge_checked"]),
-            "degraded": int(v["degraded"]),
-            "below_min": int(v["below_min"]),
-            "avg_score": round(float(v["avg_score"]), 4) if v["avg_score"] is not None else None,
-            "avg_n": int(v["avg_n"]),
-            "judge_since": _d(v["judge_since"]),
-            "other_judge_checked": int(v["other_judge_checked"]),
-        }
-
-    evals = {r[0]: _eval_block(r) for r in eval_rows}
-
-    return {
-        "total_reports": total_reports,
-        "total_chunks": total_chunks,
-        "markets": [{"market": m, "count": c} for m, c in rows],
-        # display 在後端算：`source_display` 的對照表是 app/services/filename.py 的
-        # 單一真相，檢索頁與閱讀頁也走它。搬一份到前端等於兩份會漂的字典。
-        # 未收錄的 source 由 source_display 原樣回傳（不會變 None），NULL 才是 None。
-        "sources": [
-            {"source": s, "display": source_display(s), "count": int(c), "latest": _d(latest)}
-            for s, c, latest in source_rows
-        ],
-        "instrument_types": [{"type": t, "count": c} for t, c in instr_rows],
-        "report_types": [{"type": t, "count": c} for t, c in type_rows],
-        "summary_done": int(s_done),
-        "summary_total": int(s_total),
-        # 近 30 天窗口的派生資產覆蓋率 + 全表最新產出日（批次停跑的偵測訊號）
-        "takeaway_done_30d": int(tk_done),
-        "takeaway_total_30d": int(tk_total),
-        "takeaway_latest": _d(tk_latest),
-        "signal_done_30d": int(sig_done),
-        "signal_total_30d": int(sig_total),
-        "signal_latest": _d(sig_latest),
-        # M8 查核健康度（近 30 天）。
-        "evaluation": {
-            "qa": evals.get("qa"),
-            "min_score": _FAITHFULNESS_MIN,
-        },
-        "extraction": extraction,
-    }
-
-
-def _extraction_block(rows: list | None, total_reports: int) -> dict | None:
-    """(kind, key, count) 列 → 抽取品質區塊。rows 為 None（缺表）回 None，前端降級。
-
-    `backfill` 的分母是 `research_report` 全表、分子是已達目標版本者：回填要跑
-    十幾個晚上，這是唯一不用 SQL 就看得到進度的地方。`stopped_at` 分佈與
-    `needs_review`／`pages_failed` 是 §2 目標 #1「靜默失敗歸零」的可見面。"""
-    if rows is None:
-        return None
-    versions: dict[str, int] = {}
-    stopped: dict[str, int] = {}
-    flags: dict[str, int] = {}
-    log_latest: str | None = None
-    for kind, key, count in rows:
-        if kind == "version":
-            versions[str(key)] = int(count)
-        elif kind == "stopped_at":
-            stopped[str(key)] = int(count)
-        elif kind == "flag":
-            flags[str(key)] = int(count)
-        elif kind == "log_latest":
-            log_latest = str(key) or None
-    done = versions.get(EXTRACTION_VERSION, 0)
-    return {
-        "target_version": EXTRACTION_VERSION,
-        "versions": [
-            {"version": v, "count": c} for v, c in sorted(versions.items(), key=lambda kv: (-kv[1], kv[0]))
-        ],
-        "needs_review": flags.get("needs_review", 0),
-        "pages_failed": flags.get("pages_failed", 0),
-        "stopped_at": stopped,
-        "log_latest": log_latest,
-        "backfill": _coverage_block(done, total_reports, log_latest),
-    }
-
-
-async def _db_stats_snapshot() -> dict:
-    now = time.monotonic()
-    cached = _DB_STATS_CACHE.get("data")
-    expires_at = float(_DB_STATS_CACHE.get("expires_at", 0.0) or 0.0)
-    if cached is not None and now < expires_at:
-        return cached  # type: ignore[return-value]
-    data = await _fetch_db_stats_snapshot()
-    _DB_STATS_CACHE["data"] = data
-    _DB_STATS_CACHE["expires_at"] = now + DB_STATS_CACHE_TTL_SECONDS
-    return data
-
-
 @router.get("/api/stats")
 async def stats(user: User = Depends(authz.current_user)):
-    snapshot = await _db_stats_snapshot()
+    snapshot = await stats_snapshot.db_stats_snapshot()
     return {
         "total_reports": snapshot["total_reports"],
         "total_chunks": snapshot["total_chunks"],
@@ -403,7 +89,7 @@ async def stats(user: User = Depends(authz.current_user)):
         "instrument_types": snapshot["instrument_types"],
         "report_types": snapshot["report_types"],
         # 目前登入者（側欄底部顯示）。快照是全站共用的快取，這一鍵每個請求各自帶，
-        # 不進 _DB_STATS_CACHE。角色等身分資訊走 /api/me。
+        # 不進快照的快取。角色等身分資訊走 /api/me。
         "username": user.username,
     }
 
@@ -685,7 +371,7 @@ def _gather_runtime() -> dict:
             # 近 30 天，歷史積壓跑起來那張卡幾乎不動——少了這格就完全看不出它在跑。
             "titles": _proc_alive("generate_titles.py"),
             # 摘錄與訊號兩支擷取都沒有進度表徵，只能靠這兩格。兩張覆蓋率卡刻意都只量
-            # 近 30 天（見 _fetch_db_stats_snapshot 的註解），而擷取的積壓絕大多數比
+            # 近 30 天（見 web/stats_snapshot.py 的註解），而擷取的積壓絕大多數比
             # 30 天舊——2026-08-06 實測缺訊號的 13,821 篇裡只有 156 篇落在窗口內。也
             # 就是說回補歷史時那兩張卡幾乎不動，少了這兩格就完全看不出批次在不在跑。
             "takeaways": _proc_alive("extract_takeaways.py"),
@@ -701,7 +387,7 @@ def _gather_runtime() -> dict:
 
 
 async def _runtime_snapshot() -> dict:
-    """`_gather_runtime` 的 TTL 快取版；形狀與 `_db_stats_snapshot` 對齊。
+    """`_gather_runtime` 的 TTL 快取版；形狀與 `stats_snapshot.db_stats_snapshot` 對齊。
 
     快取放在這一層而不是 `_gather_runtime` 裡面，是為了讓既有測試能繼續 patch
     `_gather_runtime` 取代整塊產出（快取由 conftest 的 fixture 每題清空）。
@@ -711,27 +397,14 @@ async def _runtime_snapshot() -> dict:
     )
 
 
-def _coverage_block(done: int, total: int, latest: str | None) -> dict:
-    """近 30 天覆蓋率區塊；形狀比照既有的 summary（done/total/remaining/pct）另加 latest。
-
-    **必須定義在 `@router.get` 之上**：夾在裝飾器與 handler 之間的話，裝飾器會套到
-    這支輔助函式，FastAPI 就把 done/total/latest 當成 query 參數 → `/api/progress`
-    對正常請求回 422。這正是 2026-07-28 的實際事故；測試直接呼叫 `monitor.progress()`
-    函式物件、繞過路由層，所以全綠也擋不住（見 test_monitor_http 的 HTTP 層測試）。
-    """
-    done, total = int(done), int(total)
-    return {
-        "done": done,
-        "total": total,
-        "remaining": max(0, total - done),
-        "pct": round(done / total * 100, 2) if total else 0.0,
-        "latest": latest,
-    }
-
-
-@router.get("/api/progress")
+# 完整管線資料（runtime、pipelines、log 尾巴）只給有 ops.read 的管理員。掛在路由而不是 router 層：
+# /api/stats 在同一支 router，要維持一般使用者可用。tests/test_authz.py 把這條列為必須守門的路徑。
+@router.get(
+    "/api/progress",
+    dependencies=[Depends(authz.require_admin), Depends(authz.require_scope("ops.read"))],
+)
 async def progress():
-    snapshot = await _db_stats_snapshot()
+    snapshot = await stats_snapshot.db_stats_snapshot()
     runtime = await _runtime_snapshot()
     s_done = int(snapshot["summary_done"])
     s_total = int(snapshot["summary_total"])
@@ -756,11 +429,11 @@ async def progress():
         # 零量測（2026-07 實測 takeaway 停更 8 天、signal 停更 12 天）。缺席時閱讀頁
         # 整區不進 DOM（優雅降級），症狀是「最新研報靜默少一個功能」，不會有人回報。
         # 全表覆蓋率不能當訊號（兩者都刻意只跑子集），要看的是近期窗口與 latest 是否前進。
-        "takeaway": _coverage_block(
+        "takeaway": stats_snapshot.coverage_block(
             snapshot["takeaway_done_30d"], snapshot["takeaway_total_30d"],
             snapshot["takeaway_latest"],
         ),
-        "signal": _coverage_block(
+        "signal": stats_snapshot.coverage_block(
             snapshot["signal_done_30d"], snapshot["signal_total_30d"],
             snapshot["signal_latest"],
         ),

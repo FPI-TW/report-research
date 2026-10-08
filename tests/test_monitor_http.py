@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from web import deps  # noqa: E402
+from web import deps, stats_snapshot  # noqa: E402
 from web.routers import monitor  # noqa: E402
 from web.server import app  # noqa: E402
 
@@ -67,7 +67,7 @@ _SNAPSHOT = {
     "signal_done_30d": 1,
     "signal_total_30d": 10,
     "signal_latest": date(2026, 7, 16),
-    # M8 查核統計。handler 直接透傳這一塊，形狀由 _fetch_db_stats_snapshot 決定。
+    # M8 查核統計。handler 直接透傳這一塊，形狀由 web/stats_snapshot.py 的 _fetch_db_stats_snapshot 決定。
     "evaluation": {
         "qa": {"total": 40, "checked": 3, "degraded": 1, "below_min": 1,
                "avg_score": 0.5634, "latest": "2026-07-28"},
@@ -88,13 +88,13 @@ class ProgressHttpTests(unittest.TestCase):
 
     def _get(self):
         async def fake_snapshot():
-            # _db_stats_snapshot 已把 date 轉字串,此處比照 handler 實際拿到的形狀
+            # db_stats_snapshot 已把 date 轉字串,此處比照 handler 實際拿到的形狀
             d = dict(_SNAPSHOT)
             d["takeaway_latest"] = "2026-07-20"
             d["signal_latest"] = "2026-07-16"
             return d
 
-        with patch.object(monitor, "_db_stats_snapshot", fake_snapshot), \
+        with patch.object(stats_snapshot, "db_stats_snapshot", fake_snapshot), \
              patch.object(monitor, "_gather_runtime", lambda: {
                  "tagging": None, "ingest": None,
                  "pipelines": {"web": True}, "orchestrator": None,
@@ -141,8 +141,8 @@ class ProgressHttpTests(unittest.TestCase):
         # 正向對照：真正的 handler 必須是端點。裝飾器套錯時 `progress` 不會被註冊；
         # 列舉方式失效時（見 _app_routes）這裡也會紅，而不是讓下一行空轉通過。
         self.assertIn(monitor.progress, endpoints)
-        # 沒有任何路由的 endpoint 是輔助函式
-        self.assertNotIn(monitor._coverage_block, endpoints)
+        # 沒有任何路由的 endpoint 是輔助函式（_coverage_block 已移到 web/stats_snapshot.py）
+        self.assertNotIn(stats_snapshot.coverage_block, endpoints)
 
     def test_no_private_helper_is_a_route(self):
         """比上一條更廣：模組裡任何 `_` 開頭的函式都不得成為端點。
@@ -208,7 +208,7 @@ class ScheduleVisibilityHttpTests(unittest.TestCase):
             d["signal_latest"] = "2026-07-16"
             return d
 
-        with patch.object(monitor, "_db_stats_snapshot", fake_snapshot), \
+        with patch.object(stats_snapshot, "db_stats_snapshot", fake_snapshot), \
              patch.object(monitor, "_gather_runtime", lambda: dict(self.RUNTIME)):
             r = _authed().get("/api/progress")
         self.assertEqual(r.status_code, 200, r.text[:300])
@@ -241,7 +241,7 @@ class StatsHttpTests(unittest.TestCase):
         async def fake_snapshot():
             return dict(_SNAPSHOT)
 
-        with patch.object(monitor, "_db_stats_snapshot", fake_snapshot):
+        with patch.object(stats_snapshot, "db_stats_snapshot", fake_snapshot):
             r = _authed().get("/api/stats")
         self.assertEqual(r.status_code, 200, r.text[:300])
         body = r.json()

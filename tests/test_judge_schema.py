@@ -119,7 +119,7 @@ class JudgeIdentityTests(unittest.TestCase):
     def test_all_three_readers_use_the_shared_filter(self):
         """M11：監控卡、待複核佇列、離線彙總共用同一段過濾，不各寫一份。"""
         for rel, needle in (
-            ("web/routers/monitor.py", "CURRENT_JUDGE_SQL"),
+            ("web/stats_snapshot.py", "CURRENT_JUDGE_SQL"),
             ("web/routers/review.py", "CURRENT_JUDGE_SQL"),
             ("scripts/eval_faithfulness.py", "is_current_judge"),
         ):

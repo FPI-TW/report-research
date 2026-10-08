@@ -15,8 +15,8 @@ import styles from './Pipeline.module.css'
  * 品質 → 語料組成。
  *
  * 資料只來自 `/api/progress`（web 行程直接讀 DB 與 data/ 的 log），**不經維運代理**：代理停掉、
- * 監控收集沒裝的主機上這頁照常。守門在外殼（`OperationsLayout` 的 `ops.read`），但 `/api/progress`
- * 本身目前對所有登入者開放。
+ * 監控收集沒裝的主機上這頁照常。外殼（`OperationsLayout`）沒有 `ops.read` 就不掛這頁、不發請求；
+ * 真正擋人的是後端：`/api/progress` 限管理員＋`ops.read`。
  */
 export default function OpsPipelinePage() {
   const q = useProgress()

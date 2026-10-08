@@ -524,8 +524,8 @@ def _load() -> Settings:
         # 忠實度查核 / faithfulness（M8 里程碑）
         ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),
         # 新名 FAITHFULNESS_MIN；讀不到時退回舊名 REPORT_FAITHFULNESS_MIN（研報 PDF 功能移除前的
-        # 鍵名，保留相容）。讀者是監控頁與待複核佇列的 `_FAITHFULNESS_MIN`（web/routers/
-        # monitor.py、review.py）與 scripts/eval_faithfulness.py，都是「低於門檻」的判準。
+        # 鍵名，保留相容）。讀者是管線分頁與待複核佇列的 `_FAITHFULNESS_MIN`（web/stats_snapshot.py、
+        # web/routers/review.py）與 scripts/eval_faithfulness.py，都是「低於門檻」的判準。
         faithfulness_min=_faithfulness_min(),
         ask_faithfulness_sample_rate=float(
             os.getenv("ASK_FAITHFULNESS_SAMPLE_RATE", "1.0")

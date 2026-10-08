@@ -1,17 +1,23 @@
 import type { EvalSource } from './progressSchema'
 
 /**
+ * 判準只看這三個鍵：管線分頁傳整份 `evaluation.qa`，待複核頁傳 `/api/review/judge-scale` 的回應
+ * （`reviewSchemas.ts` 的 `JudgeScale`，同名同義的子集）。
+ */
+export type ScaleFields = Pick<EvalSource, 'judge_model' | 'judge_since' | 'other_judge_checked'>
+
+/**
  * 「新量尺」的判準，管線分頁的忠實度卡與待複核佇列共用（DeepSeek 遷移 PR-26/27）。
  *
  * 現行判定尺是 DeepSeek，而且窗期內還有其他判定尺（換尺前的 haiku）的列：這時 judge_since
  * （窗期內現行 judge 最早的一筆）就是切換後的第一筆，日期由資料得出、不寫死。窗期內已全是
  * 新尺時 judge_since 只是窗期起點，不再稱「新」。
  */
-export function isNewDeepSeekScale(d: EvalSource | null | undefined): boolean {
+export function isNewDeepSeekScale(d: ScaleFields | null | undefined): boolean {
   return Boolean(d?.judge_model?.startsWith('deepseek-') && (d.other_judge_checked ?? 0) > 0)
 }
 
 /** 「新量尺（自 X 起，DeepSeek）」；新尺尚無查核時不編日期。 */
-export function newScaleText(d: EvalSource): string {
+export function newScaleText(d: ScaleFields): string {
   return `新量尺（${d.judge_since ? `自 ${d.judge_since} 起，` : '尚無查核，'}DeepSeek）`
 }

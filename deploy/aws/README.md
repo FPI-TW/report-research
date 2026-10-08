@@ -87,6 +87,23 @@ Cloudflare 的兩個待辦也尚未完成：
 此次帳號沒有 CloudTrail trail（`describe-trails` 為空），未另行建立 audit infrastructure。
 上述 API／SSM 結果用於此次驗收；CloudFormation 更新與 Cloudflare 待辦仍須各自驗證完成。
 
+## 研報導入：R2 inbox 與同步錯開
+
+EC2 碰不到 NAS，以 `SYNC_SOURCE=r2-inbox` 從 R2 的 `inbox/` 拉新研報（`scripts/r2_inbox.py pull`）；辦公室主機的 sync 在
+`/etc/default/report-mark-sync` 設 `SYNC_INBOX_PUSH=1`，每輪 rsync 完把新檔推上去（2026-10-07 起，之前沒設，EC2 自 10/4 起
+每輪拉到 0 份、不告警）。辦公室主機整點觸發、rsync 完才推，所以 EC2 的同步錯開到每 3 小時的 :20（00:20、03:20…），
+drop-in 是 `deploy/aws/report-mark-sync.timer.d/offset.conf`：
+
+```bash
+sudo install -d -m 0755 /etc/systemd/system/report-mark-sync.timer.d
+sudo install -m 0644 deploy/aws/report-mark-sync.timer.d/offset.conf /etc/systemd/system/report-mark-sync.timer.d/
+sudo systemctl daemon-reload
+systemctl list-timers report-mark-sync.timer   # NEXT 應落在 :20（被觸發的同步還在跑時 NEXT 暫為空白，跑完才排）
+```
+
+漏推的檔用 `scripts/r2_inbox.py push --delta <清單>` 補推（清單是 `研報自動匯入/` 底下的相對路徑，一行一檔；批次不讀 repo 根
+`.env`，R2 憑證從 `/etc/default/report-mark-sync` 帶入）。EC2 只拉本地沒有或大小不同的檔，多推不會重複匯入。
+
 ## 固定邊界
 
 - AWS account：`607063196781`

@@ -1773,11 +1773,12 @@ sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不�
 
 ### 啟用 pg_stat_statements（獨立維護步驟；只寫文件，部署流程不會自動做）
 
-`pg_stat_statements` 要在 `shared_preload_libraries` 預載才能用，而改這個參數一定要重啟 PostgreSQL。兩個環境的前提
-不同（2026-10-07 唯讀查證）：
+`pg_stat_statements` 要在 `shared_preload_libraries` 預載才能用，而改這個參數一定要重啟 PostgreSQL。**兩個環境都已於
+2026-10-08 啟用**（擴充 1.10）；下面的步驟留給重建容器、換主機或回退時用。兩個環境的前提不同：
 
-- **辦公室本機（測試環境，`report-mark-postgres` 容器，pg16）**：`shared_preload_libraries` 為空、擴充套件可用但
-  未建立。需要短暫停機（重啟容器期間 web 回 503、探針可能經 P5 開事件，挑維護窗口、事先告知）：
+- **辦公室本機（測試環境，`report-mark-postgres` 容器，pg16）**：預載寫在 data volume 的 `postgresql.auto.conf`，容器重建
+  也還在。全新的 volume 要照下面做，需要短暫停機（重啟容器期間 web 回 503、探針可能經 P5 開事件，挑維護窗口、事先告知；
+  2026-10-08 實測 `docker restart` 約 3 秒，P5 沒有開事件）：
 
   ```bash
   # 1) 寫進 data volume 的 postgresql.auto.conf（容器重建也還在）
@@ -1793,9 +1794,9 @@ sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不�
 - **正式環境（EC2＋RDS；AWS 資源名稱與部分文件仍寫 staging）**：參數群組
   `report-research-staging-dbparametergroup-…` 已含 `pg_stat_statements,pg_tle`（static、in-sync），**不需要
   reboot**；只要以 master 帳號（`rds_superuser`）在 app 用的庫執行一次
-  `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`。app 帳號若沒有 `pg_read_all_stats`，頁面看得到統計但
-  別人的語句文字會顯示「權限不足、已隱藏」；要看全部再以 master `GRANT pg_read_all_stats TO <app 帳號>`
-  （是否授予由使用者決定）。
+  `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`（2026-10-08 已執行）。app 帳號若沒有 `pg_read_all_stats`，頁面看得到
+  統計但別人的語句文字會顯示「權限不足、已隱藏」；要看全部再以 master `GRANT pg_read_all_stats TO <app 帳號>`
+  （是否授予由使用者決定；目前未授予）。
 
 驗收：頁面「慢查詢」不再顯示原因、出現依總執行時間排序的語句。統計自 `pg_stat_statements_reset()` 或重啟起累計。
 回退：`DROP EXTENSION pg_stat_statements;`（本機若要連預載一起拿掉：`ALTER SYSTEM RESET shared_preload_libraries`
@@ -2503,9 +2504,9 @@ Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額
    - `QUOTA_ENFORCE=0`：配額影子模式，只計數、記錄「本來會擋」，不回 429。正式阻擋要等觀察兩週、依 P50/P95 決定（使用者定案 5）。
    - 功能旗標：`feature_flag` 沒有任何覆寫時，行為與 v1.5 相同（`ask.web_search` 預設關、其餘派生功能預設開，實際值仍受
      環境變數上限限制）。七個上限變數照「功能開關與 staging 啟用矩陣」的啟用矩陣核對；部署時不設任何覆寫。
-6. **`pg_stat_statements` 不在這個順序裡**：它是獨立的維護步驟，個別放行（使用者定案 13），步驟見「DB 統計快照與慢查詢」
-   的「啟用 pg_stat_statements」。辦公室主機要改 `shared_preload_libraries` 並重啟 DB 容器（短暫停機）；EC2 的 RDS 參數群組
-   已預載，只需以 master 帳號建擴充。沒做時「慢查詢」區塊只顯示原因，其他頁面不受影響。
+6. **`pg_stat_statements` 不在這個順序裡**：它是獨立的維護步驟，個別放行（使用者定案 13），兩個環境都已於 2026-10-08 啟用；
+   步驟見「DB 統計快照與慢查詢」的「啟用 pg_stat_statements」（重建或換主機時用）。沒做時「慢查詢」區塊只顯示原因，其他頁面
+   不受影響。
 
 ### v2 功能的啟用矩陣（測試環境與正式環境）
 
@@ -2526,6 +2527,6 @@ RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動�
 | 功能旗標頁與 `/api/features` | 隨 web | 開，不設覆寫 | 開，不設覆寫 | 各旗標的上限見「功能開關與 staging 啟用矩陣」 |
 | DB 即時快照（`/api/admin/db/overview`） | 隨 web | 開 | 開 | RDS 帳號沒有 `pg_monitor`／`pg_read_all_stats` 時，相關段落顯示「權限不足」 |
 | `report-mark-db-snapshot`（DB 趨勢） | 安裝 unit | 安裝 | 安裝 | 權限不足的段落記在 `stats.errors`、趨勢上是空點 |
-| 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 經同意後，在維護窗口改設定並重啟 DB 容器 | 經同意後，以 master 帳號 `CREATE EXTENSION` | 不綁 v2 部署；沒做時頁面只顯示原因 |
+| 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 已啟用（2026-10-08，預載＋重啟容器） | 已啟用（2026-10-08，master 帳號 `CREATE EXTENSION`；`pg_read_all_stats` 未授予） | 不綁 v2 部署；沒做時頁面只顯示原因 |
 | 事件趨勢（`incident`、`job_execution`） | 隨 web | 開 | 開，但會是空的 | 資料來自監控收集與事件投影；EC2 沒裝 |
 | ops catalog 的 v2 項目與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` 已列 | `services.staging.toml` 已列 | 維運代理要已安裝；「立即執行」只給 db-snapshot、analytics-rollup |

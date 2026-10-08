@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.services import original_file_url  # noqa: E402
 from app.services.entitlement import Entitlement  # noqa: E402
 from app.services.object_storage import ObjectNotFound, ObjectStorageError  # noqa: E402
-from app.services.textnorm import clean_text  # noqa: E402
 from web import deps  # noqa: E402
 from web.routers import external  # noqa: E402
 from web.server import app  # noqa: E402
@@ -92,8 +91,7 @@ class SearchTests(_Case):
         self.assertEqual(item["report_date"], "2026-10-01")
         self.assertEqual(item["instrument_types"], ["stock"])
         self.assertAlmostEqual(item["score"], 0.9)
-        self.assertEqual(item["passages"][0]["chunk_index"], 0)
-        self.assertEqual(item["passages"][0]["content"], clean_text("台積電 營收 成長"))  # 清理後內文
+        self.assertNotIn("passages", item)  # 刻意不回命中段落
         # 沒有 report.file scope：完全不附 file_url（不是 null）
         self.assertNotIn("file_url", item)
         self.assertNotIn("file_url_expires_at", item)
@@ -145,21 +143,30 @@ class SearchTests(_Case):
 
     def test_parameter_bounds(self):
         key = self.api.add(fx.make_client(1))
-        for qs in ("limit=21", "limit=0", "passages=4", "passages=0", "offset=-1", "sort=random", "q=" + "x" * 501):
+        for qs in ("limit=21", "limit=0", "page=0", "page=-1", "page=x", "sort=random", "q=" + "x" * 501):
             with self.subTest(qs=qs):
                 url = f"/external/v1/search?{qs}" if qs.startswith("q=") else f"/external/v1/search?q=x&{qs}"
                 self.assertEqual(self.get(url, key).status_code, 422)
 
-    def test_pagination_and_passage_limit(self):
+    def test_pagination_by_page(self):
         key = self.api.add(fx.make_client(1, scopes=("search",)))
         many = [fx.Report(f"{i:08d}-1111-4111-8111-111111111111", f"{i:064x}") for i in range(5)]
         self.hits = [fx.chunk_row(r, chunk_index=j) for r in many for j in range(3)]
-        body = self.get("/external/v1/search?q=x&limit=2&offset=1&passages=1&sort=relevance", key).json()
-        self.assertEqual(body["total"], 5)
-        self.assertEqual(body["offset"], 1)
-        self.assertEqual(body["limit"], 2)
-        self.assertEqual(len(body["results"]), 2)
-        self.assertTrue(all(len(x["passages"]) == 1 for x in body["results"]))
+
+        def ids(qs):
+            body = self.get(f"/external/v1/search?q=x&limit=2&sort=relevance{qs}", key).json()
+            self.assertEqual((body["total"], body["limit"]), (5, 2))
+            self.assertNotIn("offset", body)
+            return body["page"], [x["report_id"] for x in body["results"]]
+
+        p_default, first = ids("")
+        self.assertEqual(p_default, 1)  # 不帶 page＝第 1 頁
+        self.assertEqual(ids("&page=1"), (1, first))
+        _, second = ids("&page=2")
+        _, third = ids("&page=3")
+        self.assertEqual((len(first), len(second), len(third)), (2, 2, 1))  # 5 篇：2＋2＋1
+        self.assertEqual(len(set(first + second + third)), 5)  # 不跨頁重複、不漏篇
+        self.assertEqual(ids("&page=4"), (4, []))  # 超過最後一頁：空結果
 
     def test_file_urls_attached_with_scope_without_head_and_fail_open(self):
         key = self.api.add(fx.make_client(1, entitlements={"market": ("TW", "US")}))

@@ -17,7 +17,7 @@
   CP 的候選片段同時改為 1 起編號、與脈絡本身的 `[n]` 及答案的引用一致（審查 M12）。
 
 **judge 身分**：`qa_log.evaluation` 自 DeepSeek 遷移 PR-07 起帶 `judge_model`。讀分數的三處
-（監控卡 `web/routers/monitor.py`、待複核佇列 `web/routers/review.py`、離線彙總
+（監控卡 `web/stats_snapshot.py`、待複核佇列 `web/routers/review.py`、離線彙總
 `scripts/eval_faithfulness.py`）**只計現行 judge 的分數**，一律經本模組的 SQL 片段或
 `is_current_judge`，不各寫一份——換 judge 之後舊尺的 0.85 與新尺的 0.85 不是同一件事，
 混著平均、混著排「待複核」就是在比兩把尺。

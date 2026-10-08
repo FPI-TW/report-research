@@ -704,18 +704,18 @@ class IndividualAccountFlowTests(unittest.TestCase):
         self.assertEqual(body["id"], self.admin)
 
     def test_stats_reports_current_username(self):
-        from web.routers import monitor
+        from web import stats_snapshot
 
         async def fake_snapshot():
             return {"total_reports": 0, "total_chunks": 0, "markets": [], "instrument_types": [],
                     "report_types": []}
 
-        orig = monitor._db_stats_snapshot
-        monitor._db_stats_snapshot = fake_snapshot
+        orig = stats_snapshot.db_stats_snapshot
+        stats_snapshot.db_stats_snapshot = fake_snapshot
         try:
             body = self._login().get("/api/stats").json()
         finally:
-            monitor._db_stats_snapshot = orig
+            stats_snapshot.db_stats_snapshot = orig
         self.assertEqual(body["username"], "alice")
 
 

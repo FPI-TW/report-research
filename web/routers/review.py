@@ -73,7 +73,7 @@ _FAITHFULNESS_MIN = _SETTINGS.faithfulness_min
 _JUDGE_MODEL = _SETTINGS.faithfulness_model
 
 # jsonb 一律先以 jsonb_typeof 過濾再 cast：一列畸形的 evaluation 不該讓整支端點 500
-# （與 web/routers/monitor.py 的同一段理由相同）。
+# （與 web/stats_snapshot.py 的同一段理由相同）。
 _SCORE = (
     "CASE WHEN jsonb_typeof(evaluation->'faithfulness_score') = 'number' "
     "THEN (evaluation->>'faithfulness_score')::float END"

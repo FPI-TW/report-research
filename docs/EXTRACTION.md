@@ -91,7 +91,7 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 
 `research_report` 的七個抽取欄：`extractor`、`extraction_version`、`quality_score`、`quality_flags`、`page_count`、`pages_failed`、`needs_review`。
 
-監控落點：`web/routers/monitor.py` 的 `/api/progress` 回 `extraction` 區塊（版本分布、`needs_review` 數、回填進度），單一 UNION ALL 查詢；缺表時該區塊為 `null`，管理後台管線分頁的抽取卡（`frontend/src/features/admin/ops/pipeline/QualityCards.tsx`）降級而非整頁 500。
+監控落點：`web/routers/monitor.py` 的 `/api/progress` 回 `extraction` 區塊（版本分布、`needs_review` 數、回填進度），查詢在 `web/stats_snapshot.py`、單一 UNION ALL；缺表時該區塊為 `null`，管理後台管線分頁的抽取卡（`frontend/src/features/admin/ops/pipeline/QualityCards.tsx`）降級而非整頁 500。
 
 回填會改寫正典文字，`store.reanchor_takeaways` 重算摘錄錨點時錨不回的置 NULL。v3 回填 15 晚實測 5,532 條摘錄掉了 15%（448／1,116 篇至少掉一條），而總結列沒有這個數字。v4 起 `backfill_extraction.py` 的總結列多印「摘錄錨定 a/b（x%）」；補救走 `scripts/lost_anchors_to_delta.py --out data/takeaway_reanchor_delta.txt`，再 `scripts/extract_takeaways.py --hashes-file 該檔 --reextract`（每篇一次 LLM，可 `--limit` 分批）。
 

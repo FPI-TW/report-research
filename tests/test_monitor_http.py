@@ -148,6 +148,9 @@ class ProgressHttpTests(unittest.TestCase):
         """比上一條更廣：模組裡任何 `_` 開頭的函式都不得成為端點。
 
         只釘 `_coverage_block` 的話，下一支插錯位置的輔助函式又會是同一個 422。
+        全部 router 的同一條結構檢查在 `tests/test_router_helpers.py`；這裡保留，是因為
+        monitor 正是 `_coverage_block` 事故（輔助函式夾在 `@router.*` 與 handler 之間、端點回 422）
+        發生的模組，留作該事故的就地回歸。
         """
         endpoints = {getattr(r, "endpoint", None) for r in _app_routes()}
         # 正向對照：列舉必須真的看得到本模組的端點，否則下面的 offenders 恆為空，

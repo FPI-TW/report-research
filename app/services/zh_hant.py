@@ -69,8 +69,10 @@ MIN_SIMPLIFIED_RATIO = 0.05
 
 @lru_cache(maxsize=1)
 def _converter():
-    """OpenCC s2tw 轉換器。延後建構：載入詞典要數 MB，而 web 完全不需要它
-    （只有批次會寫這些欄位），不該讓它進到 web 的啟動成本裡。
+    """OpenCC s2tw 轉換器。延後建構：載入詞典要數 MB，不該進到 web 的啟動成本裡。
+
+    web 也會用到（問答的三條寫入路徑與追問建議，寫入點清單見 docs/ARCHITECTURE.md §5），
+    但要等第一次遇到 Big5 編不出的字（`is_simplified_only`）才建構，啟動時不載入。
     """
     from opencc import OpenCC
 

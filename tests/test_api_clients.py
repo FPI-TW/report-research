@@ -46,9 +46,10 @@ class KeyFormatTests(unittest.TestCase):
     def test_parse_rejects_malformed(self):
         raw, prefix, _ = api_clients.generate_key()
         secret = raw.split("_", 2)[2]
+        # 大寫前綴的案例固定以 A 開頭：隨機 prefix 可能全是數字，`.upper()` 不變就成了一把合法的 key。
         bad = [
             None, 123, "", "rmk_", raw + "x", raw[:-1], " " + raw, raw + "\n",
-            f"RMK_{prefix}_{secret}", f"rmk_{prefix.upper()}_{secret}", f"rmk_{prefix[:7]}_{secret}",
+            f"RMK_{prefix}_{secret}", f"rmk_A{prefix[1:].upper()}_{secret}", f"rmk_{prefix[:7]}_{secret}",
             f"xyz_{prefix}_{secret}", f"rmk_{prefix}_{secret[:-1]}!", f"Bearer {raw}",
         ]
         for value in bad:

@@ -14,7 +14,7 @@
 | 正式 | EC2（`research.tingfong.com`） | RDS | CloudFormation stack 與 RDS 的 `report-research-staging*`、`deploy/ops/services.staging.toml`、`report-mark-ops-agent-staging.service`、`OPS_AGENT_ENVIRONMENT=staging` |
 | 測試 | 辦公室主機（`research.kashionzarchive.com`） | 容器 `report-mark-postgres`（`localhost:5436/research`），**有真實資料** | `deploy/ops/services.prod.toml`、`OPS_AGENT_ENVIRONMENT` 的預設值 `production`；程式、註解與較舊文件裡的「生產」「本機生產庫」多指這台 |
 
-- 指示裡說「測試／正式／staging／生產」時，先跟使用者確認目標主機；不要從資源名、catalog 檔名、環境變數值或文件用字推斷。站序是 devdb 演練 → 測試 → 正式，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照），步驟見 `docs/production_resilience.md`「Admin v2 部署順序」。
+- 要部署、安裝 unit 或改主機上的資料時，目標主機不明確就先問：使用者給了 hostname，或明說「正式（EC2）」「測試（辦公室主機）」就照做；只說「staging」「生產」「production」這類歷史用字時視為不明確。不要從資源名、catalog 檔名、環境變數值或文件用字推斷。唯讀查證與文件工作不必問。站序是 devdb 演練 → 測試 → 正式，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照），步驟見 `docs/production_resilience.md`「Admin v2 部署順序」。
 - **預設 DB 是真實資料**：沒設 `REPORT_MARK_DB_URL` 時連 `localhost:5436/research`（`app/services/db.py`）。在辦公室主機上，沒有 `.env` 的 worktree 也會連到它；pytest 不保證先載入 `.env`，要指定別的庫就在命令列設 `REPORT_MARK_DB_URL=…`。
 - 對已有資料的庫做 migration 要 `CONFIRM=<host:port/db>`（逐字）。`make schema`、`make db-backup`、`make ingest-lowio` 走 `docker exec`，只適用 DB 在容器裡的主機；正式環境（RDS）改跑 `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`。
 - 在 EC2 安裝 `deploy/systemd/` 的 unit 一律用 `deploy/install_units.sh`，不要 `sudo cp`（理由見改動對照表的 `deploy/systemd/` 列）。
@@ -22,11 +22,12 @@
   - `make reset-db`：`TRUNCATE … CASCADE` 會沿 FK 連帶清空 `report_takeaway`、`report_signal`（不可重建、在備份清單內），沒有確認提示。
   - `make clean-data`：刪 `data/extracted`（全語料抽取快取）與 `data/tags`（LLM 標註結果），重建要重付 LLM 費用。
   - `make ingest-lowio`：`fsync=off`，SIGKILL 後不還原；處置 `make restore-durability`。
-- **共用工作樹**：`git add <path>`，不用 `-A`／`.`（他人有 WIP）。辦公室主機的主 checkout 同時是測試環境的部署目錄。
+- **共用工作樹**：`git add <path>`，不用 `-A`／`.`（他人有 WIP）。辦公室主機的主 checkout 同時是測試環境的部署目錄；worktree 不是。
+- **開發不等於部署**：可在工作樹執行測試與建置（含 `make build-web`）；安裝到系統目錄、更新部署產物及重啟部署服務（例如 `report-mark-web.service`），僅在使用者已授權部署至明確目標時執行。主 checkout 同時是部署目錄，在其中建置前端會更新部署產物，須按部署操作處理（`frontend/dist` 不存在時 SPA 回 503）。部署程序見 `docs/production_resilience.md`。
 
 ## 鐵律
 
-- **分工**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），LLM（DeepSeek）只做語意（標註、摘要、問答、訊號擷取）。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。
+- **分工**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），LLM（DeepSeek）只做語意（標註、摘要、問答、訊號擷取）。研報以檔案 SHA256 `file_hash` 識別；各入口能不能續跑、重跑會不會覆寫，以該腳本的 docstring 為準（例如 `scripts/extract_all.py` 每次全量重抽並覆寫同 hash 的快取，`scripts/ingest_all.py` 跳過已入庫的 hash）。
 - **不另建檢索**：新功能重用 `hybrid_search`／`retrieval_pipeline`。
 - **fail-open**：派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律降級，不阻斷主流程。
 - 市場代碼對齊 findb（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`），對照在 `app/services/tagging.py`、由 `tests/test_tagging.py` 逐字釘住，是跨 repo 契約；`make align` 零 LLM 重對。
@@ -35,16 +36,17 @@
 
 ```bash
 uv sync                              # Python 3.11+；torch 為 CPU-only
-cp .env.example .env                 # 務必改掉 REPORT_MARK_SESSION_SECRET 的佔位值（程式只擋空值，佔位字串會被當成真金鑰）
+[ -e .env ] || cp .env.example .env  # 只在新 checkout 建立，不要覆蓋既有 .env（主 checkout 的是部署設定）
+                                     # 新建後務必改掉 REPORT_MARK_SESSION_SECRET 的佔位值（程式只擋空值，佔位字串會被當成真金鑰）
 uv run python scripts/create_admin.py --username <名稱>   # 套完 schema 後建第一位管理員（密碼互動輸入，不經 argv）
 make setup                           # 相依 + pgvector 容器 + alembic upgrade head（空庫）
 make schema CONFIRM=<host:port/db>   # 已有資料的庫做 migration：逐字確認目標（RDS 不適用，見「環境角色與資料安全」）
 make schema-check                    # 嚴格 drift 比對（零＝0、有＝1）；既有庫導入見「改動對照表」
 make schema-version                  # 只比 alembic 版本與程式 head（唯讀、不建暫存庫；0 一致／1 落後／2 超前或無法判斷／3 連不上）
-make serve                           # :8097，無 --reload；Python 改動要重啟
+make serve                           # :8097，無 --reload；改了 Python 要重啟這個行程
 make serve-dev                       # --reload + SKIP_WARMUP=1，只綁 127.0.0.1
 make serve-preview                   # 免登入看版面（DEV_NO_AUTH=1），另開 8098
-make build-web                       # 前端改動要跑這個才生效
+make build-web                       # 建置 frontend/dist（SPA 契約測試需要）；在部署目錄執行＝更新部署產物
 
 uv run pytest -q                     # 缺 frontend/dist 會紅（不是 skip）
 SKIP_SPA_TESTS=1 uv run pytest -q    # 不想先 build 前端時
@@ -67,26 +69,24 @@ uv run python scripts/ingest_all.py
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：`前端測試（tsc + vitest）`（實際另跑 ESLint 與 vite build，並把 `frontend/dist` 傳給後端 job）、`後端測試（pytest）`（ruff＋pytest，SPA 測試對真 build 驗證）、`schema 契約（PostgreSQL）`（空庫 `alembic upgrade head`、單一 head、drift 自我一致、既有庫 stamp 演練，再以 `REPORT_MARK_REQUIRE_DB=1` 跑 DB 契約測試）、`secret 掃描（gitleaks）`。**required check 名稱＝job 的 `name`**，分支保護在 GitHub 設定不在 repo；改了 `name` 沒同步改設定，PR 會永遠等一個不回報的 check。CI 只在 PR 的 base 是 `main`／`admin-v*-integration`、或 push 到 `main` 時跑；前端 job 失敗時後端 job 直接略過。
 - async 測試一律 `unittest.IsolatedAsyncioTestCase`；**不用 pytest-asyncio**（未安裝、刻意不裝，`tests/test_dev_ergonomics.py` 守門）。
-- 測試不連網、不載模型（CI 設 `HF_HUB_OFFLINE=1`）：LLM、嵌入、檔案系統一律用假物件。給函式加參數時同步改假物件簽章——過期的假物件拋 `TypeError` 會被外層 `except` 吞掉，程式靜默走另一條路。
+- 測試不連網、不載模型（CI 設 `HF_HUB_OFFLINE=1`）：LLM、嵌入一律用假物件；檔案 I/O 寫在暫存目錄（`tempfile`），不碰 repo 根的 `.env` 與 `data/`。給函式加參數時同步改假物件簽章——過期的假物件拋 `TypeError` 會被外層 `except` 吞掉，程式靜默走另一條路。
 - 例外是 DB 契約測試（`tests/*_db.py`，加上 `tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`；都以 `REPORT_MARK_REQUIRE_DB` 決定能否 skip）：連得上 DB 就真的連（預設連線是測試環境的真實資料庫，一律 rollback 不 commit），連不上就 skip；CI 的 schema job 設 `REPORT_MARK_REQUIRE_DB=1` 禁止 skip。**新增一支要在 `.github/workflows/ci.yml` 的 schema job 加一個步驟**：後端 job 沒有 DB，漏加時它在 CI 只會靜默 skip，沒有測試檢查清單是否列齊。本機沒設 `REPORT_MARK_REQUIRE_DB` 時，有些測試連 `UndefinedColumn` 這類 SQL 錯誤也轉成 skip（例：`tests/test_review_db.py`），本機 skipped 不代表 SQL 正確。並發測試需真 commit 時，只在語料表與上傳表皆空的拋棄式庫執行，非空即 skip、`REQUIRE_DB=1` 時失敗。
 - 測試旗標是「有值就算開」：`REPORT_MARK_REQUIRE_DB=0`、`SKIP_SPA_TESTS=0` 一樣生效，要關就 unset。一律用 `uv run pytest` 跑；`python tests/test_x.py` 會繞過 `tests/conftest.py` 對金鑰與 `data/` 狀態檔的中和。
-- 端點走 HTTP 層測（`TestClient`），不直接呼叫 handler 物件。router 檔的輔助函式一律放在所有 `@router.*` 裝飾器之上；夾在裝飾器與 handler 的 `def` 之間時，裝飾器會套到輔助函式上，端點回 422，直呼函式的測試看不到（沒有結構性測試守門）。
+- 端點走 HTTP 層測（`TestClient`），不直接呼叫 handler 物件。不要把函式夾在 `@router.*` 裝飾器與 handler 的 `def` 之間：裝飾器會套到那個函式上，端點回 422，直呼函式的測試照樣綠。把輔助函式集中放在所有路由之上只是排版慣例（既有註解會引用它），放在兩個完整的路由定義之間不會出錯；結構檢查只有 monitor 的局部守門（`tests/test_monitor_http.py`），其他 router 靠 HTTP 測試抓。
 - **測試絕不可寫 repo 根的真實環境檔**：`finally` 擋得住例外、擋不住行程被殺，要驗載入行為餵 `tempfile`。`tests/conftest.py`（快照並還原 `.env`，變動即讓整個 session 失敗）與 `tests/test_env_loading.py` 是第二道防線，不是許可證。
 - 任何預設寫進 repo 根 `data/` 的新狀態檔，要在 `tests/conftest.py` 以**賦值**（不是 `setdefault`）導向不存在的路徑或 `os.devnull`，比照 `LLM_BREAKER_FILE`、`LLM_USAGE_LOG`。回應隨查詢參數變的 TTL 快取走 `web/ttl_cache.py`（conftest 每題前後 `reset_all()`）；其他模組級快取要在 conftest 加每題前後的重設（比照 monitor 的快取），否則測試互相污染。
 - `tests/conftest.py` 刻意強制 `LLM_PROVIDER=claude_cli`（測試不打付費 API）；要驗預設值的測試自己移除該鍵。
 - 帳號：`tests/conftest.py` 整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`，預設一位 tester／testpass **管理員**），既有測試照常 POST `/login`。要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份；只需要「已登入」用 `session_cookies()`。conftest 也預設把問答的擁有權檢查（`deps.conversation_is_foreign`／`deps.qa_is_foreign`）stub 成「不是別人的」，要驗 404 的測試自行覆寫。其他每題預設：功能旗標讀成「沒有 DB 覆寫」（所以 `ask.web_search` 關）、`deps.quota.charge` 放行不計數、追問建議與查詢規劃回空；預設的 tester 是管理員但**不是** super，測 super 限定端點要自己建帳號。改了 `app/services/accounts.py` 的語意要同步改假物件——`tests/test_accounts_db.py` 同一組情境兩邊各跑一次。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉相依，不是加豁免。Dependabot 自動更新 PR 已停用，相依更新改由人工審查；更新 `torch` 時須確認 CPU-only wheel、FlagEmbedding／transformers 相容性並跑 eval，`@embedpdf/*` 必須整組升版並人眼驗證 PDF 選取與複製。
-- 測試裡的假祕密用 `fixed-test-secret-` 開頭（`.gitleaks.toml` 的 allowlist 只認 `[0-9a-z]`），其他形狀在執行期組字串。gitleaks 以完整歷史掃所有遠端分支：誤報一旦推上去，只能在 `.gitleaksignore` 逐筆加指紋，不改寫歷史。
-- 契約類測試（改了別處會紅，修程式或文件，不放寬 allowlist；下列是主要幾支，不是完整清單）：`tests/test_docs_contract.py`、`tests/test_schema_constraints.py`、`tests/test_schema_migrations.py`、`tests/test_schema_baseline.py`、`tests/test_schema_drift_check.py`、`tests/test_content_norm_equivalence.py`、`tests/test_sse_event_contract.py`、`tests/test_radar_contract.py`、`tests/test_deploy_units.py`、`tests/test_sync_timer_persistence.py`、`tests/test_env_loading.py`、`tests/test_llm_env_loading.py`、`tests/test_logging_setup.py`、`tests/test_dev_mode.py`、`tests/test_claude_lock.py`、`tests/test_claude_cli.py`、`tests/test_llm.py`、`tests/test_llm_models.py`、`tests/test_sql_index_hygiene.py`、`tests/test_secret_scan_config.py`、`tests/test_license_guard.py`、`tests/test_dev_ergonomics.py`、`tests/test_pre_split_guards.py`、`tests/test_spa_serving.py`、`tests/test_eval_question_contract.py`、`tests/test_db_backup.py`、`tests/test_authz.py`、`tests/test_accounts_db.py`、`tests/test_qa_isolation.py`、`tests/test_qa_isolation_db.py`、`tests/test_admin_client_generated.py`、`tests/test_visibility_guard.py`、`tests/test_report_visibility_db.py`。
+- 測試裡的假祕密用 `fixed-test-secret-` 開頭（`.gitleaks.toml` 的 allowlist 只認 `[0-9a-z]`），其他形狀在執行期組字串。gitleaks 以完整歷史掃所有遠端分支，誤報推上去後每個 PR 都會紅。例外要精確並寫明出處：已在歷史裡的假值用 `.gitleaksignore` 的完整 commit 指紋；不是祕密的參數名稱，照 `.gitleaks.toml` 的說明逐字加 stopword。不改寫歷史，也不以路徑放行（例如整個 `tests/`；`tests/test_secret_scan_config.py` 守設定）。
+- 契約類測試（例如 `tests/test_docs_contract.py`、`tests/test_visibility_guard.py`、`tests/test_authz.py`；改了別處就紅的對帳或結構測試）：紅了是修程式或文件，不放寬 allowlist 或豁免清單。
 - 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定正式語料快照；快照 ID 見 README「開發與測試」）；舊的 `eval/baselines/baseline-2026-09-02.json` 是 haiku judge 系譜，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
 
 ## 改動對照表（改了 A 就要動 B）
 
 | 改了什麼 | 還要做什麼 |
 |---|---|
-| 任何 Python | `sudo systemctl restart report-mark-web.service` |
-| 任何前端 | `make build-web`；`frontend/dist` 不存在時 SPA 回 503 |
 | 改檔名、刪檔、加端點 | `tests/test_docs_contract.py` 會紅：**改文件，不放寬 allowlist**。living docs 是本檔、`README.md`、`docs/WORKFLOW.md`、`docs/ARCHITECTURE.md`、`docs/EXTRACTION.md`、`docs/DEPLOYMENT_STATUS.md`（新增這類文件要加進該測試的 `LIVING_DOCS`）。端點路徑逐字寫進 README 的 API 表（`docs/WORKFLOW.md` 有契約細節時也寫），含參數名與 `:path`。這支測試掃的是磁碟不是 git：引用還沒 `git add` 的檔案，本機綠、CI 紅 |
 | 新增後端 SSE 事件 | 加進 `tests/fixtures/sse_events.json`（兩側測試會指出另一側缺什麼） |
 | 新增 SSE 事件欄位 | 契約測試**抓不到**欄位漏宣告：自己在 `frontend/src/lib/askSchemas.ts` 用 `optional()` 宣告（zod 預設 strip，未宣告鍵靜默丟掉），並在 `askSchemas.test.ts` 補斷言 |
@@ -96,13 +96,13 @@ uv run python scripts/ingest_all.py
 | 新增不可重建的表 | `scripts/db_backup.sh` 的 `BACKUP_TABLES`、`tests/test_db_backup.py` 的清單、README／`docs/ARCHITECTURE.md`／`docs/production_resilience.md` 的表數字樣一起改 |
 | 新增管理端點 | 路徑放 `/api/admin/` 或 `/api/review/` 底下、router 層掛 `authz.require_admin`，每條再掛 `authz.require_scope(...)`（或 `require_super`；敏感操作加 `require_elevated`），`tests/test_authz.py` 結構性檢查每一條；`/api/admin/*` 的 pydantic model 改了要重跑 `uv run python scripts/gen_admin_client.py`（`tests/test_admin_client_generated.py` 比對 `frontend/src/lib/generated/adminApi.ts`）；要特定錯誤代碼用 `web.errors.AppError`；帳號規則寫在 `app/services/accounts.py` 而不是路由層（CLI 也要受約束）；會改資料的管理動作在同一筆交易寫 `admin_audit_log`，`detail` 不得含密碼或註記全文。批次操作逐筆呼叫單筆的同一個本體（`accounts._update_user_in`／`visibility.set_visibility`），規則不另寫一份：被規則擋的逐筆略過、其餘同一筆交易，每筆各一列稽核再加一列摘要。管理清單的 CSV 匯出走 `web/routers/admin_exports.py`（先 `accounts.record_export` 寫稽核再交資料、筆數上限、`web/csv_export.py` 防公式注入），刻意不提供問答原文的匯出 |
 | scope 詞彙 | `app/services/accounts.py` 的 `ADMIN_DEFAULT_SCOPES`／`GRANTABLE_SCOPES` 是唯一定義；可授予的那組同時是 `research.user_scope` 的 CHECK（寫 revision、重生 `db/expected_constraints.txt`）與 `web/routers/admin.py` 的 `GrantableScope`（`tests/test_admin_api.py` 釘住），改完重跑 `scripts/gen_admin_client.py` |
-| `review_state` 詞彙（kind／status／verification） | `web/routers/review.py` 的 `Literal` 與 `frontend/src/lib/reviewSchemas.ts` 的 zod enum 逐字一致（**沒有測試守門**）；`verification` 的預設值 `untested` 改了要寫 revision（表刻意無 CHECK、無 FK）；部署順序 `make schema` → `make build-web` → 重啟 web |
+| `review_state` 詞彙（kind／status／verification） | `web/routers/review.py` 的 `Literal` 與 `frontend/src/lib/reviewSchemas.ts` 的 zod enum 逐字一致（**沒有測試守門**）；`verification` 的預設值 `untested` 改了要寫 revision（表刻意無 CHECK、無 FK）；部署時的順序是 `make schema` → `make build-web` → 重啟 web |
 | 上傳狀態與 `failure_kind` 詞彙（`report_upload`） | `app/services/uploads.py` 是唯一定義：`state` 的 CHECK 與 partial unique index 條件由 `tests/test_uploads_vocab.py` 對帳 migration；`failure_kind` 刻意無 CHECK，新增類別不需要 revision。前端 `frontend/src/features/admin/uploadLabels.ts`（中文標籤、分頁籤分組、`RETRYABLE_FAILURE_KINDS`）要手動同步（**沒有測試守門**）。`failure_kind` 的未知值原樣顯示、不擋畫面；`state` 在產生的 client（`frontend/src/lib/generated/adminApi.ts`）是嚴格 enum，新增 `state` 要重跑 `scripts/gen_admin_client.py` 並重 build 前端，否則整份上傳清單解析失敗。可重試類別以後端判定為準 |
 | 新增或修改面向使用者、查 `research_report`／`report_chunk`／`report_signal`／`report_takeaway` 的 SQL | 帶 `app/services/visibility.py` 的 `visible_report_sql(別名)`（只有 report_id 時用 `visible_report_id_sql`），被管理員隱藏的研報才不會漏出來；`tests/test_visibility_guard.py` 以 AST 掃描檢索、閱讀、雷達、總覽、簡報、原檔各模組。批次與管理面不過濾（真的不需要時列進該測試的 `_EXEMPT` 並寫理由） |
 | `content_norm` 或 `textnorm.norm_for_match()` | 兩者逐字等價（`tests/test_content_norm_equivalence.py`；已知 6 個分歧字元由該測試鎖住範圍，不可擴大） |
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的讀取**不要順手搬**；找旋鈕要同時搜 `os.getenv` 與 `os.environ`（範圍 `app web scripts eval`；只搜前者會漏掉 `web/auth.py` 等處）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`、`REPORT_MARK_BACKUP_*`，測試用的 `REPORT_MARK_REQUIRE_*`、`REPORT_MARK_WRITE_CONSTRAINTS`）是 live 的，不要改名 |
-| `ops_agent/` 或 `deploy/ops/services.*.toml` | 代理從 root 擁有的 `/opt/report-mark-ops/` 執行（docker 群組等同 root，不從 repo 跑）：重新 `install` 到那裡、`--check` 後重啟該主機的代理（測試環境 `report-mark-ops-agent.service`、正式環境 `report-mark-ops-agent-staging.service`；步驟見 `docs/production_resilience.md`「維運代理」）。代理只用標準庫、不 import `app.*`（`tests/test_ops_agent.py` 守）；新增 action 要同時改 `ops_agent/protocol.py` 的 `KNOWN_ACTIONS`／`OPS` 與 `web/routers/admin_ops.py` 的 `Action` |
-| `deploy/systemd/` 的 unit 與 `report-mark-web.service.d/` | repo 裡的 unit 是辦公室主機的字面值（`User=kashionz` 與其路徑）。**EC2**：一律 `sudo deploy/install_units.sh --user <使用者> --root <repo 根> <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；只複製與 `daemon-reload`，不 enable；EC2 不裝的 unit 見 README 的 EC2 一節）。**辦公室主機**：`sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；`*.env.example` 對應 `/etc/default/`（`report-mark-llm` 必須 `install -m 0640 -o root -g kashionz`，`cp` 會讓金鑰全員可讀），`*.sudoers` 以 `install -m 0440` 裝進 `/etc/sudoers.d/` 且目的檔名不帶副檔名（sudo 忽略含 `.` 的檔名），`mount-nas-*` 裝到 `/usr/local/sbin/`，`report-mark-alert.sh` 就地執行。`deploy/docker-compose.yml`、`deploy/nginx.conf` 走 `make up-edge`／`edge-reload`。不要只改機器上的副本；`tests/test_deploy_units.py` 守 unit 檔 |
+| `ops_agent/` 或 `deploy/ops/services.*.toml` | 代理只用標準庫、不 import `app.*`（`tests/test_ops_agent.py` 守）；新增 action 要同時改 `ops_agent/protocol.py` 的 `KNOWN_ACTIONS`／`OPS` 與 `web/routers/admin_ops.py` 的 `Action`。部署時：代理從 root 擁有的 `/opt/report-mark-ops/` 執行（docker 群組等同 root，不從 repo 跑），要重新 `install` 到那裡、`--check` 後重啟該主機的代理（測試環境 `report-mark-ops-agent.service`、正式環境 `report-mark-ops-agent-staging.service`；步驟見 `docs/production_resilience.md`「維運代理」） |
+| `deploy/systemd/` 的 unit 與 `report-mark-web.service.d/` | 改 repo 裡的真相來源，不要只改機器上的副本（`tests/test_deploy_units.py` 守 unit 檔）。部署到主機時才安裝；repo 裡的 unit 是辦公室主機的字面值（`User=kashionz` 與其路徑）。**EC2**：一律 `sudo deploy/install_units.sh --user <使用者> --root <repo 根> <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；只複製與 `daemon-reload`，不 enable；EC2 不裝的 unit 見 README 的 EC2 一節）。**辦公室主機**：`sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；`*.env.example` 對應 `/etc/default/`（`report-mark-llm` 必須 `install -m 0640 -o root -g kashionz`，`cp` 會讓金鑰全員可讀），`*.sudoers` 以 `install -m 0440` 裝進 `/etc/sudoers.d/` 且目的檔名不帶副檔名（sudo 忽略含 `.` 的檔名），`mount-nas-*` 裝到 `/usr/local/sbin/`，`report-mark-alert.sh` 就地執行。`deploy/docker-compose.yml`、`deploy/nginx.conf` 走 `make up-edge`／`edge-reload` |
 | DeepSeek 金鑰 | repo 根 `.env` 與 `/etc/default/report-mark-llm`（辦公室主機為 0640 root:kashionz，只有 sync 與上傳 worker 的 unit 載入）逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`）；改完重啟 web，不需 `daemon-reload`。輪替見 `docs/production_resilience.md` |
 | 新的 LLM 批次或評測入口 | `sys.path.insert` 之後第一個專案 import 必須是 `scripts._llm_env`、緊接 `load_llm_env()`；`require_llm_key(...)` 在取鎖之前（`tests/test_llm_env_loading.py` 掃描入口檔釘住，只 import `answer`／`retrieval_pipeline` 等間接層的入口也算；不呼叫 LLM 的列在該檔 `NON_LLM_ENTRIES` 並逐一核對取用的名稱）；批次傳 `{任務: 模型}`（缺金鑰時說得出是哪個旋鈕），評測傳模型名清單。會呼叫 LLM 的批次還要加進 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS` 並取鎖 |
 | 新增批次 LLM 呼叫點（`run_claude`） | 帶 `max_tokens` 與 `meta={"task", "file_hash", "report_id"}`（簡報只需 `task`），值由 `tests/test_claude_cli.py` 的 `EXPECTED` 表逐點釘住，改值要同步改表並說明理由；重試迴圈加 `if res.text is None and not is_retryable(res): break`（`API[...]` 已在傳輸層處理，解析失敗才在腳本層重試），跳過名單的 reason 用 `failure_kind(res)` |
@@ -110,6 +110,9 @@ uv run python scripts/ingest_all.py
 | 改批次 prompt 或解析規則 | 跳過名單（`llm_task_failure`）只以 model 為鍵、不看 prompt：重跑要加 `--retry-blocked`，否則舊失敗繼續擋。`should_skip()` 與 `skip_clause_sql()` 必須等價（`tests/test_llm_failures.py`） |
 | 讀忠實度分數 | 一律經 `app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`／`JUDGE_MODEL_SQL`／`is_current_judge`，不自寫過濾；`LEGACY_JUDGE_MODEL` 永遠不跟著現行預設改 |
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露。網搜暫停與否由 `frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`（功能旗標 `ask.web_search`，讀 `/api/features`）控制，不要刪 web 項；清單為空時 `ComposerTools` 回 null |
+| 新增或修改功能旗標 | 先讀 `app/services/feature_flags.py` 的 docstring：實際值＝環境變數上限 AND DB 政策，DB 讀取失敗退回 registry 預設，所以**安全閘門不可做成旗標**（MFA 強制、auth、CSRF、上傳安全上限都刻意不在裡面）；批次腳本不讀旗標 |
+| 上傳 worker、PDF 預檢或清除流程 | 先讀 `app/services/upload_worker.py` 與 `app/services/pdf_preflight.py` 的 docstring：草稿列與入庫在同一交易、狀態轉移是條件式 UPDATE、檔案與 R2 物件在 commit 之後才刪；不可信的 PDF 只在受限子行程裡檢查（記憶體、逾時、頁數上限、白名單環境）。入庫重用 `scripts/_ingest_core.py` 的 `ingest_one`，不另寫一份 |
+| 使用分析新增維度或匯出 | 先讀 `app/services/analytics.py` 的隱私契約：只出彙總、k 門檻（`ANALYTICS_MIN_USERS`）、互補抑制、開放詞彙被抑制時連鍵都不給、被抑制的格子不依數值排序；不讀問答原文 |
 | 前端在別頁讀功能旗標 | `useFeature()` 只讀 store，目前只有問答頁呼叫 `useFeatures()` 去抓 `/api/features`；新頁面要在頁面層呼叫一次 `useFeatures()`，否則旗標永遠是 false（`frontend/src/lib/useFeatures.ts`） |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
 | 要做審批流程、RLS、分區或管理面 SSE | 目前刻意不提供；先讀 `docs/ARCHITECTURE.md` §11 的啟用門檻與前置（審批掛 `security_ops.HIGH_RISK_ACTIONS`、RLS 先有非超級使用者 app role、SSE 先解決串流期間重驗 session），門檻未達不做 |
@@ -139,12 +142,12 @@ uv run python scripts/ingest_all.py
 ### 抽取、入庫與物件儲存（`docs/EXTRACTION.md`、`docs/WORKFLOW.md`）
 - 全語料三支：`scripts/extract_all.py` → `scripts/tag_all_cli.py` → `scripts/ingest_all.py`（gate on `is_research`＋`market`），各階段 per-hash 快取；日常入庫走 `scripts/sync_new_reports.sh`。
 - `EXTRACTOR` 程式預設 `pypdf`，部署主機用的 pdfplumber 版面層（`app/services/extraction/layout.py`）是 sync 環境檔設的；批次不讀 repo 根 `.env`，**手動跑 `extract_all.py` 要自己帶 `EXTRACTOR=pdfplumber`**，否則靜默走 pypdf。品質只標記不擋；`extraction_log` 的 `stopped_at` 詞彙與 `store.STOPPED_AT` 逐字對齊。**刻意不用 PyMuPDF**（AGPL，本站對外服務）。
-- 物件儲存在部署主機是 `OBJECT_STORAGE_MODE=r2`（兩個環境共用同一個 bucket）：缺 key 即 503、不回退本機；非 local 缺任一 `R2_*` 啟動即 fail-closed，憑證在 repo 根 `.env` 與 `/etc/default/report-mark-sync` 逐字相同。bucket 必須設 CORS（沒設則 PDF 檢視器整頁靜默失敗、伺服器零錯誤）；presign 一律帶 `filename`、有效期不超過一小時。遷移與對帳順序見 `docs/WORKFLOW.md`。
+- 物件儲存：非 local 模式缺任一 `R2_*` 啟動即 fail-closed；r2 模式缺 key 即 503、不回退本機。web 讀 repo 根 `.env`、sync 讀 `/etc/default/report-mark-sync`，兩邊的 `R2_*` 與 `OBJECT_STORAGE_MODE` 要一致（`deploy/systemd/report-mark-sync.env.example`）。bucket 必須設 CORS（沒設則 PDF 檢視器整頁靜默失敗、伺服器零錯誤）；presign 一律帶 `filename`、有效期不超過一小時。各主機實際的模式與 bucket 見 `docs/DEPLOYMENT_STATUS.md`；遷移與對帳順序見 `docs/WORKFLOW.md`。
 
 ## 資料層陷阱（§8）
 
 - `research_report.full_text` 是未清理的原始抽取（帶 CJK 字間空白）；顯示一律 `clean_extracted(full_text)`，不是 `clean_text`（後者折掉換行，只適合檢索片段）。
-- `report_chunk.content` 不是 `full_text` 的子字串（overlap merge），錨定一律經 `app/services/reading/anchor.py`。**不要寫批次更新 `report_chunk.content`**，要動只有重跑 `ingest_all.py`（`make normalize` 那種就地更新的死法記在 `docs/WORKFLOW.md`）。
+- `report_chunk.content` 不是 `full_text` 的子字串（overlap merge），錨定一律經 `app/services/reading/anchor.py`。**不要寫批次就地更新 `report_chunk.content`**（`make normalize` 那種死法記在 `docs/WORKFLOW.md`）。既有研報要重切重嵌，走 `store.replace_report_extraction`＋`store.reanchor_takeaways`（保留 report_id、同一交易；範例是 `scripts/backfill_extraction.py`，它以 `extraction_version` 挑候選）。`scripts/ingest_all.py` 會跳過已入庫的 hash，不會重建；`store.upsert_report` 先刪後插、換新 report_id，對既有研報用它會沿 FK CASCADE 清掉摘錄與訊號。
 - 簡體字守門 `zh_hant.to_traditional()`：LLM 產出的顯示文字落庫前要轉。目前有轉的是四支批次、訊號 summary、問答三條路徑；**追問建議（`app/services/followups.py` → `qa_log.followups`）目前沒有轉**，新寫入點不要照它寫；串流路徑刻意不中途轉，問答在 `done` 帶只在有變動時出現的 `answer` 欄位收斂（`askSchemas.ts`＋`askReducer.ts` 都要接）。**逐字引文（`report_takeaway.quote`、`thesis_dimensions[*].evidence`）一律不轉**——它是錨定基準與 PDFium 搜尋關鍵字。
 - 研報隱藏／恢復（`research.report_visibility`，revision 0004）**以 `file_hash` 為鍵、刻意不設 FK**：`upsert_report` 先刪後插換新 report_id，旗標掛在 report_id 上會靜默消失。被隱藏的研報對所有使用者路徑等於不存在（閱讀頁與原檔 404），批次照常處理、恢復即生效，管理面（待複核、監控）不過濾。revision 0008 起同一列另帶 `publication`：上傳後尚未發布的草稿（`draft`）同樣不可見（片段條件是「隱藏或非 published」），對草稿隱藏／恢復回 409，恢復不會順手發布。
 - 顯示名稱走 `title`，缺值回退 `file_name`（`frontend/src/lib/displayTitle.ts`）；NULL 是常態。
@@ -176,8 +179,7 @@ uv run python scripts/ingest_all.py
 - LLM 批次（清單見 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS`）以 `scripts/_claude_lock.py` 的 flock 互斥——名稱是 CLI 時代的遺留，現在防的是重複計費、摘錄覆寫互撞與 DB 連線數。除簡報（只包那次 LLM 呼叫）與 `scripts/process_uploads.py`（匯入與清理兩處各取一次）外，都在 main 進入點取鎖；`CLAUDE_LOCK_DISABLE=1` 會整個略過這把鎖（一次性逃生口，刻意不放進任何環境檔）；撞鎖 rc=75 是「不跑」不是「跑壞」。從 worktree 跑批次不與主 checkout 互斥。`llm.py` 刻意不在 flock 範圍內（`tests/test_claude_lock.py` 釘住）。
 - 批次斷路器 `data/.llm_breaker` 觸發後，手動跑的批次 30 分鐘內 rc=2 拒跑；sync 輪內只擋同一輪後段（標記綁 `SYNC_ROUND_ID`、跨輪放行），且只擋會用到 DeepSeek 的段；`data/llm_usage.jsonl` 是費用歸因依據。
 - 健康判定打 `/healthz`（只探 DB，回應只有 `status` 一鍵是釘死的），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。
-- 監控兩層：探針只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。六組元件：web（`scripts/check_web_health.sh`）、LINE bot（`scripts/check_linebot_health.sh`）、對外邊緣（`scripts/check_edge_health.sh`，從本機打對外網址；1＝邊緣故障、3＝origin 自己壞了、4＝判不出來）、容器與主機（`scripts/check_container_health.sh`、`scripts/check_host_health.sh`；依 tier 去抖在探針裡做，3＝確認期、9＝important／supporting 確認失敗）、安全（`scripts/check_security_health.sh`）；web 與 LINE bot 兩組不設 `INCIDENT_HOLD_EXIT_CODES`（它們的 3 是健康），其餘四組設 3。P5 每次狀態轉換另寫監控 spool（事件投影，失敗不影響告警）。**本機 `/healthz` 綠不代表外網連得到**；測試環境的 Docker Desktop 重啟後 nginx 可能停在 Exited，處置 `make edge-reload`。
-- web 探針退出碼：R2 由 `/healthz/storage` 偵測為 6；DeepSeek 帳號由 `/healthz/llm`（只回 `llm` 一鍵、不含金額）偵測，CNY 餘額低於 `LLM_BALANCE_FLOOR` 為 7（WARNING），用罄／401／連不上／判斷不出來為 8（CRITICAL）；全查、一行帶全部 reason，退出碼取 8 → 5 → 6 → 7 最前面的。402 的處置是儲值，絕不改走 Claude。細節見 `docs/production_resilience.md`。
+- 監控兩層：探針（`scripts/check_*_health.sh`）只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。退出碼契約寫在各探針檔頭，同一個碼在不同探針意思不同（例如 3），改探針或 `INCIDENT_HOLD_EXIT_CODES` 前先讀。**本機 `/healthz` 綠不代表外網連得到**；測試環境的 Docker Desktop 重啟後 nginx 可能停在 Exited，處置 `make edge-reload`。
 - `make freshness` rc 0／1／2／3 分流；`signal` 門檻 0 與語料閘是刻意預設。`make db-audit` 只讀不修，warn 也算失敗。
 - `研報自動匯入/` 唯讀。
 
@@ -188,8 +190,8 @@ uv run python scripts/ingest_all.py
 ## 慣例
 
 - Commit：Conventional Commits＋繁中 scope（`feat(問答): ...`、`fix(抽取): ...`、`docs(維運): ...`），標題約 70 字內，本文寫 what 與 why。commit 前跑 ruff 與相關測試，不繞過 hook。
-- Python：ruff `E,F,I`、120 字元、`E402` 關（import 前 `sys.path.insert`／載環境檔是刻意的）；**不跑 `ruff format`**、無 black／mypy。
-- 前端：React 19＋TypeScript＋Vite、CSS Modules、TanStack Query、zod 在 API 邊界；`_` 前綴＝刻意不用；`src/components/animate-ui/` 是第三方匯入，不套 lint。
+- Python：**不跑 `ruff format`**（會重排大半檔案、洗掉 git blame；設定與理由在 `pyproject.toml`）；`E402` 刻意關：import 前的 `sys.path.insert`／載環境檔是必要順序，不要「修正」。
+- 前端：API 回應的 zod schema 集中定義在 `src/lib/`（API 邊界；測試裡用 zod 不受此限）；`_` 前綴＝刻意不用；`src/components/animate-ui/` 與 `frontend/eslint.config.js` 忽略清單裡的檔案是第三方匯入，不套 lint。
 
 ## 專案結構與文件地圖
 

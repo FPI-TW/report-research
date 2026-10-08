@@ -39,7 +39,7 @@
 ### 2) 填入 token
 
 ```bash
-cp deploy/.env.example deploy/.env
+[ -e deploy/.env ] || cp deploy/.env.example deploy/.env   # 不覆蓋既有的 deploy/.env
 # 編輯 deploy/.env，把 TUNNEL_TOKEN= 後面貼上剛才複製的 token
 ```
 
@@ -48,7 +48,7 @@ cp deploy/.env.example deploy/.env
 登入由 App 處理。每個人有自己的帳號（`research.app_user`），session 簽章金鑰來自環境變數（複製 repo 根 `.env.example` 為 `.env`）：
 
 ```bash
-cp .env.example .env
+[ -e .env ] || cp .env.example .env   # 只在新 checkout 建立，不覆蓋既有 .env
 # 編輯 .env：
 #   REPORT_MARK_SESSION_SECRET  固定長隨機字串(未設則重啟登出所有人)
 #   產生 secret：python -c "import secrets; print(secrets.token_hex(32))"

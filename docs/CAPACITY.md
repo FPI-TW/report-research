@@ -324,7 +324,7 @@ freshclam timer，執行時才暫時多約 1 GB、每輪多 20–40 秒載入病
 
 ## 批次元件：上傳 worker
 
-`report-mark-upload.service`（Admin v1.5，`scripts/process_uploads.sh`，timer 每 5 分鐘；**尚未部署**）。取樣器依 unit
+`report-mark-upload.service`（Admin v1.5，`scripts/process_uploads.sh`，timer 每 5 分鐘；各主機是否安裝見 `docs/DEPLOYMENT_STATUS.md`）。取樣器依 unit
 名自動把它記成元件 `upload`，分析器列在 `BATCH_COMPONENTS`（批次，不算線上路徑）。每輪大多只是幾個空查詢；有乾淨檔
 要入庫時才延遲載入 BGE-M3，入庫段取 claude 鎖、與 sync 互斥，主機尖峰維持「web 一份＋一支批次一份」。
 backfill（`scripts/backfill_extraction.py`，也載 BGE-M3、不取 claude 鎖）正在跑時只掃描、不入庫。

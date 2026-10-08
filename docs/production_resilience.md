@@ -2480,7 +2480,9 @@ Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額
    - 部署 checkout 先更新到含 Admin v2 的版本（migration 檔在新版裡），**web 先不要重啟**：執行中的仍是舊程式。
    - 套之前 `make schema-version` 應回 1（落後），而且零 drift：辦公室主機跑 `make schema-check`；EC2 的 app 帳號沒有
      CREATEDB，照「schema 與版本 drift 每日檢查」的 staging（RDS）一節以 master 帳號建基準。
-   - `make schema CONFIRM=<host:port/db>`（逐字確認目標），套完 `make schema-version` 回 0、再做一次零 drift 比對。
+   - 套 migration（逐字確認目標）：DB 在容器的辦公室主機 `make schema CONFIRM=<host:port/db>`；EC2 的 RDS 用
+     `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`（`make schema` 會先啟動 Docker 的 PostgreSQL，
+     不適用 RDS；同下方「v2 功能的啟用矩陣」）。套完 `make schema-version` 回 0、再做一次零 drift 比對。
    - 每日 schema 檢查（`report-mark-schema-check`）已啟用的主機，套 schema 與換程式要在同一個維護窗口內做完，
      否則當天的檢查會以版本不一致告警。
 2. **換程式**：`make build-web`，緊接著重啟 web。v2 沒有新增 Python 或前端相依，

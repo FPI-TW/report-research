@@ -386,7 +386,7 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 
 | 文件 | 內容 |
 |---|---|
-| `AGENTS.md` | 給貢獻者與 AI 代理的唯一指引：環境角色與資料安全、鐵律、指令、測試、改動對照表、架構不變量摘要、陷阱、慣例；部署現況另見 `docs/DEPLOYMENT_STATUS.md` |
+| `AGENTS.md` | 給貢獻者與 AI 代理的唯一指引：環境角色與資料安全、鐵律、指令、測試與 CI、改動對照表、架構不變量、資料層陷阱、Web／auth 與安全、維運、慣例（架構不變量到維運四段只列影響決策的規則與「改 X 前先讀 Y」的入口，細節在 `docs/ARCHITECTURE.md` 與模組 docstring）；部署現況另見 `docs/DEPLOYMENT_STATUS.md` |
 | `docs/ARCHITECTURE.md` | 模組地圖、import 方向、檢索／問答／讀取功能的不變量、Web 層、資料層、設定旋鈕 |
 | `docs/WORKFLOW.md` | 端到端管線、逐階段 I/O 與參數、生產同步鏈、標籤詞彙、SSE 契約、R2 遷移順序、排錯 |
 | `docs/EXTRACTION.md` | 抽取層現況：選型與授權、文件模型、回退、品質指標、快取、`extraction_log`、golden set、回填 |

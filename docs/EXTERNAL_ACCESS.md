@@ -1,5 +1,7 @@
 # 對外存取：Cloudflare Tunnel + nginx
 
+> 本文是辦公室主機（開發與測試環境，`research.kashionzarchive.com`）的對外入口。正式環境 EC2（`research.tingfong.com`）不走 Tunnel，而是 Cloudflare 橘雲 A record 直連，見 README「非辦公室主機」一節。
+
 讓辦公室外的同事從外網連入廷豐研報檢索網頁。登入由 App 內建登入頁處理（個別帳號），邊緣 nginx 只做反向代理與限流。
 
 ## 架構
@@ -111,7 +113,7 @@ make up-edge              # 啟動 nginx + cloudflared
 make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel connection" 即成功）
 ```
 
-> 提醒：請確保 web 服務（生產為 `report-mark-web.service`）在執行、本機 `/healthz` 回 200，否則 nginx 會回 502。
+> 提醒：請確保 web 服務（部署主機上是 `report-mark-web.service`）在執行、本機 `/healthz` 回 200，否則 nginx 會回 502。
 
 ### 5) 外網實測
 
@@ -130,7 +132,7 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 換登入帳密 | 編輯 `.env` 的帳密 → `sudo systemctl restart report-mark-web.service` |
 | 重啟 nginx | `make edge-reload` |
 
-重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**；但單檔 bind mount 掛載失敗時 nginx 不會被拉起（見疑難排解第一列），由下方的邊緣探針告警。web 服務在生產由 systemd 的 `report-mark-web.service` 常駐、開機自動啟動；要重啟用 `sudo systemctl restart report-mark-web.service`，健康與否打本機 `/healthz` 判定（不看 `systemctl is-active`）。`make serve` 只用於開發機手動啟動。
+重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**；但單檔 bind mount 掛載失敗時 nginx 不會被拉起（見疑難排解第一列），由下方的邊緣探針告警。web 服務在部署主機上由 systemd 的 `report-mark-web.service` 常駐、開機自動啟動；要重啟用 `sudo systemctl restart report-mark-web.service`，健康與否打本機 `/healthz` 判定（不看 `systemctl is-active`）。`make serve` 只用於開發機手動啟動。
 
 ## 監控
 

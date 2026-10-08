@@ -12,7 +12,7 @@
 | 角色 | 主機 | DB | 名稱裡的歷史命名（保留不改，不代表角色） |
 |---|---|---|---|
 | 正式 | EC2（`research.tingfong.com`） | RDS | CloudFormation stack 與 RDS 的 `report-research-staging*`、`deploy/ops/services.staging.toml`、`report-mark-ops-agent-staging.service`、`OPS_AGENT_ENVIRONMENT=staging` |
-| 測試 | 辦公室主機（`research.kashionzarchive.com`） | 容器 `report-mark-postgres`（`localhost:5436/research`），**有真實資料** | `deploy/ops/services.prod.toml`、`OPS_AGENT_ENVIRONMENT` 的預設值 `production`；程式、註解與較舊文件裡的「生產」「本機生產庫」多指這台 |
+| 開發與測試（文件稱「測試環境」） | 辦公室主機，即本機（`research.kashionzarchive.com`） | 容器 `report-mark-postgres`（`localhost:5436/research`），**有真實資料** | `deploy/ops/services.prod.toml`、`OPS_AGENT_ENVIRONMENT` 的預設值 `production`；程式、註解與較舊文件裡的「生產」「本機生產庫」多指這台 |
 
 - 要部署、安裝 unit 或改主機上的資料時，目標主機不明確就先問：使用者給了 hostname，或明說「正式（EC2）」「測試（辦公室主機）」就照做；只說「staging」「生產」「production」這類歷史用字時視為不明確。不要從資源名、catalog 檔名、環境變數值或文件用字推斷。唯讀查證與文件工作不必問。站序是 devdb 演練 → 測試 → 正式，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照），步驟見 `docs/production_resilience.md`「Admin v2 部署順序」。
 - **預設 DB 是真實資料**：沒設 `REPORT_MARK_DB_URL` 時連 `localhost:5436/research`（`app/services/db.py`）。在辦公室主機上，沒有 `.env` 的 worktree 也會連到它；pytest 不保證先載入 `.env`，要指定別的庫就在命令列設 `REPORT_MARK_DB_URL=…`。
@@ -81,7 +81,7 @@ uv run python scripts/ingest_all.py
 - 授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉相依，不是加豁免。Dependabot 自動更新 PR 已停用，相依更新改由人工審查；更新 `torch` 時須確認 CPU-only wheel、FlagEmbedding／transformers 相容性並跑 eval，`@embedpdf/*` 必須整組升版並人眼驗證 PDF 選取與複製。
 - 測試裡的假祕密用 `fixed-test-secret-` 開頭（`.gitleaks.toml` 的 allowlist 只認 `[0-9a-z]`），其他形狀在執行期組字串。gitleaks 以完整歷史掃所有遠端分支，誤報推上去後每個 PR 都會紅。例外要精確並寫明出處：已在歷史裡的假值用 `.gitleaksignore` 的完整 commit 指紋；不是祕密的參數名稱，照 `.gitleaks.toml` 的說明逐字加 stopword。不改寫歷史，也不以路徑放行（例如整個 `tests/`；`tests/test_secret_scan_config.py` 守設定）。
 - 契約類測試（例如 `tests/test_docs_contract.py`、`tests/test_visibility_guard.py`、`tests/test_authz.py`；改了別處就紅的對帳或結構測試）：紅了是修程式或文件，不放寬 allowlist 或豁免清單。
-- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定正式語料快照；快照 ID 見 README「開發與測試」）；舊的 `eval/baselines/baseline-2026-09-02.json` 是 haiku judge 系譜，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定的語料快照；快照 ID 見 README「開發與測試」）；舊的 `eval/baselines/baseline-2026-09-02.json` 是 haiku judge 系譜，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
 
 ## 改動對照表（改了 A 就要動 B）
 

@@ -183,7 +183,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 
 ## 8. 資料層
 
-schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；守門與 baseline 規則在 `app/services/schema_migrations.py`）。`db/schema.sql` 是凍結的 baseline（revision 0001，SHA-256 釘住），只接受空庫；之後的變更一律是手寫 SQL 的 revision。對已有資料的庫做變更要逐字確認目標（`REPORT_MARK_MIGRATE_CONFIRM`），因為本機預設庫是辦公室測試環境的真實資料庫；正式環境則是 EC2 使用的 RDS（角色見 `AGENTS.md`「環境角色與資料安全」）。既有庫導入時先以 `scripts/schema_baseline.py` 證明零 drift 才 stamp——`alembic stamp` 本身不檢查庫長什麼樣。同一支腳本也做日常檢查：`check --expect-head`（`make schema-version`）只比 DB 的 `alembic_version` 與程式的 head（版本 drift；完整比對以 DB 自己宣稱的 revision 為基準，抓不到「換了程式忘了 `make schema`」），`report-mark-schema-check.timer` 每日跑 `scheduled`（版本＋完整比對，狀態寫 `data/schema_check.json`）。導入前的歷史：`CREATE ... IF NOT EXISTS` 對既有庫刪不掉東西、也改不了同名物件的定義，既有的三個庫（devdb、staging、生產）因此留有三項索引差異，已於 2026-10-05 以 `db/align_baseline_indexes.sql` 修正，並在零 drift 後 stamp 為 0001。`db/expected_constraints.txt` 由 `tests/test_schema_constraints.py` 對帳。刪表同理：深度研報的四張表已從 `db/schema.sql` 拿掉，既有庫要手動跑 `db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`）；DROP 之前對生產庫跑約束測試會多出 `report_run`／`report_section` 的兩條 CHECK 而紅，是預期的。
+schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；守門與 baseline 規則在 `app/services/schema_migrations.py`）。`db/schema.sql` 是凍結的 baseline（revision 0001，SHA-256 釘住），只接受空庫；之後的變更一律是手寫 SQL 的 revision。對已有資料的庫做變更要逐字確認目標（`REPORT_MARK_MIGRATE_CONFIRM`），因為本機預設庫是辦公室測試環境的真實資料庫；正式環境則是 EC2 使用的 RDS（角色見 `AGENTS.md`「環境角色與資料安全」）。既有庫導入時先以 `scripts/schema_baseline.py` 證明零 drift 才 stamp——`alembic stamp` 本身不檢查庫長什麼樣。同一支腳本也做日常檢查：`check --expect-head`（`make schema-version`）只比 DB 的 `alembic_version` 與程式的 head（版本 drift；完整比對以 DB 自己宣稱的 revision 為基準，抓不到「換了程式忘了 `make schema`」），`report-mark-schema-check.timer` 每日跑 `scheduled`（版本＋完整比對，狀態寫 `data/schema_check.json`）。導入前的歷史：`CREATE ... IF NOT EXISTS` 對既有庫刪不掉東西、也改不了同名物件的定義，既有的三個庫（devdb、辦公室主機的測試環境庫、EC2 的 RDS）因此留有三項索引差異，已於 2026-10-05 以 `db/align_baseline_indexes.sql` 修正，並在零 drift 後 stamp 為 0001。`db/expected_constraints.txt` 由 `tests/test_schema_constraints.py` 對帳。刪表同理：深度研報的四張表已從 `db/schema.sql` 拿掉，既有庫要手動跑 `db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`）；DROP 之前對既有庫跑約束測試會多出 `report_run`／`report_section` 的兩條 CHECK 而紅，是預期的。
 
 | 表 | 用途 | 關係 |
 |---|---|---|
@@ -218,7 +218,7 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 
 `app/config.py`（frozen dataclass ＋ `os.getenv`，非 pydantic-settings）分組：
 
-功能旗標的上限也在這裡：`ASK_ENABLE_WEB`、`UPLOAD_ENABLED`、`QA_AGENTIC_ENABLED`、`ASK_FAITHFULNESS_ENABLED`、`ASK_RERANK_ENABLED`、`TRUSTED_DATA_ENABLED`、`QUOTA_ENFORCE` 是能力上限，實際值再 AND 管理後台的 DB 覆寫（`app/services/feature_flags.py`；各環境建議見 `docs/production_resilience.md`「功能開關與 staging 啟用矩陣」）。
+功能旗標的上限也在這裡：`ASK_ENABLE_WEB`、`UPLOAD_ENABLED`、`QA_AGENTIC_ENABLED`、`ASK_FAITHFULNESS_ENABLED`、`ASK_RERANK_ENABLED`、`TRUSTED_DATA_ENABLED`、`QUOTA_ENFORCE` 是能力上限，實際值再 AND 管理後台的 DB 覆寫（`app/services/feature_flags.py`；各環境建議見 `docs/production_resilience.md`「功能開關與啟用矩陣」）。
 
 | 組 | 旋鈕（預設） |
 |---|---|

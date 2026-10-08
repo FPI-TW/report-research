@@ -83,7 +83,7 @@ make metrics-once
 # 前景取樣一小時（臨時量測用）
 make metrics-collect DURATION=3600
 
-# 常駐取樣（生產用；真相來源在 deploy/，改完要 cp 過去）
+# 常駐取樣（辦公室主機用；真相來源在 deploy/，改完要 cp 過去）
 sudo cp deploy/systemd/report-mark-metrics.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-metrics.service
@@ -235,7 +235,7 @@ HTTP 那一層，繞過去就量不到。題目取自同一份凍結題集 `eval
 
 ## 問答 rerank 延遲重測（2026-09-29）
 
-從正式庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離 PostgreSQL；在本工作樹
+從辦公室主機的語料庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離 PostgreSQL；在本工作樹
 `127.0.0.1:8099` 啟動單 worker API，載入既有 DeepSeek 設定，對同一組前 8 題各送
 一次真實登入後的 `/api/ask` SSE 請求。依序量單併發、三併發，再把預設
 `ASK_RERANK_CANDIDATES` 從 50 改為 16，重跑相同兩輪；其餘設定、語料和主機不變。

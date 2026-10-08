@@ -1,12 +1,15 @@
 # web/routers/monitor.py
 """監控資料 API：/api/stats（語料統計）與 /api/progress（匯入/標註即時進度）。
 
-從 web/server.py 拆出（第三步）。/api/stats 供檢索頁的全庫市場計數；/api/progress 供管理後台
-的管線分頁（/app/admin/operations/pipeline）與待複核頁的判定尺附註。
+從 web/server.py 拆出（第三步）。/api/stats 供檢索頁的全庫市場計數，一般登入者可用；
+/api/progress 只供管理後台的管線分頁（/app/admin/operations/pipeline），**在路由上**掛
+`require_admin`＋`ops.read`（不能掛在 router 層：同一支 router 的 /api/stats 要維持
+一般使用者可用）。待複核頁的判定尺改走 `/api/review/judge-scale`（web/routers/review.py），
+不再為了一個附註拿到整份 runtime 與管線資訊（issue #348）。
 
-**DB 快照與它的快取在 `web/stats_snapshot.py`**：stats 與 progress 都經
-`stats_snapshot.db_stats_snapshot()` 取同一份快照，TTL 內只打一次 DB。放在 router 之外，
-是為了讓其他 router 也能共用同一份（router 之間不互相 import）。
+**DB 快照與它的快取在 `web/stats_snapshot.py`**：stats、progress 與 review 的判定尺端點
+都經 `stats_snapshot.db_stats_snapshot()` 取同一份快照，TTL 內只打一次 DB。放在 router
+之外，是因為 router 之間不互相 import。
 
 進度解析（log tail + /proc 掃描）是同步工作，progress 以 asyncio.to_thread 執行
 _gather_runtime，不阻塞事件迴圈。
@@ -394,7 +397,12 @@ async def _runtime_snapshot() -> dict:
     )
 
 
-@router.get("/api/progress")
+# 完整管線資料（runtime、pipelines、log 尾巴）只給有 ops.read 的管理員。掛在路由而不是 router 層：
+# /api/stats 在同一支 router，要維持一般使用者可用。tests/test_authz.py 把這條列為必須守門的路徑。
+@router.get(
+    "/api/progress",
+    dependencies=[Depends(authz.require_admin), Depends(authz.require_scope("ops.read"))],
+)
 async def progress():
     snapshot = await stats_snapshot.db_stats_snapshot()
     runtime = await _runtime_snapshot()

@@ -12,10 +12,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 # stats/progress 與 runtime 快取、進度解析 helper 在 web.routers.monitor；DB 快照與它的快取、
-# M8 查核欄位在 web.stats_snapshot；服務綁定（SessionFactory）在 web.deps。覆寫各自指向定義它的模組。
+# M8 查核欄位在 web.stats_snapshot（review 的判定尺端點也讀它）；服務綁定（SessionFactory）
+# 在 web.deps。覆寫各自指向定義它的模組。
 from app.services.accounts import DEV_USER  # noqa: E402
 from web import deps, stats_snapshot  # noqa: E402
-from web.routers import monitor  # noqa: E402
+from web.routers import monitor, review  # noqa: E402
 
 
 class _ScalarResult:
@@ -336,7 +337,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         monitor.reset_caches()
         stats_snapshot.reset_cache()
 
-    async def test_stats_and_progress_share_one_db_snapshot_within_ttl(self):
+    async def test_stats_progress_and_judge_scale_share_one_db_snapshot_within_ttl(self):
         calls = []
         eval_params: dict = {}
 
@@ -412,15 +413,21 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         try:
             stats = await monitor.stats(DEV_USER)
             progress = await monitor.progress()
+            scale = await review.judge_scale()
         finally:
             deps.SessionFactory = orig_session_factory
             monitor._gather_runtime = orig_gather_runtime
 
         # 11 = 原本 6 + takeaway/signal 覆蓋率各一 + M8 查核統計一（兩張表以 UNION ALL
         # 併成單次查詢，刻意不拆成兩次）+ 券商分佈一 + E1 抽取品質一（同樣 UNION ALL
-        # 併成單次）。這個數字守的是「stats 與 progress 共用 _DB_STATS_CACHE、TTL 內
-        # 只打一次 DB」（見 web/stats_snapshot.py docstring）。
+        # 併成單次）。這個數字守的是「stats、progress 與待複核的判定尺共用 _DB_STATS_CACHE、
+        # TTL 內只打一次 DB」（見 web/stats_snapshot.py docstring）。
         self.assertEqual(len(calls), 11)
+        # 判定尺是 evaluation.qa 的子集（issue #348）：同一份快照、不另寫查詢，只挑三個鍵。
+        self.assertEqual(
+            scale.model_dump(),
+            {"judge_model": stats_snapshot._JUDGE_MODEL, "judge_since": "2026-07-02", "other_judge_checked": 2},
+        )
         ext = progress["extraction"]
         self.assertEqual(ext["backfill"]["done"], 0 if ext["target_version"] != "ext-2026-09-02.v3" else 2)
         self.assertEqual(ext["backfill"]["total"], 6)

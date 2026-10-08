@@ -3,7 +3,7 @@
 
 系統已經偵測到、也存在庫裡，但先前**看不到是哪幾筆**的三種東西：
 
-- `faithfulness`：問答忠實度抽查分數低於門檻（`qa_log.evaluation`）。監控頁只有 30 天內的
+- `faithfulness`：問答忠實度抽查分數低於門檻（`qa_log.evaluation`）。管線分頁只有 30 天內的
   **筆數**（`/api/progress` 的 `evaluation.qa.below_min`），要知道是哪一題只能開 psql。
 - `feedback`：使用者按了倒讚的回答（`qa_log.feedback`）。先前唯一的消費端是離線的
   `scripts/analyze_qa_log.py`。
@@ -39,6 +39,11 @@ HMAC 的短代號（`web.auth.pseudonym`），同一人同一代號、看不出�
   每一列另帶 `judge_model`（沒有 evaluation 的倒讚列為 None）。
 - `extraction` 沒有窗期：`needs_review` 是研報的現況，不是事件。
 
+判定尺（`GET /api/review/judge-scale`）：佇列頁要知道現行判定尺與「是不是剛換尺」，才標得出
+「新量尺」。它只回 `/api/progress` 的 `evaluation.qa` 裡那三個鍵，取自同一份 DB 快照與快取
+（`web/stats_snapshot.py`），不另寫查詢；完整的管線、runtime 資料要 `ops.read`，`review.manage`
+不因為這個附註就拿到（issue #348）。
+
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """
 from __future__ import annotations
@@ -57,7 +62,7 @@ from app.services.accounts import User, record_audit
 from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
 from app.services.store import review_reasons
-from web import auth, authz, deps
+from web import auth, authz, deps, stats_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +163,17 @@ class QaContentResponse(BaseModel):
     created_at: str | None = None
     question: str
     answer: str | None = None
+
+
+class JudgeScaleResponse(BaseModel):
+    """判定尺：`/api/progress` 的 `evaluation.qa` 的子集，只有標「新量尺」需要的鍵。"""
+
+    # 現行判定尺（FAITHFULNESS_MODEL）。
+    judge_model: str
+    # 窗期（近 30 天）內現行判定尺最早的一筆；還沒有查核為 None。
+    judge_since: str | None = None
+    # 窗期內其他判定尺量的筆數；大於 0 表示窗期內換過尺。
+    other_judge_checked: int = 0
 
 
 class ReviewUpdate(BaseModel):
@@ -311,6 +327,19 @@ async def review_queue(
         next_offset=next_offset if has_more else None,
         min_score=_FAITHFULNESS_MIN if kind == "faithfulness" else None,
         items=items,
+    )
+
+
+@router.get("/api/review/judge-scale", response_model=JudgeScaleResponse)
+async def judge_scale():
+    """待複核頁的判定尺附註。快照共用 `/api/stats`、`/api/progress` 的 15 秒快取。"""
+    snapshot = await stats_snapshot.db_stats_snapshot()
+    # 快照的 evaluation.qa 理論上一定有一列（無 GROUP BY 的聚合）；缺了就只回現行判定尺。
+    qa = (snapshot.get("evaluation") or {}).get("qa") or {}
+    return JudgeScaleResponse(
+        judge_model=qa.get("judge_model") or _JUDGE_MODEL,
+        judge_since=qa.get("judge_since"),
+        other_judge_checked=int(qa.get("other_judge_checked") or 0),
     )
 
 

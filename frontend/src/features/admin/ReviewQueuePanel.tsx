@@ -4,10 +4,9 @@ import { ApiError, requestJSON } from '../../lib/api'
 import { displayTitle } from '../../lib/displayTitle'
 import {
   qaContentSchema,
-  type QaContent, type ReviewItem, type ReviewKind, type ReviewStatus, type ReviewVerification,
+  type JudgeScale, type QaContent, type ReviewItem, type ReviewKind, type ReviewStatus, type ReviewVerification,
 } from '../../lib/reviewSchemas'
 import { isNewDeepSeekScale, newScaleText } from '../../lib/judgeScale'
-import type { EvalSource } from '../../lib/progressSchema'
 import { reasonText } from './reviewReasons'
 import { useReviewQueue } from './useReviewQueue'
 import styles from './ReviewQueue.module.css'
@@ -28,7 +27,7 @@ import styles from './ReviewQueue.module.css'
  * 兩者都是 null：提問者標「共用帳號」，處理人不顯示。
  * 整張卡限管理員（後端 `/api/review/*` 對一般使用者回 403），所以只出現在管理頁。
  *
- * `scale` 是 `/api/progress` 的問答忠實度統計（與管線分頁的忠實度卡同一份）：判定尺剛換成 DeepSeek、
+ * `scale` 是 `/api/review/judge-scale` 的判定尺（與管線分頁的忠實度卡同一份快照）：判定尺剛換成 DeepSeek、
  * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
  * 會被讀成「低分變少了」。佇列本身仍自己取數、不跟 5 秒輪詢（理由見 useReviewQueue）。
  */
@@ -179,7 +178,7 @@ function ExtractionRow({ item, save, disabled }: { item: ReviewItem; save: Revie
   )
 }
 
-function NewScaleNote({ scale }: { scale: EvalSource }) {
+function NewScaleNote({ scale }: { scale: JudgeScale }) {
   return (
     <div className={styles.prate}>
       {`判定尺 ${scale.judge_model} 是${newScaleText(scale)}：分數與換尺前的不可直接比較`}
@@ -188,7 +187,7 @@ function NewScaleNote({ scale }: { scale: EvalSource }) {
 }
 
 export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
-  scale?: EvalSource | null; canReadContent?: boolean
+  scale?: JudgeScale | null; canReadContent?: boolean
 } = {}) {
   const [kind, setKind] = useState<ReviewKind>('faithfulness')
   const [status, setStatus] = useState<ReviewStatus | 'all'>('open')

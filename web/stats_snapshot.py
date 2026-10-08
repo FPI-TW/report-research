@@ -1,12 +1,13 @@
 # web/stats_snapshot.py
-"""語料與查核統計的 DB 快照：/api/stats 與 /api/progress 共用。
+"""語料與查核統計的 DB 快照：/api/stats、/api/progress 與 /api/review/judge-scale 共用。
 
-從 web/routers/monitor.py 抽出：快照與它的快取放在 router 之外，其他 router 才能共用同一份
-（router 之間不互相 import）。
+從 web/routers/monitor.py 抽出（issue #348）：待複核頁的判定尺端點在 web/routers/review.py，
+而 router 之間不互相 import，所以快照與它的快取放在 router 之外的這裡。
 
-**讀者共用 `_DB_STATS_CACHE`**：都經 `db_stats_snapshot()` 取快照，TTL 內只打一次 DB
+**三個端點共用 `_DB_STATS_CACHE`**：都經 `db_stats_snapshot()` 取快照，TTL 內只打一次 DB
 （tests/test_server_stats.py 的查詢次數斷言守此）。快取是模組級狀態，任何讀者另存一份或另寫
-查詢，TTL 去重就失效。
+查詢，TTL 去重就失效。各端點只挑自己需要的鍵回給前端：`/api/stats` 只給語料分面、
+`/api/review/judge-scale` 只給判定尺，完整快照只出現在 `/api/progress`（管理員＋`ops.read`）。
 
 存取方式比照 `web/deps.py`：router 寫 `from web import stats_snapshot` 再呼叫
 `stats_snapshot.db_stats_snapshot()`，測試以 `patch.object(stats_snapshot, "db_stats_snapshot", ...)`

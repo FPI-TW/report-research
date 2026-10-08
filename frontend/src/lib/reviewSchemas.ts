@@ -67,6 +67,18 @@ export const reviewStateSchema = z.object({
 })
 
 /**
+ * 待複核頁的判定尺（`GET /api/review/judge-scale`，`review.manage`），逐字鏡像 web/routers/review.py 的
+ * `JudgeScaleResponse`：`/api/progress` 的 `evaluation.qa` 裡標「新量尺」需要的三個鍵。
+ * 待複核頁刻意不讀 `/api/progress`：那支要 `ops.read`，而且帶整份 runtime 與管線資料。
+ */
+export const judgeScaleSchema = z.object({
+  judge_model: z.string(),
+  judge_since: z.string().nullable(),
+  other_judge_checked: z.number(),
+})
+export type JudgeScale = z.infer<typeof judgeScaleSchema>
+
+/**
  * 逐筆讀取的一筆問答原文（`POST /api/review/qa/{qa_id}/access`，要 `qa_content.read`）。
  * 只有這一筆，不含對話串；每次讀取後端都寫一列稽核。
  */

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { EvalSource } from '../../lib/progressSchema'
+import type { JudgeScale } from '../../lib/reviewSchemas'
 import { ReviewQueuePanel } from './ReviewQueuePanel'
 import { reasonText } from './reviewReasons'
 
@@ -10,7 +10,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 type Handler = (url: URL, init?: RequestInit) => { status?: number; body: unknown }
 
-function mount(handler: Handler, scale: EvalSource | null = null, canReadContent = false) {
+function mount(handler: Handler, scale: JudgeScale | null = null, canReadContent = false) {
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const { status = 200, body } = handler(new URL(input, 'http://x'), init)
     return new Response(JSON.stringify(body), { status })
@@ -242,10 +242,8 @@ test('以現行門檻已不需複核的研報要說出來，不留一格空白',
   expect(await screen.findByText('現行門檻下已達標')).toBeInTheDocument()
 })
 
-const scaleBase: EvalSource = {
-  total: 9, checked: 9, degraded: 0, below_min: 1, avg_score: 0.95, latest: '2026-09-26',
-  judge_model: 'deepseek-flash', judge_since: '2026-09-25', other_judge_checked: 6, judge_checked: 3, avg_n: 3,
-}
+// /api/review/judge-scale 的回應（`/api/progress` 的 evaluation.qa 子集）
+const scaleBase: JudgeScale = { judge_model: 'deepseek-flash', judge_since: '2026-09-25', other_judge_checked: 6 }
 
 test('判定尺剛換成 DeepSeek、窗期內還有舊尺 → 忠實度分頁比照監控卡標新量尺', async () => {
   mount(() => ({ body: page('faithfulness', [qa(1)]) }), scaleBase)
@@ -254,7 +252,7 @@ test('判定尺剛換成 DeepSeek、窗期內還有舊尺 → 忠實度分頁比
 })
 
 test('新尺尚無查核 → 新量尺但不編日期', async () => {
-  mount(() => ({ body: page('faithfulness', []) }), { ...scaleBase, judge_since: null, judge_checked: 0 })
+  mount(() => ({ body: page('faithfulness', []) }), { ...scaleBase, judge_since: null })
   await screen.findByText('沒有待複核的項目')
   expect(screen.getByText(/新量尺（尚無查核，DeepSeek）/)).toBeInTheDocument()
 })

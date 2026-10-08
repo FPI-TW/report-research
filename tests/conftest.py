@@ -175,7 +175,8 @@ def _fake_accounts():
 @pytest.fixture(autouse=True)
 def _reset_monitor_caches():
     """監控的三個模組級 TTL 快取每題前後各清一次：`web.routers.monitor` 的 runtime 與
-    tag 檔數兩個，加上 `web.stats_snapshot` 的 DB 快照（/api/stats、/api/progress 共用）。
+    tag 檔數兩個，加上 `web.stats_snapshot` 的 DB 快照（/api/stats、/api/progress、
+    /api/review/judge-scale 共用）。
 
     沒有這層的話：A 測試 patch 掉 `_gather_runtime` 後打一次 `/api/progress`，
     假值就進了 `_RUNTIME_CACHE`，B 測試即使 patch 成別的值也拿得到 A 的——兩邊

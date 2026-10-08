@@ -2166,9 +2166,9 @@ make down-clamav   # 停掉並移除容器；病毒碼 volume 保留（刻意不
 
 `report-mark-upload.service`＋`.timer`（`scripts/process_uploads.sh`）：每 5 分鐘一輪，掃毒（ClamAV）→ 掃描通過的
 上傳入庫成草稿 → 本輪新草稿跑摘要、標題、摘錄 → 清除過寬限期的退回件、過保留期的感染證據、隔離區孤兒檔。
-流程與狀態機見 `docs/WORKFLOW.md`「上傳 worker」。**現況：程式在 repo 裡，unit 沒有裝、timer 沒有 enable、
-`UPLOAD_ENABLED` 維持 0**；下面的安裝要另外取得同意，順序照 AGENTS.md「過渡中狀態」（devdb 演練 → staging →
-生產；staging 沒有 clamd，維持旗標關閉、不裝這支 unit）。
+流程與狀態機見 `docs/WORKFLOW.md`「上傳 worker」。部署紀錄與待確認事項見 `docs/DEPLOYMENT_STATUS.md`，
+安裝前先核對目標主機的 unit、timer 與 `UPLOAD_ENABLED`。下面的安裝要另外取得同意，
+站序為 devdb 演練 → 測試環境（辦公室主機）→ 正式環境（EC2）；正式環境未具備 ClamAV 前維持旗標關閉、不裝上傳 worker。
 
 互斥與記憶體：
 
@@ -2516,7 +2516,7 @@ RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動�
 
 | 項目 | 怎麼啟用 | 測試環境（辦公室主機） | 正式環境（EC2） | 前提與差異 |
 |---|---|---|---|---|
-| schema 0011 | `make schema CONFIRM=…` | 套用 | 套用 | 一律先於換程式；v1、v1.5 已在該主機驗收 |
+| schema 0011 | 依 DB 類型執行 migration | `make schema CONFIRM=<host:port/db>` | `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`（RDS） | 一律先於換程式；v1、v1.5 已在該主機驗收 |
 | 使用量收集（`usage_daily`、`usage_counter`） | 隨 web | 開 | 開 | 不必安裝；只記次數與主題彙總，不記搜尋字串 |
 | 使用分析頁＋`report-mark-analytics-rollup` | 安裝 unit | 安裝 | 安裝 | 沒裝時最近 90 天照常即時顯示，更早的日子是「沒有資料」 |
 | 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`：EC2 沒裝，顯示沒有結果或過期 |

@@ -1,5 +1,5 @@
 # report-mark 維運代理的 Service Catalog（EC2 staging：research.tingfong.com）。格式與驗證規則見 ops_agent/catalog.py。
-# 注意：檔名與 unit 名稱裡的 staging 是歷史命名——EC2（research.tingfong.com）實際上是正式環境（AGENTS.md「過渡中狀態」）。
+# 注意：檔名與 unit 名稱裡的 staging 是歷史命名——EC2（research.tingfong.com）實際上是正式環境（AGENTS.md「環境角色與資料安全」；部署紀錄見 docs/DEPLOYMENT_STATUS.md）。
 # 部署：複製到 EC2 的 /opt/report-mark-ops/services.staging.toml（root 擁有、0644），代理 unit 是
 # deploy/systemd/report-mark-ops-agent-staging.service，步驟見 docs/production_resilience.md「維運代理」的 staging 一節。
 # web 那端設 OPS_AGENT_ENVIRONMENT=staging（socket 固定是 /run/report-mark-ops-staging/agent.sock）。

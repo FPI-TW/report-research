@@ -207,7 +207,7 @@ function ClientForm({ client, busy, onCancel, onSubmit }: {
  */
 function KeyDialog({ shown, onClose }: { shown: { name: string; key: string } | null; onClose: () => void }) {
   return (
-    <Modal open={shown != null} onClose={onClose} title={shown ? `「${shown.name}」的 API 金鑰` : ''}>
+    <Modal open={shown != null} onClose={onClose} title={shown ? `「${shown.name}」的 API 金鑰` : ''} className={local.keyModal}>
       <div className={styles.dialogForm}>
         <p className={local.keyWarn} role="note">
           請立即複製並妥善保存，關閉後將<strong>無法再次查看</strong>。

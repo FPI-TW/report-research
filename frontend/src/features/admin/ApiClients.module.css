@@ -4,10 +4,26 @@
 .legend { font-size: 12px; color: var(--tf-text-4); padding: 0 4px; }
 .checkGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 12px; }
 
-/* 一次性金鑰：警示文案與可選取的等寬金鑰框（不截斷、可整段選取以便手動複製） */
+/* 金鑰彈窗收窄到剛好放下一行金鑰（約 57 個等寬字元＋右側複製 icon）；預設的 920px 對一行金鑰太寬。 */
+.keyModal { --tf-modal-width: min(560px, 100%); }
+
+/* 一次性金鑰：精簡警示、金鑰框（不截斷、可整段選取以便手動複製）右側內嵌複製 icon */
 .keyWarn { font-size: 13px; color: var(--tf-text-1); background: var(--tf-gold-tint); border-radius: 6px; padding: 10px 12px; margin: 0; }
-.keyBox {
-  display: block; font-family: var(--tf-mono, ui-monospace, monospace); font-size: 13px; color: var(--tf-text-1);
-  background: var(--tf-fill-subtle); border: 1px solid var(--tf-border-weak); border-radius: 6px; padding: 10px 12px;
-  overflow-wrap: anywhere; user-select: all;
+.keyField {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--tf-fill-subtle); border: 1px solid var(--tf-border-weak); border-radius: 6px; padding: 4px 4px 4px 12px;
 }
+.keyBox {
+  flex: 1; min-width: 0; font-family: var(--tf-mono, ui-monospace, monospace); font-size: 13px; color: var(--tf-text-1);
+  padding: 6px 0; overflow-wrap: anywhere; user-select: all;
+}
+/* 無框 icon 鈕，比照問答頁的複製鈕（AssistantMessage.module.css 的 .act）。position: relative 讓
+   CopyButton 換圖時退場那顆圖示以按鈕為包含塊、原地換圖；svg display: block 消掉基線落差。 */
+.keyCopy {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 30px; height: 30px; padding: 0; border: none; background: transparent; border-radius: 6px;
+  color: var(--tf-text-muted-aa); cursor: pointer;
+}
+.keyCopy svg { display: block; width: 15px; height: 15px; stroke-width: 1.8; }
+.keyCopy > span { display: flex; align-items: center; justify-content: center; }
+.keyCopy:hover { background: var(--tf-border); color: var(--tf-graphite); }

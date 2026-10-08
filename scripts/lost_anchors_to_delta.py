@@ -33,7 +33,7 @@ SELECT r.file_hash,
        max(r.report_date) AS report_date
 FROM research.report_takeaway t
 JOIN research.research_report r ON r.id = t.report_id
-WHERE (:since_days IS NULL OR r.report_date >= current_date - (:since_days::int))
+WHERE (CAST(:since_days AS int) IS NULL OR r.report_date >= current_date - CAST(:since_days AS int))
 GROUP BY r.file_hash
 HAVING count(*) FILTER (WHERE t.anchor_method IS NULL) >= :min_lost
 ORDER BY lost DESC, report_date DESC NULLS LAST

@@ -1,4 +1,4 @@
-# report-mark 維運代理的 Service Catalog（辦公室主機的生產環境）。格式與驗證規則見 ops_agent/catalog.py。
+# report-mark 維運代理的 Service Catalog（辦公室主機＝開發與測試環境；檔名的 prod 與 environment = "production" 是歷史命名）。格式與驗證規則見 ops_agent/catalog.py。
 # 部署：複製到 /opt/report-mark-ops/services.prod.toml（root 擁有、0644），步驟見 docs/production_resilience.md
 # 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
 #

@@ -253,7 +253,7 @@ class BindingTests(unittest.TestCase):
 
 
 class StagingCatalogTests(unittest.TestCase):
-    """EC2 staging：RDS（不是容器）、沒有 NAS、apt 的 nginx。
+    """EC2（正式環境；catalog 檔名沿用 staging）：RDS（不是容器）、沒有 NAS、apt 的 nginx。
 
     restart 只有 web，run 只有 freshness／audit 與 v2 的 db-snapshot／analytics-rollup。
     """

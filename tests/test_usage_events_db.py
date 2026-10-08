@@ -6,7 +6,8 @@
 - feature_flag：text[]／uuid[] 讀得回來、registry 沒有的 key 被忽略。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——
-本機預設連到的是生產庫。flush 與 feature_flags 都吃 session_factory 參數，這裡給綁在外層交易上、commit 只釋放
+本機預設連到的是測試環境的真實資料庫。
+flush 與 feature_flags 都吃 session_factory 參數，這裡給綁在外層交易上、commit 只釋放
 savepoint 的 session（同 tests/test_accounts_db.py）。
 """
 

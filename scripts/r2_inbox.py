@@ -1,4 +1,4 @@
-"""R2 inbox：讓碰不到 NAS 的部署（EC2 staging）也收得到新研報。
+"""R2 inbox：讓碰不到 NAS 的部署（EC2，正式環境）也收得到新研報。
 
 辦公室主機的 sync 每輪 rsync NAS → 本地鏡像後，把這一輪的 delta 檔連同相對路徑與 mtime
 推到 R2 的 ``inbox/``；另一端的 sync 以 ``SYNC_SOURCE=r2-inbox`` 改從這裡拉，產出與

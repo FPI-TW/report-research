@@ -3,7 +3,7 @@
 驗：建立後金鑰 resolve 得到、停用立即失效、輪替後舊金鑰失效新金鑰可用、每日額度到上限＋1 被拒且換日重置、
 刪除用戶端時授權範圍與用量 cascade、每個寫入動作同交易留稽核且 detail 不含原始金鑰或 key_hash。
 
-**一律 rollback、絕不 commit**——本機預設連到的是生產庫。服務函式自己會 commit，所以比照
+**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫。服務函式自己會 commit，所以比照
 `tests/test_accounts_db.py` 把 `api_clients.SessionFactory` 換成綁在一條外層交易上、commit 只釋放
 savepoint 的 session，最後整條交易 rollback。名稱一律帶隨機尾碼，不假設庫是空的。
 連不上 DB 或尚未套 0010 就 skip；`REPORT_MARK_REQUIRE_DB=1`（CI）時改成失敗。

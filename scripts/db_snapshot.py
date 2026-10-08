@@ -15,7 +15,7 @@
 為什麼這支要連 DB（監控收集器刻意不連）：量的就是 DB 本身，DB 掛掉時本來就量不到；DB 故障的告警仍由
 `/healthz`＋P5 負責。所以 DB 不可用是 rc=2（unit 以 SuccessExitStatus=2 放行，理由同 rollup：
 report-mark-alert@ 沒有去重，DB 掛掉時每小時一則重複通知），只有 rc=1（SQL 錯誤、bug）走 OnFailure 告警。
-系統目錄某一段權限不足或逾時不算失敗：那一段記在 stats.errors、趨勢上是空點（staging 的 RDS 帳號權限較窄）。
+系統目錄某一段權限不足或逾時不算失敗：那一段記在 stats.errors、趨勢上是空點（正式環境 EC2 的 RDS 帳號權限較窄）。
 
 刻意不 import 檢索、嵌入、LLM 模組（主機記憶體緊；`tests/test_db_snapshot.py` 以子行程守門）。同時跑兩份無害：
 寫入一律 ON CONFLICT DO NOTHING。批次腳本的 logging 無聲（只有 web 初始化 logging），結果一律 print 到 journal。

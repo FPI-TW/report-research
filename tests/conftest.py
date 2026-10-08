@@ -97,7 +97,7 @@ os.environ["UPLOAD_QUARANTINE_DIR"] = "/nonexistent/report-mark-quarantine"
 os.environ["UPLOAD_WORKER_LOCK_FILE"] = "/nonexistent/report-mark-upload-worker/.upload_worker.lock"
 os.environ["UPLOAD_CLEAN_DIR"] = "/nonexistent/report-mark-uploads-clean"
 os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
-# 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器就是生產主機，代理裝上之後預設 socket
+# 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器同時是測試環境的部署主機，代理裝上之後預設 socket
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"
 os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
@@ -108,7 +108,8 @@ os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
 os.environ["ADMIN_MFA_REQUIRED"] = "0"
 # 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／
 # llm_usage_daily——測試以 `with TestClient(app)` 觸發 lifespan 時，那就是寫進 REPORT_MARK_DB_URL 指的庫
-# （本機預設是生產庫）。**用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
+# （本機預設是測試環境的真實資料庫）。
+# **用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
 # 要驗寫入的測試自己給假的 session factory（tests/test_usage_events.py）。
 os.environ["USAGE_EVENTS_ENABLED"] = "0"
 
@@ -274,7 +275,7 @@ def _reset_external_rate_limit():
 def _stub_feature_flag_db():
     """功能旗標的讀取（`app.services.feature_flags` 沒給 session_factory 時用的 `SessionFactory`）預設讀成「沒有
     任何覆寫」：問答、上傳等既有測試在 registry 預設下跑（＝只看環境變數，與 v1 相同），而不是去讀
-    `REPORT_MARK_DB_URL` 指的庫——本機預設是生產庫，那裡的覆寫會讓測試結果跟著生產設定變。
+    `REPORT_MARK_DB_URL` 指的庫——本機預設是測試環境的真實資料庫，那裡的覆寫會讓測試結果跟著那個庫的設定變。
     驗旗標本身的測試明確傳 session_factory，或在範圍內用 `fake_feature_flags.flag_rows()` 換成指定的覆寫。
     旗標模組很輕（只依賴 app.config 與 app.services.db），這裡直接 import。"""
     from fake_feature_flags import NoRowsSession

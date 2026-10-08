@@ -12,7 +12,7 @@
 - 呼叫之後同一交易的 `plan_cache_mode` 是 `force_custom_plan`（SET LOCAL，交易結束還原）。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB 就 skip。**一律 rollback、絕不 commit**——本機
-預設連到的是生產庫（`upsert_report` 本身會 commit，測試把那個 session 的 commit 換成
+預設連到的是測試環境的真實資料庫（`upsert_report` 本身會 commit，測試把那個 session 的 commit 換成
 flush）。斷言只針對自己塞進去的列：字面用語料裡不存在的詞，在完整語料上也只命中自己。
 """
 

@@ -10,7 +10,7 @@
 2. 成功時 hook 的寫入與研報在同一個交易裡可見，hook 與 upsert 之間沒有 commit。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0004）就 skip，`REPORT_MARK_REQUIRE_DB`
-設定時改成紅燈。**一律 rollback、絕不 commit**——本機預設連到的是生產庫：session 的 commit 換成
+設定時改成紅燈。**一律 rollback、絕不 commit**——本機預設連到的是測試環境的真實資料庫：session 的 commit 換成
 記錄呼叫的假物件（`upsert_report` 內部的 commit 也是它），結束時整個 rollback。斷言只針對自己塞進去
 的 file_hash。不連網、不載模型：抽字、嵌入、抽取快取都是假物件，標註走預先寫好的標註快取。
 """

@@ -12,7 +12,7 @@ revision 0008 的草稿（`report_visibility.publication='draft'`）走同一組
 `report_upload` 的 CHECK 與 partial unique index，以及 `make db-audit` 的草稿一致性檢查。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0004／0008）就 skip。**一律 rollback、
-絕不 commit**——本機預設連到的是生產庫。`upsert_report` 本身會 commit，測試把那個 session 的
+絕不 commit**——本機預設連到的是測試環境的真實資料庫。`upsert_report` 本身會 commit，測試把那個 session 的
 commit 換成 flush。斷言只針對自己塞進去的列（以 file_hash／report_id 辨識），不假設庫是空的：
 向量用與查詢完全相同的方向（距離 ≈ 0）、字面用語料裡不存在的詞，在完整語料上也排得到前面。
 """

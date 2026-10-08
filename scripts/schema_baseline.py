@@ -11,7 +11,7 @@
     REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> \\
         uv run python scripts/schema_baseline.py stamp --no-dump        # 只限非受保護的庫
 
-**連的是 `REPORT_MARK_DB_URL`**（repo 根 `.env`，與 web 同一個鍵）。本機預設就是生產庫。
+**連的是 `REPORT_MARK_DB_URL`**（repo 根 `.env`，與 web 同一個鍵）。本機預設是測試環境的真實資料庫。
 
 ── 為什麼不能直接 `alembic stamp` ──────────────────────────────────────────────
 stamp 只是在 `alembic_version` 寫一個版本號，**不檢查庫長什麼樣**。被 stamp 成 0001、實際卻少

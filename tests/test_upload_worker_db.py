@@ -3,7 +3,7 @@
 **這支會真的 commit**（worker 的每一步都是自己的交易，條件式 UPDATE 認領、commit 之後才刪檔——rollback 包起來
 就測不到這些）。所以只在**拋棄式庫**上跑：連上之後先確認 `research.research_report` 與 `research.report_upload`
 都是空的（CI 的 schema 契約 job 是剛 `alembic upgrade head` 的空庫），不是空的就 skip；`REPORT_MARK_REQUIRE_DB=1`
-時 skip 改成紅燈。本機預設連到的是生產庫，那裡一定不是空的——這道前提就是不讓它在生產庫上 commit 的守門。
+時 skip 改成紅燈。本機預設連到的是測試環境的真實資料庫，那裡一定不是空的——這道前提就是不讓它在那個庫上 commit 的守門。
 每題結束刪掉自己寫的列（稽核紀錄只能新增、刪不掉，留在拋棄式庫裡無妨）。
 
 不連網、不載模型、不打 LLM、不連 clamd：掃描器、抽字、嵌入、標註、物件儲存、跳過名單的寫入端都是假物件；

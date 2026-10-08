@@ -28,7 +28,7 @@ CONFIRM ?=
 # schema-stamp-baseline：全庫備份落點；只有非受保護的庫可用 NO_DUMP=1 明確略過。
 DUMP_DIR ?=
 NO_DUMP ?=
-# 全庫備份以 docker exec 在這個容器裡跑 pg_dump；DB 不在容器（staging 的 RDS）時設成空值改用主機的 pg_dump。
+# 全庫備份以 docker exec 在這個容器裡跑 pg_dump；DB 不在容器（正式環境 EC2 的 RDS）時設成空值改用主機的 pg_dump。
 DUMP_CONTAINER ?= $(DB_CONTAINER)
 
 # Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；

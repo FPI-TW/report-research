@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Card } from '../../../components/console'
+import { Card, StatTile } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type { AnalyticsCell, AnalyticsOverviewResponse, AnalyticsTopList } from '../../../lib/generated/adminApi'
 import { BarChart, LineChart } from './AnalyticsCharts'
@@ -29,16 +29,6 @@ function Loading<T>({ q, what, children }: {
   return <>{children(q.data)}</>
 }
 
-function Stat({ name, value, hint }: { name: string; value: string; hint?: string }) {
-  return (
-    <div className={c.tile} role="group" aria-label={name}>
-      <span className={c.tileLabel}>{name}</span>
-      <span className={`${c.tileValue} ${styles.statValue}`}>{value}</span>
-      {hint && <span className={c.tileSub} title={hint}>{hint}</span>}
-    </div>
-  )
-}
-
 /** 總覽：數字磚＋每日趨勢。總量不設門檻。 */
 export function OverviewSection({ query }: { query: AnalyticsQuery }) {
   const q = useAnalyticsOverview(query)
@@ -58,19 +48,24 @@ export function OverviewSection({ query }: { query: AnalyticsQuery }) {
 function Overview({ d }: { d: AnalyticsOverviewResponse }) {
   const days = d.daily.map(p => p.day)
   const today = d.range.today
+  const stats: { name: string; value: string; hint?: string }[] = [
+    { name: '問答數', value: fmtInt(d.totals.questions), hint: `其中停止 ${fmtInt(d.totals.stopped)}` },
+    { name: '單日活躍人數（最高）', value: fmtInt(d.totals.active_users_peak), hint: '問答或閱讀、原檔、搜尋的不重複人數' },
+    { name: '期間不重複使用者', value: fmtInt(d.totals.distinct_users_live),
+      hint: d.totals.distinct_users_live == null ? '只在即時段可算' : '即時段' },
+    { name: '閱讀／原檔／搜尋', value: `${fmtInt(d.totals.reading)}／${fmtInt(d.totals.report_file)}／${fmtInt(d.totals.search)}`,
+      hint: '成功開啟的次數' },
+    { name: '回答延遲 p50／p95', value: `${fmtMs(d.latency.p50_ms)}／${fmtMs(d.latency.p95_ms)}`,
+      hint: `即時段 ${fmtInt(d.latency.n)} 題，不含停止` },
+    { name: '首字時間 p50／p95', value: `${fmtMs(d.latency.thinking_p50_ms)}／${fmtMs(d.latency.thinking_p95_ms)}` },
+  ]
   return (
     <>
       <div className={styles.stats}>
-        <Stat name="問答數" value={fmtInt(d.totals.questions)} hint={`其中停止 ${fmtInt(d.totals.stopped)}`} />
-        <Stat name="單日活躍人數（最高）" value={fmtInt(d.totals.active_users_peak)}
-          hint="問答或閱讀、原檔、搜尋的不重複人數" />
-        <Stat name="期間不重複使用者" value={fmtInt(d.totals.distinct_users_live)}
-          hint={d.totals.distinct_users_live == null ? '只在即時段可算' : '即時段'} />
-        <Stat name="閱讀／原檔／搜尋" value={`${fmtInt(d.totals.reading)}／${fmtInt(d.totals.report_file)}／${fmtInt(d.totals.search)}`}
-          hint="成功開啟的次數" />
-        <Stat name="回答延遲 p50／p95" value={`${fmtMs(d.latency.p50_ms)}／${fmtMs(d.latency.p95_ms)}`}
-          hint={`即時段 ${fmtInt(d.latency.n)} 題，不含停止`} />
-        <Stat name="首字時間 p50／p95" value={`${fmtMs(d.latency.thinking_p50_ms)}／${fmtMs(d.latency.thinking_p95_ms)}`} />
+        {stats.map(s => (
+          <StatTile key={s.name} name={s.name} label={s.name} value={<span className={styles.statValue}>{s.value}</span>}
+            sub={s.hint} subTitle={s.hint} />
+        ))}
       </div>
       <Card title="每日趨勢" labelledBy="analytics-daily-title"
         right={(

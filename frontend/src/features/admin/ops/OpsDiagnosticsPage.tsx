@@ -232,7 +232,7 @@ function ChecksCard({ d }: { d: DiagnosticsResponse }) {
   const [llmLabel, llmTone] = LLM_LABELS[ck.llm.state] ?? [ck.llm.state, 'warn']
   return (
     <Card id="diag-checks" title="連通性">
-      <p className={styles.meta}>R2 與 DeepSeek 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</p>
+      <p className={c.meta}>R2 與 DeepSeek 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</p>
       <KV label="連通性" rows={[
         ['資料庫', <><Pill tone={ck.db.ok ? 'ok' : 'fail'}>{ck.db.ok ? '正常' : '失敗'}</Pill>{' '}
           {ck.db.ok ? `SELECT 1 ${fmtMs(ck.db.latency_ms)}；PostgreSQL ${ck.db.server_version ?? '—'}` : ck.db.error}</>],
@@ -360,7 +360,7 @@ export default function OpsDiagnosticsPage() {
   return (
     <>
       {header}
-      <p className={styles.meta}>產生時間 <b>{fmtDateTime(d.generated_at)}</b>（伺服器快取 {d.cache_ttl_s} 秒）</p>
+      <p className={c.meta}><span>產生時間 <b>{fmtDateTime(d.generated_at)}</b>（伺服器快取 {d.cache_ttl_s} 秒）</span></p>
       <Summary d={d} />
       {bundle.failed && (
         <textarea

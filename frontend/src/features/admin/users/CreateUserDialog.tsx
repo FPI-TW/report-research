@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { FormDialog, Field, Segmented, type SegOption } from '../../../components/console'
+import { FormDialog, Field, FieldGroup, Segmented, type SegOption } from '../../../components/console'
 import type { Role } from '../../../lib/adminSchemas'
 import { roleLabel } from '../auditLabels'
 import { useAdminActions } from '../useAdmin'
 import { MIN_PASSWORD, messageOf, passwordProblem, usernameProblem } from './userText'
 import c from '../../../components/console/Console.module.css'
-import styles from './Users.module.css'
 
 const ROLE_OPTIONS: readonly SegOption<Role>[] = [
   { value: 'user', label: '一般使用者' },
@@ -45,12 +44,11 @@ export function CreateUserDialog({ onClose, onDone }: { onClose: () => void; onD
         <input className={c.input} type="password" value={password} autoComplete="new-password" maxLength={256}
           onChange={e => { setPassword(e.target.value); setError(null) }} />
       </Field>
-      {/* 分段是一組按鈕，不包在 <label> 裡（點標籤會誤觸第一顆）。 */}
-      <div className={`${c.field} ${styles.roleField}`}>
-        <span>角色</span>
-        <Segmented options={ROLE_OPTIONS} value={role} onChange={setRole} label="角色" />
-      </div>
-      <p className={styles.dialogHint}>
+      {/* 分段是一組按鈕，不包在 <label> 裡（點標籤會誤觸第一顆）；外面那層 div 讓分段維持內容寬、不被拉滿。 */}
+      <FieldGroup label="角色" bare>
+        <div><Segmented options={ROLE_OPTIONS} value={role} onChange={setRole} label="角色" /></div>
+      </FieldGroup>
+      <p className={c.fieldHint}>
         帳號 2–64 個字元（文字、數字與 . _ @ -），不分大小寫；密碼至少 {MIN_PASSWORD} 個字元。
         請把初始密碼以安全的管道交給對方。
       </p>

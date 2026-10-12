@@ -144,12 +144,15 @@ function ApiClients() {
                     <tr key={client.id} className={`${c.rowClickable} ${opened?.id === client.id ? c.rowSelected : ''}`}
                       onClick={() => setOpenId(String(client.id))}>
                       <td className={local.wrap}>
-                        <button type="button" className={local.nameBtn} aria-label={`${client.name}，查看詳情`}
-                          onClick={e => { e.stopPropagation(); setOpenId(String(client.id)) }}>{client.name}</button>
+                        <button type="button" className={c.rowLink} aria-label={`${client.name}，查看詳情`}
+                          onClick={e => { e.stopPropagation(); setOpenId(String(client.id)) }}>
+                          <span className={local.name}>{client.name}</span>
+                        </button>
                         {client.note && <div className={c.sub}>{client.note}</div>}
                       </td>
                       <td className={c.num}>{keyPrefixText(client)}</td>
-                      <td><Status tone={client.enabled ? 'ok' : 'bad'}>{client.enabled ? '啟用' : '停用'}</Status></td>
+                      {/* 停用是管理員設定的狀態，不是異常：用中性的灰燈（只有異常才亮）。 */}
+                      <td><Status tone={client.enabled ? 'ok' : 'idle'}>{client.enabled ? '啟用' : '停用'}</Status></td>
                       <td>{client.scopes.length ? client.scopes.join('、') : <span className={c.muted}>（無）</span>}</td>
                       <td>
                         <div className={c.num}>{client.rate_limit_per_min.toLocaleString()}／分</div>

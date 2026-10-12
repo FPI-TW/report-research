@@ -6,8 +6,6 @@
 /* 表格下方的補充說明（console 的 cardFoot 沒有上框線） */
 .footNote { border-top: 1px solid var(--ac-l2); line-height: 1.6; }
 .idle { margin: 0; font-size: 12.5px; color: var(--ac-t5); }
-.meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t4); }
-.meta b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t2); }
 
 /* 結論 */
 .verdictRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }

@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { FormDialog, isElevationCancelled } from '../../../components/console'
+import { CheckRow, FormDialog, isElevationCancelled } from '../../../components/console'
 import type { AdminUser, GrantableScope } from '../useAdmin'
 import { SCOPE_LABELS, messageOf } from './userText'
 import c from '../../../components/console/Console.module.css'
-import styles from './Users.module.css'
 
 export type PrivilegesBody = { is_super: boolean; scopes: GrantableScope[] }
 
@@ -35,18 +34,14 @@ export function PrivilegesDialog({ user, onClose, onSave }: {
   return (
     <FormDialog open title={`調整「${user.username}」的權限`} width={460} submitLabel="儲存" busy={busy} error={error}
       onSubmit={() => { void submit() }} onClose={onClose}>
-      <label className={styles.checkRow}>
-        <input type="checkbox" className={c.check} checked={isSuper} onChange={e => setIsSuper(e.target.checked)} />
-        super admin（可授予權限、管理其他 super admin）
-      </label>
+      {/* 勾選項一列一個（直排）：直接當表單的子項，不包 c.checkGroup（那是橫向換行）。 */}
+      <CheckRow checked={isSuper} onChange={setIsSuper}>super admin（可授予權限、管理其他 super admin）</CheckRow>
       {(Object.keys(SCOPE_LABELS) as GrantableScope[]).map(s => (
-        <label key={s} className={styles.checkRow} data-disabled={isSuper || undefined}>
-          <input type="checkbox" className={c.check} checked={isSuper || scopes.includes(s)} disabled={isSuper}
-            onChange={() => toggle(s)} />
+        <CheckRow key={s} checked={isSuper || scopes.includes(s)} disabled={isSuper} onChange={() => toggle(s)}>
           {SCOPE_LABELS[s]}
-        </label>
+        </CheckRow>
       ))}
-      <p className={styles.dialogHint}>super admin 自動擁有全部權限。調整後對方的下一個動作就生效；需要重新驗證身分。</p>
+      <p className={c.fieldHint}>super admin 自動擁有全部權限。調整後對方的下一個動作就生效；需要重新驗證身分。</p>
     </FormDialog>
   )
 }

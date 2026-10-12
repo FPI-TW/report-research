@@ -6,8 +6,6 @@ import { routes } from '../../../App'
 import { Toaster, dismissToast } from '../../../components/console'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
-import OpsHostPage from './OpsHostPage'
-import OpsJobsPage from './OpsJobsPage'
 import OpsIncidentsPage from './OpsIncidentsPage'
 import OpsServicesPage from './OpsServicesPage'
 
@@ -76,32 +74,6 @@ const GRAPH = {
   down: ['backup'], root_causes: ['backup'], affected: [],
 }
 
-const job = (over: Record<string, unknown> = {}) => ({
-  host: 'office-host', unit: 'report-mark-sync.service', service: 'sync', invocation_id: 'a'.repeat(32),
-  state: 'finished', started_at: '2026-10-06T01:00:00Z', finished_at: '2026-10-06T01:02:30Z', duration_seconds: 150,
-  result: 'success', exit_status: 0, exec_main_code: 'exited', last_seen_at: '2026-10-06T01:03:00Z', ...over,
-})
-const JOBS = [
-  job(),
-  job({ service: 'backup', unit: 'report-mark-backup.service', invocation_id: 'b'.repeat(32), result: 'exit-code',
-    exit_status: 2 }),
-  job({ service: 'audit', unit: 'report-mark-audit.service', invocation_id: 'c'.repeat(32), state: 'running',
-    finished_at: null, duration_seconds: null, result: null, exit_status: null, exec_main_code: null }),
-  job({ service: 'freshness', unit: 'report-mark-freshness.service', invocation_id: 'd'.repeat(32), state: 'lost',
-    finished_at: null, duration_seconds: null, result: null, exit_status: null, exec_main_code: null }),
-]
-const obs = (metric: string, value: number, over: Record<string, unknown> = {}) => ({
-  observed_at: '2026-10-06T02:00:00Z', host: 'office-host', scope: 'host', subject: 'host', metric, value,
-  state: null, detail: null, ...over,
-})
-const HOST_OBS = [
-  obs('cpu_pct', 12.5), obs('mem_used_pct', 58.4), obs('mem_avail_bytes', 8 * 1024 ** 3), obs('load1', 2.7),
-  obs('psi_io_some_avg60', 3.2), obs('disk_read_bps', 2048),
-  obs('used_pct', 24.6, { subject: 'fs:/home/kashionz/projects/report-mark' }),
-  obs('avail_bytes', 700 * 1024 ** 3, { subject: 'fs:/home/kashionz/projects/report-mark' }),
-  obs('cpu_pct', 80.0, { observed_at: '2026-10-06T01:30:00Z' }),
-]
-
 const incident = (over: Record<string, unknown> = {}) => ({
   incident_id: 'office-host:web:1791252000', host: 'office-host', component: 'web', kind: 'service',
   probe_unit: 'report-mark-health.service', status: 'resolved', severity: 'CRITICAL', reason: 'probe_exit_1',
@@ -159,12 +131,6 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
   const fetchMock = vi.fn(async (url: string) => {
     const o = opts.override?.(url)
     if (o) return json(o)
-    if (url.startsWith('/api/admin/jobs')) {
-      const p = new URLSearchParams(url.split('?')[1] ?? '')
-      const items = JOBS.filter(j => !p.get('state') || j.state === p.get('state'))
-      return json({ body: { since: '2026-09-29T02:00:00Z', until: '2026-10-06T02:00:00Z', total: items.length,
-        limit: 50, offset: 0, has_more: false, next_offset: null, items } })
-    }
     if (url.startsWith('/api/admin/incidents/trends')) return json({ body: INCIDENT_TRENDS_EMPTY })
     if (url.startsWith('/api/admin/incidents/')) {
       const id = decodeURIComponent(url.slice('/api/admin/incidents/'.length))
@@ -177,10 +143,6 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
         && (!p.get('component') || i.component === p.get('component')))
       return json({ body: { since: '2026-09-06T04:00:00Z', until: '2026-10-06T04:00:00Z', total: items.length,
         limit: 50, offset: 0, has_more: false, next_offset: null, items } })
-    }
-    if (url.startsWith('/api/admin/observations')) {
-      return json({ body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000,
-        truncated: false, resolution: 'raw', items: HOST_OBS } })
     }
     if (url === '/api/me') return json({ body: { id: 'me', username: 'root', role: 'admin', scopes } })
     if (url === '/api/admin/ops/services') return json({ body: LIST })
@@ -212,9 +174,7 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
             <Route index element={<Navigate to="services" replace />} />
             <Route path="services" element={<OpsServicesPage />} />
             <Route path="logs" element={<OpsLogsPage />} />
-            <Route path="jobs" element={<OpsJobsPage />} />
             <Route path="incidents" element={<OpsIncidentsPage />} />
-            <Route path="host" element={<OpsHostPage />} />
           </Route>
         </Routes>
         <LocationProbe />
@@ -264,12 +224,13 @@ test('服務：依 tier 分組，顯示 ActiveState、Result、最近執行、�
   const backupRow = rowOf(important, 'backup')
   expect(backupRow.getByText('失敗')).toBeInTheDocument()
   expect(backupRow.getByText('exit-code')).toBeInTheDocument()
-  // 不開放 logs 的服務沒有日誌按鈕
+  // 不開放 logs 的服務沒有日誌連結
   const supporting = within(screen.getByRole('region', { name: '輔助服務' }))
-  expect(rowOf(supporting, 'freshness').queryByRole('button', { name: '日誌' })).not.toBeInTheDocument()
+  expect(rowOf(supporting, 'freshness').queryByRole('link', { name: '日誌' })).not.toBeInTheDocument()
   expect(screen.getByText(/檢查時間/)).toHaveTextContent('每 30 秒更新')
-  // 日誌是列的主要動作：帶著服務名到日誌頁
-  fireEvent.click(webRow.getByRole('button', { name: '日誌' }))
+  // 日誌是列的主要動作：真的連結（可以開新分頁），帶著服務名到日誌頁
+  expect(webRow.getByRole('link', { name: '日誌' })).toHaveAttribute('href', '/admin/operations/logs?service=web')
+  fireEvent.click(webRow.getByRole('link', { name: '日誌' }))
   await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/logs?service=web'))
 })
 
@@ -300,7 +261,9 @@ test('服務：篩選分段帶數量，選了寫進網址；沒有符合的層�
   expect(seg.getByRole('button', { name: /需要注意/ })).toHaveTextContent('2')
   expect(seg.getByRole('button', { name: /常駐/ })).toHaveTextContent('5')
   expect(seg.getByRole('button', { name: /排程/ })).toHaveTextContent('1')
+  // 每列的服務名；列內另一個連結是主要動作「日誌」，不算。
   const names = () => screen.getAllByRole('row').flatMap(r => within(r).queryAllByRole('link').map(a => a.textContent))
+    .filter(t => t !== '日誌')
 
   fireEvent.click(seg.getByRole('button', { name: /需要注意/ }))
   await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/services?filter=attention'))

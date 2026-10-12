@@ -148,8 +148,9 @@
 .t3 { color: var(--ac-t3); }
 .muted { color: var(--ac-t5); }
 .sub { margin-top: 2px; font-size: 11.5px; color: var(--ac-t5); }
-/* 卡片上方或標題列的一行中繼資料（範圍、筆數、產生時間）。 */
-.meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t5); }
+/* 卡片上方或標題列的一行中繼資料（範圍、筆數、產生時間）：一項一個 <span>，要強調的值用 <b>（等寬）。 */
+.meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t4); }
+.meta b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t2); }
 /* 整列可點的表格裡，列內當鍵盤入口的按鈕：看起來是文字，實際是 button。 */
 .rowLink {
   padding: 0; border: none; background: none; color: var(--ac-t1); font: inherit; text-align: left; cursor: pointer;

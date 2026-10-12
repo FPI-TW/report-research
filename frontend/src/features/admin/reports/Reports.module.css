@@ -4,16 +4,9 @@
 
 /* 批次列：有勾選才出現，靠右。 */
 .bulkCount { color: var(--ac-goldt); margin-right: 4px; }
-.bulkDanger { color: var(--ac-badt); }
 
 /* 清單 */
 .titleCell { min-width: 220px; max-width: 460px; overflow-wrap: anywhere; }
-/* 列的鍵盤入口：看起來是標題文字，實際是按鈕（整列的 onClick 滑鼠才點得到）。 */
-.rowLink {
-  padding: 0; border: none; background: none; color: var(--ac-t1); font: inherit; text-align: left;
-  cursor: pointer; overflow-wrap: anywhere;
-}
-.rowLink:hover { color: var(--ac-goldt); }
 .statusCell { max-width: 300px; }
 .reason { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t4); overflow-wrap: anywhere; }
 

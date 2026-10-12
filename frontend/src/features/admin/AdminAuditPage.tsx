@@ -115,7 +115,7 @@ function AuditLog() {
                       <td className={e.actor_username ? c.t1 : c.muted}>{actorLabel(e)}</td>
                       <td className={c.nowrap}>
                         {/* 列的鍵盤入口：整列可點，但能聚焦的是這顆按鈕。 */}
-                        <button type="button" className={a.rowLink} title="看這筆操作的完整內容"
+                        <button type="button" className={c.rowLink} title="看這筆操作的完整內容"
                           onClick={ev => { ev.stopPropagation(); setEntryParam(String(e.id)) }}>
                           {actionLabel(e.action)}
                         </button>

@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { Card, PageHeader, Segmented, Tabs, TrendBars, type SegOption } from '../../../components/console'
+import { Card, PageHeader, Segmented, StatTile, Tabs, TrendBars, type SegOption } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type { LlmUsageOnline, LlmUsageResponse, LlmUsageTotals } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
-import { DataStat } from './data/DataStat'
 import { dailyAxis, dailyCalls, dayIn } from './data/usageSeries'
 import { OpsQueryError } from './OpsShared'
 import { useLlmUsage } from './useOps'
@@ -75,7 +74,7 @@ function Totals({ t, costAvailable, prefix = '' }: { t: LlmUsageTotals; costAvai
   return (
     <div className={`${c.tiles} ${styles.wideTiles}`}>
       {tiles.map(([name, value, hint]) => (
-        <DataStat key={name} name={`${prefix}${name}`} label={name} value={value} hint={hint} />
+        <StatTile key={name} name={`${prefix}${name}`} label={name} value={value} sub={hint} subTitle={hint} />
       ))}
     </div>
   )
@@ -130,7 +129,7 @@ function BatchSection({ d }: { d: LlmUsageResponse }) {
       <div className={styles.sectionHead}>
         <h2 id="llm-batch-title" className={styles.sectionTitle}>批次</h2>
         {d.source.exists && (
-          <p className={styles.meta}>
+          <p className={c.meta}>
             <span>範圍 <b>{fmtDateTime(d.since)}</b> ～ <b>{fmtDateTime(d.until)}</b>（日期以台北時間切）</span>
             <span>範圍內 <b>{fmtInt(d.source.lines_in_range)}</b> 筆</span>
             {d.source.lines_invalid > 0 && <span>無法解析 <b>{fmtInt(d.source.lines_invalid)}</b> 行（已略過）</span>}
@@ -167,7 +166,7 @@ function OnlineSection({ online }: { online: LlmUsageOnline | null | undefined }
       <div className={styles.sectionHead}>
         <h2 id="llm-online-title" className={styles.sectionTitle}>線上（問答、忠實度抽查）</h2>
         {online?.available && (
-          <p className={styles.meta}>
+          <p className={c.meta}>
             <span>{online.since_day} ～ {online.until_day}（台北日，頭尾兩天整天計入）</span>
             <span>歸因到 <b>{fmtInt(online.attributed_users)}</b> 位使用者</span>
             {online.unattributed_calls > 0 && <span>未歸因 <b>{fmtInt(online.unattributed_calls)}</b> 次</span>}

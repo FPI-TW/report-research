@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Field, FormDialog, Segmented, isElevationCancelled } from '../../../components/console'
+import { CheckRow, Field, FieldGroup, FormDialog, Segmented, isElevationCancelled } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type { FlagItem, FlagUpdateRequest } from '../../../lib/generated/adminApi'
 import { useAdminUsers } from '../useAdmin'
@@ -22,17 +22,16 @@ function initialMode(flag: FlagItem): FlagMode {
 
 function UserPicker({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
   const users = useAdminUsers()
-  if (users.isPending) return <p className={s.hint}>載入帳號…</p>
+  if (users.isPending) return <p className={c.fieldHint}>載入帳號…</p>
   if (users.isError) return <p className={c.error} role="alert">無法載入帳號清單：{users.error.message}</p>
   const live = users.data.filter((u) => u.enabled || selected.includes(u.id))
   return (
     <div className={s.userList}>
       {live.map((u) => (
-        <label key={u.id} className={s.checkLabel}>
-          <input type="checkbox" className={c.check} checked={selected.includes(u.id)}
-            onChange={(e) => onChange(e.target.checked ? [...selected, u.id] : selected.filter((x) => x !== u.id))} />
+        <CheckRow key={u.id} checked={selected.includes(u.id)}
+          onChange={(on) => onChange(on ? [...selected, u.id] : selected.filter((x) => x !== u.id))}>
           {u.username}{u.role === 'admin' ? '（管理員）' : ''}{u.enabled ? '' : '（已停用）'}
-        </label>
+        </CheckRow>
       ))}
     </div>
   )
@@ -70,30 +69,24 @@ function FlagForm({ flag, onClose, onSave }: {
   return (
     <FormDialog open title={`調整「${flag.key}」`} body={flag.description} submitLabel="儲存" busy={busy} error={error}
       onSubmit={() => { void submit() }} onClose={onClose}>
-      {/* 分段與勾選群組不用 <Field>：它是 <label>，點標題文字會誤觸群組裡的第一個控制項。 */}
-      <div className={c.field}>
-        <span className={c.fieldLabel}>模式</span>
+      {/* 分段與勾選群組不用 <Field>：它是 <label>，點標題文字會誤觸群組裡的第一個控制項。
+          模式那一欄只有分段這一個具名群組，所以用 bare（外層不再帶同名的 role）。 */}
+      <FieldGroup label="模式" bare>
         <div><Segmented label="模式" options={MODE_OPTIONS} value={mode} onChange={(v) => { setMode(v); setError(null) }} /></div>
-      </div>
+      </FieldGroup>
       {mode === 'scoped' && (
         <>
-          <div className={c.field} role="group" aria-label="限定角色">
-            <span className={c.fieldLabel}>限定角色</span>
-            <div className={s.checks}>
+          <FieldGroup label="限定角色">
+            <div className={c.checkGroup}>
               {(['admin', 'user'] as const).map((r) => (
-                <label key={r} className={s.checkLabel}>
-                  <input type="checkbox" className={c.check} checked={roles.includes(r)}
-                    onChange={(e) => toggleRole(r, e.target.checked)} />
-                  {ROLE_LABELS[r]}
-                </label>
+                <CheckRow key={r} checked={roles.includes(r)} onChange={(on) => toggleRole(r, on)}>{ROLE_LABELS[r]}</CheckRow>
               ))}
             </div>
-          </div>
-          <div className={c.field} role="group" aria-label="限定帳號">
-            <span className={c.fieldLabel}>限定帳號</span>
+          </FieldGroup>
+          <FieldGroup label="限定帳號">
             <UserPicker selected={users} onChange={setUsers} />
-          </div>
-          <p className={s.hint}>勾到的角色或帳號任一符合即開啟；背景工作沒有身分，一律視為關。</p>
+          </FieldGroup>
+          <p className={c.fieldHint}>勾到的角色或帳號任一符合即開啟；背景工作沒有身分，一律視為關。</p>
         </>
       )}
       <Field label="註記（選填；稽核只記有沒有改，不記內容）" counter={`${note.length}/${NOTE_MAX}`}>

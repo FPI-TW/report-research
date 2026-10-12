@@ -1,4 +1,4 @@
-import { Button, Dialog, toast } from '../../../components/console'
+import { Button, Dialog, DialogActions, DialogBody, toast } from '../../../components/console'
 import { Icon } from '../../../components/primitives/Icon'
 import { copyText } from '../../../lib/clipboard'
 import local from '../ApiClients.module.css'
@@ -20,15 +20,15 @@ export function KeyDialog({ shown, onClose }: { shown: ShownKey | null; onClose:
     )
   }
   return (
-    <Dialog open={shown != null} onClose={onClose} title={shown ? `「${shown.name}」的新金鑰` : ''} width={500} locked>
-      <p className={local.keyNote}>這把金鑰只會顯示這一次。請現在複製，交給對方後再關閉。</p>
+    <Dialog open={shown != null} onClose={onClose} title={shown ? `「${shown.name}」的新金鑰` : ''} width={500} dismissible={false}>
+      <DialogBody>這把金鑰只會顯示這一次。請現在複製，交給對方後再關閉。</DialogBody>
       <div className={local.keyField}>
         <code className={local.keyBox} aria-label="API 金鑰">{shown?.key}</code>
         <Button className={local.keyCopy} onClick={copy} data-autofocus><Icon name="copy" size={14} />複製</Button>
       </div>
-      <div className={local.keyActions}>
+      <DialogActions>
         <Button variant="primary" onClick={onClose}>我已複製，關閉</Button>
-      </div>
+      </DialogActions>
     </Dialog>
   )
 }

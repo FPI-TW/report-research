@@ -52,13 +52,8 @@ function ScannerTile({ scanner }: { scanner: AdminUploadScanner | undefined }) {
     : [scanner.scanning ? `掃描中 ${scanner.scanning} 件` : null, oldest ? `最舊的已等待 ${oldest}` : null]
       .filter(Boolean).join('，') || '目前沒有等待掃描的檔案'
   return (
-    <div className={c.tile} role="status" aria-label="掃描器狀態">
-      <span className={c.tileLabel}>掃描佇列</span>
-      <span className={c.tileValue} data-tone={scanner?.last_error ? 'bad' : undefined}>
-        {scanner ? <>{scanner.pending}<span className={c.tileUnit}>件待掃描</span></> : '—'}
-      </span>
-      {sub && <span className={c.tileSub}>{sub}</span>}
-    </div>
+    <StatTile role="status" name="掃描器狀態" label="掃描佇列" value={scanner ? scanner.pending : '—'}
+      unit={scanner ? '件待掃描' : undefined} tone={scanner?.last_error ? 'bad' : undefined} sub={sub} />
   )
 }
 
@@ -154,8 +149,10 @@ function UploadList({ tab, now, review, onOpen }: {
             {items.map(it => (
               <tr key={it.upload_id} className={c.rowClickable} onClick={() => onOpen(it.upload_id)}>
                 <td data-label="檔案" className={u.nameCell}>
-                  <button type="button" className={u.rowLink} aria-haspopup="dialog"
-                    onClick={e => { e.stopPropagation(); onOpen(it.upload_id) }}>{it.original_name}</button>
+                  <button type="button" className={c.rowLink} aria-haspopup="dialog"
+                    onClick={e => { e.stopPropagation(); onOpen(it.upload_id) }}>
+                    <span className={u.fileName}>{it.original_name}</span>
+                  </button>
                   <div className={`${c.sub} ${c.num}`}>{fmtBytes(it.size_bytes)}</div>
                 </td>
                 <td data-label="狀態" className={u.stateCell}><StateCell item={it} /></td>

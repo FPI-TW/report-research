@@ -158,7 +158,7 @@ test('列表：名稱、金鑰前綴、狀態、端點、限流／額度、授�
   ] })
   const a = await row('外部系統 A')
   expect(a.getByText('rmk_0123abcd_…')).toBeInTheDocument()
-  expect(a.getByText('啟用')).toBeInTheDocument()
+  expect(a.getByText('啟用')).toHaveAttribute('data-tone', 'ok')
   expect(a.getByText('search、report.file')).toBeInTheDocument()
   expect(a.getByText('60／分')).toBeInTheDocument()
   expect(a.getByText('1,000／日')).toBeInTheDocument()
@@ -166,7 +166,8 @@ test('列表：名稱、金鑰前綴、狀態、端點、限流／額度、授�
   expect(a.getByText('券商：元大')).toBeInTheDocument()
   expect(a.queryByText('尚未使用')).not.toBeInTheDocument()
   const b = await row('外部系統 B')
-  expect(b.getByText('停用')).toBeInTheDocument()
+  // 停用是管理員設定的狀態、不是異常：中性的灰燈，不亮紅
+  expect(b.getByText('停用')).toHaveAttribute('data-tone', 'idle')
   expect(b.getByText('暫停使用')).toBeInTheDocument()
   expect(b.getByText('（無）')).toBeInTheDocument()
   expect(b.getByText('券商、報告類型、商品類型不限')).toBeInTheDocument()

@@ -2,16 +2,11 @@
    這裡只有它沒有的排版；色全部走 --ac-*。 */
 
 .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-/* 卡片標題列下方（或頁首下方）的一行中繼資料：時間、筆數、排程 */
-.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t4); }
-.meta b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t2); }
 .note { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ac-t5); }
-.note code, .meta code { font-family: var(--ac-mono); font-size: 0.95em; color: var(--ac-t3); }
+.note code { font-family: var(--ac-mono); font-size: 0.95em; color: var(--ac-t3); }
 .idle { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ac-t5); }
 
-/* 數字磚：整塊是一個具名的 group（讀屏與測試都找得到）；要放得下一行補充時用 .wideTiles */
-.tileGroup { display: flex; min-width: 0; }
-.tileGroup > * { flex: 1; }
+/* 數字磚要放得下一行補充時用 .wideTiles */
 .wideTiles { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 
 /* 沒有外框卡片的段落（LLM 用量的合計／批次／線上）：標題＋一行說明 */

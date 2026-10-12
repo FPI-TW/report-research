@@ -142,7 +142,7 @@ function UploadList({ tab, now, review, onOpen }: {
           <thead>
             <tr>
               <th>檔案</th><th>狀態</th><th>上傳</th><th>狀態更新</th>
-              {hasActions && <th className={c.tdRight}>操作</th>}
+              {hasActions && <th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>}
             </tr>
           </thead>
           <tbody>
@@ -162,7 +162,9 @@ function UploadList({ tab, now, review, onOpen }: {
                 </td>
                 <td data-label="狀態更新" className={c.num}>{fmtDateTime(it.state_changed_at)}</td>
                 {hasActions && (
-                  <td className={c.tdActions}><UploadRowActions item={it} now={now} review={review} onOpen={onOpen} /></td>
+                  <td className={`${c.tdActions} ${c.stickyRight}`}>
+                    <UploadRowActions item={it} now={now} review={review} onOpen={onOpen} />
+                  </td>
                 )}
               </tr>
             ))}

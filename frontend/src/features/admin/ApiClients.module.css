@@ -4,6 +4,8 @@
 /* 列的鍵盤入口（c.rowLink）裡的名稱：比一般列文字重一點。 */
 .name { font-weight: 500; }
 .wrap { min-width: 150px; overflow-wrap: anywhere; }
+/* 名稱欄：備註（上限 1000 字）在清單裡最多兩行（c.clamp2），完整內容在 title 與抽屜；給最大寬度，長備註才不會把其他欄壓窄。 */
+.nameCell { max-width: 280px; }
 
 /* 表單裡勾選項（CheckRow）的排法：端點直排、市場排成對齊的格線（共用的 c.checkGroup 是橫向換行）。 */
 .checkList { display: flex; flex-direction: column; gap: 6px; }

@@ -53,7 +53,8 @@ export function ReportDrawer({ fileHash, report, loading, busy, onClose, onHide,
   ) : (
     <>
       <Link to={`/report/${report.file_hash}`} className={c.btn}>開啟閱讀頁</Link>
-      <Button variant="danger" disabled={busy} onClick={() => onHide(report)}>隱藏</Button>
+      {/* 這一步只是開原因表單：紅字不填色，實心紅留給表單的最後一步。 */}
+      <Button variant="dangerText" disabled={busy} onClick={() => onHide(report)}>隱藏</Button>
     </>
   )
   return (

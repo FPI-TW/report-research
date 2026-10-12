@@ -179,8 +179,11 @@ test('還有下一頁時「載入更多」以 next_offset 接續並累加', asyn
 
 test('載入失敗：說出來並給重試，不讓整頁消失', async () => {
   let fail = true
-  mount(() => (fail ? { status: 500, body: { detail: 'x' } } : { body: page('faithfulness', [qa(1)]) }))
-  expect(await screen.findByText(/佇列載入失敗/)).toBeInTheDocument()
+  mount(() => (fail
+    ? { status: 503, body: { detail: '資料庫暫時無法使用，請稍後再試', code: 'db_unavailable' } }
+    : { body: page('faithfulness', [qa(1)]) }))
+  // 和其他頁同一種寫法：「○○載入失敗：＜後端 detail＞」＋role="alert"
+  expect(await screen.findByRole('alert')).toHaveTextContent('佇列載入失敗：資料庫暫時無法使用，請稍後再試')
   expect(screen.getByRole('tab', { name: /^忠實度低分/ })).toBeInTheDocument()
   fail = false
   fireEvent.click(screen.getByRole('button', { name: '重試' }))

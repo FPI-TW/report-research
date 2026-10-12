@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
 import AdminQuotaPage from './AdminQuotaPage'
 
 afterEach(() => {
@@ -152,6 +153,9 @@ test('沒有任何帳號時顯示空狀態', async () => {
 
 test('非 super admin 不能調整 super admin 的配額，也看不到「不限」選項', async () => {
   mount()
+  // 帳號單行截斷、完整名稱放 title；操作欄釘在右邊
+  expect((await userRow('boss')).getByText('boss')).toHaveAttribute('title', 'boss')
+  expect((await userRow('boss')).getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
   const locked = (await userRow('boss')).getByRole('button', { name: '調整上限' })
   expect(locked).toBeDisabled()
   expect(locked).toHaveAttribute('title', '只有 super admin 能調整 super admin 的配額')

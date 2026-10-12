@@ -72,7 +72,7 @@ export function SessionsCard() {
         <div className={c.tableWrap}>
           <table className={c.table}>
             <thead>
-              <tr><th>帳號</th><th>登入時間</th><th>最後活動</th><th>IP</th><th>裝置</th><th>狀態</th><th /></tr>
+              <tr><th>帳號</th><th>登入時間</th><th>最後活動</th><th>IP</th><th>裝置</th><th>狀態</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th></tr>
             </thead>
             <tbody>
               {q.data.items.map(item => (
@@ -86,14 +86,15 @@ export function SessionsCard() {
                   </td>
                   <td className={c.num}>{fmtDateTime(item.created_at)}</td>
                   <td className={c.num}>{fmtDateTime(item.last_seen_at)}</td>
-                  <td className={c.num}>{item.ip ?? '—'}</td>
+                  {/* IPv6 很長：給最大寬度、允許折行（c.num 的 nowrap 由 s.ip 蓋掉）。 */}
+                  <td className={`${c.mono} ${s.ip}`}>{item.ip ?? '—'}</td>
                   <td><div className={s.ua} title={item.user_agent ?? undefined}>{shortUa(item.user_agent, 36)}</div></td>
                   <td>
                     {item.active
                       ? <Status tone="ok">有效</Status>
                       : <Status tone="idle">{item.revoked_at ? '已撤銷' : '已過期'}</Status>}
                   </td>
-                  <td className={c.tdActions}>
+                  <td className={`${c.tdActions} ${c.stickyRight}`}>
                     {item.active && (
                       <RowActions primary={{ label: '撤銷', onClick: () => setConfirming(item) }} />
                     )}

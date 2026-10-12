@@ -38,7 +38,7 @@ export function ClientDrawer({ client, busy, onClose, onAction }: {
       footer={<>
         <DrawerFootNote>建立與輪替金鑰需要重新驗證</DrawerFootNote>
         {client.enabled
-          ? <Button onClick={act('disable')} disabled={busy}>停用</Button>
+          ? <Button variant="dangerText" onClick={act('disable')} disabled={busy}>停用</Button>
           : <Button onClick={act('enable')} disabled={busy}>啟用</Button>}
         <Button variant="primary" onClick={act('rotate')} disabled={busy}>輪替金鑰</Button>
       </>}>

@@ -93,7 +93,7 @@ export default function OpsIncidentsPage() {
                   <thead>
                     <tr>
                       <th>元件</th><th>狀態</th><th>嚴重度</th><th>開始</th><th>結束</th><th>持續</th><th>原因</th>
-                      <th className={c.tdRight}>操作</th>
+                      <th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -108,13 +108,14 @@ export default function OpsIncidentsPage() {
                         <td><StatusBadge status={i.status} /></td>
                         <td><SeverityBadge severity={i.severity} /></td>
                         <td className={c.num}>{fmtDateTime(i.opened_at)}</td>
-                        <td className={c.num}>{endText(i)}</td>
+                        {/* 「不明（最後轉換 …）」很長：這一欄允許折行，寬度才留得下來給原因。 */}
+                        <td className={`${c.mono} ${styles.end}`}>{endText(i)}</td>
                         <td className={c.num}>{fmtDuration(i.duration_seconds)}</td>
                         <td className={styles.reason}>
-                          <span className={c.mono}>{i.reason}</span>
+                          <span className={`${c.mono} ${c.nowrap}`}>{i.reason}</span>
                           {i.summary && <div className={c.sub}>{i.summary}</div>}
                         </td>
-                        <td className={c.tdActions}>
+                        <td className={`${c.tdActions} ${c.stickyRight}`}>
                           <RowActions primary={{ label: '詳情', onClick: () => setIncident(i.incident_id) }} />
                         </td>
                       </tr>

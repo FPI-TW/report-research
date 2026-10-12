@@ -15,8 +15,6 @@ dl.kv { grid-template-columns: minmax(96px, max-content) minmax(0, 1fr); column-
 dl.kv dt { overflow-wrap: anywhere; }
 dl.kv dd { font-variant-numeric: tabular-nums; word-break: break-word; min-width: 0; }
 .breakAll { word-break: break-all; }
-/* 狀態接在說明文字前面（「● 正常 SELECT 1 1.2 ms」）：對齊文字的中線 */
-.pill { display: inline-flex; vertical-align: middle; }
 .sub { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--ac-t3); }
 
 .manual {

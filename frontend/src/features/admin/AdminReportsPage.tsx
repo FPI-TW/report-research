@@ -98,7 +98,7 @@ function AdminReports() {
         <StatTile label="已隱藏" value={fmtCount(counts.data?.hidden)} />
         <StatTile label="上傳草稿" value={fmtCount(counts.data?.draft)} />
       </div>
-      <div className={c.toolbar}>
+      <div className={`${c.toolbar} ${chosen.length > 0 ? s.toolbarSticky : ''}`}>
         <form className={s.search} onSubmit={search} role="search">
           <SearchInput value={draft} onChange={v => setDraft(v.slice(0, 200))} placeholder="標題／檔名／券商關鍵字" width={260} />
           <Button type="submit">搜尋</Button>
@@ -136,7 +136,7 @@ function AdminReports() {
                     <th className={c.thCheck}>
                       <SelectAllBox ids={selectable} selected={sel.selected} onChange={on => sel.setAll(selectable, on)} />
                     </th>
-                    <th>研報</th><th>券商／市場</th><th>報告日／入庫</th><th>狀態</th><th className={c.tdRight}>操作</th>
+                    <th>研報</th><th>券商／市場</th><th>報告日／入庫</th><th>狀態</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -165,12 +165,14 @@ function AdminReports() {
                         </td>
                         <td className={s.statusCell}>
                           <Status tone={STATUS_TONE[st]}>{STATUS_LABEL[st]}</Status>
-                          {st === 'hidden' && r.hidden_reason && <div className={s.reason}>{r.hidden_reason}</div>}
+                          {st === 'hidden' && r.hidden_reason && (
+                            <div className={`${c.truncate} ${s.reason}`} title={r.hidden_reason}>{r.hidden_reason}</div>
+                          )}
                           {r.visibility_updated_at && (
                             <div className={c.sub}>{r.visibility_updated_by ?? '—'}・{fmtDateTime(r.visibility_updated_at)}</div>
                           )}
                         </td>
-                        <td className={c.tdActions}>
+                        <td className={`${c.tdActions} ${c.stickyRight}`}>
                           {st === 'draft' ? (
                             <Link to={DRAFT_REVIEW_PATH} className={`${c.btn} ${c.btnSm}`} title="到上傳審核發布或退回"
                               onClick={stop}>前往審核</Link>

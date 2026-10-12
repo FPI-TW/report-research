@@ -29,7 +29,7 @@ export function HighRiskCard() {
       <div className={s.filters}>
         <label className={s.inlineField}>
           分類
-          <select className={`${c.select} ${s.select}`} value={category}
+          <select className={c.select} value={category}
             onChange={e => { setCategory(e.target.value as HighRiskCategory | ''); setCursors([null]) }}>
             <option value="">全部</option>
             {Object.entries(CATEGORY_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}

@@ -24,11 +24,13 @@ export function RecentAudit({ auditTo }: { auditTo: string }) {
         <ul className={styles.recent}>
           {q.data.items.map(e => {
             const summary = auditSummary(e)
+            const actor = actorLabel(e)
+            const action = actionLabel(e.action)
             return (
               <li key={e.id} className={styles.recentRow}>
                 <span className={styles.recentTime}>{fmtDateTime(e.created_at)}</span>
-                <span className={styles.recentActor} data-muted={!e.actor_username || undefined}>{actorLabel(e)}</span>
-                <span className={styles.recentAction}>{actionLabel(e.action)}</span>
+                <span className={styles.recentActor} data-muted={!e.actor_username || undefined} title={actor}>{actor}</span>
+                <span className={styles.recentAction} title={action}>{action}</span>
                 <span className={styles.recentSum} title={summary}>{summary}</span>
               </li>
             )

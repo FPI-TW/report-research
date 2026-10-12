@@ -146,7 +146,7 @@ function UsersCard({ data }: { data: QuotaOverview }) {
         <div className={c.tableWrap}>
           <table className={c.table} aria-label="每人用量">
             <thead>
-              <tr><th>帳號</th><th>問答</th><th>匯出</th><th>上傳</th><th>線上 LLM</th><th className={c.tdActions}>操作</th></tr>
+              <tr><th>帳號</th><th>問答</th><th>匯出</th><th>上傳</th><th>線上 LLM</th><th className={`${c.tdActions} ${c.stickyRight}`}>操作</th></tr>
             </thead>
             <tbody>
               {data.users.map(u => {
@@ -155,7 +155,7 @@ function UsersCard({ data }: { data: QuotaOverview }) {
                   <tr key={u.user_id}>
                     <td>
                       <div className={styles.account}>
-                        <span className={c.t1}>{u.username}</span>
+                        <span className={`${c.truncate} ${styles.username}`} title={u.username}>{u.username}</span>
                         {u.is_super && <Chip tone="gold">super</Chip>}
                         {!u.enabled && <Chip tone="idle">已停用</Chip>}
                       </div>
@@ -169,7 +169,7 @@ function UsersCard({ data }: { data: QuotaOverview }) {
                       <span className={c.num}>{fmtInt(u.llm.calls)} 次</span>
                       <div className={`${c.sub} ${c.num}`}>{fmtInt(u.llm.prompt_tokens + u.llm.completion_tokens)} token</div>
                     </td>
-                    <td className={c.tdActions}>
+                    <td className={`${c.tdActions} ${c.stickyRight}`}>
                       <RowActions primary={{
                         label: '調整上限', onClick: () => setEditingId(u.user_id),
                         disabled: locked, hint: locked ? SUPER_ONLY_HINT : undefined,

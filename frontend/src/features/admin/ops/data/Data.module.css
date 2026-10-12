@@ -45,3 +45,7 @@ dl.kvText dd { font-family: inherit; line-height: 1.6; }
 /* 表格下方的補充說明（console 的 cardFoot 沒有上框線） */
 .footNote { border-top: 1px solid var(--ac-l2); line-height: 1.6; }
 .footNote b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t3); }
+
+/* 表格第一欄的名稱（表名、索引名、任務或模型名）：等寬、單行截斷，完整名稱放 title，長名稱才不會把最後一欄推出卡片。
+   選擇器帶元素名：要蓋過共用 c.truncate 的 max-width: 100%（表格自動版面下那個百分比不會收斂）。 */
+span.nameCol { max-width: 280px; }

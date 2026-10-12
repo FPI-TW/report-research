@@ -2,9 +2,11 @@
 
 /* ── 清單 ── */
 .rowOpen td { background: var(--ac-hover); }
-.reason { max-width: 320px; overflow-wrap: anywhere; }
+/* 原因欄：代碼（container_restarting）不折行，底下的說明才折；欄寬放寬到放得下一句說明。 */
+.reason { min-width: 180px; max-width: 420px; overflow-wrap: anywhere; }
+/* 結束欄：一般的時間一行放得下（min-width），「不明（最後轉換 …）」折成兩行，不讓這一欄吃掉原因欄的寬度。 */
+.end { min-width: 160px; font-variant-numeric: tabular-nums; }
 .inlineField { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ac-t5); white-space: nowrap; }
-.inlineField select { height: 28px; font-size: 12px; }
 .note { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ac-t5); }
 .warnNote { margin: 0 0 8px; font-size: 12px; line-height: 1.6; color: var(--ac-warnt); }
 

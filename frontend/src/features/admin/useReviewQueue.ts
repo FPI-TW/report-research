@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQueries, useQueryClient, type InfiniteData } from '@tanstack/react-query'
-import { getJSON } from '../../lib/api'
+import { getJSON, requestJSON } from '../../lib/api'
 import {
   reviewQueueSchema, reviewStateSchema,
   type ReviewItem, type ReviewKind, type ReviewQueue, type ReviewStatus, type ReviewVerification,
@@ -15,6 +15,8 @@ export interface UseReviewQueue {
   minScore: number | null
   isLoading: boolean
   isError: boolean
+  /** 載入失敗的原因（`ApiError` 的 message 是後端 detail）；沒有失敗是 null。 */
+  error: unknown
   hasMore: boolean
   isFetchingMore: boolean
   loadMore: () => void
@@ -34,8 +36,9 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
   const query = useInfiniteQuery({
     queryKey: ['review-queue', kind, status],
     initialPageParam: 0,
+    // requestJSON：載入失敗時把後端的 detail 放進錯誤訊息，清單才說得出原因（getJSON 只有「HTTP 503」）。
     queryFn: ({ pageParam }) =>
-      getJSON(`/api/review/queue?kind=${kind}&status=${status}&limit=${PAGE_SIZE}&offset=${pageParam}`, reviewQueueSchema),
+      requestJSON(`/api/review/queue?kind=${kind}&status=${status}&limit=${PAGE_SIZE}&offset=${pageParam}`, reviewQueueSchema),
     getNextPageParam: last => last.next_offset ?? undefined,
     staleTime: 60_000,
     retry: false,
@@ -66,6 +69,7 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
     minScore: pages[0]?.min_score ?? null,
     isLoading: query.isLoading,
     isError: query.isError,
+    error: query.error,
     hasMore: Boolean(query.hasNextPage),
     isFetchingMore: query.isFetchingNextPage,
     loadMore: () => { void query.fetchNextPage() },

@@ -97,7 +97,8 @@ test('資料庫：快照數字磚；權限不足／逾時的段落只顯示說�
   expect(screen.getByText(/快取與交易統計：查詢逾時/)).toBeInTheDocument()
   expect(screen.getByText(/每段查詢上限 5000 ms・每 60 秒更新/)).toBeInTheDocument()
   const tables = within(screen.getByRole('table', { name: '各表統計' }))
-  expect(tables.getByText('report_chunk')).toBeInTheDocument()
+  // 表名單行截斷，完整名稱放 title
+  expect(tables.getByText('report_chunk')).toHaveAttribute('title', 'report_chunk')
   expect(tables.getByText('9.1%')).toBeInTheDocument()
   expect(within(screen.getByRole('region', { name: '各表大小與膨脹估計' })).getByText('前 50 大（共 30 張）')).toBeInTheDocument()
   const idx = within(screen.getByRole('region', { name: '未使用的索引' }))

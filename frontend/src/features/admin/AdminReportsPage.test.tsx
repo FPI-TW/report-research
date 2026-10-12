@@ -3,7 +3,9 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../components/console'
+import c from '../../components/console/Console.module.css'
 import AdminReportsPage from './AdminReportsPage'
+import s from './reports/Reports.module.css'
 
 afterEach(() => { vi.unstubAllGlobals(); dismissToast() })
 
@@ -127,10 +129,16 @@ test('清單：已發布的主要動作是隱藏、已隱藏顯示原因與操�
   const hidden = await row('bbbb.pdf')
   expect(hidden.queryByRole('link')).not.toBeInTheDocument()
   expect(hidden.getByText('已隱藏')).toBeInTheDocument()
-  expect(hidden.getByText('重複上傳')).toBeInTheDocument()
+  // 隱藏原因在清單裡截成一行，完整內容放 title（抽屜也有全文）
+  expect(hidden.getByText('重複上傳')).toHaveAttribute('title', '重複上傳')
+  expect(hidden.getByText('重複上傳')).toHaveClass(c.truncate)
   expect(hidden.getByText(/^root・/)).toBeInTheDocument()
   expect(hidden.getByRole('button', { name: '恢復' })).toBeInTheDocument()
   expect(hidden.queryByRole('button', { name: '隱藏' })).not.toBeInTheDocument()
+  // 操作欄釘在右邊：表格橫向捲動時還看得到
+  expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  expect(visible.getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+  expect(hidden.getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
 })
 
 test('點列開詳情抽屜並寫進網址；已發布可連到閱讀頁，關閉後網址拿掉參數', async () => {
@@ -143,7 +151,9 @@ test('點列開詳情抽屜並寫進網址；已發布可連到閱讀頁，關�
   expect(drawer.getByText('aaaa.pdf', { selector: 'dd' })).toBeInTheDocument()
   expect(drawer.getByText(H1)).toBeInTheDocument()
   expect(drawer.getByRole('link', { name: '開啟閱讀頁' })).toHaveAttribute('href', `/report/${H1}`)
-  expect(drawer.getByRole('button', { name: '隱藏' })).toBeInTheDocument()
+  // 抽屜的「隱藏」只是開原因表單：紅字不填色；實心紅留給表單的最後一步
+  expect(drawer.getByRole('button', { name: '隱藏' })).toHaveClass(c.btnDangerText)
+  expect(drawer.getByRole('button', { name: '隱藏' })).not.toHaveClass(c.btnDanger)
   fireEvent.click(drawer.getByRole('button', { name: '關閉' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(screen.getByTestId('where')).toHaveTextContent(/^\/admin\/reports$/)
@@ -367,6 +377,8 @@ test('勾選：草稿不可勾；全選本頁只選可操作的列，動作列�
   fireEvent.click(screen.getByRole('checkbox', { name: '全選本頁' }))
   const bar = within(await screen.findByRole('toolbar', { name: '批次操作' }))
   expect(bar.getByText('已選 3 篇')).toBeInTheDocument()
+  // 有勾選時整條工具列釘在頁面頂端：捲到下面的列也按得到批次按鈕
+  expect(screen.getByRole('toolbar', { name: '批次操作' }).parentElement).toHaveClass(s.toolbarSticky)
   expect(bar.getByRole('button', { name: '批次隱藏（2）' })).toBeEnabled()
   expect(bar.getByRole('button', { name: '批次恢復（1）' })).toBeEnabled()
   expect(draft.getByRole('checkbox')).not.toBeChecked()

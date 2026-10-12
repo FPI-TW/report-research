@@ -4,6 +4,7 @@ import { MemoryRouter, Navigate, Route, Routes, createMemoryRouter, RouterProvid
 import { afterEach, expect, test, vi } from 'vitest'
 import { routes } from '../../../App'
 import { Toaster, dismissToast } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
 import OpsIncidentsPage from './OpsIncidentsPage'
@@ -288,6 +289,44 @@ test('服務：網址帶不認得的 filter 時當成全部', async () => {
     .toHaveAttribute('aria-pressed', 'true')
 })
 
+test('服務：依賴超過兩個收成「＋N」，完整清單放 title；兩個以內照列', async () => {
+  const many = { ...GRAPH, nodes: GRAPH.nodes.map(n => (n.name === 'nginx'
+    ? { ...n, depends_on: ['web', 'postgres', 'r2', 'cloudflared'] } : n)) }
+  mount('/admin/operations/services', {
+    override: url => (url === '/api/admin/ops/dependencies' ? { body: many } : undefined),
+  })
+  const critical = within(await screen.findByRole('region', { name: '核心服務' }))
+  const nginx = rowOf(critical, 'nginx')
+  const more = await nginx.findByText('＋2')
+  expect(more.parentElement).toHaveAttribute('title', 'web、postgres、r2、cloudflared')
+  expect(within(more.parentElement!).getByText('web')).toBeInTheDocument()
+  expect(within(more.parentElement!).getByText('postgres')).toBeInTheDocument()
+  expect(within(more.parentElement!).queryByText('r2')).not.toBeInTheDocument()
+  expect(within(more.parentElement!).queryByText('cloudflared')).not.toBeInTheDocument()
+  // 兩個以內：全部列出，沒有「＋N」也不需要 title
+  const web = rowOf(critical, 'web')
+  expect(web.getByText('r2').parentElement).not.toHaveAttribute('title')
+  expect(web.queryByText(/^＋/)).not.toBeInTheDocument()
+})
+
+test('服務：三張分組表的操作欄都釘在右邊、共用同一組欄寬；「常駐」不折行', async () => {
+  mount('/admin/operations/services')
+  await screen.findByRole('region', { name: '核心服務' })
+  const tables = screen.getAllByRole('table')
+  expect(tables).toHaveLength(3)
+  const cols = tables.map(t => Array.from(t.querySelectorAll('colgroup col')).map(col => col.getAttribute('data-col')))
+  expect(cols[0]).toEqual(['name', 'status', 'state', 'result', 'lastRun', 'timer', 'deps', 'actions'])
+  expect(cols[1]).toEqual(cols[0])
+  expect(cols[2]).toEqual(cols[0])
+  for (const t of tables) {
+    expect(within(t).getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+    for (const tr of within(t).getAllByRole('row').slice(1)) {
+      expect(within(tr).getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+    }
+  }
+  expect(rowOf(within(tables[0]), 'web').getByText('常駐')).toHaveClass(c.nowrap)
+})
+
 test('服務：依賴圖讀不到時依賴欄留空，服務清單照常顯示', async () => {
   mount('/admin/operations/services', {
     override: url => url === '/api/admin/ops/dependencies'
@@ -334,7 +373,7 @@ test('服務列的「更多」→ 重新啟動：確認、重新驗證後送出�
   fireEvent.click(screen.getByRole('menuitem', { name: '重新啟動' }))
   const confirm = within(screen.getByRole('alertdialog', { name: '重新啟動 web' }))
   expect(confirm.getByText(/確定要重新啟動「web」/)).toBeInTheDocument()
-  fireEvent.click(confirm.getByRole('button', { name: '確定重新啟動' }))
+  fireEvent.click(confirm.getByRole('button', { name: '重新啟動' }))
   // /api/me 沒有 elevated_until：先重新驗證
   const elevate = await screen.findByRole('dialog', { name: '重新驗證身分' })
   expect(elevate).toHaveTextContent('「重新啟動 web」需要重新驗證')
@@ -459,6 +498,10 @@ test('事件：列出進行中、已恢復、結束不明，不經維運代理�
   expect(rows[2]).toHaveTextContent('監控失明')
   expect(rows[2]).toHaveTextContent('不明（最後轉換')
   expect(screen.getByText(/即時告警以 Slack 為準/)).toHaveTextContent('3 筆事件')
+  // 操作欄釘在右邊；原因代碼不折行（說明才折）
+  expect(table.getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  for (const tr of rows) expect(within(tr).getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+  expect(within(rows[0]).getByText(INCIDENTS[0].reason)).toHaveClass(c.nowrap)
   expect(screen.getByRole('button', { name: /匯出 CSV/ })).toBeInTheDocument()
   expect(opsCalls(fetchMock)).toEqual([])
   const status = within(screen.getByRole('group', { name: '狀態' }))

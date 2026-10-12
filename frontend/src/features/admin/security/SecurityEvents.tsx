@@ -40,7 +40,7 @@ export function AuthEventsCard({ ip }: { ip: IpFilter }) {
       <div className={s.filters}>
         <label className={s.inlineField}>
           類型
-          <select className={`${c.select} ${s.select}`} value={event}
+          <select className={c.select} value={event}
             onChange={e => { setEvent(e.target.value as AuthEventType | ''); setCursors([null]) }}>
             <option value="">全部</option>
             {EVENT_OPTIONS.map(v => <option key={v} value={v}>{eventLabel(v)}</option>)}
@@ -131,7 +131,7 @@ export function SuspiciousIpsCard({ onPick }: { onPick: (ip: string) => void }) 
               <tr>
                 <th>IP</th><th className={c.tdRight}>失敗</th><th className={c.tdRight}>被限流</th>
                 <th className={c.tdRight}>非 HTTPS</th><th className={c.tdRight}>成功</th><th className={c.tdRight}>涉及帳號</th>
-                <th>最後出現</th><th />
+                <th>最後出現</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -144,7 +144,7 @@ export function SuspiciousIpsCard({ onPick }: { onPick: (ip: string) => void }) 
                   <td className={`${c.num} ${c.tdRight}`}>{r.successes}</td>
                   <td className={`${c.num} ${c.tdRight}`}>{r.distinct_users}</td>
                   <td className={c.num}>{fmtDateTime(r.last_seen)}</td>
-                  <td className={c.tdActions}>
+                  <td className={`${c.tdActions} ${c.stickyRight}`}>
                     <RowActions label={`${r.ip} 的更多操作`}
                       primary={{ label: '看事件', onClick: () => onPick(r.ip) }}
                       more={[{ label: '複製 IP', onClick: () => copy(r.ip) }]} />

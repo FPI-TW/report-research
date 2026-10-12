@@ -1,38 +1,25 @@
-/* 功能旗標頁：每個旗標一張卡（窄螢幕單欄、寬螢幕兩欄），色與圓角走 --tf-* token（同 Admin.module.css）。 */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+/* 功能旗標頁自己的少數樣式；卡片、表格、按鈕、表單欄位用主控台共用樣式（Console.module.css）。色全部走 --ac-*。 */
+.keyCell { min-width: 220px; }
+.desc { margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t5); white-space: normal; }
+/* 最後修改的時間：不折行（.desc 預設可折）。 */
+.when { white-space: nowrap; }
+.wrap { overflow-wrap: anywhere; }
+.foot { margin: 0; padding: 10px 16px; border-top: 1px solid var(--ac-l2); font-size: 11.5px; line-height: 1.6; color: var(--ac-t5); }
+.foot code { font-family: var(--ac-mono); color: var(--ac-t3); }
 
-.flag {
-  background: var(--tf-surface); border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs);
-  padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+/* 調整表單 */
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.checkLabel { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ac-t2); cursor: pointer; }
+.userList {
+  display: flex; flex-direction: column; gap: 7px; max-height: 200px; overflow-y: auto; padding: 9px 10px;
+  border: 1px solid var(--ac-l4); border-radius: 6px; background: var(--ac-sunk);
 }
-.flagHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
-.flagKey { margin: 0; font-size: 14px; font-weight: 600; color: var(--tf-text-1); overflow-wrap: anywhere; }
-.flagDesc { margin: 0; font-size: 13px; color: var(--tf-text-2); }
+.hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ac-t5); }
 
-.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin: 0; }
-.facts div { min-width: 0; }
-.facts dt { font-size: 11.5px; color: var(--tf-text-4); }
-.facts dd { margin: 2px 0 0; font-size: 13px; color: var(--tf-text-1); overflow-wrap: anywhere; }
-.note { margin: 0; font-size: 12.5px; color: var(--tf-text-2); overflow-wrap: anywhere; }
-.flagActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-
-.fieldset { border: 1px solid var(--tf-border-weak); border-radius: 6px; padding: 8px 12px 10px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.fieldset legend { font-size: 12px; color: var(--tf-text-4); padding: 0 4px; }
-.userList { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
-
-.transferRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 0; }
-.fileLabel {
-  display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tf-text-1);
-  border: 1px solid var(--tf-border-weak); border-radius: 6px; padding: 4px 9px; cursor: pointer;
-}
-.fileLabel input { font-size: 12px; max-width: 220px; }
-.preview { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
-.previewHead { margin: 0 0 4px; }
+/* 匯入預覽 */
+.previewTable { max-height: 46vh; overflow: auto; border: 1px solid var(--ac-l2); border-radius: 6px; }
+.problemsHead { margin: 0 0 4px; }
 .problems { margin: 0; padding-left: 18px; }
 .problems li { overflow-wrap: anywhere; }
-
-@media (max-width: 600px) {
-  .facts { grid-template-columns: minmax(0, 1fr); }
-  .fileLabel { flex: 1 1 100%; flex-wrap: wrap; }
-  .fileLabel input { max-width: 100%; }
-}
+.problems code { font-family: var(--ac-mono); }
+.previewActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }

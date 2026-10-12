@@ -1,73 +1,162 @@
-import { useState } from 'react'
+import {
+  Button, Card, ConsolePage, Drawer, DrawerFootNote, DrawerSection, PageHeader, Segmented, useQueryParam, type SegOption,
+} from '../../components/console'
+import c from '../../components/console/Console.module.css'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
+import type { AuditEntry } from '../../lib/adminSchemas'
 import { adminCsvUrls } from '../../lib/generated/adminApi'
-import { AdminHeader } from './AdminHeader'
 import { ExportCsvButton } from './ExportCsvButton'
+import { AUDIT_CATEGORIES, AUDIT_CATEGORY_LABELS, auditCategory, type AuditCategory } from './auditCategories'
 import { actionLabel, actorLabel, auditSummary, fmtDateTime } from './auditLabels'
 import { AUDIT_PAGE_SIZE, useAdminAudit } from './useAdmin'
-import styles from './Admin.module.css'
+import a from './Audit.module.css'
 
 /** 錯誤物件 → 給人看的訊息。 */
 function messageOf(err: unknown): string {
   return err instanceof Error && err.message ? err.message : '載入失敗，請重試'
 }
 
-function AuditLog() {
-  const [offset, setOffset] = useState(0)
-  const q = useAdminAudit(offset)
+type Filter = AuditCategory | 'all'
+
+/** URL 的 `?offset=` → 非負整數；亂填的值當成第一頁。 */
+function parseOffset(raw: string | null): number {
+  const n = raw == null ? 0 : Number(raw)
+  return Number.isInteger(n) && n > 0 ? n : 0
+}
+
+function EntryDrawer({ entryId, entry, loading, onClose }: {
+  entryId: string | null; entry: AuditEntry | undefined; loading: boolean; onClose: () => void
+}) {
+  if (entryId == null) return null
+  if (!entry) {
+    return (
+      <Drawer open onClose={onClose} width={520} title={loading ? '載入中…' : '找不到這筆紀錄'}>
+        {!loading && (
+          <DrawerSection>
+            <p className={a.note}>#{entryId} 不在目前這一頁。新的操作會把舊紀錄往後推，請翻頁找，或匯出 CSV。</p>
+          </DrawerSection>
+        )}
+      </Drawer>
+    )
+  }
+  const hasDetail = Object.keys(entry.detail).length > 0
   return (
-    <section className={styles.card} aria-labelledby="admin-audit-title">
-      <div className={styles.cardHead}>
-        <h2 id="admin-audit-title" className={styles.ctitle}>最近的操作</h2>
-        <ExportCsvButton href={adminCsvUrls.exportAudit()} what="操作紀錄" />
+    <Drawer open onClose={onClose} width={520} title={actionLabel(entry.action)}
+      subtitle={`${fmtDateTime(entry.created_at)}・${actorLabel(entry)}`}
+      footer={<DrawerFootNote>紀錄只能新增，不含任何密碼或註記全文。</DrawerFootNote>}>
+      <DrawerSection title="這筆操作">
+        <dl className={c.kv}>
+          <dt>編號</dt><dd>#{entry.id}</dd>
+          <dt>時間</dt><dd title={entry.created_at ?? undefined}>{fmtDateTime(entry.created_at)}</dd>
+          <dt>操作者</dt>
+          <dd>{actorLabel(entry)}{entry.actor_user_id && <span className={a.sub}>{entry.actor_user_id}</span>}</dd>
+          <dt>動作</dt><dd>{entry.action}</dd>
+          <dt>分類</dt><dd>{AUDIT_CATEGORY_LABELS[auditCategory(entry.action)]}</dd>
+          <dt>對象</dt><dd>{entry.target_type}{entry.target_id ? ` ${entry.target_id}` : ''}</dd>
+          <dt>內容</dt><dd>{auditSummary(entry)}</dd>
+        </dl>
+      </DrawerSection>
+      <DrawerSection title="完整 detail">
+        {hasDetail
+          ? <pre className={`${c.log} ${a.detail}`} aria-label="完整 detail">{JSON.stringify(entry.detail, null, 2)}</pre>
+          : <p className={a.note}>這筆操作沒有額外的 detail。</p>}
+      </DrawerSection>
+    </Drawer>
+  )
+}
+
+function AuditLog() {
+  // 頁碼、分類與開著的那一筆都放在 URL：連結可以分享、重新整理也還在。
+  const [offsetParam, setOffsetParam] = useQueryParam('offset')
+  const [categoryParam, setCategoryParam] = useQueryParam('category')
+  const [entryParam, setEntryParam] = useQueryParam('entry')
+  const offset = parseOffset(offsetParam)
+  const filter: Filter = AUDIT_CATEGORIES.find(k => k === categoryParam) ?? 'all'
+  const q = useAdminAudit(offset)
+
+  const items = q.data?.items ?? []
+  const rows = filter === 'all' ? items : items.filter(e => auditCategory(e.action) === filter)
+  const options: SegOption<Filter>[] = [
+    { value: 'all', label: '全部', count: q.data ? items.length : null },
+    ...AUDIT_CATEGORIES.map(k => ({
+      value: k, label: AUDIT_CATEGORY_LABELS[k],
+      count: q.data ? items.filter(e => auditCategory(e.action) === k).length : null,
+    })),
+  ]
+  const goTo = (next: number) => setOffsetParam(next > 0 ? String(next) : null)
+
+  return (
+    <Card title="最近的操作" labelledBy="admin-audit-title"
+      right={<ExportCsvButton href={adminCsvUrls.exportAudit()} what="操作紀錄" />}>
+      <div className={`${c.toolbar} ${a.toolbar}`}>
+        <Segmented label="分類（只篩這一頁）" options={options} value={filter}
+          onChange={v => setCategoryParam(v === 'all' ? null : v)} />
+        {filter !== 'all' && <span className={c.muted}>分類只篩目前這一頁</span>}
       </div>
       {q.isPending ? (
-        <p className={styles.idle}>載入中…</p>
+        <p className={c.empty}>載入中…</p>
       ) : q.isError ? (
-        <p className={styles.error} role="alert">操作紀錄載入失敗：{messageOf(q.error)}</p>
-      ) : q.data.items.length === 0 ? (
-        <p className={styles.idle}>還沒有任何管理操作</p>
+        <div className={c.cardBody}><p className={c.error} role="alert">操作紀錄載入失敗：{messageOf(q.error)}</p></div>
+      ) : q.data.items.length === 0 && offset === 0 ? (
+        <p className={c.empty}>還沒有任何管理操作</p>
       ) : (
         <>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead><tr><th>時間</th><th>操作者</th><th>動作</th><th>內容</th></tr></thead>
-              <tbody>
-                {q.data.items.map(e => (
-                  <tr key={e.id}>
-                    <td className={styles.num}>{fmtDateTime(e.created_at)}</td>
-                    <td className={e.actor_username ? undefined : styles.muted}>{actorLabel(e)}</td>
-                    <td>{actionLabel(e.action)}</td>
-                    <td>{auditSummary(e)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className={styles.pager}>
-            <button type="button" className={styles.action} disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - AUDIT_PAGE_SIZE))}>上一頁</button>
-            <span>{`第 ${offset + 1}–${offset + q.data.items.length} 筆，共 ${q.data.total} 筆`}</span>
-            <button type="button" className={styles.action} disabled={q.data.next_offset == null}
-              onClick={() => { if (q.data.next_offset != null) setOffset(q.data.next_offset) }}>下一頁</button>
+          {rows.length === 0 ? (
+            <p className={c.empty}>{filter === 'all' ? '這一頁沒有紀錄' : `這一頁沒有「${AUDIT_CATEGORY_LABELS[filter]}」的操作`}</p>
+          ) : (
+            <div className={c.tableWrap}>
+              <table className={c.table}>
+                <thead><tr><th>時間</th><th>操作者</th><th>動作</th><th>內容</th></tr></thead>
+                <tbody>
+                  {rows.map(e => (
+                    <tr key={e.id} className={`${c.rowClickable} ${String(e.id) === entryParam ? c.rowSelected : ''}`}
+                      onClick={() => setEntryParam(String(e.id))}>
+                      <td className={c.num}>{fmtDateTime(e.created_at)}</td>
+                      <td className={e.actor_username ? c.t1 : c.muted}>{actorLabel(e)}</td>
+                      <td className={c.nowrap}>
+                        {/* 列的鍵盤入口：整列可點，但能聚焦的是這顆按鈕。 */}
+                        <button type="button" className={a.rowLink} title="看這筆操作的完整內容"
+                          onClick={ev => { ev.stopPropagation(); setEntryParam(String(e.id)) }}>
+                          {actionLabel(e.action)}
+                        </button>
+                      </td>
+                      <td className={a.summary}>{auditSummary(e)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className={c.pager}>
+            <span>
+              {q.data.items.length > 0
+                ? `第 ${offset + 1}–${offset + q.data.items.length} 筆，共 ${q.data.total} 筆`
+                : `共 ${q.data.total} 筆`}
+              {filter !== 'all' && `・這一頁符合 ${rows.length} 筆`}
+            </span>
+            <div className={c.pagerBtns}>
+              <Button size="sm" disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - AUDIT_PAGE_SIZE))}>上一頁</Button>
+              <Button size="sm" disabled={q.data.next_offset == null}
+                onClick={() => { if (q.data.next_offset != null) goTo(q.data.next_offset) }}>下一頁</Button>
+            </div>
           </div>
         </>
       )}
-    </section>
+      <EntryDrawer entryId={entryParam} entry={items.find(e => String(e.id) === entryParam)} loading={q.isPending}
+        onClose={() => setEntryParam(null)} />
+    </Card>
   )
 }
 
 function AdminAudit() {
   return (
-    <div className={styles.page}>
-      <div className={styles.inner}>
-        <AdminHeader
-          title="操作紀錄"
-          subtitle="建帳、改角色、停用、重設密碼、強制登出、處理待複核與隱藏研報，誰在何時做了什麼；新的在前。不含任何密碼或註記全文。"
-        />
-        <AuditLog />
-      </div>
-    </div>
+    <ConsolePage>
+      <PageHeader
+        summary="誰在何時做了什麼；新的在前，不含任何密碼或註記全文。"
+        help="建帳、改角色、停用、重設密碼、強制登出、處理待複核與隱藏研報，誰在何時做了什麼；新的在前。不含任何密碼或註記全文。操作者為「指令列（CLI）」表示由主機上的指令列工具執行。點任一列看完整的 detail；分類只篩目前載入的這一頁，要完整清單請匯出 CSV。"
+      />
+      <AuditLog />
+    </ConsolePage>
   )
 }
 

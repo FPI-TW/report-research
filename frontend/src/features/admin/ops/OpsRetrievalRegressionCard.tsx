@@ -189,7 +189,7 @@ function Body({ d }: { d: RetrievalRegressionResponse }) {
   const cmp = d.comparison
   return (
     <>
-      <p className={styles.meta}>
+      <p className={c.meta}>
         <span>最後一次執行 <b>{fmtDateTime(d.finished_at)}</b></span>
         {d.exit_code != null && <span>退出碼 <b>{d.exit_code}</b></span>}
         <span>{SCHEDULE}</span>

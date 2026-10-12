@@ -120,7 +120,7 @@ function Snapshot({ ov }: { ov: DbOverviewResponse }) {
       </div>
       {errors.map(x => <SectionNote key={x.what} error={x.e} what={x.what} />)}
       {!conn.error && (
-        <p className={styles.meta} aria-label="連線狀態">
+        <p className={c.meta} aria-label="連線狀態">
           {Object.entries(conn.by_state ?? {}).map(([state, n]) => (
             <span key={state}>{STATE_LABELS[state] ?? state} <b>{String(n)}</b></span>
           ))}
@@ -242,7 +242,7 @@ function SlowQueriesCard() {
       ) : (
         <>
           <div className={styles.body}>
-            <p className={styles.meta}>
+            <p className={c.meta}>
               <span>統計起點 <b>{q.data.stats_reset ? fmtDateTime(q.data.stats_reset) : '資料庫啟動或擴充建立以來'}</b></span>
               {(q.data.hidden_count ?? 0) > 0 && <span>{q.data.hidden_count} 筆因權限不足隱藏查詢文字</span>}
               <span>查詢文字最多 200 字</span>
@@ -319,7 +319,7 @@ function TrendsCard({ tableOptions }: { tableOptions: string[] }) {
           <OpsQueryError error={q.error} what="趨勢" />
         ) : (
           <>
-            <p className={styles.meta}>
+            <p className={c.meta}>
               <span>粒度 <b>{q.data.granularity === 'hour' ? '逐時' : '每日'}</b></span>
               {q.data.kind === 'rate' && <span>{q.data.granularity === 'hour' ? '每小時' : '每日'}增量（統計重設的那一點留空）</span>}
               {q.data.granularity === 'day' && q.data.kind === 'gauge' && <span>每日平均，淡色帶為當日最低～最高</span>}

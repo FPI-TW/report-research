@@ -123,10 +123,12 @@ export function Field({ label, counter, children }: { label: ReactNode; counter?
 /**
  * 一組控制項的欄位（分段、一排勾選框）：外觀和 `Field` 一樣，但不是 `<label>`——
  * `<label>` 包著好幾顆按鈕時，點標題會誤觸第一顆。
+ * `bare`＝只負責標題與排版，不帶 `role` 與 `aria-label`：欄位裡只有一個本身就具名的群組（`Segmented`）時用，
+ * 無障礙樹裡才不會有兩個同名的群組。包一排 `CheckRow` 的欄位不要給。
  */
-export function FieldGroup({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
+export function FieldGroup({ label, children, hint, bare }: { label: string; children: ReactNode; hint?: ReactNode; bare?: boolean }) {
   return (
-    <div className={c.field} role="group" aria-label={label}>
+    <div className={c.field} role={bare ? undefined : 'group'} aria-label={bare ? undefined : label}>
       <span className={c.fieldLabel}>{label}</span>
       {children}
       {hint && <p className={c.fieldHint}>{hint}</p>}

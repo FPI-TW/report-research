@@ -108,7 +108,7 @@ function AdminReports() {
         {chosen.length > 0 && (
           <div className={c.bulk} role="toolbar" aria-label="批次操作">
             <span className={s.bulkCount}>已選 {chosen.length} 篇</span>
-            <Button size="sm" className={s.bulkDanger} disabled={toHide.length === 0 || bulk.isPending}
+            <Button size="sm" variant="dangerText" disabled={toHide.length === 0 || bulk.isPending}
               title={toHide.length === 0 ? '選取的研報都已隱藏' : undefined}
               onClick={() => setBulkHideFor(toHide)}>批次隱藏（{toHide.length}）</Button>
             <Button size="sm" disabled={toRestore.length === 0 || bulk.isPending}
@@ -154,7 +154,7 @@ function AdminReports() {
                             onChange={() => sel.toggle(r.file_hash)} />
                         </td>
                         <td className={s.titleCell}>
-                          <button type="button" className={s.rowLink} aria-haspopup="dialog"
+                          <button type="button" className={c.rowLink} aria-haspopup="dialog"
                             onClick={e => { e.stopPropagation(); setOpenHash(r.file_hash) }}>{name}</button>
                           {r.title && <div className={c.sub}>{r.file_name}</div>}
                         </td>

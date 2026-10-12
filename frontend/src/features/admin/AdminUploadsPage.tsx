@@ -149,8 +149,10 @@ function UploadList({ tab, now, review, onOpen }: {
             {items.map(it => (
               <tr key={it.upload_id} className={c.rowClickable} onClick={() => onOpen(it.upload_id)}>
                 <td data-label="檔案" className={u.nameCell}>
-                  <button type="button" className={u.rowLink} aria-haspopup="dialog"
-                    onClick={e => { e.stopPropagation(); onOpen(it.upload_id) }}>{it.original_name}</button>
+                  <button type="button" className={c.rowLink} aria-haspopup="dialog"
+                    onClick={e => { e.stopPropagation(); onOpen(it.upload_id) }}>
+                    <span className={u.fileName}>{it.original_name}</span>
+                  </button>
                   <div className={`${c.sub} ${c.num}`}>{fmtBytes(it.size_bytes)}</div>
                 </td>
                 <td data-label="狀態" className={u.stateCell}><StateCell item={it} /></td>

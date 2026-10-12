@@ -33,12 +33,8 @@
 /* ── 清單：寬螢幕是表格，窄的卡片（手機）改成一筆一塊、欄名在前 ── */
 .listWrap { container-type: inline-size; }
 .nameCell { min-width: 200px; max-width: 420px; overflow-wrap: anywhere; }
-/* 列的鍵盤入口：看起來是檔名，實際是按鈕（整列的 onClick 滑鼠才點得到）。 */
-.rowLink {
-  padding: 0; border: none; background: none; color: var(--ac-t1); font: inherit; font-family: var(--ac-mono); font-size: 12px;
-  text-align: left; cursor: pointer; overflow-wrap: anywhere;
-}
-.rowLink:hover { color: var(--ac-goldt); }
+/* 列的鍵盤入口（c.rowLink）裡的檔名：等寬、小一級。 */
+.fileName { font-family: var(--ac-mono); font-size: 12px; }
 .stateCell { max-width: 320px; }
 .reason { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t4); overflow-wrap: anywhere; }
 .bad { color: var(--ac-badt); overflow-wrap: anywhere; }
@@ -53,7 +49,6 @@
 
 /* ── 詳情抽屜 ── */
 .foot { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 10px; }
-.dangerText { color: var(--ac-badt); }
 .note { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ac-t4); }
 .hint { margin: 10px 0 0; font-size: 12px; line-height: 1.6; color: var(--ac-t5); }
 .hash { word-break: break-all; }

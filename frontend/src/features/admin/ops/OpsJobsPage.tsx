@@ -9,7 +9,6 @@ import { jobFailed } from './exec/jobs'
 import { OpsQueryError } from './OpsShared'
 import { fmtDuration } from './opsLabels'
 import { JOBS_PAGE_SIZE, useOpsJobs } from './useOps'
-import styles from './exec/Exec.module.css'
 
 type JobState = JobItem['state']
 
@@ -64,7 +63,7 @@ export default function OpsJobsPage() {
             title="執行紀錄"
             labelledBy="ops-jobs-title"
             right={(
-              <p className={styles.meta}>
+              <p className={c.meta}>
                 <span>範圍 <b>{fmtDateTime(q.data.since)}</b> ～ <b>{fmtDateTime(q.data.until)}</b></span>
                 <span>共 <b>{q.data.total}</b> 筆（每 5 分鐘匯入一次）</span>
               </p>
@@ -93,11 +92,11 @@ export default function OpsJobsPage() {
                           <td>
                             <button
                               type="button"
-                              className={styles.rowLink}
+                              className={c.rowLink}
                               title="查看這次執行的詳情"
                               onClick={e => { e.stopPropagation(); setJobId(job.invocation_id) }}
                             >
-                              {name}
+                              <span className={c.mono}>{name}</span>
                             </button>
                             <div className={`${c.sub} ${c.mono}`}>{job.unit}</div>
                           </td>

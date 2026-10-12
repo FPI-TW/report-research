@@ -9,15 +9,6 @@
 
 /* 批次列 */
 .bulkCount { margin-right: 4px; font-size: 12.5px; color: var(--ac-goldt); white-space: nowrap; }
-/* 批次停用：紅字的列內按鈕（加上 button 提高權重，蓋過 .btnSm 與 hover 的字色）。 */
-button.dangerText, button.dangerText:hover:not(:disabled) { color: var(--ac-badt); }
 
 /* 清單載入失敗：訊息框放在卡片裡，留出內距。 */
 .loadError { padding: 12px 14px; }
-
-/* 對話框：勾選列（調整權限）與欄位下方的補充說明。 */
-.checkRow { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--ac-t2); cursor: pointer; }
-.checkRow[data-disabled] { opacity: 0.55; cursor: default; }
-.checkRow input { flex: none; width: 15px; height: 15px; }
-.dialogHint { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--ac-t5); }
-.roleField { align-items: flex-start; }

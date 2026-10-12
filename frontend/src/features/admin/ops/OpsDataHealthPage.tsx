@@ -63,7 +63,7 @@ function ResultMeta({ section, schedule }: { section: DbAuditSection | R2Reconci
   }
   return (
     <>
-      <p className={styles.meta}>
+      <p className={c.meta}>
         <span>最後一次 <b>{fmtDateTime(section.finished_at)}</b></span>
         {section.exit_code != null && <span>退出碼 <b>{section.exit_code}</b></span>}
         <span>{schedule}</span>
@@ -79,7 +79,7 @@ function FreshnessCard({ s }: { s: FreshnessSection }) {
   return (
     <Card title="批次新鮮度" labelledBy="dh-fresh-title" right={<HealthStatus status={s.status} />}>
       <div className={styles.body}>
-        <p className={styles.meta}>
+        <p className={c.meta}>
           <span>即時判讀（與每日 08:30 的 report-mark-freshness 同一組規則）</span>
         </p>
         {s.error && <p className={c.error} role="alert">{s.error}：只能判讀管線心跳。</p>}

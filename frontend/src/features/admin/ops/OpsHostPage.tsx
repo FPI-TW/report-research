@@ -128,10 +128,10 @@ export default function OpsHostPage() {
   return (
     <>
       {header}
-      <p className={styles.meta}>
+      <p className={c.meta}>
         <Chip mono>{newest.host}</Chip>
         <span>最新觀測 <b>{fmtDateTime(newest.observed_at)}</b>（每 5 分鐘匯入，最多晚一輪）</span>
-        <span>粒度 <strong>{RESOLUTION_LABEL[q.data.resolution]}</strong></span>
+        <span>粒度 <strong className={styles.metaStrong}>{RESOLUTION_LABEL[q.data.resolution]}</strong></span>
         {q.data.truncated && <span>資料超過上限，只顯示最近的部分</span>}
       </p>
       <div className={`${c.tiles} ${styles.hostTiles}`}>

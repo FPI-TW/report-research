@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react'
-import { Field } from '../../../components/console'
+import { CheckRow, Field, FieldGroup } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import { MARKET_ORDER, marketLabel } from '../../../lib/meta'
 import type { ApiClientScope } from '../useAdminApiClients'
@@ -10,39 +9,28 @@ import local from '../ApiClients.module.css'
 
 const toggle = <T extends string>(list: readonly T[], v: T): T[] => (list.includes(v) ? list.filter(x => x !== v) : [...list, v])
 
-function CheckGroup({ legend, grid, children }: { legend: string; grid?: boolean; children: ReactNode }) {
-  return (
-    <fieldset className={local.group}>
-      <legend className={local.legend}>{legend}</legend>
-      <div className={grid ? local.checkGrid : local.checkList}>{children}</div>
-    </fieldset>
-  )
-}
-
 /** 可呼叫的端點（key scope）。可以一個都不選：這把金鑰就什麼端點都打不了。 */
 export function ScopeChecks({ value, onChange }: { value: ApiClientScope[]; onChange: (v: ApiClientScope[]) => void }) {
   return (
-    <CheckGroup legend="可呼叫的端點">
-      {SCOPE_ORDER.map(s => (
-        <label key={s} className={local.checkItem}>
-          <input type="checkbox" className={c.check} checked={value.includes(s)} onChange={() => onChange(toggle(value, s))} />
-          {SCOPE_LABELS[s]}
-        </label>
-      ))}
-    </CheckGroup>
+    <FieldGroup label="可呼叫的端點">
+      <div className={local.checkList}>
+        {SCOPE_ORDER.map(s => (
+          <CheckRow key={s} checked={value.includes(s)} onChange={() => onChange(toggle(value, s))}>{SCOPE_LABELS[s]}</CheckRow>
+        ))}
+      </div>
+    </FieldGroup>
   )
 }
 
 export function MarketChecks({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   return (
-    <CheckGroup legend="授權市場（必選，至少一個）" grid>
-      {MARKET_ORDER.map(m => (
-        <label key={m} className={local.checkItem}>
-          <input type="checkbox" className={c.check} checked={value.includes(m)} onChange={() => onChange(toggle(value, m))} />
-          {marketLabel(m)}（{m}）
-        </label>
-      ))}
-    </CheckGroup>
+    <FieldGroup label="授權市場（必選，至少一個）">
+      <div className={local.checkGrid}>
+        {MARKET_ORDER.map(m => (
+          <CheckRow key={m} checked={value.includes(m)} onChange={() => onChange(toggle(value, m))}>{marketLabel(m)}（{m}）</CheckRow>
+        ))}
+      </div>
+    </FieldGroup>
   )
 }
 

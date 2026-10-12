@@ -27,22 +27,6 @@ function pickLines(v: string | null): number {
   return (LINE_OPTIONS as readonly number[]).includes(n) ? n : DEFAULT_LINES
 }
 
-/**
- * 服務的分段切換。共用的 `Segmented` 只有單列；服務在測試環境有三十幾個，所以這裡用同一組樣式
- * 但允許換行，每個服務都看得到、一下就切得過去。
- */
-function ServicePicker({ names, value, onChange }: { names: string[]; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className={`${c.seg} ${styles.segWrap}`} role="group" aria-label="服務">
-      {names.map(name => (
-        <button key={name} type="button" className={c.segBtn} aria-pressed={name === value} onClick={() => onChange(name)}>
-          {name}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 function LogView({ service, since, lines }: { service: string; since: string; lines: number }) {
   const q = useOpsLogs(service, since, lines)
   if (q.isPending) return <p className={c.empty}>載入日誌中…</p>
@@ -63,7 +47,7 @@ function LogView({ service, since, lines }: { service: string; since: string; li
       )}
     >
       <div className={styles.logBody}>
-        <p className={styles.meta}>
+        <p className={c.meta}>
           <span>自 {fmtDateTime(d.since)} 起・{d.entries.length} 行</span>
         </p>
         {d.truncated && (
@@ -109,6 +93,7 @@ export default function OpsLogsPage() {
   if (services.isError) return <>{header}<OpsQueryError error={services.error} what="服務清單" /></>
   const withLogs = services.data.items.filter(s => s.actions.includes('logs'))
   const service = params.get('service') ?? ''
+  const serviceOptions: SegOption<string>[] = withLogs.map(s => ({ value: s.name, label: <span className={c.mono}>{s.name}</span> }))
 
   return (
     <>
@@ -120,7 +105,8 @@ export default function OpsLogsPage() {
           <div className={styles.pickers}>
             <div className={styles.picker}>
               <span className={styles.pickerLabel}>服務</span>
-              <ServicePicker names={withLogs.map(s => s.name)} value={service} onChange={v => set('service', v)} />
+              {/* 服務在測試環境有三十幾個：分段換行，每個都看得到、一下就切得過去。 */}
+              <Segmented wrap label="服務" options={serviceOptions} value={service} onChange={v => set('service', v)} />
             </div>
             <div className={styles.picker}>
               <span className={styles.pickerLabel}>時間範圍</span>

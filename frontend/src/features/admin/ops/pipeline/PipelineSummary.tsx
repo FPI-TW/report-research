@@ -39,7 +39,7 @@ export function PipelineSummary({ progress: p, stale }: { progress: Progress; st
             <Lamp tone={VERDICT[level].lamp} label="" size={8} />
             <span className={styles.verdictText}>{VERDICT[level].text(items.length)}</span>
           </div>
-          <p className={styles.meta}>
+          <p className={c.meta}>
             <span>更新於 <b>{p.ts}</b>（每 {PROGRESS_POLL_MS / 1000} 秒，分頁在背景時暫停）</span>
             <span>執行中的批次 <b>{running}</b></span>
             <span>研報 <b>{fmtInt(p.db.reports)}</b> 篇</span>

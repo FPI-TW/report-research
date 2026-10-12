@@ -270,7 +270,7 @@ function Detail({ uploadId, onClose, review, now }: Props & { uploadId: string }
   const buttons: ReactNode[] = []
   if (opts.reject) {
     buttons.push(
-      <Button key="reject" className={u.dangerText} disabled={busy || opts.reject === 'busy'}
+      <Button key="reject" variant="dangerText" disabled={busy || opts.reject === 'busy'}
         title={opts.reject === 'busy' ? BUSY_HINT : undefined} onClick={() => review.request('reject', upload)}>退回</Button>,
     )
   }

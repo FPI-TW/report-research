@@ -144,8 +144,10 @@ function ApiClients() {
                     <tr key={client.id} className={`${c.rowClickable} ${opened?.id === client.id ? c.rowSelected : ''}`}
                       onClick={() => setOpenId(String(client.id))}>
                       <td className={local.wrap}>
-                        <button type="button" className={local.nameBtn} aria-label={`${client.name}，查看詳情`}
-                          onClick={e => { e.stopPropagation(); setOpenId(String(client.id)) }}>{client.name}</button>
+                        <button type="button" className={c.rowLink} aria-label={`${client.name}，查看詳情`}
+                          onClick={e => { e.stopPropagation(); setOpenId(String(client.id)) }}>
+                          <span className={local.name}>{client.name}</span>
+                        </button>
                         {client.note && <div className={c.sub}>{client.note}</div>}
                       </td>
                       <td className={c.num}>{keyPrefixText(client)}</td>

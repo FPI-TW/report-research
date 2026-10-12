@@ -224,12 +224,13 @@ test('服務：依 tier 分組，顯示 ActiveState、Result、最近執行、�
   const backupRow = rowOf(important, 'backup')
   expect(backupRow.getByText('失敗')).toBeInTheDocument()
   expect(backupRow.getByText('exit-code')).toBeInTheDocument()
-  // 不開放 logs 的服務沒有日誌按鈕
+  // 不開放 logs 的服務沒有日誌連結
   const supporting = within(screen.getByRole('region', { name: '輔助服務' }))
-  expect(rowOf(supporting, 'freshness').queryByRole('button', { name: '日誌' })).not.toBeInTheDocument()
+  expect(rowOf(supporting, 'freshness').queryByRole('link', { name: '日誌' })).not.toBeInTheDocument()
   expect(screen.getByText(/檢查時間/)).toHaveTextContent('每 30 秒更新')
-  // 日誌是列的主要動作：帶著服務名到日誌頁
-  fireEvent.click(webRow.getByRole('button', { name: '日誌' }))
+  // 日誌是列的主要動作：真的連結（可以開新分頁），帶著服務名到日誌頁
+  expect(webRow.getByRole('link', { name: '日誌' })).toHaveAttribute('href', '/admin/operations/logs?service=web')
+  fireEvent.click(webRow.getByRole('link', { name: '日誌' }))
   await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/logs?service=web'))
 })
 
@@ -260,7 +261,9 @@ test('服務：篩選分段帶數量，選了寫進網址；沒有符合的層�
   expect(seg.getByRole('button', { name: /需要注意/ })).toHaveTextContent('2')
   expect(seg.getByRole('button', { name: /常駐/ })).toHaveTextContent('5')
   expect(seg.getByRole('button', { name: /排程/ })).toHaveTextContent('1')
+  // 每列的服務名；列內另一個連結是主要動作「日誌」，不算。
   const names = () => screen.getAllByRole('row').flatMap(r => within(r).queryAllByRole('link').map(a => a.textContent))
+    .filter(t => t !== '日誌')
 
   fireEvent.click(seg.getByRole('button', { name: /需要注意/ }))
   await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/services?filter=attention'))

@@ -374,6 +374,22 @@ describe('小元件', () => {
     expect(screen.getByRole('checkbox', { name: 'super admin 已含' })).toBeDisabled()
   })
 
+  it('FieldGroup 設 bare：只畫標題，不帶 role 與 aria-label——裡面的 Segmented 是唯一的同名群組', () => {
+    const onSeg = vi.fn()
+    render(
+      <FieldGroup label="角色" bare>
+        <div><Segmented label="角色" value="user" onChange={onSeg} options={[{ value: 'user', label: '一般使用者' }, { value: 'admin', label: '管理員' }]} /></div>
+      </FieldGroup>,
+    )
+    const group = screen.getByRole('group', { name: '角色' })
+    expect(within(group).getAllByRole('button').map(b => b.textContent)).toEqual(['一般使用者', '管理員'])
+    const field = group.parentElement!.parentElement!
+    expect(field).not.toHaveAttribute('role')
+    expect(field).not.toHaveAttribute('aria-label')
+    fireEvent.click(within(field).getAllByText('角色')[0])
+    expect(onSeg).not.toHaveBeenCalled()
+  })
+
   it('Dialog 設 dismissible={false}：Esc 與點遮罩都不關，只能按裡面的按鈕', () => {
     const onClose = vi.fn()
     render(

@@ -1,4 +1,4 @@
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { Chip, PageHeader, RowActions, Segmented, useQueryParam, type RowAction, type SegOption } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type { OpsDependencyNode, OpsServiceStatus } from '../../../lib/generated/adminApi'
@@ -58,12 +58,11 @@ interface TableProps {
   openName: string | null
   detailHref: (name: string) => string
   onOpen: (name: string) => void
-  onLogs: (name: string) => void
   /** 沒有 `ops.operate` 時是 undefined：寫入類操作不出現在「更多」。 */
   onAction?: (name: string, action: WriteAction) => void
 }
 
-function ServiceTable({ items, deps, openName, detailHref, onOpen, onLogs, onAction }: TableProps) {
+function ServiceTable({ items, deps, openName, detailHref, onOpen, onAction }: TableProps) {
   return (
     <div className={c.tableWrap}>
       <table className={c.table}>
@@ -99,7 +98,7 @@ function ServiceTable({ items, deps, openName, detailHref, onOpen, onLogs, onAct
                 <td><DependsOn node={deps.nodes?.get(s.name)} deps={deps} /></td>
                 <td className={c.tdActions}>
                   <RowActions label={`${s.name} 的更多操作`}
-                    primary={s.actions.includes('logs') ? { label: '日誌', onClick: () => onLogs(s.name) } : undefined}
+                    primary={s.actions.includes('logs') ? { label: '日誌', to: logsHref(s.name) } : undefined}
                     more={more} />
                 </td>
               </tr>
@@ -119,7 +118,6 @@ function ServiceTable({ items, deps, openName, detailHref, onOpen, onLogs, onAct
 export default function OpsServicesPage() {
   const q = useOpsServices()
   const depsQ = useOpsDependencies()
-  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [service, setService] = useQueryParam('service')
   const actions = useServiceActions()
@@ -206,7 +204,7 @@ export default function OpsServicesPage() {
                       </span>
                     </div>
                     <ServiceTable items={rows} deps={deps} openName={service} detailHref={detailHref}
-                      onOpen={setService} onLogs={name => { void navigate(logsHref(name)) }}
+                      onOpen={setService}
                       onAction={actions.canOperate ? actions.request : undefined} />
                   </section>
                 )

@@ -166,7 +166,7 @@ function AdminUsers() {
             {BULK_ACTIONS.map(action => {
               const targets = bulkTargets[action]
               return (
-                <Button key={action} size="sm" className={action === 'disable' ? styles.dangerText : undefined}
+                <Button key={action} size="sm" variant={action === 'disable' ? 'dangerText' : 'default'}
                   disabled={busy || targets.length === 0}
                   title={targets.length === 0 ? `選取的帳號裡沒有可以${BULK_TEXT[action].verb}的` : undefined}
                   onClick={() => setBulkFor({ action, users: targets })}>

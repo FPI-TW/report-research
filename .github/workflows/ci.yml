@@ -294,6 +294,19 @@ jobs:
           python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['exit_code']==0 and d['problems']==[], d" \
             "$RUNNER_TEMP/schema_check.json"
 
+      # 維運用 extension（pg_stat_statements：獨立維護步驟啟用、不在 migration 裡）裝在目標庫時不得算 drift，
+      # 連它建的視圖也不算；不在允許清單的 extension（這裡用 hstore）照樣要算。驗完即移除，後面的 DB 契約
+      # 測試要的是沒有這兩個 extension 的庫。
+      - name: 維運用 extension 不算 drift
+        run: |
+          psql -h localhost -U postgres -d research -q -v ON_ERROR_STOP=1 -c "CREATE EXTENSION pg_stat_statements"
+          uv run python scripts/schema_baseline.py check
+          psql -h localhost -U postgres -d research -q -v ON_ERROR_STOP=1 \
+            -c "DROP EXTENSION pg_stat_statements" -c "CREATE EXTENSION hstore"
+          set +e; uv run python scripts/schema_baseline.py check; rc=$?; set -e
+          psql -h localhost -U postgres -d research -q -v ON_ERROR_STOP=1 -c "DROP EXTENSION hstore"
+          test "$rc" = 1 || { echo "::error::不在允許清單的 extension 應算 drift（退出碼 1），實際 $rc"; exit 1; }
+
       # 既有庫導入 Alembic 的完整演練（P0-ops 的同一條路）：以舊流程（psql 套 baseline）建庫
       # → upgrade 必須拒絕（baseline 只接受空庫）→ 零 drift → stamp → 讀回 0001。
       - name: 既有庫 stamp 演練

@@ -56,6 +56,46 @@ class DiffCatalogTests(unittest.TestCase):
         self.assertEqual(r.drift_count, 0)
         self.assertEqual(r.column_order, ["research.t"])
 
+    def test_operational_extension_only_on_target_is_information_not_drift(self):
+        # 2026-10-09 起每日檢查連續告警的原因：pg_stat_statements 由獨立維護步驟啟用、不在 migration 裡，
+        # 基準庫永遠沒有它。
+        ref = {"extension": {"vector": "0.8.0 @public"}}
+        tgt = {"extension": {"vector": "0.8.0 @public", "pg_stat_statements": "1.10 @public"}}
+        r = sb.diff_catalogs(ref, tgt)
+        self.assertEqual(r.drift_count, 0)
+        self.assertEqual(r.operational_extensions, ["pg_stat_statements"])
+        out = sb.format_report(r, identity="h:1/d", revision="0011", reference_desc="x")
+        self.assertIn("pg_stat_statements", out)
+        self.assertIn("零 drift", out)
+
+    def test_unlisted_extension_only_on_target_is_drift(self):
+        r = sb.diff_catalogs({"extension": {}}, {"extension": {"hstore": "1.8 @public"}})
+        self.assertEqual(r.categories["extension"].extra, ["hstore"])
+        self.assertEqual(r.drift_count, 1)
+        self.assertEqual(r.operational_extensions, [])
+
+    def test_operational_extension_is_compared_once_the_reference_has_it(self):
+        # 放行的只有「目標多裝」這個方向：哪天寫進 migration，版本不同或目標缺少就回到一般比對。
+        ref = {"extension": {"pg_stat_statements": "1.10 @public"}}
+        changed = sb.diff_catalogs(ref, {"extension": {"pg_stat_statements": "1.11 @public"}})
+        self.assertEqual(changed.drift_count, 1)
+        missing = sb.diff_catalogs(ref, {"extension": {}})
+        self.assertEqual(missing.categories["extension"].missing, ["pg_stat_statements"])
+        self.assertEqual((changed.operational_extensions, missing.operational_extensions), ([], []))
+
+    def test_operational_extension_does_not_change_the_json_shape(self):
+        # 狀態檔是 format 1、管理頁在讀：放行的 extension 不新增鍵，也不出現在 categories。
+        r = sb.diff_catalogs({}, {"extension": {"pg_stat_statements": "1.10 @public"}})
+        self.assertEqual(sb.report_to_json(r),
+                         {"drift_count": 0, "categories": {}, "column_order_differs": []})
+
+    def test_extension_owned_objects_are_excluded_in_every_object_category(self):
+        # extension 建的表、視圖、函式、型別不是這個 repo 的 schema。視圖曾經漏掉這個條件，
+        # pg_stat_statements 的兩張視圖因此被算成 drift。
+        for cat in ("relation", "column", "view", "function", "type"):
+            with self.subTest(category=cat):
+                self.assertIn("d.deptype = 'e'", sb.CATALOG_QUERIES[cat])
+
     def test_report_states_verdict(self):
         r = sb.diff_catalogs({"index": {"research.a": "A"}}, {})
         out = sb.format_report(r, identity="h:1/d", revision="0001", reference_desc="x")

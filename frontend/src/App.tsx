@@ -39,6 +39,8 @@ const AdminAnalyticsPage = lazy(routeLoaders.adminAnalytics)
 const AdminSecurityPage = lazy(routeLoaders.adminSecurity)
 const AdminQuotaPage = lazy(routeLoaders.adminQuota)
 const AdminFlagsPage = lazy(routeLoaders.adminFlags)
+// 管理後台裡的 404：主控台的頁面骨架，一般使用者的瀏覽器不會下載（研報平台的 NotFound 在下面，維持原樣）。
+const AdminNotFound = lazy(() => import('./components/shell/AdminNotFound'))
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -135,7 +137,7 @@ export const routes = [
             ],
           },
           { path: 'ops/*', element: <OpsAliasRedirect /> },
-          { path: '*', element: <NotFound /> },
+          { path: '*', element: <Suspense><AdminNotFound /></Suspense> },
         ],
       },
     ],

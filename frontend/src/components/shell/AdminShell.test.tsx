@@ -203,6 +203,56 @@ test('⌘K／Ctrl+K 開頁面搜尋：只列看得到的頁，Enter 跳第一筆
   expect(screen.queryByRole('dialog', { name: '搜尋頁面' })).not.toBeInTheDocument()
 })
 
+test('頁面搜尋關閉後，焦點回到開它之前的那個元素', async () => {
+  mount('admin', '/admin/reviews', ALL)
+  await screen.findByText('待複核內容')
+  // 按鈕開的：回到頂列的「搜尋頁面」
+  const opener = screen.getByRole('button', { name: /搜尋頁面/ })
+  opener.focus()
+  fireEvent.click(opener)
+  expect(within(await screen.findByRole('dialog', { name: '搜尋頁面' })).getByRole('combobox')).toHaveFocus()
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(screen.queryByRole('dialog', { name: '搜尋頁面' })).not.toBeInTheDocument()
+  expect(opener).toHaveFocus()
+  // 快捷鍵開的：回到當時所在的那個連結
+  const link = panel().getByRole('link', { name: /研報管理/ })
+  link.focus()
+  fireEvent.keyDown(window, { key: 'k', metaKey: true })
+  expect(within(await screen.findByRole('dialog', { name: '搜尋頁面' })).getByRole('combobox')).toHaveFocus()
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(link).toHaveFocus()
+})
+
+test('換頁後把目前所在的領域與頁面捲進畫面（手機寬度下圖示軌與次級面板是橫向捲動的一排）', async () => {
+  const scrolled: string[] = []
+  const original = Element.prototype.scrollIntoView
+  Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
+    expect(arg).toEqual({ block: 'nearest', inline: 'nearest' })
+    scrolled.push(this.getAttribute('href') ?? '')
+  }
+  try {
+    mount('admin', '/admin/flags', ALL)
+    expect(await screen.findByText('其他管理頁')).toBeInTheDocument()
+    expect(rail().getByRole('link', { name: '設定' })).toHaveAttribute('aria-current', 'true')
+    expect(scrolled).toEqual(['/admin/flags', '/admin/flags'])
+    // 換到別的領域：新的那一格再捲一次
+    fireEvent.click(rail().getByRole('link', { name: '安全' }))
+    await waitFor(() => expect(panel().getByRole('link', { name: '安全' })).toHaveAttribute('aria-current', 'page'))
+    expect(scrolled.slice(2)).toEqual(['/admin/security', '/admin/security'])
+  } finally {
+    Element.prototype.scrollIntoView = original
+  }
+})
+
+test('不在導覽裡的網址（404）：圖示軌不標任何領域，次級面板退回第一個領域當導覽', async () => {
+  mount('admin', '/admin/不存在', ALL)
+  expect(await screen.findByText('其他管理頁')).toBeInTheDocument()
+  expect(rail().getAllByRole('link')).toHaveLength(7)
+  for (const a of rail().getAllByRole('link')) expect(a).not.toHaveAttribute('aria-current')
+  expect(panel().getByRole('link', { name: '總覽' })).not.toHaveAttribute('aria-current')
+  expect(screen.getByRole('navigation', { name: '位置' })).toHaveTextContent('管理後台')
+})
+
 test('頂列：帳號與 super 標籤；重新驗證的視窗還開著時顯示「已驗證」', async () => {
   mount('admin', '/admin/reviews', ALL, {
     me: { is_super: true, elevated_until: new Date(Date.now() + 5 * 60_000).toISOString() },

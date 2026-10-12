@@ -1,21 +1,5 @@
-import type { OpsServiceStatus } from '../../../lib/generated/adminApi'
-import { SUMMARY_LABELS, isAgentUnavailable } from './opsLabels'
-import { Status, type LampTone } from '../../../components/console'
+import { isAgentUnavailable } from './opsLabels'
 import c from '../../../components/console/Console.module.css'
-
-const SUMMARY_TONE: Record<OpsServiceStatus['summary'], LampTone> = {
-  running: 'ok',
-  idle: 'idle',
-  failed: 'bad',
-  transitioning: 'info',
-  not_found: 'bad',
-  unknown: 'idle',
-}
-
-/** 服務的整體狀態：燈號＋文字。排程服務兩次執行之間的「閒置」是正常，用中性色。 */
-export function SummaryBadge({ summary }: { summary: OpsServiceStatus['summary'] }) {
-  return <Status tone={SUMMARY_TONE[summary]}>{SUMMARY_LABELS[summary]}</Status>
-}
 
 /**
  * 維運 API 的錯誤：代理不可用（503 `ops_agent_unavailable`）時整頁換成明確的降級說明，

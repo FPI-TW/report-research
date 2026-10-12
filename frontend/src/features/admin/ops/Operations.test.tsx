@@ -6,8 +6,6 @@ import { routes } from '../../../App'
 import { Toaster, dismissToast } from '../../../components/console'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
-import OpsHostPage from './OpsHostPage'
-import OpsJobsPage from './OpsJobsPage'
 import OpsIncidentsPage from './OpsIncidentsPage'
 import OpsServicesPage from './OpsServicesPage'
 
@@ -76,32 +74,6 @@ const GRAPH = {
   down: ['backup'], root_causes: ['backup'], affected: [],
 }
 
-const job = (over: Record<string, unknown> = {}) => ({
-  host: 'office-host', unit: 'report-mark-sync.service', service: 'sync', invocation_id: 'a'.repeat(32),
-  state: 'finished', started_at: '2026-10-06T01:00:00Z', finished_at: '2026-10-06T01:02:30Z', duration_seconds: 150,
-  result: 'success', exit_status: 0, exec_main_code: 'exited', last_seen_at: '2026-10-06T01:03:00Z', ...over,
-})
-const JOBS = [
-  job(),
-  job({ service: 'backup', unit: 'report-mark-backup.service', invocation_id: 'b'.repeat(32), result: 'exit-code',
-    exit_status: 2 }),
-  job({ service: 'audit', unit: 'report-mark-audit.service', invocation_id: 'c'.repeat(32), state: 'running',
-    finished_at: null, duration_seconds: null, result: null, exit_status: null, exec_main_code: null }),
-  job({ service: 'freshness', unit: 'report-mark-freshness.service', invocation_id: 'd'.repeat(32), state: 'lost',
-    finished_at: null, duration_seconds: null, result: null, exit_status: null, exec_main_code: null }),
-]
-const obs = (metric: string, value: number, over: Record<string, unknown> = {}) => ({
-  observed_at: '2026-10-06T02:00:00Z', host: 'office-host', scope: 'host', subject: 'host', metric, value,
-  state: null, detail: null, ...over,
-})
-const HOST_OBS = [
-  obs('cpu_pct', 12.5), obs('mem_used_pct', 58.4), obs('mem_avail_bytes', 8 * 1024 ** 3), obs('load1', 2.7),
-  obs('psi_io_some_avg60', 3.2), obs('disk_read_bps', 2048),
-  obs('used_pct', 24.6, { subject: 'fs:/home/kashionz/projects/report-mark' }),
-  obs('avail_bytes', 700 * 1024 ** 3, { subject: 'fs:/home/kashionz/projects/report-mark' }),
-  obs('cpu_pct', 80.0, { observed_at: '2026-10-06T01:30:00Z' }),
-]
-
 const incident = (over: Record<string, unknown> = {}) => ({
   incident_id: 'office-host:web:1791252000', host: 'office-host', component: 'web', kind: 'service',
   probe_unit: 'report-mark-health.service', status: 'resolved', severity: 'CRITICAL', reason: 'probe_exit_1',
@@ -159,12 +131,6 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
   const fetchMock = vi.fn(async (url: string) => {
     const o = opts.override?.(url)
     if (o) return json(o)
-    if (url.startsWith('/api/admin/jobs')) {
-      const p = new URLSearchParams(url.split('?')[1] ?? '')
-      const items = JOBS.filter(j => !p.get('state') || j.state === p.get('state'))
-      return json({ body: { since: '2026-09-29T02:00:00Z', until: '2026-10-06T02:00:00Z', total: items.length,
-        limit: 50, offset: 0, has_more: false, next_offset: null, items } })
-    }
     if (url.startsWith('/api/admin/incidents/trends')) return json({ body: INCIDENT_TRENDS_EMPTY })
     if (url.startsWith('/api/admin/incidents/')) {
       const id = decodeURIComponent(url.slice('/api/admin/incidents/'.length))
@@ -177,10 +143,6 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
         && (!p.get('component') || i.component === p.get('component')))
       return json({ body: { since: '2026-09-06T04:00:00Z', until: '2026-10-06T04:00:00Z', total: items.length,
         limit: 50, offset: 0, has_more: false, next_offset: null, items } })
-    }
-    if (url.startsWith('/api/admin/observations')) {
-      return json({ body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000,
-        truncated: false, resolution: 'raw', items: HOST_OBS } })
     }
     if (url === '/api/me') return json({ body: { id: 'me', username: 'root', role: 'admin', scopes } })
     if (url === '/api/admin/ops/services') return json({ body: LIST })
@@ -212,9 +174,7 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
             <Route index element={<Navigate to="services" replace />} />
             <Route path="services" element={<OpsServicesPage />} />
             <Route path="logs" element={<OpsLogsPage />} />
-            <Route path="jobs" element={<OpsJobsPage />} />
             <Route path="incidents" element={<OpsIncidentsPage />} />
-            <Route path="host" element={<OpsHostPage />} />
           </Route>
         </Routes>
         <LocationProbe />

@@ -155,7 +155,7 @@ test('維運 → 資料庫分頁', async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/database'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
-  expect(await screen.findByRole('heading', { level: 2, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { level: 1, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
 }, 15000)
 
 test('舊書籤 /monitor 導回檢索頁（導入監控已搬進管理後台）', async () => {

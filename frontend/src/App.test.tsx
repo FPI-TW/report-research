@@ -186,7 +186,8 @@ test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常�
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/pipeline'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByText('管線正常', {}, { timeout: 15000 })).toBeInTheDocument()
-  // 經代理的請求只有外殼導覽燈號要的服務清單；管線頁自己不碰代理，代理回 503 也不影響它。
+  // 經代理的請求只有外殼導覽燈號要的服務清單與依賴圖；管線頁自己不碰代理，代理回 503 也不影響它。
+  const SHELL_SIGNALS = ['/api/admin/ops/services', '/api/admin/ops/dependencies']
   const agentCalls = fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/admin/ops'))
-  expect(agentCalls.every(u => u === '/api/admin/ops/services')).toBe(true)
+  expect(agentCalls.every(u => SHELL_SIGNALS.includes(u))).toBe(true)
 }, 15000)

@@ -1,13 +1,14 @@
 import type { AnalyticsCell, AnalyticsSpan, AnalyticsTopList } from '../../../lib/generated/adminApi'
 
-/** 範圍選項（天數，含今天）。後端上限 731 天。 */
+/** 範圍選項（天數，含今天；分段切換用，所以值是字串）。後端上限 731 天。 */
 export const RANGES = [
-  { days: 7, label: '最近 7 天' },
-  { days: 30, label: '最近 30 天' },
-  { days: 90, label: '最近 90 天' },
-  { days: 180, label: '最近 180 天' },
-  { days: 365, label: '最近 365 天' },
+  { value: '7', label: '7 天' },
+  { value: '30', label: '30 天' },
+  { value: '90', label: '90 天' },
+  { value: '180', label: '180 天' },
+  { value: '365', label: '1 年' },
 ] as const
+export type RangeDays = (typeof RANGES)[number]['value']
 
 export const fmtInt = (n: number | null | undefined): string => (n == null ? '—' : n.toLocaleString('zh-TW'))
 

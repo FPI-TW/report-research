@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import type { AnalyticsCell, AnalyticsTopList } from '../../../lib/generated/adminApi'
+import { Card } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
+import type { AnalyticsCell, AnalyticsOverviewResponse, AnalyticsTopList } from '../../../lib/generated/adminApi'
 import { BarChart, LineChart } from './AnalyticsCharts'
 import {
   AUDIT_ACTION_LABELS, ROUTE_TITLES, cellText, cellTitle, fmtInt, fmtMs, fmtScore, hiddenNote, routeValueLabel,
@@ -9,7 +11,6 @@ import {
   type AnalyticsQuery, useAnalyticsOperations, useAnalyticsOverview, useAnalyticsQuality, useAnalyticsRoutes,
   useAnalyticsTop,
 } from './useAnalytics'
-import adminStyles from '../Admin.module.css'
 import styles from './Analytics.module.css'
 
 function messageOf(err: unknown): string {
@@ -21,69 +22,80 @@ function Loading<T>({ q, what, children }: {
   what: string
   children: (data: T) => ReactNode
 }) {
-  if (q.isPending) return <p className={adminStyles.idle}>載入中…</p>
+  if (q.isPending) return <p className={c.empty}>載入中…</p>
   if (q.isError || q.data === undefined) {
-    return <p className={adminStyles.error} role="alert">{what}載入失敗：{messageOf(q.error)}</p>
+    return <div className={c.cardBody}><p className={c.error} role="alert">{what}載入失敗：{messageOf(q.error)}</p></div>
   }
   return <>{children(q.data)}</>
 }
 
 function Stat({ name, value, hint }: { name: string; value: string; hint?: string }) {
   return (
-    <div className={styles.stat} aria-label={name}>
-      <div className={styles.statName}>{name}</div>
-      <div className={styles.statValue}>{value}</div>
-      {hint && <div className={styles.statHint}>{hint}</div>}
+    <div className={c.tile} role="group" aria-label={name}>
+      <span className={c.tileLabel}>{name}</span>
+      <span className={`${c.tileValue} ${styles.statValue}`}>{value}</span>
+      {hint && <span className={c.tileSub} title={hint}>{hint}</span>}
     </div>
   )
 }
 
-/** 總覽：卡片＋每日趨勢。總量不設門檻。 */
+/** 總覽：數字磚＋每日趨勢。總量不設門檻。 */
 export function OverviewSection({ query }: { query: AnalyticsQuery }) {
   const q = useAnalyticsOverview(query)
   return (
-    <section className={adminStyles.card} aria-labelledby="analytics-overview-title">
-      <h2 id="analytics-overview-title" className={adminStyles.ctitle}>總覽</h2>
-      <Loading q={q} what="總覽">
-        {d => {
-          const days = d.daily.map(p => p.day)
-          return (
-            <>
-              <div className={styles.cards}>
-                <Stat name="問答數" value={fmtInt(d.totals.questions)} hint={`其中停止 ${fmtInt(d.totals.stopped)}`} />
-                <Stat name="單日活躍人數（最高）" value={fmtInt(d.totals.active_users_peak)}
-                  hint="問答或閱讀、原檔、搜尋的不重複人數" />
-                <Stat name="期間不重複使用者" value={fmtInt(d.totals.distinct_users_live)}
-                  hint={d.totals.distinct_users_live == null ? '只在即時段可算' : '即時段'} />
-                <Stat name="閱讀／原檔／搜尋" value={`${fmtInt(d.totals.reading)}／${fmtInt(d.totals.report_file)}／${fmtInt(d.totals.search)}`}
-                  hint="成功開啟的次數" />
-                <Stat name="回答延遲 p50／p95" value={`${fmtMs(d.latency.p50_ms)}／${fmtMs(d.latency.p95_ms)}`}
-                  hint={`即時段 ${fmtInt(d.latency.n)} 題，不含停止`} />
-                <Stat name="首字時間 p50／p95" value={`${fmtMs(d.latency.thinking_p50_ms)}／${fmtMs(d.latency.thinking_p95_ms)}`} />
-              </div>
-              <ul className={styles.sources} aria-label="資料來源">
-                {d.range.spans.map(s => <li key={s.source}>{spanText(s)}</li>)}
-              </ul>
-              {d.totals.missing_days > 0 && (
-                <p className={styles.warn}>
-                  有 {d.totals.missing_days} 天還沒有每晚彙總（圖上灰色）：確認 report-mark-analytics-rollup.timer 有在跑，
-                  或以 scripts/analytics_rollup.py --backfill 補上。
-                </p>
-              )}
-              <div className={adminStyles.spacer} />
-              <div className={styles.charts}>
-                <BarChart title="每日問答數" days={days} values={d.daily.map(p => p.questions ?? null)} />
-                <BarChart title="每日活躍人數" days={days} values={d.daily.map(p => p.active_users ?? null)} />
-                <BarChart title="每日閱讀次數" days={days} values={d.daily.map(p => p.reading)} />
-                <LineChart title="每日回答延遲" days={days} format={fmtMs}
-                  a={{ label: 'p50', values: d.daily.map(p => p.latency_p50_ms ?? null) }}
-                  b={{ label: 'p95', values: d.daily.map(p => p.latency_p95_ms ?? null) }} />
-              </div>
-            </>
-          )
-        }}
-      </Loading>
+    <section className={styles.overview} aria-label="總覽">
+      {q.isPending ? (
+        <div className={c.card}><p className={c.empty}>載入中…</p></div>
+      ) : q.isError || q.data === undefined ? (
+        <div className={c.card}>
+          <div className={c.cardBody}><p className={c.error} role="alert">總覽載入失敗：{messageOf(q.error)}</p></div>
+        </div>
+      ) : <Overview d={q.data} />}
     </section>
+  )
+}
+
+function Overview({ d }: { d: AnalyticsOverviewResponse }) {
+  const days = d.daily.map(p => p.day)
+  const today = d.range.today
+  return (
+    <>
+      <div className={styles.stats}>
+        <Stat name="問答數" value={fmtInt(d.totals.questions)} hint={`其中停止 ${fmtInt(d.totals.stopped)}`} />
+        <Stat name="單日活躍人數（最高）" value={fmtInt(d.totals.active_users_peak)}
+          hint="問答或閱讀、原檔、搜尋的不重複人數" />
+        <Stat name="期間不重複使用者" value={fmtInt(d.totals.distinct_users_live)}
+          hint={d.totals.distinct_users_live == null ? '只在即時段可算' : '即時段'} />
+        <Stat name="閱讀／原檔／搜尋" value={`${fmtInt(d.totals.reading)}／${fmtInt(d.totals.report_file)}／${fmtInt(d.totals.search)}`}
+          hint="成功開啟的次數" />
+        <Stat name="回答延遲 p50／p95" value={`${fmtMs(d.latency.p50_ms)}／${fmtMs(d.latency.p95_ms)}`}
+          hint={`即時段 ${fmtInt(d.latency.n)} 題，不含停止`} />
+        <Stat name="首字時間 p50／p95" value={`${fmtMs(d.latency.thinking_p50_ms)}／${fmtMs(d.latency.thinking_p95_ms)}`} />
+      </div>
+      <Card title="每日趨勢" labelledBy="analytics-daily-title"
+        right={(
+          <ul className={styles.sources} aria-label="資料來源">
+            {d.range.spans.map(s => <li key={s.source}>{spanText(s)}</li>)}
+          </ul>
+        )}>
+        <div className={c.cardBody}>
+          {d.totals.missing_days > 0 && (
+            <p className={`${c.banner} ${styles.missing}`} data-tone="warn">
+              有 {d.totals.missing_days} 天還沒有每晚彙總（圖上灰色）：確認 report-mark-analytics-rollup.timer 有在跑，
+              或以 scripts/analytics_rollup.py --backfill 補上。
+            </p>
+          )}
+          <div className={styles.charts}>
+            <BarChart title="每日問答數" days={days} today={today} values={d.daily.map(p => p.questions ?? null)} />
+            <BarChart title="每日活躍人數" days={days} today={today} values={d.daily.map(p => p.active_users ?? null)} />
+            <BarChart title="每日閱讀次數" days={days} today={today} values={d.daily.map(p => p.reading)} />
+            <LineChart title="每日回答延遲" days={days} format={fmtMs}
+              a={{ label: 'p50', values: d.daily.map(p => p.latency_p50_ms ?? null) }}
+              b={{ label: 'p95', values: d.daily.map(p => p.latency_p95_ms ?? null) }} />
+          </div>
+        </div>
+      </Card>
+    </>
   )
 }
 
@@ -98,9 +110,9 @@ function RankList({ title, list, minUsers, showKey = false, emptyText = '這段�
   const note = hiddenNote(list, minUsers)
   return (
     <div>
-      <h3 className={adminStyles.ctitle}>{title}</h3>
+      <h3 className={styles.listTitle}>{title}</h3>
       {list.cells.length === 0 ? (
-        <p className={adminStyles.idle}>{note ?? emptyText}</p>
+        <p className={styles.listEmpty}>{note ?? emptyText}</p>
       ) : (
         <ol className={styles.rank} aria-label={title}>
           {list.cells.map(c => <RankItem key={c.key} cell={c} max={max} minUsers={minUsers} showKey={showKey} />)}
@@ -133,13 +145,12 @@ function RankItem({ cell, max, minUsers, showKey }: { cell: AnalyticsCell; max: 
 export function TopSection({ query }: { query: AnalyticsQuery }) {
   const q = useAnalyticsTop(query)
   return (
-    <section className={adminStyles.card} aria-labelledby="analytics-top-title">
-      <h2 id="analytics-top-title" className={adminStyles.ctitle}>熱門標的與研報</h2>
+    <Card title="熱門標的與研報" labelledBy="analytics-top-title">
       <Loading q={q} what="熱門清單">
         {d => {
           const k = d.range.min_users
           return (
-            <div className={styles.lists}>
+            <div className={`${c.cardBody} ${styles.lists}`}>
               <RankList title="問答引用的標的" list={d.targets} minUsers={k} showKey />
               <RankList title="問答引用的研報" list={d.reports} minUsers={k} />
               <RankList title="問答引用的市場" list={d.markets} minUsers={k} showKey />
@@ -151,7 +162,7 @@ export function TopSection({ query }: { query: AnalyticsQuery }) {
           )
         }}
       </Loading>
-    </section>
+    </Card>
   )
 }
 
@@ -159,13 +170,12 @@ export function TopSection({ query }: { query: AnalyticsQuery }) {
 export function RoutesSection({ query }: { query: AnalyticsQuery }) {
   const q = useAnalyticsRoutes(query)
   return (
-    <section className={adminStyles.card} aria-labelledby="analytics-routes-title">
-      <h2 id="analytics-routes-title" className={adminStyles.ctitle}>路由分布</h2>
+    <Card title="路由分布" labelledBy="analytics-routes-title">
       <Loading q={q} what="路由分布">
         {d => {
           const k = d.range.min_users
           return (
-            <>
+            <div className={c.cardBody}>
               <p className={styles.counters}>
                 <span>問答 <b>{fmtInt(d.questions)}</b></span>
                 <span>停止 <b>{fmtInt(d.stopped)}</b></span>
@@ -176,17 +186,17 @@ export function RoutesSection({ query }: { query: AnalyticsQuery }) {
                 {d.distributions.map(dist => (
                   <RankList key={dist.name} title={ROUTE_TITLES[dist.name] ?? dist.name} minUsers={k}
                     list={{
-                      cells: dist.cells.map(c => ({ ...c, label: routeValueLabel(dist.name, c.key) })),
+                      cells: dist.cells.map(cell => ({ ...cell, label: routeValueLabel(dist.name, cell.key) })),
                       suppressed_count: dist.suppressed_count, complementary_count: dist.complementary_count,
                       truncated: false,
                     }} />
                 ))}
               </div>
-            </>
+            </div>
           )
         }}
       </Loading>
-    </section>
+    </Card>
   )
 }
 
@@ -194,19 +204,18 @@ export function RoutesSection({ query }: { query: AnalyticsQuery }) {
 export function QualitySection({ query }: { query: AnalyticsQuery }) {
   const q = useAnalyticsQuality(query)
   return (
-    <section className={adminStyles.card} aria-labelledby="analytics-quality-title">
-      <h2 id="analytics-quality-title" className={adminStyles.ctitle}>品質趨勢（每週）</h2>
+    <Card title="品質趨勢（每週）" labelledBy="analytics-quality-title">
       <Loading q={q} what="品質趨勢">
         {d => {
           return (
             <>
-              <p className={styles.counters}>
+              <p className={`${styles.counters} ${styles.countersBar}`}>
                 <span>現行 judge <b>{d.judge_model}</b></span>
                 <span>低分門檻 <b>{d.faithfulness_min}</b></span>
                 {d.other_judge_checked > 0 && <span>其他 judge 量的 {fmtInt(d.other_judge_checked)} 筆不計入分數</span>}
               </p>
-              <div className={adminStyles.tableWrap}>
-                <table className={adminStyles.table} aria-label="每週品質">
+              <div className={c.tableWrap}>
+                <table className={c.table} aria-label="每週品質">
                   <thead>
                     <tr>
                       <th>週（週一起）</th><th>問答</th><th>已查核</th><th>平均忠實度</th><th>低於門檻</th>
@@ -216,14 +225,14 @@ export function QualitySection({ query }: { query: AnalyticsQuery }) {
                   <tbody>
                     {d.weeks.map(w => (
                       <tr key={w.week_start}>
-                        <td className={adminStyles.num}>{w.week_start}{w.partial && <span className={adminStyles.muted}>（不完整）</span>}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.questions)}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.judge_checked)}</td>
-                        <td className={adminStyles.num}>{fmtScore(w.avg_score)}{w.score_n > 0 && <span className={adminStyles.muted}>（{w.score_n}）</span>}</td>
-                        <td className={adminStyles.num}>{w.below_min ? <b>{fmtInt(w.below_min)}</b> : 0}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.degraded)}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.likes)}</td>
-                        <td className={adminStyles.num}>{w.dislikes ? <b>{fmtInt(w.dislikes)}</b> : 0}</td>
+                        <td className={c.num}>{w.week_start}{w.partial && <span className={c.muted}>（不完整）</span>}</td>
+                        <td className={c.num}>{fmtInt(w.questions)}</td>
+                        <td className={c.num}>{fmtInt(w.judge_checked)}</td>
+                        <td className={c.num}>{fmtScore(w.avg_score)}{w.score_n > 0 && <span className={c.muted}>（{w.score_n}）</span>}</td>
+                        <td className={c.num}>{w.below_min ? <b>{fmtInt(w.below_min)}</b> : 0}</td>
+                        <td className={c.num}>{fmtInt(w.degraded)}</td>
+                        <td className={c.num}>{fmtInt(w.likes)}</td>
+                        <td className={c.num}>{w.dislikes ? <b>{fmtInt(w.dislikes)}</b> : 0}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -233,7 +242,7 @@ export function QualitySection({ query }: { query: AnalyticsQuery }) {
           )
         }}
       </Loading>
-    </section>
+    </Card>
   )
 }
 
@@ -241,19 +250,18 @@ export function QualitySection({ query }: { query: AnalyticsQuery }) {
 export function OperationsSection({ query }: { query: AnalyticsQuery }) {
   const q = useAnalyticsOperations(query)
   return (
-    <section className={adminStyles.card} aria-labelledby="analytics-ops-title">
-      <h2 id="analytics-ops-title" className={adminStyles.ctitle}>上傳與審核量</h2>
+    <Card title="上傳與審核量" labelledBy="analytics-ops-title">
       <Loading q={q} what="上傳與審核量">
         {d => {
           return (
             <>
-              <p className={styles.counters}>
+              <p className={`${styles.counters} ${styles.countersBar}`}>
                 {d.audit_actions.map(a => (
                   <span key={a.action}>{AUDIT_ACTION_LABELS[a.action] ?? a.action} <b>{fmtInt(a.count)}</b></span>
                 ))}
               </p>
-              <div className={adminStyles.tableWrap}>
-                <table className={adminStyles.table} aria-label="每週上傳與審核">
+              <div className={c.tableWrap}>
+                <table className={c.table} aria-label="每週上傳與審核">
                   <thead>
                     <tr>
                       <th>週（週一起）</th><th>收檔</th><th>發布</th><th>退回</th><th>感染</th><th>失敗</th>
@@ -263,14 +271,14 @@ export function OperationsSection({ query }: { query: AnalyticsQuery }) {
                   <tbody>
                     {d.weeks.map(w => (
                       <tr key={w.week_start}>
-                        <td className={adminStyles.num}>{w.week_start}{w.partial && <span className={adminStyles.muted}>（不完整）</span>}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.uploads_received)}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.uploads_published)}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.uploads_rejected)}</td>
-                        <td className={adminStyles.num}>{w.uploads_infected ? <b>{fmtInt(w.uploads_infected)}</b> : 0}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.uploads_failed)}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.reviews)}</td>
-                        <td className={adminStyles.num}>{fmtInt(w.qa_content_reads)}</td>
+                        <td className={c.num}>{w.week_start}{w.partial && <span className={c.muted}>（不完整）</span>}</td>
+                        <td className={c.num}>{fmtInt(w.uploads_received)}</td>
+                        <td className={c.num}>{fmtInt(w.uploads_published)}</td>
+                        <td className={c.num}>{fmtInt(w.uploads_rejected)}</td>
+                        <td className={c.num}>{w.uploads_infected ? <b>{fmtInt(w.uploads_infected)}</b> : 0}</td>
+                        <td className={c.num}>{fmtInt(w.uploads_failed)}</td>
+                        <td className={c.num}>{fmtInt(w.reviews)}</td>
+                        <td className={c.num}>{fmtInt(w.qa_content_reads)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -280,6 +288,6 @@ export function OperationsSection({ query }: { query: AnalyticsQuery }) {
           )
         }}
       </Loading>
-    </section>
+    </Card>
   )
 }

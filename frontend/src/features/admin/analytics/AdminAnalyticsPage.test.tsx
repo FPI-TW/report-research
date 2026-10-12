@@ -99,6 +99,17 @@ function mount(scopes = ['admin', 'analytics.read'], fail: string | null = null)
   return fetchMock
 }
 
+test('頁首：kicker、標題與一句摘要；隱私說明收在「說明」後面', async () => {
+  mount()
+  expect(await screen.findByRole('heading', { level: 1, name: '使用分析' })).toBeInTheDocument()
+  expect(screen.getByText('洞察')).toBeInTheDocument()
+  expect(screen.getByText(/只有彙總，沒有依使用者拆分的視圖/)).toBeInTheDocument()
+  expect(screen.queryByText(/會再隱藏一格數值最小的/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '說明' }))
+  expect(screen.getByText(/不重複使用者少於 3 位時顯示「<3」/)).toBeInTheDocument()
+  expect(screen.getByText(/會再隱藏一格數值最小的（標示「隱藏」）/)).toBeInTheDocument()
+})
+
 test('總覽卡片、資料來源、缺彙總的提示與趨勢圖', async () => {
   mount()
   const overview = await screen.findByRole('region', { name: '總覽' })
@@ -109,7 +120,12 @@ test('總覽卡片、資料來源、缺彙總的提示與趨勢圖', async () =>
   expect(sources).toHaveTextContent('2026-01-01 ～ 2026-07-09：每晚彙總')
   expect(sources).toHaveTextContent('2026-07-10 ～ 2026-10-07：即時查詢')
   expect(within(overview).getByText(/有 2 天還沒有每晚彙總/)).toBeInTheDocument()
-  expect(within(overview).getByRole('img', { name: /每日問答數：3 天，合計 8/ })).toBeInTheDocument()
+  const chart = within(overview).getByRole('img', { name: /每日問答數：3 天，合計 8/ })
+  expect(chart).toBeInTheDocument()
+  // 缺彙總的那一天是灰柱（沒有值）；最後一天是今天，用金色標出來。
+  const bars = [...chart.querySelectorAll('rect')]
+  expect(bars.map(r => r.querySelector('title')!.textContent)).toEqual(['2026-10-05：沒有資料', '2026-10-06：4', '2026-10-07：4'])
+  expect(bars.map(r => r.hasAttribute('data-today'))).toEqual([false, false, true])
 })
 
 test('k 門檻與互補抑制：未達門檻顯示「<3」、互補抑制顯示「隱藏」，開放詞彙只說另有幾項', async () => {
@@ -152,7 +168,10 @@ test('切換範圍時以台北日期送 since；單一區塊失敗只影響那�
   const fetchMock = mount(['admin', 'analytics.read'], '/api/admin/analytics/quality')
   expect(await screen.findByRole('alert')).toHaveTextContent('品質趨勢載入失敗：資料庫暫時無法使用')
   expect(await screen.findByLabelText('問答數')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('範圍'), { target: { value: '90' } })
+  const ranges = within(screen.getByRole('group', { name: '範圍' }))
+  expect(ranges.getByRole('button', { name: '30 天' })).toHaveAttribute('aria-pressed', 'true')
+  expect(ranges.getAllByRole('button').map(el => el.textContent)).toEqual(['7 天', '30 天', '90 天', '180 天', '1 年'])
+  fireEvent.click(ranges.getByRole('button', { name: '90 天' }))
   const since = sinceForDays(90)
   await waitFor(() => expect(fetchMock.mock.calls.some(([u]) =>
     String(u) === `/api/admin/analytics/overview?since=${since}`)).toBe(true))

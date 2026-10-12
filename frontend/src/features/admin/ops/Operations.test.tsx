@@ -4,7 +4,6 @@ import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router
 import { afterEach, expect, test, vi } from 'vitest'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
-import OpsOverviewPage from './OpsOverviewPage'
 import OpsHostPage from './OpsHostPage'
 import OpsJobsPage from './OpsJobsPage'
 import OpsIncidentsPage from './OpsIncidentsPage'
@@ -180,8 +179,7 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/admin/operations" element={<OperationsLayout />}>
-            <Route index element={<Navigate to="overview" replace />} />
-            <Route path="overview" element={<OpsOverviewPage />} />
+            <Route index element={<Navigate to="services" replace />} />
             <Route path="services" element={<OpsServicesPage />} />
             <Route path="services/:name" element={<OpsServiceDetailPage />} />
             <Route path="logs" element={<OpsLogsPage />} />
@@ -204,36 +202,12 @@ const UNAVAILABLE: Override = url => url.startsWith('/api/admin/ops')
   ? { status: 503, body: { detail: '維運代理不可用：維運代理未啟動（找不到 /run/x.sock）', code: 'ops_agent_unavailable' } }
   : undefined
 
-test('/admin/operations 導向總覽；子導覽十二個分頁，都已接上 API（沒有「尚未提供」）', async () => {
+test('/admin/operations 導向服務；切頁交給外殼的次級面板（這裡沒有子導覽）', async () => {
   mount('/admin/operations')
-  expect(await screen.findByRole('heading', { name: '總覽' })).toBeInTheDocument()
-  expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/overview')
-  const tabs = within(screen.getByRole('navigation', { name: '維運子導覽' }))
-  expect(tabs.getAllByRole('link').map(a => a.getAttribute('href'))).toEqual([
-    '/admin/operations/overview', '/admin/operations/pipeline', '/admin/operations/services',
-    '/admin/operations/dependencies',
-    '/admin/operations/jobs',
-    '/admin/operations/incidents', '/admin/operations/logs', '/admin/operations/host',
-    '/admin/operations/data-health', '/admin/operations/llm-usage', '/admin/operations/diagnostics',
-    '/admin/operations/database',
-  ])
-  expect(tabs.getByRole('link', { name: /總覽/ })).toHaveAttribute('aria-current', 'page')
-  for (const name of [/管線/, /服務/, /依賴圖/, /排程工作/, /事件/, /主機/, /資料健康/, /LLM 用量/, /診斷/, /資料庫/]) {
-    expect(tabs.getByRole('link', { name })).not.toHaveTextContent('尚未提供')
-  }
-})
-
-test('總覽：環境與主機、各層運作中／總數、需要注意的服務（核心停著也算）', async () => {
-  mount('/admin/operations/overview')
-  expect(await screen.findByText('office-host')).toBeInTheDocument()
-  expect(screen.getByText('production')).toBeInTheDocument()
-  expect(within(screen.getByLabelText('核心服務')).getByText('2／3')).toBeInTheDocument()
-  expect(within(screen.getByLabelText('重要服務')).getByText('0／2')).toBeInTheDocument()
-  const problems = within(screen.getByRole('region', { name: '需要注意' }))
-  expect(problems.getByRole('link', { name: 'nginx' })).toHaveAttribute('href', '/admin/operations/services/nginx')
-  expect(problems.getByRole('link', { name: 'backup' })).toBeInTheDocument()
-  expect(problems.queryByRole('link', { name: 'web' })).not.toBeInTheDocument()
-  expect(problems.queryByRole('link', { name: 'sync' })).not.toBeInTheDocument()
+  expect(await screen.findByRole('region', { name: '核心服務' })).toBeInTheDocument()
+  expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/services')
+  expect(screen.getByRole('heading', { level: 1, name: '維運' })).toBeInTheDocument()
+  expect(screen.queryByRole('navigation', { name: '維運子導覽' })).not.toBeInTheDocument()
 })
 
 test('服務：依 tier 分組，顯示 ActiveState、Result、最近執行與 timer，連到詳情與日誌', async () => {
@@ -261,19 +235,17 @@ test('服務：依 tier 分組，顯示 ActiveState、Result、最近執行與 t
   expect(freshRow.queryByRole('link', { name: '日誌' })).not.toBeInTheDocument()
 })
 
-test('空清單：總覽與服務頁都說明 catalog 沒有服務', async () => {
+test('空清單：服務頁說明 catalog 沒有服務', async () => {
   const empty: Override = url => url === '/api/admin/ops/services' ? { body: { ...LIST, items: [] } } : undefined
   mount('/admin/operations/services', { override: empty })
   expect(await screen.findByText('Service Catalog 裡沒有任何服務')).toBeInTheDocument()
 })
 
-test('維運代理不可用（503）：總覽整頁換成降級說明與代理給的原因，不白屏', async () => {
-  mount('/admin/operations/overview', { override: UNAVAILABLE })
+test('維運代理不可用（503）：服務頁整頁換成降級說明與代理給的原因，不白屏', async () => {
+  mount('/admin/operations/services', { override: UNAVAILABLE })
   expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' })).toBeInTheDocument()
   expect(screen.getByText(/找不到 \/run\/x.sock/)).toBeInTheDocument()
   expect(screen.getByText(/研報平台的其他功能不受影響/)).toBeInTheDocument()
-  // 子導覽還在，可以切去讀 DB 投影的分頁（排程工作、事件、主機不經代理）
-  expect(screen.getByRole('navigation', { name: '維運子導覽' })).toBeInTheDocument()
 })
 
 test('維運代理不可用（503）：服務頁與日誌頁同樣降級', async () => {
@@ -447,7 +419,7 @@ test('主機：最近一小時沒有觀測時給出明確說明', async () => {
 })
 
 test('沒有 ops.read：只顯示需要權限的說明，不打維運 API', async () => {
-  const fetchMock = mount('/admin/operations/overview', { scopes: ['admin'] })
+  const fetchMock = mount('/admin/operations/services', { scopes: ['admin'] })
   expect(await screen.findByRole('heading', { name: '需要「維運」權限' })).toBeInTheDocument()
   expect(opsCalls(fetchMock)).toEqual([])
 })

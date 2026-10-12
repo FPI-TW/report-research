@@ -244,7 +244,7 @@ function mountShell(scopes: string[]) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/admin/audit']}>
+      <MemoryRouter initialEntries={['/admin/users']}>
         <Routes>
           <Route path="/admin" element={<AdminShell />}>
             <Route path="*" element={<div>其他管理頁</div>} />

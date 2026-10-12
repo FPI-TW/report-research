@@ -88,7 +88,6 @@ function mount(body: unknown = DIAG) {
 test('診斷頁：分區顯示摘要、版本、schema、連通性', async () => {
   mount()
   expect(await screen.findByRole('heading', { name: '診斷' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '診斷' })).toHaveAttribute('href', '/admin/operations/diagnostics')
 
   const summary = screen.getByRole('list', { name: '診斷摘要' })
   expect(within(summary).getByText('DB 落後')).toBeInTheDocument()

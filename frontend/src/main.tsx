@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MotionConfig } from 'motion/react'
 import { QueryClientProvider } from '@tanstack/react-query'
+import { applyAdminThemeEarly } from './lib/adminTheme'
 import { tfTransition } from './lib/motionTokens'
 import { createQueryClient } from './lib/queryClient'
 import './styles/tokens.css'
@@ -9,6 +10,9 @@ import './styles/tailwind.css'
 import App from './App'
 
 const queryClient = createQueryClient()
+
+// 直接開管理後台時先把主題寫上 <html>，外殼的 chunk 下載完之前不會先閃一次亮底。
+applyAdminThemeEarly()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

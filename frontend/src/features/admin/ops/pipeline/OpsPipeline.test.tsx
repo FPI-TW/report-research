@@ -47,11 +47,10 @@ function mount(replies: Body[], opts: { scopes?: string[] } = {}) {
 const progressCalls = (f: ReturnType<typeof mount>) => f.mock.calls.filter(([u]) => u === '/api/progress').length
 const card = (name: string) => within(screen.getByRole('region', { name }))
 
-test('維運子導覽有「管線」且是目前分頁；一切正常 → 管線正常、沒有待處理清單', async () => {
+test('一切正常 → 管線正常、沒有待處理清單（切頁在外殼，這裡沒有子導覽）', async () => {
   mount([progressFixture()])
   expect(await screen.findByText('管線正常')).toBeInTheDocument()
-  const tabs = within(screen.getByRole('navigation', { name: '維運子導覽' }))
-  expect(tabs.getByRole('link', { name: '管線' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.queryByRole('navigation', { name: '維運子導覽' })).not.toBeInTheDocument()
   const summary = card('管線狀態')
   expect(summary.queryByRole('list', { name: '需要處理的項目' })).not.toBeInTheDocument()
   expect(summary.getByText('14:32:05')).toBeInTheDocument()

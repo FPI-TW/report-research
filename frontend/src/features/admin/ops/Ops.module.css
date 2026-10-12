@@ -1,16 +1,4 @@
-/* 維運頁（/app/admin/operations/*）。卡片、表格沿用 Admin.module.css；這裡只有子導覽、狀態膠囊與日誌。 */
-.tabs {
-  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px;
-  border-radius: var(--tf-radius-md); background: var(--tf-fill-subtle); align-self: flex-start;
-}
-.tab {
-  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
-  border-radius: var(--tf-radius-md); color: var(--tf-text-2); font-size: 13px; text-decoration: none; white-space: nowrap;
-}
-.tab:hover { color: var(--tf-text-1); background: rgba(0, 0, 0, 0.05); }
-.tabOn, .tabOn:hover { background: var(--tf-surface); color: var(--tf-text-1); box-shadow: var(--tf-shadow-xs); }
-.soon { font-size: 10.5px; color: var(--tf-text-4); }
-
+/* 維運頁（/app/admin/operations/*）。卡片、表格沿用 Admin.module.css；這裡只有狀態膠囊與日誌。 */
 .pill { display: inline-block; border-radius: var(--tf-radius-pill); font-size: 11.5px; font-weight: 600; padding: 2px 9px; white-space: nowrap; }
 .sRunning { background: var(--tf-success-soft); color: var(--tf-success-text); }
 .sIdle { background: var(--tf-fill-subtle); color: var(--tf-text-3); }

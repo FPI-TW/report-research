@@ -1,0 +1,79 @@
+/* 總覽（/app/admin）。主控台的版面語彙：panel 底、l1 外框、8px 圓角；色全部走 --ac-*。 */
+.page { height: 100%; overflow-y: auto; }
+.inner { padding: 24px 28px 40px; display: flex; flex-direction: column; gap: 16px; }
+
+.header { display: flex; flex-direction: column; gap: 6px; }
+.title { margin: 0; font-size: 22px; font-weight: 600; color: var(--ac-t1); }
+.summary { margin: 0; font-size: 13px; color: var(--ac-t4); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px 14px 12px;
+  background: var(--ac-panel); border: 1px solid var(--ac-l1); border-radius: 8px;
+  color: inherit; text-decoration: none;
+}
+.tile:hover { border-color: var(--ac-l5); color: inherit; }
+.tileLabel { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ac-t4); }
+.tileValue { font-family: var(--ac-mono); font-size: 19px; font-weight: 500; color: var(--ac-t1); white-space: nowrap; }
+.tileValue[data-tone='bad'] { color: var(--ac-badt); }
+.tileValue[data-tone='warn'] { color: var(--ac-warnt); }
+.tileSub { font-size: 11.5px; color: var(--ac-t5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.card { background: var(--ac-panel); border: 1px solid var(--ac-l1); border-radius: 8px; min-width: 0; }
+.cardHead { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--ac-l1); }
+.cardTitle { margin: 0; font-size: 13px; font-weight: 600; color: var(--ac-t1); }
+.cardLink { margin-left: auto; font-size: 12px; color: var(--ac-goldt); text-decoration: none; }
+.cardLink:hover { color: var(--ac-goldt); text-decoration: underline; }
+.badge {
+  font-family: var(--ac-mono); font-size: 11px; padding: 1px 6px; border-radius: 4px;
+  background: var(--ac-badp); color: var(--ac-badt);
+}
+.empty { margin: 0; padding: 16px; font-size: 12.5px; color: var(--ac-t5); }
+
+.alerts { list-style: none; margin: 0; padding: 0; }
+.alert { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--ac-l2); }
+.alert:last-child { border-bottom: none; }
+.alertLamp { margin-top: 6px; }
+.alertBody { flex: 1; min-width: 0; }
+.alertTitle { font-size: 13px; color: var(--ac-t1); }
+.alertDetail { margin-top: 3px; font-size: 11.5px; color: var(--ac-t5); overflow-wrap: anywhere; }
+.rowBtn {
+  flex: none; height: 26px; padding: 0 10px; display: inline-flex; align-items: center;
+  border: 1px solid var(--ac-l3); border-radius: 5px; background: var(--ac-btn);
+  color: var(--ac-t2); font-size: 12px; text-decoration: none; white-space: nowrap;
+}
+.rowBtn:hover { background: var(--ac-btnh); border-color: var(--ac-l5); color: var(--ac-t1); }
+
+.queues { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.queue {
+  display: flex; flex-direction: column; gap: 4px; padding: 16px; min-width: 0;
+  border-right: 1px solid var(--ac-l2); color: inherit; text-decoration: none;
+}
+.queue:last-child { border-right: none; }
+.queue:hover { background: var(--ac-hover); color: inherit; }
+.queueN { font-family: var(--ac-mono); font-size: 24px; font-weight: 500; line-height: 1.1; color: var(--ac-t1); }
+.queueLabel { font-size: 12.5px; color: var(--ac-t3); }
+.queueMeta { font-size: 11.5px; color: var(--ac-t5); }
+
+.tiers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tier { padding: 14px 16px; border-right: 1px solid var(--ac-l2); min-width: 0; }
+.tier:last-child { border-right: none; }
+.tierName { font-size: 12px; color: var(--ac-t4); }
+.tierCount { margin-top: 4px; font-family: var(--ac-mono); font-size: 20px; color: var(--ac-t1); }
+.tierCount[data-bad] { color: var(--ac-badt); }
+.tierHint { margin-top: 2px; font-size: 11.5px; color: var(--ac-t5); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chipBad {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px;
+  border: 1px solid var(--ac-badbc); border-radius: 4px; background: var(--ac-badp);
+  font-family: var(--ac-mono); font-size: 10.5px; color: var(--ac-badt); text-decoration: none;
+}
+.chipBad:hover { color: var(--ac-badt); border-color: var(--ac-bad); }
+
+@media (max-width: 900px) {
+  .inner { padding: 16px; }
+  .columns, .tiers { grid-template-columns: minmax(0, 1fr); }
+  .tier { border-right: none; border-bottom: 1px solid var(--ac-l2); }
+  .tier:last-child { border-bottom: none; }
+}

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from 'react'
-import { createBrowserRouter, Navigate } from 'react-router'
+import { createBrowserRouter, Navigate, useLocation, useParams } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { AppShell } from './components/shell/AppShell'
 import { RouteError } from './components/shell/RouteError'
@@ -14,6 +14,7 @@ const ReportPage = lazy(routeLoaders.report)
 // 管理後台：外殼 AdminShell 與各頁 default export 都包 RequireAdmin（顯示層守門）；
 // 授權在後端 /api/admin/*、/api/review/*。
 const AdminShell = lazy(routeLoaders.adminShell)
+const AdminOverviewPage = lazy(routeLoaders.adminOverview)
 const AdminUsersPage = lazy(routeLoaders.adminUsers)
 const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
@@ -21,9 +22,8 @@ const AdminReportsPage = lazy(routeLoaders.adminReports)
 const AdminUploadsPage = lazy(routeLoaders.adminUploads)
 const AdminUploadDetailPage = lazy(routeLoaders.adminUpload)
 const AdminApiClientsPage = lazy(routeLoaders.adminApiClients)
-// 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
+// 維運（/admin/operations/*）：外殼（ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
-const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
 const OpsPipelinePage = lazy(routeLoaders.adminOpsPipeline)
 const OpsServicesPage = lazy(routeLoaders.adminOpsServices)
 const OpsServiceDetailPage = lazy(routeLoaders.adminOpsService)
@@ -44,6 +44,13 @@ const AdminFlagsPage = lazy(routeLoaders.adminFlags)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
+}
+
+/** `/admin/ops/*` 是 `/admin/operations/*` 的短別名：子路徑、query 與 hash 原樣帶過去。 */
+function OpsAliasRedirect() {
+  const rest = useParams()['*'] ?? ''
+  const { search, hash } = useLocation()
+  return <Navigate to={{ pathname: `/admin/operations${rest ? `/${rest}` : ''}`, search, hash }} replace />
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -83,7 +90,7 @@ export const routes = [
       {
         errorElement: <RouteError />,
         children: [
-          { index: true, element: <Navigate to="/admin/users" replace /> },
+          { index: true, element: <Suspense><AdminOverviewPage /></Suspense> },
           { path: 'users', element: <Suspense><AdminUsersPage /></Suspense> },
           { path: 'reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
           { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
@@ -99,8 +106,9 @@ export const routes = [
             path: 'operations',
             element: <Suspense><OperationsLayout /></Suspense>,
             children: [
-              { index: true, element: <Navigate to="overview" replace /> },
-              { path: 'overview', element: <Suspense><OpsOverviewPage /></Suspense> },
+              { index: true, element: <Navigate to="services" replace /> },
+              // 維運總覽併進管理後台的總覽（/admin）；舊書籤導過去。
+              { path: 'overview', element: <Navigate to="/admin" replace /> },
               { path: 'pipeline', element: <Suspense><OpsPipelinePage /></Suspense> },
               { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
               { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
@@ -115,6 +123,7 @@ export const routes = [
               { path: 'database', element: <Suspense><OpsDatabasePage /></Suspense> },
             ],
           },
+          { path: 'ops/*', element: <OpsAliasRedirect /> },
           { path: '*', element: <NotFound /> },
         ],
       },

@@ -5,6 +5,7 @@ import { useFocusTrap } from '../../lib/useFocusTrap'
 import { Button } from './controls'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
+import { useRestoreFocus } from './useRestoreFocus'
 
 interface DialogProps {
   open: boolean
@@ -25,7 +26,7 @@ interface DialogProps {
 }
 
 /**
- * 主控台對話框的底：遮罩＋置中面板，portal 到 body，Esc 與點遮罩關閉，焦點鎖在面板內。
+ * 主控台對話框的底：遮罩＋置中面板，portal 到 body，Esc 與點遮罩關閉，焦點鎖在面板內，關閉後還給開啟前的元素。
  * 一般用 `ConfirmDialog`／`FormDialog`；內容特殊（例如只顯示一次的金鑰）才直接用這個。
  */
 export function Dialog({
@@ -34,6 +35,7 @@ export function Dialog({
   const locked = busyLocked || !dismissible
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  useRestoreFocus(panelRef, open)
   useFocusTrap(panelRef, open)
 
   // 焦點預設落在第一個輸入欄位（表單）；沒有欄位時留在 focus trap 選的第一顆按鈕（確認框的「取消」）。

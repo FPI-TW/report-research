@@ -10,7 +10,7 @@
 .back:hover { color: var(--ac-goldt); }
 @media (max-width: 600px) { .wrap { padding: 16px; } .card { padding: 20px; } }
 .action {
-  margin-top: 6px; height: 32px; padding: 0 14px; border: 1px solid var(--ac-gold); border-radius: 6px;
-  background: var(--ac-gold); color: var(--ac-ongold); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  margin-top: 6px; height: 32px; padding: 0 14px; border: 1px solid var(--ac-goldbtn); border-radius: 6px;
+  background: var(--ac-goldbtn); color: var(--ac-ongold); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
 .action:hover { filter: brightness(1.06); }

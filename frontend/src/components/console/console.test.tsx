@@ -89,6 +89,28 @@ describe('RowActions', () => {
     expect(more).toHaveFocus()
   })
 
+  it('選了選單項目：焦點先回到「更多」按鈕，項目開的對話框關閉後焦點還在那一顆', () => {
+    function Row() {
+      const [confirm, setConfirm] = useState(false)
+      return (
+        <>
+          <RowActions label="jason.wu 的更多操作" more={[{ label: '停用', onClick: () => setConfirm(true), danger: true }]} />
+          <ConfirmDialog open={confirm} title="停用「jason.wu」？" body="x" confirmLabel="停用"
+            onConfirm={() => setConfirm(false)} onCancel={() => setConfirm(false)} />
+        </>
+      )
+    }
+    render(<Row />)
+    const more = screen.getByRole('button', { name: 'jason.wu 的更多操作' })
+    fireEvent.click(more)
+    fireEvent.click(screen.getByRole('menuitem', { name: '停用' }))
+    const dlg = within(screen.getByRole('alertdialog'))
+    expect(dlg.getByRole('button', { name: '取消' })).toHaveFocus()
+    fireEvent.click(dlg.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(more).toHaveFocus()
+  })
+
   it('沒有更多項目就不畫「更多」', () => {
     render(<RowActions primary={{ label: '日誌', onClick: () => {} }} more={[false, null]} />)
     expect(screen.queryByRole('button', { name: /更多/ })).not.toBeInTheDocument()
@@ -138,6 +160,104 @@ describe('ConfirmDialog 與 FormDialog', () => {
     fireEvent.submit(input.closest('form')!)
     expect(onSubmit).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: '隱藏' })).toBeDisabled()
+  })
+})
+
+describe('關閉浮層後焦點回到原處', () => {
+  function Opener({ removeTrigger }: { removeTrigger?: boolean }) {
+    const [open, setOpen] = useState(false)
+    const [gone, setGone] = useState(false)
+    const close = () => { setOpen(false); if (removeTrigger) setGone(true) }
+    return (
+      <>
+        <button type="button">別的按鈕</button>
+        {!gone && <button type="button" onClick={() => setOpen(true)}>建立帳號</button>}
+        <FormDialog open={open} title="建立帳號" submitLabel="建立" onSubmit={close} onClose={close}>
+          <Field label="帳號"><input /></Field>
+        </FormDialog>
+      </>
+    )
+  }
+
+  it('對話框：Esc、取消、送出之後，焦點都回到開它的那顆按鈕', () => {
+    render(<Opener />)
+    const trigger = screen.getByRole('button', { name: '建立帳號' })
+    for (const close of [
+      () => fireEvent.keyDown(document, { key: 'Escape' }),
+      () => fireEvent.click(screen.getByRole('button', { name: '取消' })),
+      () => fireEvent.submit(screen.getByLabelText('帳號').closest('form')!),
+    ]) {
+      trigger.focus()
+      fireEvent.click(trigger)
+      expect(screen.getByLabelText('帳號')).toHaveFocus()
+      close()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(trigger).toHaveFocus()
+    }
+  })
+
+  it('原本的元素已經不在文件裡就不還原，也不會出錯', () => {
+    render(<Opener removeTrigger />)
+    const trigger = screen.getByRole('button', { name: '建立帳號' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).not.toBeInTheDocument()
+    expect(document.body).toHaveFocus()
+  })
+
+  it('疊著的對話框：上層關閉回到下層的按鈕，下層關閉回到頁面上的按鈕', () => {
+    function Stack() {
+      const [form, setForm] = useState(false)
+      const [confirm, setConfirm] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setForm(true)}>調整配額</button>
+          <Dialog open={form} onClose={() => setForm(false)} title="調整配額" closeButton>
+            <DialogActions><Button onClick={() => setConfirm(true)}>清除覆寫</Button></DialogActions>
+          </Dialog>
+          <ConfirmDialog open={confirm} title="清除覆寫？" body="x" confirmLabel="清除"
+            onConfirm={() => setConfirm(false)} onCancel={() => setConfirm(false)} />
+        </>
+      )
+    }
+    render(<Stack />)
+    const trigger = screen.getByRole('button', { name: '調整配額' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const inner = screen.getByRole('button', { name: '清除覆寫' })
+    inner.focus()
+    fireEvent.click(inner)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(inner).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('抽屜：關閉後焦點回到列內的入口按鈕', () => {
+    function List() {
+      const [service, setService] = useQueryParam('service')
+      return (
+        <>
+          <table><tbody><tr><td><button type="button" onClick={() => setService('web')}>report-mark-web</button></td></tr></tbody></table>
+          <Drawer open={service !== null} onClose={() => setService(null)} title="report-mark-web">
+            <DrawerSection>unit</DrawerSection>
+          </Drawer>
+        </>
+      )
+    }
+    render(<MemoryRouter initialEntries={['/admin/operations/services']}><List /></MemoryRouter>)
+    const entry = screen.getByRole('button', { name: 'report-mark-web' })
+    entry.focus()
+    fireEvent.click(entry)
+    expect(within(screen.getByRole('dialog', { name: 'report-mark-web' })).getByRole('button', { name: '關閉' })).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(entry).toHaveFocus()
   })
 })
 

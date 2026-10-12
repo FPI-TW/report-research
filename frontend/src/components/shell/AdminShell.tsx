@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { motion, useReducedMotion } from 'motion/react'
 import { Moon, Sun } from 'lucide-react'
@@ -58,7 +58,12 @@ export function AdminShell() {
   const elevated = useElevated(me.data?.elevated_until)
 
   const here = locate(domains, pathname)
+  // 不在導覽裡的網址（404）：次級面板退回第一個領域當導覽用，但圖示軌不標任何一格為目前所在。
   const domain = here?.domain ?? domains[0]
+  const railRef = useRef<HTMLElement>(null)
+  const panelNavRef = useRef<HTMLElement>(null)
+  useScrollCurrentIntoView(railRef, here?.domain.key)
+  useScrollCurrentIntoView(panelNavRef, here?.page.key)
 
   useEffect(() => {
     if (!ready) return
@@ -80,8 +85,8 @@ export function AdminShell() {
       <aside className={styles.rail}>
         <BrandLogo size={30} className={styles.logo} />
         {domains.length > 0 && (
-          <nav className={styles.domains} aria-label="管理領域">
-            {domains.map(d => <RailItem key={d.key} domain={d} on={d.key === domain?.key} signals={signals} />)}
+          <nav ref={railRef} className={styles.domains} aria-label="管理領域">
+            {domains.map(d => <RailItem key={d.key} domain={d} on={d.key === here?.domain.key} signals={signals} />)}
           </nav>
         )}
         <div className={styles.railSpacer} />
@@ -101,7 +106,7 @@ export function AdminShell() {
             <div className={styles.panelKicker}>廷豐智能研報・管理後台</div>
             <div className={styles.panelTitle}>{domain.label}</div>
           </div>
-          <nav className={styles.panelNav} aria-label="管理導覽">
+          <nav ref={panelNavRef} className={styles.panelNav} aria-label="管理導覽">
             {domain.groups.map((g, i) => (
               <PanelGroup key={g.label ?? i} group={g} pathname={pathname} signals={signals} />
             ))}
@@ -172,6 +177,19 @@ export function AdminShell() {
       <Toaster />
     </div>
   )
+}
+
+/**
+ * 手機寬度下圖示軌與次級面板各自躺平成橫向捲動的一排：換頁後把目前所在的那一格捲進畫面，
+ * 不然亮著的那一顆可能在畫面外。桌機寬度本來就看得到，`nearest` 不會捲動任何東西。
+ */
+function useScrollCurrentIntoView(ref: RefObject<HTMLElement | null>, current: string | undefined): void {
+  useEffect(() => {
+    if (!current) return
+    const el = ref.current?.querySelector<HTMLElement>('[aria-current]')
+    // jsdom 沒有實作 scrollIntoView。
+    if (typeof el?.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [ref, current])
 }
 
 /** 圖示軌的一格：點了到該領域的第一頁。底下的頁面有 bad 亮紅點，只有 warn 亮橘點；總覽不亮。 */

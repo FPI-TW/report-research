@@ -30,7 +30,8 @@ interface Props {
 /**
  * 表格列動作：最多一顆主要按鈕＋「更多 ▾」選單。危險項自動排到最後、上方加分隔線。
  * 點擊不會冒泡到列（整列可點開抽屜時不會誤觸）。選單 portal 到 body、用 fixed 定位，
- * 不會被表格的橫向捲動容器裁掉；Esc、點外面、捲動或視窗縮放都會關。
+ * 不會被表格的橫向捲動容器裁掉；Esc、點外面、捲動或視窗縮放都會關。選了項目或按 Esc，焦點回到「更多」按鈕
+ * （項目接著開的對話框關閉時，焦點才有地方還）。
  */
 export function RowActions({ primary, more, label }: Props) {
   const items = (more ?? []).filter((x): x is RowAction => Boolean(x))
@@ -109,7 +110,7 @@ export function RowActions({ primary, more, label }: Props) {
               {i === firstDanger && i > 0 && <div className={o.menuSep} role="separator" />}
               <button type="button" role="menuitem" className={`${o.menuItem} ${item.danger ? o.menuDanger : ''}`}
                 disabled={item.disabled} title={item.hint}
-                onClick={() => { close(); item.onClick() }}>{item.label}</button>
+                onClick={() => { close(true); item.onClick() }}>{item.label}</button>
             </div>
           ))}
         </div>,

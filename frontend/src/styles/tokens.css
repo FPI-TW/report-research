@@ -213,6 +213,11 @@
   --ac-gold: #ae7415;
   --ac-goldt: #8a5a0f;
   --ac-ongold: #ffffff;
+  /* 實心按鈕的底與字（主要＝金、確認框的最後一步＝紅）。--ac-gold／--ac-bad 是燈號、指示條與邊框的色，
+     配白字不到 4.5:1，所以按鈕另外給一組；hover 的 brightness(1.06) 之後仍 ≥ 4.5（components/console/consoleCss.test.ts 守）。 */
+  --ac-goldbtn: #946110;
+  --ac-badbtn: #c0392e;
+  --ac-onbad: #ffffff;
   --ac-gsel: #fbf6ea;
   --ac-gline: #e6d3a3;
   --ac-scrim: rgba(20, 22, 26, 0.28);
@@ -279,6 +284,9 @@
   --ac-gold: #d4a64a;
   --ac-goldt: #e2b968;
   --ac-ongold: #17130a;
+  --ac-goldbtn: #d4a64a;
+  --ac-badbtn: #f2655a;
+  --ac-onbad: #17130a;
   --ac-gsel: rgba(212, 166, 74, 0.07);
   --ac-gline: rgba(212, 166, 74, 0.4);
   --ac-scrim: rgba(0, 0, 0, 0.55);
@@ -377,8 +385,12 @@ a { color: var(--tf-gold-text); }
 a:hover { color: var(--tf-gold-hover); }
 ::selection { background: var(--tf-gold-tint); }
 
+/* 管理後台（<html> 帶 data-theme 的期間）焦點環一律金色：外殼、內容區與 portal 到 body 的浮層同一個樣子。
+   用變數換色而不是另寫一條規則，各元件自己的 `outline: none`（輸入框只換邊框色）才不會被蓋掉。 */
+:root[data-theme] { --tf-focus-ring: var(--ac-gold); }
+
 :focus-visible {
-  outline: 2px solid var(--tf-graphite);
+  outline: 2px solid var(--tf-focus-ring, var(--tf-graphite));
   outline-offset: 2px;
 }
 

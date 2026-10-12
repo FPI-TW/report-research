@@ -191,3 +191,32 @@ test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常�
   const agentCalls = fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/admin/ops'))
   expect(agentCalls.every(u => SHELL_SIGNALS.includes(u))).toBe(true)
 }, 15000)
+
+test('管理後台裡的 404：主控台的頁面骨架，「找不到這個頁面」＋回總覽的連結', async () => {
+  stubAs('admin')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/不存在'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: '找不到這個頁面' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: '回總覽' })).toHaveAttribute('href', '/admin')
+  // 外殼照常：導覽還在，可以直接切去別頁
+  expect(screen.getByRole('navigation', { name: '管理領域' })).toBeInTheDocument()
+}, 15000)
+
+test('一般使用者開管理後台裡不存在的網址：仍是無權限頁，不是 404', async () => {
+  stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/不存在'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { name: '需要管理員權限' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.queryByText('找不到這個頁面')).not.toBeInTheDocument()
+}, 15000)
+
+test('研報平台的 404 維持原樣', async () => {
+  stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/不存在'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByText('找不到頁面', {}, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: '找不到這個頁面' })).not.toBeInTheDocument()
+}, 15000)

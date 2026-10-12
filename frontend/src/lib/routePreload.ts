@@ -3,7 +3,7 @@ import type { ComponentType } from 'react'
 export type RouteKey =
   | 'search' | 'ask' | 'radar' | 'brief' | 'help' | 'report'
   | 'adminShell' | 'adminOverview' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
-  | 'adminUploads' | 'adminUpload'
+  | 'adminUploads'
   | 'adminOps' | 'adminOpsPipeline' | 'adminOpsServices' | 'adminOpsService' | 'adminOpsLogs'
   | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost' | 'adminOpsDataHealth' | 'adminOpsLlmUsage'
   | 'adminOpsDependencies'
@@ -28,7 +28,6 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminAudit: () => import('../features/admin/AdminAuditPage'),
   adminReports: () => import('../features/admin/AdminReportsPage'),
   adminUploads: () => import('../features/admin/AdminUploadsPage'),
-  adminUpload: () => import('../features/admin/AdminUploadDetailPage'),
   adminOps: () => import('../features/admin/ops/OperationsLayout'),
   adminOpsPipeline: () => import('../features/admin/ops/pipeline/OpsPipelinePage'),
   adminOpsServices: () => import('../features/admin/ops/OpsServicesPage'),

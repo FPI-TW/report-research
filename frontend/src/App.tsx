@@ -53,6 +53,20 @@ function OpsAliasRedirect() {
   return <Navigate to={{ pathname: `/admin/operations${rest ? `/${rest}` : ''}`, search, hash }} replace />
 }
 
+/**
+ * 舊的詳情頁路徑 → 清單頁＋query：詳情改成抽屜之後，舊連結導到清單頁並把 id 放進 query
+ * （例如 `/admin/uploads/:uploadId` → `/admin/uploads?upload=…`）。其他 query 與 hash 原樣保留。
+ */
+function DetailRedirect({ to, param, query }: { to: string; param: string; query: string }) {
+  const value = useParams()[param]
+  const { search, hash } = useLocation()
+  const next = new URLSearchParams(search)
+  if (value) next.set(query, value)
+  const qs = next.toString()
+  return <Navigate to={{ pathname: to, search: qs ? `?${qs}` : '', hash }} replace />
+}
+void DetailRedirect
+
 // eslint-disable-next-line react-refresh/only-export-components
 export const routes = [
   {

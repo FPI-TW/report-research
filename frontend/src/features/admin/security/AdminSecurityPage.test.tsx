@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
 import AdminSecurityPage from './AdminSecurityPage'
 import { eventLabel, eventTone } from './securityLabels'
 
@@ -229,7 +230,11 @@ test('可疑 IP 的「看事件」把 IP 放進 URL 與登入事件的篩選標�
   await within(events).findByText('沒有符合條件的事件')
 
   const ips = screen.getByRole('region', { name: '可疑 IP' })
-  fireEvent.click(await within(ips).findByRole('button', { name: '看事件' }))
+  const seeEvents = await within(ips).findByRole('button', { name: '看事件' })
+  // 操作欄有表頭、釘在右邊
+  expect(within(ips).getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  expect(seeEvents.closest('td')).toHaveClass(c.stickyRight)
+  fireEvent.click(seeEvents)
   expect(where()).toBe('?tab=events&ip=203.0.113.9')
   expect(within(events).getByLabelText('IP')).toHaveValue('203.0.113.9')
   expect(within(events).getByText('IP 203.0.113.9')).toBeInTheDocument()
@@ -268,6 +273,11 @@ test('撤銷單一 session：先確認，再重新驗證身分，成功後用 to
   const sessions = await screen.findByRole('region', { name: 'Session' })
   await within(sessions).findByText('alice')
   expect(within(sessions).getByText('目前這個')).toBeInTheDocument()
+  // 操作欄有表頭、釘在右邊：IP 與裝置很長時「撤銷」還看得到
+  expect(within(sessions).getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  for (const tr of within(sessions).getAllByRole('row').slice(1)) {
+    expect(within(tr).getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+  }
   fireEvent.click(within(sessions).getAllByRole('button', { name: '撤銷' })[0])
   const confirm = await screen.findByRole('alertdialog', { name: '撤銷 alice 的這個 session？' })
   expect(within(confirm).getByText('只登出這一個裝置，其他裝置不受影響。')).toBeInTheDocument()

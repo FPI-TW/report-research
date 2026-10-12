@@ -1,9 +1,14 @@
 /* 功能旗標頁自己的少數樣式；卡片、表格、按鈕、表單欄位用主控台共用樣式（Console.module.css）。色全部走 --ac-*。 */
-.keyCell { min-width: 220px; }
+/* 旗標鍵可以很長（四五十個字元）：允許折行，靠最小寬度維持可讀。 */
+.keyCell { min-width: 200px; overflow-wrap: anywhere; }
+.ceilingCell { min-width: 128px; }
 .desc { margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t5); white-space: normal; }
 /* 最後修改的時間：不折行（.desc 預設可折）。 */
 .when { white-space: nowrap; }
 .wrap { overflow-wrap: anywhere; }
+/* 覆寫欄：overflow-wrap: anywhere 在自動版面的表格裡最小寬度是一個字，欄位吃緊時會被壓成一字一行；
+   給最小寬度。註記在清單裡最多兩行（c.clamp2），完整內容在 title 與調整表單。 */
+.override { min-width: 180px; max-width: 320px; overflow-wrap: anywhere; }
 .foot { margin: 0; padding: 10px 16px; border-top: 1px solid var(--ac-l2); font-size: 11.5px; line-height: 1.6; color: var(--ac-t5); }
 .foot code { font-family: var(--ac-mono); color: var(--ac-t3); }
 

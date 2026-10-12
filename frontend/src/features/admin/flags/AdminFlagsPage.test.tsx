@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
 import AdminFlagsPage from './AdminFlagsPage'
 
 afterEach(() => {
@@ -108,7 +109,9 @@ test('表格：每個旗標的實際值、對我、環境上限、覆寫與註�
   expect(within(agentic).getByTitle('這個功能現在對你的帳號是否生效')).toHaveTextContent('開')
   expect(within(agentic).getByText('QA_AGENTIC_ENABLED 開')).toBeInTheDocument()
   expect(within(agentic).getByText('限定開啟：管理員；alice')).toBeInTheDocument()
-  expect(within(agentic).getByText('註記：試用中')).toBeInTheDocument()
+  // 註記在清單裡最多兩行，完整內容放 title（調整表單裡也有）
+  expect(within(agentic).getByText('註記：試用中')).toHaveAttribute('title', '試用中')
+  expect(within(agentic).getByText('註記：試用中')).toHaveClass(c.clamp2)
   expect(within(agentic).getByText('ops')).toBeInTheDocument()
   expect(within(agentic).getByRole('button', { name: '調整' })).toBeEnabled()
   // 恢復預設收在「更多」裡；有覆寫才有。
@@ -121,16 +124,29 @@ test('表格：每個旗標的實際值、對我、環境上限、覆寫與註�
   expect(within(quota).queryByRole('button', { name: 'quota.enforce 的更多操作' })).not.toBeInTheDocument()
   expect(screen.getByText(/程式沒登記的旗標/)).toHaveTextContent('legacy.flag')
 
+  // 操作欄有表頭、釘在右邊：表格橫向捲動時還看得到
+  expect(within(table).getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  for (const tr of [web, agentic, quota]) expect(within(tr).getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+
   // 長說明收在「說明」後面
   expect(screen.queryByText(/安全相關設定不在這裡/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '說明' }))
   expect(screen.getByText(/安全相關設定不在這裡/)).toBeInTheDocument()
 })
 
+test('清單載入失敗：顯示後端的 detail', async () => {
+  stub(OPERATOR, { 'GET /api/admin/flags': () => json({ detail: '資料庫暫時無法使用，請稍後再試', code: 'db_unavailable' }, 503) })
+  wrap()
+  expect(await screen.findByRole('alert')).toHaveTextContent('功能旗標載入失敗：資料庫暫時無法使用，請稍後再試')
+  expect(screen.queryByRole('region', { name: '旗標' })).not.toBeInTheDocument()
+})
+
 test('沒有 ops.operate：只能看與匯出，沒有調整與匯入', async () => {
   stub(['admin', 'ops.read'])
   wrap()
   await row('qa.agentic')
+  // 沒有列動作就沒有操作欄
+  expect(screen.queryByRole('columnheader', { name: '操作' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '調整' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /的更多操作/ })).not.toBeInTheDocument()
   expect(screen.queryByLabelText(/匯入檔案/)).not.toBeInTheDocument()

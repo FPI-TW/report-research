@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import {
   Card, ConfirmDialog, ConsolePage, PageHeader, RowActions, Status, isElevationCancelled, toast, useElevate, type LampTone,
 } from '../../../components/console'
@@ -41,13 +41,18 @@ function FlagRow({ flag, canOperate, onEdit, onReset }: {
       </td>
       <td><Status tone={EFFECTIVE_TONE[flag.effective]}>{EFFECTIVE_LABELS[flag.effective]}</Status></td>
       <td title="這個功能現在對你的帳號是否生效">{flag.effective_for_me ? '開' : '關'}</td>
-      <td>
-        <span className={`${c.mono} ${c.nowrap}`}>{flag.ceiling_env} {flag.ceiling ? '開' : '關'}</span>
+      <td className={s.ceilingCell}>
+        {/* 不鎖成一行：環境變數名很長時可以在底線後面折行，「開／關」也可以折到下一行。 */}
+        <span className={c.mono}>
+          {flag.ceiling_env.split('_').map((part, i, all) => (
+            <Fragment key={i}>{part}{i < all.length - 1 && <>_<wbr /></>}</Fragment>
+          ))} {flag.ceiling ? '開' : '關'}
+        </span>
         {!flag.ceiling && <div className={s.desc}>需先在環境檔開啟並重啟 web 才能調整</div>}
       </td>
-      <td className={s.wrap}>
+      <td className={s.override}>
         {overrideSummary(o, flag.default)}
-        {o?.note && <div className={s.desc}>註記：{o.note}</div>}
+        {o?.note && <div className={`${s.desc} ${c.clamp2}`} title={o.note}>註記：{o.note}</div>}
       </td>
       <td>
         {o ? (
@@ -58,7 +63,7 @@ function FlagRow({ flag, canOperate, onEdit, onReset }: {
         ) : <span className={c.muted}>—</span>}
       </td>
       {canOperate && (
-        <td className={c.tdActions}>
+        <td className={`${c.tdActions} ${c.stickyRight}`}>
           <RowActions label={`${flag.key} 的更多操作`}
             primary={{
               label: '調整', onClick: onEdit, disabled: !flag.ceiling,
@@ -126,7 +131,7 @@ function AdminFlags() {
         <div className={c.banner} role="note">你可以查看與匯出；修改需要另外授予的 <code>ops.operate</code> 權限。</div>
       )}
       {flags.isPending && <p className={c.empty}>載入中…</p>}
-      {flags.isError && <p className={c.error} role="alert">無法載入功能旗標：{messageOf(flags.error)}</p>}
+      {flags.isError && <p className={c.error} role="alert">功能旗標載入失敗：{messageOf(flags.error)}</p>}
       {flags.data && (
         <Card title="旗標" labelledBy="flags-title" hint={`${flags.data.items.length} 個`}>
           <div className={c.tableWrap}>
@@ -134,7 +139,7 @@ function AdminFlags() {
               <thead>
                 <tr>
                   <th>旗標</th><th>實際值</th><th>對我</th><th>環境上限</th><th>覆寫</th><th>最後修改</th>
-                  {canOperate && <th />}
+                  {canOperate && <th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>}
                 </tr>
               </thead>
               <tbody>

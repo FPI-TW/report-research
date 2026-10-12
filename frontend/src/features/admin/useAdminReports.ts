@@ -5,19 +5,51 @@ import { AUDIT_KEY } from './useAdmin'
 export const REPORTS_KEY = ['admin', 'reports'] as const
 export const REPORTS_PAGE_SIZE = 50
 
-/** 隱藏篩選：全部／只看顯示中／只看已隱藏（對應後端 `hidden` 省略／false／true）。 */
-export type HiddenFilter = 'all' | 'visible' | 'hidden'
+/** 狀態篩選：全部／已發布（沒被隱藏）／草稿（上傳後尚未發布）／已隱藏。 */
+export type StatusFilter = 'all' | 'published' | 'draft' | 'hidden'
 
-export function useAdminReports(params: { q: string; hidden: HiddenFilter; offset: number }) {
+/** 狀態篩選 → 後端的 `hidden`／`publication`。草稿不能被隱藏，所以「已隱藏」不必再限定發布狀態。 */
+export function statusQuery(status: StatusFilter): { hidden?: boolean; publication?: 'draft' | 'published' } {
+  switch (status) {
+    case 'published': return { hidden: false, publication: 'published' }
+    case 'draft': return { publication: 'draft' }
+    case 'hidden': return { hidden: true }
+    default: return {}
+  }
+}
+
+export function useAdminReports(params: { q: string; status: StatusFilter; offset: number }) {
   return useQuery<AdminReportListResponse>({
     queryKey: [...REPORTS_KEY, params],
     queryFn: () => adminApi.listReports({
       q: params.q.trim() || undefined,
-      hidden: params.hidden === 'all' ? undefined : params.hidden === 'hidden',
+      ...statusQuery(params.status),
       limit: REPORTS_PAGE_SIZE,
       offset: params.offset,
     }),
     placeholderData: keepPreviousData,
+    retry: false,
+  })
+}
+
+export interface ReportCounts { total: number; hidden: number; draft: number }
+
+/**
+ * 頁首的三個數字（語料、已隱藏、上傳草稿）。後端沒有彙總端點，各用清單端點取 `total`（`limit=1`）。
+ * 掛在 `REPORTS_KEY` 底下：隱藏、恢復、發布之後既有的 invalidate 會順帶重抓。
+ */
+export function useReportCounts() {
+  return useQuery<ReportCounts>({
+    queryKey: [...REPORTS_KEY, 'counts'],
+    queryFn: async () => {
+      const [all, hidden, draft] = await Promise.all([
+        adminApi.listReports({ limit: 1 }),
+        adminApi.listReports({ hidden: true, limit: 1 }),
+        adminApi.listReports({ publication: 'draft', limit: 1 }),
+      ])
+      return { total: all.total, hidden: hidden.total, draft: draft.total }
+    },
+    staleTime: 60_000,
     retry: false,
   })
 }

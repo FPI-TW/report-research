@@ -1,0 +1,25 @@
+/* 研報管理特有的部分；按鈕、表格、卡片、KV 一律用 console 的類名。色只用 --ac-*。 */
+
+.search { display: flex; align-items: center; gap: 8px; }
+
+/* 批次列：有勾選才出現，靠右。 */
+.bulkCount { color: var(--ac-goldt); margin-right: 4px; }
+.bulkDanger { color: var(--ac-badt); }
+
+/* 清單 */
+.titleCell { min-width: 220px; max-width: 460px; overflow-wrap: anywhere; }
+/* 列的鍵盤入口：看起來是標題文字，實際是按鈕（整列的 onClick 滑鼠才點得到）。 */
+.rowLink {
+  padding: 0; border: none; background: none; color: var(--ac-t1); font: inherit; text-align: left;
+  cursor: pointer; overflow-wrap: anywhere;
+}
+.rowLink:hover { color: var(--ac-goldt); }
+.statusCell { max-width: 300px; }
+.reason { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t4); overflow-wrap: anywhere; }
+
+/* 對話框與抽屜 */
+.targets { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ac-t2); overflow-wrap: anywhere; }
+.note { margin: 0 0 12px; font-size: 12.5px; line-height: 1.7; color: var(--ac-t4); }
+.hash { word-break: break-all; }
+/* KV 的值預設等寬；人寫的句子（隱藏原因）改回介面字。 */
+.prose { font-family: var(--ac-sans); white-space: pre-wrap; }

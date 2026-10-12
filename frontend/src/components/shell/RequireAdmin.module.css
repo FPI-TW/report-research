@@ -1,14 +1,16 @@
-.wrap { max-width: 1120px; margin: 0 auto; padding: 32px; display: flex; flex-direction: column; gap: 14px; }
+/* 管理後台的無權限頁、確認權限中的骨架、TOTP 強制的提示卡。畫在 AdminShell 裡，色走主控台的 --ac-*。 */
+.wrap { padding: 24px 28px 40px; display: flex; flex-direction: column; gap: 14px; font-family: var(--ac-sans); }
 .card {
-  background: var(--tf-surface); border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs);
-  padding: 32px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; color: var(--tf-text-2);
+  max-width: 720px; padding: 28px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  background: var(--ac-panel); border: 1px solid var(--ac-l1); border-radius: 8px; color: var(--ac-t3);
 }
-.title { font-family: var(--tf-display); font-weight: 600; font-size: 22px; letter-spacing: -0.01em; color: var(--tf-text-1); margin: 0; }
-.body { font-size: 14px; color: var(--tf-text-muted-aa); margin: 0; }
-.back { font-size: 13px; color: var(--tf-text-2); text-decoration: underline; }
+.title { margin: 0; font-size: 18px; font-weight: 600; color: var(--ac-t1); }
+.body { margin: 0; font-size: 13px; line-height: 1.7; color: var(--ac-t4); }
+.back { font-size: 13px; color: var(--ac-goldt); text-decoration: underline; }
+.back:hover { color: var(--ac-goldt); }
 @media (max-width: 600px) { .wrap { padding: 16px; } .card { padding: 20px; } }
 .action {
-  margin-top: 6px; height: 36px; padding: 0 16px; border: none; border-radius: var(--tf-radius-md);
-  background: var(--tf-graphite); color: var(--tf-on-graphite); font: inherit; font-size: 14px; cursor: pointer;
+  margin-top: 6px; height: 32px; padding: 0 14px; border: 1px solid var(--ac-gold); border-radius: 6px;
+  background: var(--ac-gold); color: var(--ac-ongold); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
-.action:hover { opacity: .9; }
+.action:hover { filter: brightness(1.06); }

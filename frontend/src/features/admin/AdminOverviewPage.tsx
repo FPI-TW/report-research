@@ -51,8 +51,11 @@ function Overview() {
   const visible = flattenPages(visibleDomains(scopes))
   const tiles = buildTiles(signals, sources, services)
   if (has('ops.read')) tiles.push(externalTile(deps))
+  // 主機的燈號就是「進行中的事件裡有主機資源那一筆」（adminSignals.ts）：事件那一列已經列出來時，
+  // 主機那一列是同一件事，不再列一次（燈號與狀態磚照舊，只有這張清單去重）。
+  const hostIsListedAsIncident = Boolean(signals.incidents?.lamp) && visible.some(e => e.page.key === 'incidents')
   const alerts = visible
-    .filter(e => signals[e.page.key]?.lamp)
+    .filter(e => signals[e.page.key]?.lamp && !(e.page.key === 'host' && hostIsListedAsIncident))
     .map(e => ({ ...e, signal: signals[e.page.key]! }))
     .sort((a, b) => (a.signal.lamp === 'bad' ? 0 : 1) - (b.signal.lamp === 'bad' ? 0 : 1))
   const nBad = alerts.filter(a => a.signal.lamp === 'bad').length

@@ -33,6 +33,10 @@ import styles from './ReviewQueue.module.css'
 const HELP = '系統偵測到需要人看的問答與研報；處理狀態、註記與處理人另存，原始品質訊號不變。'
   + '問答刻意不顯示原文，只列中繼資料與提問者代號；有 qa_content.read 的人可逐筆「查看內容」，每次查看都寫稽核。'
 
+function messageOf(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : '請重試'
+}
+
 /** 清單上的分數顏色：原型以 0.5 分界，更低的用紅字。只是顯示上的強調，與複核門檻（`min_score`）無關。 */
 const SCORE_LOW = 0.5
 
@@ -67,8 +71,9 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
           {q.isLoading ? (
             <div className={styles.listEmpty}>載入中…</div>
           ) : q.isError ? (
-            <div className={styles.listEmpty}>
-              佇列載入失敗。<button type="button" className={c.linkBtn} onClick={q.refetch}>重試</button>
+            <div className={styles.listError}>
+              <p className={c.error} role="alert">佇列載入失敗：{messageOf(q.error)}</p>
+              <button type="button" className={c.linkBtn} onClick={q.refetch}>重試</button>
             </div>
           ) : q.items.length === 0 ? (
             <div className={styles.listEmpty}>目前沒有項目</div>

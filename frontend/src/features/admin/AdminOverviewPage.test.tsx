@@ -192,6 +192,27 @@ test('異常與注意：列出亮燈的頁面與原因，按鈕連到該頁', as
   expect(card.getByRole('link', { name: '看服務' })).toHaveAttribute('href', '/admin/operations/services')
 })
 
+const firing = (component: string, summary: string) => ({
+  incident_id: `office-host:${component}:1791252000`, host: 'office-host', component, kind: 'service', status: 'firing',
+  severity: 'WARNING', reason: 'threshold_exceeded', summary, opened_at: '2026-10-07T06:00:00Z',
+  last_event_at: '2026-10-07T06:30:00Z', event_count: 2,
+})
+
+test('異常與注意：主機資源事件和「N 個事件進行中」是同一件事，只列事件那一列', async () => {
+  mount(ALL, url => (url.startsWith('/api/admin/incidents')
+    ? { body: { since: 'a', until: 'b', ...page(1, { items: [firing('host', '磁碟使用率 91%')] }) } }
+    : undefined))
+  const card = within(await screen.findByRole('region', { name: '異常與注意' }))
+  expect(await card.findByText('1 個事件進行中')).toBeInTheDocument()
+  expect(card.getByRole('link', { name: '看事件' })).toHaveAttribute('href', '/admin/operations/incidents')
+  // 主機那一列不重複列
+  expect(card.queryByText('主機資源事件進行中')).not.toBeInTheDocument()
+  expect(card.queryByRole('link', { name: '看主機' })).not.toBeInTheDocument()
+  // 服務（backup 失敗、nginx 核心沒在跑）＋事件：兩列，摘要的數字跟著清單
+  expect(card.getAllByRole('listitem')).toHaveLength(2)
+  expect(screen.getByText(/1 項異常、1 項注意/)).toBeInTheDocument()
+})
+
 test('待處理：四格只有數字，不算進異常', async () => {
   mount(ALL)
   const queues = within(await screen.findByRole('region', { name: '待處理' }))
@@ -272,6 +293,10 @@ test('最近操作：最新的幾筆，連到操作紀錄', async () => {
   expect(rows[0]).toHaveTextContent('停用帳號')
   expect(rows[0]).toHaveTextContent('jason.wu')
   expect(rows[1]).toHaveTextContent('指令列（CLI）')
+  // 欄位是單行截斷：操作者、動作、摘要都帶 title，被截掉也看得到全文
+  expect(within(rows[0]).getByText('kashionz')).toHaveAttribute('title', 'kashionz')
+  expect(within(rows[0]).getByText('停用帳號')).toHaveAttribute('title', '停用帳號')
+  expect(within(rows[0]).getByText(/jason\.wu/)).toHaveAttribute('title', expect.stringContaining('jason.wu'))
   expect(recent.getByRole('link', { name: '全部紀錄' })).toHaveAttribute('href', '/admin/audit')
   expect(urlsOf(fetchMock)).toContain('/api/admin/audit?limit=6&offset=0')
 })

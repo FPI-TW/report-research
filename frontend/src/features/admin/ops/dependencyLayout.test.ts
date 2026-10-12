@@ -21,8 +21,9 @@ describe('layoutGraph', () => {
     expect(l.width).toBe(PAD * 2 + 3 * NODE_W + 2 * GAP_X)
     expect(l.height).toBe(PAD * 2 + NODE_H)
     expect(l.edges).toHaveLength(2)
-    // 從上游的右緣畫到下游的左緣
-    expect(l.edges[0].path.startsWith(`M ${PAD + NODE_W} `)).toBe(true)
+    // 從下游（web）的左緣畫到上游（pg）的右緣：箭頭指向被依賴的一方
+    expect(l.edges[0].path.startsWith(`M ${PAD + NODE_W + GAP_X} `)).toBe(true)
+    expect(l.edges[0].path.endsWith(`, ${PAD + NODE_W} ${PAD + NODE_H / 2}`)).toBe(true)
   })
 
   it('重心法：下游依它依賴的上游排序，減少交叉', () => {

@@ -141,6 +141,15 @@
 .rowBad td { background: var(--ac-badrow); }
 .tdRight, .table th.tdRight { text-align: right; }
 .tdActions { text-align: right; white-space: nowrap; }
+/* 釘在右邊的操作欄：表格比卡片寬、要橫向捲的時候，操作永遠看得到。那一欄的 th 與每一列的 td 都要套。
+   釘住的格子會蓋在捲過去的內容上，底色一定要不透明：選取、異常這類半透明的列底色疊在 panel 上。 */
+.stickyRight { position: sticky; right: 0; z-index: 1; background: var(--ac-panel); box-shadow: -1px 0 0 var(--ac-l2); }
+.table .rowClickable:hover .stickyRight { background: var(--ac-hover); }
+.table .rowSelected .stickyRight { background: linear-gradient(var(--ac-gsel), var(--ac-gsel)) var(--ac-panel); }
+.table .rowBad .stickyRight { background: linear-gradient(var(--ac-badrow), var(--ac-badrow)) var(--ac-panel); }
+/* 長字串的儲存格：最多兩行，完整內容放 title 或詳情抽屜。 */
+.clamp2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.truncate { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nowrap { white-space: nowrap; }
 .mono { font-family: var(--ac-mono); }
 .num { font-family: var(--ac-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }

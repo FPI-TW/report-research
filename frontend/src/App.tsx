@@ -26,7 +26,6 @@ const AdminApiClientsPage = lazy(routeLoaders.adminApiClients)
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsPipelinePage = lazy(routeLoaders.adminOpsPipeline)
 const OpsServicesPage = lazy(routeLoaders.adminOpsServices)
-const OpsServiceDetailPage = lazy(routeLoaders.adminOpsService)
 const OpsLogsPage = lazy(routeLoaders.adminOpsLogs)
 const OpsJobsPage = lazy(routeLoaders.adminOpsJobs)
 const OpsIncidentsPage = lazy(routeLoaders.adminOpsIncidents)
@@ -65,7 +64,6 @@ function DetailRedirect({ to, param, query }: { to: string; param: string; query
   const qs = next.toString()
   return <Navigate to={{ pathname: to, search: qs ? `?${qs}` : '', hash }} replace />
 }
-void DetailRedirect
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const routes = [
@@ -125,7 +123,7 @@ export const routes = [
               { path: 'overview', element: <Navigate to="/admin" replace /> },
               { path: 'pipeline', element: <Suspense><OpsPipelinePage /></Suspense> },
               { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
-              { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
+              { path: 'services/:name', element: <DetailRedirect to="/admin/operations/services" param="name" query="service" /> },
               { path: 'dependencies', element: <Suspense><OpsDependenciesPage /></Suspense> },
               { path: 'logs', element: <Suspense><OpsLogsPage /></Suspense> },
               { path: 'jobs', element: <Suspense><OpsJobsPage /></Suspense> },

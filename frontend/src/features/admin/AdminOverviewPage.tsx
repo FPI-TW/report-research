@@ -18,7 +18,7 @@ import styles from './Overview.module.css'
 const PAGE_TO = Object.fromEntries(flattenPages(ADMIN_IA).map(e => [e.page.key, e.page.to])) as Record<AdminPageKey, string>
 
 const ACTION_LABEL: Partial<Record<AdminPageKey, string>> = {
-  services: '看服務', pipeline: '看管線', incidents: '看事件', host: '看主機', dataHealth: '看資料健康', security: '看安全',
+  services: '看服務', dependencies: '看依賴圖', pipeline: '看管線', incidents: '看事件', host: '看主機', dataHealth: '看資料健康', security: '看安全',
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')

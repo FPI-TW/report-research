@@ -1,6 +1,6 @@
 import type { AdminPageKey } from '../../components/shell/adminNav'
 import type {
-  DataHealthResponse, IncidentListResponse, OpsServiceListResponse, SecurityAlertsResponse,
+  DataHealthResponse, IncidentListResponse, OpsDependencyGraph, OpsServiceListResponse, SecurityAlertsResponse,
 } from '../../lib/generated/adminApi'
 import type { Progress } from '../../lib/progressSchema'
 import { componentLabel, fmtDuration, needsAttention } from './ops/opsLabels'
@@ -12,6 +12,8 @@ import { STATE_LABELS } from './security/securityLabels'
  *
  *   服務      有服務失敗或找不到（核心層不在運作中也算，`opsLabels.needsAttention`）→ bad；
  *             維運代理連不上 → warn（狀態不明不等於正常）。排程服務兩次執行之間的「閒置」是正常。
+ *   依賴圖    外部依賴（R2、DeepSeek、NAS…）的健康判讀由後端算好：down → bad、degraded → warn。
+ *             沒有探針的外部依賴是 unknown（未監控），不亮。內部服務壞掉算在「服務」，這裡不重複計。
  *   管線      `pipeline/attention.ts`：近 24 小時有排程失敗 → bad；忠實度查核 fail-open → warn。
  *   事件      有進行中的事件 → warn，數字是進行中的筆數。
  *   主機      有進行中的主機資源事件（元件 host）→ warn。主機頁本身沒有門檻，事件偵測才有。
@@ -37,6 +39,7 @@ export type AdminSignals = Partial<Record<AdminPageKey, PageSignal>>
 export interface SignalInputs {
   services?: OpsServiceListResponse
   agentUnavailable?: boolean
+  dependencies?: OpsDependencyGraph
   progress?: Progress
   firingIncidents?: IncidentListResponse
   dataHealth?: DataHealthResponse
@@ -60,6 +63,25 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
     }
   } else if (input.agentUnavailable) {
     out.services = { lamp: 'warn', reason: '維運代理連不上', detail: '服務狀態、依賴圖與日誌暫時讀不到' }
+  }
+
+  if (input.dependencies) {
+    const ext = input.dependencies.nodes.filter(n => n.kind === 'external')
+    const down = ext.filter(n => n.health === 'down')
+    const degraded = ext.filter(n => n.health === 'degraded')
+    if (down.length > 0) {
+      out.dependencies = {
+        lamp: 'bad',
+        reason: `${down.length} 個外部依賴故障`,
+        detail: down.map(n => (n.health_reason ? `${n.name}（${n.health_reason}）` : n.name)).join('、'),
+      }
+    } else if (degraded.length > 0) {
+      out.dependencies = {
+        lamp: 'warn',
+        reason: `${degraded.length} 個外部依賴降級`,
+        detail: degraded.map(n => (n.health_reason ? `${n.name}（${n.health_reason}）` : n.name)).join('、'),
+      }
+    }
   }
 
   if (input.progress) {

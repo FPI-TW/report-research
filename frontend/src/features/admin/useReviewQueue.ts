@@ -76,22 +76,25 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
 }
 
 /**
- * 三個分頁各自的待處理數（分頁籤上的數字）。
- *
- * query key 與 queryFn 刻意和外殼的 `useAdminSignals` 一模一樣：兩邊共用同一份快取，外殼在的時候這裡
- * 不會多打請求，儲存後 invalidate 一次兩邊的數字一起更新。輪詢交給外殼，這裡不設 `refetchInterval`。
+ * 一個分頁的待處理數（`limit=1` 只取 total）。外殼的 `useAdminSignals` 與這一頁的分頁籤用同一份定義，
+ * key 與 queryFn 才不會各寫各的、靜默分家——兩邊共用同一份快取，儲存後 invalidate 一次一起更新。
+ */
+export function reviewCountQuery(kind: ReviewKind) {
+  return {
+    queryKey: [...REVIEW_COUNT_KEY, kind] as const,
+    queryFn: () => getJSON(`/api/review/queue?kind=${kind}&status=open&limit=1&offset=0`, reviewQueueSchema),
+    staleTime: 60_000,
+    retry: false as const,
+    select: (d: { total: number }) => d.total,
+  }
+}
+
+/**
+ * 三個分頁各自的待處理數。輪詢交給外殼，這裡不設 `refetchInterval`。
  * 取不到（或還沒回來）就是 undefined：分頁籤不顯示數字，不擋佇列。
  */
 export function useReviewOpenCounts(): Record<ReviewKind, number | undefined> {
-  const results = useQueries({
-    queries: REVIEW_KINDS.map(kind => ({
-      queryKey: [...REVIEW_COUNT_KEY, kind],
-      queryFn: () => getJSON(`/api/review/queue?kind=${kind}&status=open&limit=1&offset=0`, reviewQueueSchema),
-      staleTime: 60_000,
-      retry: false,
-      select: (d: { total: number }) => d.total,
-    })),
-  })
+  const results = useQueries({ queries: REVIEW_KINDS.map(kind => reviewCountQuery(kind)) })
   const [faithfulness, feedback, extraction] = results.map(r => r.data)
   return { faithfulness, feedback, extraction }
 }

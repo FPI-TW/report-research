@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type {
-  DataHealthResponse, IncidentListResponse, OpsServiceListResponse, OpsServiceStatus, SecurityAlertsResponse,
+  DataHealthResponse, IncidentListResponse, OpsDependencyGraph, OpsDependencyNode, OpsServiceListResponse, OpsServiceStatus,
+  SecurityAlertsResponse,
 } from '../../lib/generated/adminApi'
 import { deriveSignals, worstLamp } from './adminSignals'
 import { progressFixture } from './ops/pipeline/pipelineTestKit'
@@ -34,6 +35,13 @@ const alerts = (state: SecurityAlertsResponse['state'], triggered: SecurityAlert
   max_account_failures: 0, account_failure_threshold: 5, elevate_failures: 0, elevate_failure_threshold: 5, audit_chain: 'ok',
 })
 
+const node = (name: string, kind: OpsDependencyNode['kind'], health: OpsDependencyNode['health'], reason = ''): OpsDependencyNode => ({
+  name, kind, tier: 'important', health, health_reason: reason, depends_on: [], dependents: [], layer: 0, affected: false, impacted_by: [],
+})
+const graph = (...nodes: OpsDependencyNode[]): OpsDependencyGraph => ({
+  environment: 'production', host: 'h', checked_at: '2026-10-06T02:00:00Z', nodes, edges: [], down: [], root_causes: [], affected: [],
+})
+
 describe('導覽燈號', () => {
   it('什麼都還沒讀到：不亮燈、沒有數字', () => {
     expect(deriveSignals({})).toEqual({})
@@ -58,6 +66,16 @@ describe('導覽燈號', () => {
 
   it('維運代理連不上：服務亮 warn（狀態不明不等於正常）', () => {
     expect(deriveSignals({ agentUnavailable: true }).services?.lamp).toBe('warn')
+  })
+
+  it('依賴圖：外部依賴故障 → bad、降級 → warn；未監控（unknown）與內部服務不算', () => {
+    expect(deriveSignals({ dependencies: graph(node('r2', 'external', 'down', '探針逾時'), node('nas', 'external', 'degraded')) }).dependencies)
+      .toMatchObject({ lamp: 'bad', reason: '1 個外部依賴故障', detail: 'r2（探針逾時）' })
+    expect(deriveSignals({ dependencies: graph(node('deepseek', 'external', 'degraded')) }).dependencies)
+      .toMatchObject({ lamp: 'warn', detail: 'deepseek' })
+    expect(deriveSignals({ dependencies: graph(node('slack', 'external', 'unknown'), node('r2', 'external', 'ok')) }).dependencies).toBeUndefined()
+    // 內部服務壞掉算在「服務」那一顆，依賴圖不重複亮
+    expect(deriveSignals({ dependencies: graph(node('backup', 'systemd', 'down')) }).dependencies).toBeUndefined()
   })
 
   it('管線沿用 attention.ts：近 24 小時有排程失敗 → bad；只有 fail-open → warn', () => {

@@ -3,18 +3,20 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { getJSON } from '../../lib/api'
 import { adminApi, type OpsServiceListResponse } from '../../lib/generated/adminApi'
 import { progressSchema, type Progress } from '../../lib/progressSchema'
-import { reviewQueueSchema, type ReviewKind } from '../../lib/reviewSchemas'
+import type { ReviewKind } from '../../lib/reviewSchemas'
 import { deriveSignals, type AdminSignals } from './adminSignals'
 import { isAgentUnavailable } from './ops/opsLabels'
 import { OPS_KEY } from './ops/useOps'
 import { SECURITY_KEY } from './security/useSecurity'
+import { reviewCountQuery } from './useReviewQueue'
 
 const MINUTE = 60_000
 const REVIEW_KINDS: readonly ReviewKind[] = ['faithfulness', 'feedback', 'extraction']
 
 /** 一個來源的狀態：off＝沒有 scope 或還沒啟用，不會送請求。 */
 export type SourceState = 'off' | 'pending' | 'ready' | 'error'
-export type SignalSource = 'services' | 'pipeline' | 'incidents' | 'dataHealth' | 'security' | 'reviews' | 'uploads'
+export type SignalSource =
+  | 'services' | 'dependencies' | 'pipeline' | 'incidents' | 'dataHealth' | 'security' | 'reviews' | 'uploads'
 
 export interface UseAdminSignals {
   signals: AdminSignals
@@ -31,7 +33,7 @@ export interface UseAdminSignals {
  * 每個來源只在有對應 scope 時才查——沒有 scope 的請求只會換來 403，不該送出去。`enabled` 是總開關：
  * 還不確定是不是管理員、或被 TOTP 強制擋著時，一個請求都不送。
  *
- * 一律每分鐘輪詢一次（資料健康五分鐘），分頁在背景時不輪詢（TanStack Query 預設）。服務清單、
+ * 一律每分鐘輪詢一次（依賴圖兩分鐘、資料健康五分鐘），分頁在背景時不輪詢（TanStack Query 預設）。服務清單、
  * 管線、告警與所在頁面共用 query key：同一份快取，頁面自己較密的輪詢照舊。
  * 讀取失敗不重試、也不亮燈；頁面本身會顯示錯誤。
  */
@@ -44,6 +46,12 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
     queryKey: [...OPS_KEY, 'services'],
     queryFn: () => adminApi.listOpsServices(),
     enabled: ops, refetchInterval: MINUTE, retry: false,
+  })
+  // 依賴圖只拿來看外部依賴的健康狀態；它也要經維運代理，輪詢比服務清單疏一倍。
+  const dependencies = useQuery({
+    queryKey: [...OPS_KEY, 'dependencies'],
+    queryFn: () => adminApi.getOpsDependencies(),
+    enabled: ops, refetchInterval: 2 * MINUTE, retry: false,
   })
   const progress = useQuery<Progress>({
     queryKey: ['progress'],
@@ -66,12 +74,7 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
     enabled: has('audit.read'), refetchInterval: MINUTE, retry: false,
   })
   const reviews = useQueries({
-    queries: REVIEW_KINDS.map(kind => ({
-      queryKey: ['review-queue-count', kind],
-      queryFn: () => getJSON(`/api/review/queue?kind=${kind}&status=open&limit=1&offset=0`, reviewQueueSchema),
-      enabled: reviewOn, refetchInterval: MINUTE, staleTime: MINUTE, retry: false,
-      select: (d: { total: number }) => d.total,
-    })),
+    queries: REVIEW_KINDS.map(kind => ({ ...reviewCountQuery(kind), enabled: reviewOn, refetchInterval: MINUTE })),
   })
   const drafts = useQuery({
     queryKey: ['admin', 'uploads', 'count', 'draft'],
@@ -85,19 +88,21 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
   const signals = useMemo(() => deriveSignals({
     services: services.data,
     agentUnavailable,
+    dependencies: dependencies.data,
     progress: progress.data,
     firingIncidents: incidents.data,
     dataHealth: dataHealth.data,
     securityAlerts: alerts.data,
     reviewOpen: { faithfulness: rvFaith, feedback: rvFeedback, extraction: rvExtraction },
     draftUploads: drafts.data,
-  }), [services.data, agentUnavailable, progress.data, incidents.data, dataHealth.data, alerts.data,
+  }), [services.data, agentUnavailable, dependencies.data, progress.data, incidents.data, dataHealth.data, alerts.data,
     rvFaith, rvFeedback, rvExtraction, drafts.data])
 
   const state = (on: boolean, q: { isSuccess: boolean; isError: boolean }): SourceState =>
     (!on ? 'off' : q.isSuccess ? 'ready' : q.isError ? 'error' : 'pending')
   const sources: Record<SignalSource, SourceState> = {
     services: state(ops, services),
+    dependencies: state(ops, dependencies),
     pipeline: state(ops, progress),
     incidents: state(ops, incidents),
     dataHealth: state(ops, dataHealth),

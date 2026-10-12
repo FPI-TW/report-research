@@ -20,7 +20,6 @@ const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
 const AdminReportsPage = lazy(routeLoaders.adminReports)
 const AdminUploadsPage = lazy(routeLoaders.adminUploads)
-const AdminUploadDetailPage = lazy(routeLoaders.adminUpload)
 const AdminApiClientsPage = lazy(routeLoaders.adminApiClients)
 // 維運（/admin/operations/*）：外殼（ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
@@ -65,7 +64,6 @@ function DetailRedirect({ to, param, query }: { to: string; param: string; query
   const qs = next.toString()
   return <Navigate to={{ pathname: to, search: qs ? `?${qs}` : '', hash }} replace />
 }
-void DetailRedirect
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const routes = [
@@ -110,7 +108,7 @@ export const routes = [
           { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
           { path: 'reports', element: <Suspense><AdminReportsPage /></Suspense> },
           { path: 'uploads', element: <Suspense><AdminUploadsPage /></Suspense> },
-          { path: 'uploads/:uploadId', element: <Suspense><AdminUploadDetailPage /></Suspense> },
+          { path: 'uploads/:uploadId', element: <DetailRedirect to="/admin/uploads" param="uploadId" query="upload" /> },
           { path: 'analytics', element: <Suspense><AdminAnalyticsPage /></Suspense> },
           { path: 'security', element: <Suspense><AdminSecurityPage /></Suspense> },
           { path: 'quota', element: <Suspense><AdminQuotaPage /></Suspense> },

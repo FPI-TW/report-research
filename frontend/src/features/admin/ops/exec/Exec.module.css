@@ -1,0 +1,43 @@
+/* 維運 → 執行（排程工作、日誌、主機）各頁自己的微調。卡片、表格、按鈕、分段一律用 console 的類名，
+   這裡只有它沒有的排版；色全部走 --ac-*。 */
+
+/* 表格列的鍵盤入口：看起來是服務名，其實是開詳情抽屜的按鈕 */
+.rowLink {
+  padding: 0; border: none; background: none; cursor: pointer; text-align: left;
+  font: inherit; font-family: var(--ac-mono); color: var(--ac-t1); overflow-wrap: anywhere;
+}
+.rowLink:hover { text-decoration: underline; }
+
+/* 卡片標題列下方的一行中繼資料（範圍、筆數、檢查時間） */
+.meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t4); }
+.meta b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t2); }
+/* 強調的是中文（粒度）時不套等寬字 */
+.meta strong { font-weight: 500; color: var(--ac-t2); }
+
+/* 抽屜裡的鍵值：鍵比 console 預設的 96px 寬一點（「invocation ID」放得下） */
+dl.kvWide { grid-template-columns: 112px minmax(0, 1fr); }
+.note { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ac-t4); }
+.note + dl { margin-top: 10px; }
+
+/* 日誌的選擇器：一列一個「標籤＋分段」 */
+.pickers { display: flex; flex-direction: column; gap: 10px; }
+.picker { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.pickerLabel { flex: none; width: 56px; line-height: 30px; font-size: 12px; color: var(--ac-t5); }
+/* 服務可能有三十幾個：分段允許換行，不藏在橫向捲軸後面 */
+.segWrap { display: flex; flex-wrap: wrap; min-width: 0; }
+.segWrap button { font-family: var(--ac-mono); }
+.logBody { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
+/* 日誌很長：限高自己捲，頁面不跟著被撐長 */
+.logBox { max-height: 62vh; overflow-y: auto; }
+
+/* 主機：數字磚要放得下一行補充（「1 小時最高 80.0%・等待 I/O 3.2%」） */
+.hostTiles { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.tileGroup { display: flex; min-width: 0; }
+.tileGroup > * { flex: 1; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
+.chartBody { padding: 14px 16px 12px; }
+
+@media (max-width: 560px) {
+  .picker { flex-direction: column; gap: 4px; }
+  .pickerLabel { width: auto; line-height: 1.4; }
+}

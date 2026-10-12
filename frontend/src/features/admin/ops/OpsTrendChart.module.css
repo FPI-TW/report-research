@@ -1,9 +1,10 @@
-/* 維運頁的折線趨勢圖（OpsTrendChart）。色一律走 tokens.css 的 --ac-*，深色與亮色共用。 */
+/* 維運頁的折線趨勢圖（OpsTrendChart）。色一律走 tokens.css 的 --ac-*，深色與亮色共用。
+   軸上的刻度與 TrendBars 的軸同一個樣子：等寬 10.5px、--ac-t5（文字階，兩種主題都 ≥ 4.5:1）。 */
 .figure { margin: 0; min-width: 0; }
 .plot { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px; align-items: stretch; }
 .yaxis {
   display: flex; flex-direction: column; justify-content: space-between;
-  font-size: 11px; color: var(--ac-t5); font-variant-numeric: tabular-nums; text-align: right;
+  font-family: var(--ac-mono); font-size: 10.5px; color: var(--ac-t5); font-variant-numeric: tabular-nums; text-align: right;
 }
 .svg { display: block; width: 100%; height: 160px; overflow: visible; }
 .grid { stroke: var(--ac-l1); stroke-width: 1; }
@@ -13,7 +14,7 @@
 .band { fill: var(--ac-gold); fill-opacity: 0.14; stroke: none; }
 .xaxis {
   display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 6px;
-  font-size: 11px; color: var(--ac-t5); font-variant-numeric: tabular-nums;
+  font-family: var(--ac-mono); font-size: 10.5px; color: var(--ac-t5); font-variant-numeric: tabular-nums;
 }
-.latest { color: var(--ac-t3); font-weight: 600; }
+.latest { color: var(--ac-t3); font-weight: 500; }
 .empty { font-size: 13px; color: var(--ac-t5); margin: 6px 0; }

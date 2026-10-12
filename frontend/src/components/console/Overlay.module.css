@@ -53,6 +53,8 @@
   background: none; color: var(--ac-t2); font: inherit; font-size: 12.5px; text-align: left; white-space: nowrap; cursor: pointer;
 }
 .menuItem:hover:not(:disabled), .menuItem:focus-visible { background: var(--ac-menuh); outline: none; }
+/* 鍵盤移到的那一項多一圈內縮的金框：只換底色的話和滑鼠 hover 長得一樣，看不出目前在哪一項。 */
+.menuItem:focus-visible { outline: 2px solid var(--ac-gold); outline-offset: -2px; }
 .menuItem:disabled { opacity: 0.45; cursor: not-allowed; }
 .menuDanger { color: var(--ac-badt); }
 .menuSep { height: 1px; margin: 4px 2px; background: var(--ac-l4); }
@@ -67,3 +69,5 @@
 .toast[data-tone='bad'] .toastIcon { color: var(--ac-bad); }
 
 .codeInput { font-family: var(--ac-mono); font-size: 14px; letter-spacing: 0.12em; }
+/* 字距只給輸入的數字；placeholder 是一句中文提示，拉開會變成一字一格。 */
+.codeInput::placeholder { letter-spacing: normal; }

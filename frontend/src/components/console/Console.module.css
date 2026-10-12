@@ -35,12 +35,13 @@
 .btn:hover:not(:disabled) { border-color: var(--ac-l5); background: var(--ac-btnh); color: var(--ac-t1); }
 .btn:disabled, .btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .btnSm { height: 26px; padding: 0 10px; border-radius: 5px; font-size: 12px; color: var(--ac-t2); }
+/* 實心按鈕的底與字用按鈕專用的 token（--ac-goldbtn／--ac-badbtn／--ac-onbad）：兩種主題、含 hover 都 ≥ 4.5:1。 */
 .btnPrimary, .btnPrimary:hover:not(:disabled) {
-  border-color: var(--ac-gold); background: var(--ac-gold); color: var(--ac-ongold); font-weight: 600; padding: 0 14px;
+  border-color: var(--ac-goldbtn); background: var(--ac-goldbtn); color: var(--ac-ongold); font-weight: 600; padding: 0 14px;
 }
 .btnPrimary:hover:not(:disabled) { filter: brightness(1.06); }
 .btnDanger, .btnDanger:hover:not(:disabled) {
-  border-color: var(--ac-bad); background: var(--ac-bad); color: #ffffff; font-weight: 600; padding: 0 14px;
+  border-color: var(--ac-badbtn); background: var(--ac-badbtn); color: var(--ac-onbad); font-weight: 600; padding: 0 14px;
 }
 .btnDanger:hover:not(:disabled) { filter: brightness(1.06); }
 .btnGhost { border-color: transparent; background: none; }

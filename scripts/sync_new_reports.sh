@@ -343,6 +343,33 @@ write_heartbeat() {
   log "心跳已更新：$HEARTBEAT"
 }
 
+# ── 來源段結果（機器可讀）──────────────────────────────────────────────────
+# 存在理由：這台是另一個部署（碰不到 NAS 的 EC2）的新檔來源。NAS 掛不上、rsync 失敗、inbox 推送失敗，
+# 那一端看到的都只是「inbox 沒有新檔」，與「這幾天沒有新稿」無從分辨。scripts/publish_host_beacon.py 每
+# 10 分鐘把這個檔連同服務狀態發布到 R2，另一端的後台照它告警（app/services/host_beacon.py）。
+#
+# **只記來源段**（掛載、rsync、推送），不記匯入與下游：那些失敗不影響推給另一端的檔，由本機的心跳與
+# freshness 負責。每一輪只要走到來源段的結論就寫一次（含失敗的收場）——所以這個檔的 epoch 太舊，
+# 本身就是「sync 沒有在跑」的證據（PID lock 早退、timer 停了都不會寫）。
+#
+#   result：ok｜mount_failed｜rsync_failed
+#   push  ：off（沒開 SYNC_INBOX_PUSH）｜none（開了但本輪沒有新檔，或還沒走到推送）｜ok｜failed
+#
+# 與心跳相同：原子寫入、失敗不擋 sync。鍵集合固定，讀取端逐鍵解析（不 source、不 eval）。
+FEED_STATE="data/.sync_feed_state"
+write_feed_state() {
+  local result="$1" new="${2:-0}" push="${3:-none}" tmp="${FEED_STATE}.tmp.$$"
+  case "$new" in ''|*[!0-9]*) new=0 ;; esac
+  {
+    echo "round=${ROUND_TS}"
+    echo "epoch=$(date +%s)"
+    echo "result=${result}"
+    echo "new_files=${new}"
+    echo "push=${push}"
+  } > "$tmp" 2>/dev/null || { log "來源段結果暫存寫入失敗（不擋 sync）"; rm -f "$tmp" 2>/dev/null; return 0; }
+  mv -f "$tmp" "$FEED_STATE" 2>/dev/null || { log "來源段結果 rename 失敗（不擋 sync）"; rm -f "$tmp" 2>/dev/null; return 0; }
+}
+
 mkdir -p data
 
 # 系統正在關機就別開工。**這不是本輪狀態機制的替代品，是它的補集**：這條只擋得住
@@ -437,6 +464,7 @@ else
     sudo -n /usr/local/sbin/mount-nas-research >>"$LOG" 2>&1 || true
   fi
   if ! mountpoint -q "$MOUNT"; then
+    write_feed_state mount_failed 0 none
     log "掛載失敗或不可用 → 結束（不跑 rsync、不動 DB）"; exit 1
   fi
 
@@ -451,15 +479,19 @@ else
   rsync -rt --size-only --no-motd --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG" || RC=$?
   NEW=$(grep -cvE '/$' "$DELTA" 2>/dev/null || echo 0)
   log "rsync rc=$RC，本次新傳檔列≈${NEW}"
-  if [ "$RC" -ne 0 ]; then log "rsync 失敗 → 結束"; exit 1; fi
+  if [ "$RC" -ne 0 ]; then write_feed_state rsync_failed "$NEW" none; log "rsync 失敗 → 結束"; exit 1; fi
 
   # 2b) 把這一輪的新檔推到 R2 inbox，給沒有 NAS 的部署拉（SYNC_INBOX_PUSH=1 才做）。
   #     best-effort：推失敗不擋本機匯入；漏推的檔要手動以該輪 delta 重推（r2_inbox.py push）。
+  FEED_PUSH=off
+  if [ "${SYNC_INBOX_PUSH:-0}" = 1 ]; then FEED_PUSH=none; fi
   if [ "${SYNC_INBOX_PUSH:-0}" = 1 ] && [ "$NEW" -gt 0 ]; then
     PUSH_RC=0
+    FEED_PUSH=ok
     "$UV" run python scripts/r2_inbox.py push --delta "$DELTA" >>"$LOG" 2>&1 || PUSH_RC=$?
     log "R2 inbox 推送 rc=$PUSH_RC（best-effort）"
     if [ "$PUSH_RC" -ne 0 ]; then
+      FEED_PUSH=failed
       INBOX_REPLAY="data/inbox_delta_retained_${ROUND_TS}.txt"
       cp -- "$DELTA" "$INBOX_REPLAY"
       log "R2 inbox 推送失敗，補傳 delta 保留在 ${INBOX_REPLAY}："
@@ -468,6 +500,7 @@ else
       record_unit_failure "r2_inbox(push)" "$PUSH_RC"
     fi
   fi
+  write_feed_state ok "$NEW" "$FEED_PUSH"
 fi
 
 # 3) 增量匯入（nice/ionice 降優先序，勿搶線上服務）

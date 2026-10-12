@@ -58,7 +58,9 @@ test('/admin/users 照舊是帳號管理', async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/users'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
-  expect(await screen.findByRole('heading', { level: 2, name: '帳號清單' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { level: 1, name: '帳號管理' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(await screen.findByRole('region', { name: '帳號清單' })).toBeInTheDocument()
+  expect(router.state.location.pathname).toBe('/admin/users')
 }, 15000)
 
 test('一般使用者直接開 /admin/reviews：無權限頁，不打待複核與管理 API', async () => {

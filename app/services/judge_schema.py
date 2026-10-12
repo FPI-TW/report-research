@@ -162,7 +162,7 @@ SCHEMA_RETRIES = 1
 # 不跑）。首次 judge 呼叫最多用 2 個，schema 重試只拿得到剩下的，所以一個階段最壞 3 個請求。
 # 預算以 contextvar 傳遞：judge 契約是 `judge(system, user)`，不能為了它改所有假 judge 的簽章；
 # call_validated 與 judge 在同一個 Task 裡 await，contextvar 天然界定「這一個階段」。
-# CLI 路徑不記帳（claude_cli 表的行為維持原樣，最壞次數見 faithfulness.py 模組 docstring）。
+# PR-M 起 judge 只剩 DeepSeek（HTTP），這份預算涵蓋全部 judge 呼叫。
 HTTP_STAGE_MAX_REQUESTS = 3
 _stage_requests: ContextVar[list[int] | None] = ContextVar("judge_stage_requests", default=None)
 

@@ -75,7 +75,7 @@ uv run python scripts/ingest_all.py
 - 端點走 HTTP 層測（`TestClient`），不直接呼叫 handler 物件。不要把函式夾在 `@router.*` 裝飾器與 handler 的 `def` 之間：裝飾器會套到那個函式上，端點回 422，直呼函式的測試照樣綠。把輔助函式集中放在所有路由之上只是排版慣例（既有註解會引用它），放在兩個完整的路由定義之間不會出錯；`tests/test_router_helpers.py` 對 `web/routers/` 每一支 router 做結構檢查：`_` 開頭的 callable 不得成為任何路由的 endpoint。
 - **測試絕不可寫 repo 根的真實環境檔**：`finally` 擋得住例外、擋不住行程被殺，要驗載入行為餵 `tempfile`。`tests/conftest.py`（快照並還原 `.env`，變動即讓整個 session 失敗）與 `tests/test_env_loading.py` 是第二道防線，不是許可證。
 - 任何預設寫進 repo 根 `data/` 的新狀態檔，要在 `tests/conftest.py` 以**賦值**（不是 `setdefault`）導向不存在的路徑或 `os.devnull`，比照 `LLM_BREAKER_FILE`、`LLM_USAGE_LOG`。回應隨查詢參數變的 TTL 快取走 `web/ttl_cache.py`（conftest 每題前後 `reset_all()`）；其他模組級快取要在 conftest 加每題前後的重設（比照 `web/routers/monitor.py` 與 `web/stats_snapshot.py` 的快取），否則測試互相污染。
-- `tests/conftest.py` 刻意強制 `LLM_PROVIDER=claude_cli`（測試不打付費 API）；要驗預設值的測試自己移除該鍵。
+- `tests/conftest.py` 刻意強制 `LLM_PROVIDER=deepseek`、金鑰為空、端點不可達（測試不打付費 API：漏了假物件的呼叫在送出前就以 auth 失敗，而且可能被 fail-open 吞掉，所以要驗 LLM 行為的測試自己裝 `httpx.MockTransport` 或 patch 呼叫層）；要驗預設值的測試自己移除該鍵。
 - 帳號：`tests/conftest.py` 整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`，預設一位 tester／testpass **管理員**），既有測試照常 POST `/login`。要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份；只需要「已登入」用 `session_cookies()`。conftest 也預設把問答的擁有權檢查（`deps.conversation_is_foreign`／`deps.qa_is_foreign`）stub 成「不是別人的」，要驗 404 的測試自行覆寫。其他每題預設：功能旗標讀成「沒有 DB 覆寫」（所以 `ask.web_search` 關）、`deps.quota.charge` 放行不計數、追問建議與查詢規劃回空；預設的 tester 是管理員但**不是** super，測 super 限定端點要自己建帳號。改了 `app/services/accounts.py` 的語意要同步改假物件——`tests/test_accounts_db.py` 同一組情境兩邊各跑一次。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉相依，不是加豁免。Dependabot 自動更新 PR 已停用，相依更新改由人工審查；更新 `torch` 時須確認 CPU-only wheel、FlagEmbedding／transformers 相容性並跑 eval，`@embedpdf/*` 必須整組升版並人眼驗證 PDF 選取與複製。
@@ -108,7 +108,7 @@ uv run python scripts/ingest_all.py
 | DeepSeek 金鑰 | repo 根 `.env` 與 `/etc/default/report-mark-llm`（辦公室主機為 0640 root:kashionz，只有 sync 與上傳 worker 的 unit 載入）逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`）；改完重啟 web，不需 `daemon-reload`。輪替見 `docs/production_resilience.md` |
 | 新的 LLM 批次或評測入口 | `sys.path.insert` 之後第一個專案 import 必須是 `scripts._llm_env`、緊接 `load_llm_env()`；`require_llm_key(...)` 在取鎖之前（`tests/test_llm_env_loading.py` 掃描入口檔釘住，只 import `answer`／`retrieval_pipeline` 等間接層的入口也算；不呼叫 LLM 的列在該檔 `NON_LLM_ENTRIES` 並逐一核對取用的名稱）；批次傳 `{任務: 模型}`（缺金鑰時說得出是哪個旋鈕），評測傳模型名清單。會呼叫 LLM 的批次還要加進 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS` 並取鎖 |
 | 新增批次 LLM 呼叫點（`run_claude`） | 帶 `max_tokens` 與 `meta={"task", "file_hash", "report_id"}`（簡報只需 `task`），值由 `tests/test_claude_cli.py` 的 `EXPECTED` 表逐點釘住，改值要同步改表並說明理由；重試迴圈加 `if res.text is None and not is_retryable(res): break`（`API[...]` 已在傳輸層處理，解析失敗才在腳本層重試），跳過名單的 reason 用 `failure_kind(res)` |
-| 新增 `stream_completion` 呼叫點（線上與評測） | 帶 `max_tokens` 與 `task`（`tests/test_llm.py` 的 `EXPECTED` 表逐點釘住）；同步更新所有假物件簽章；model 只用白名單或 `claude-*` 正式名稱 |
+| 新增 `stream_completion` 呼叫點（線上與評測） | 帶 `max_tokens` 與 `task`（`tests/test_llm.py` 的 `EXPECTED` 表逐點釘住）；同步更新所有假物件簽章；model 只用白名單（`llm_models.HTTP_MODELS`），其他名稱在送出前就以 `kind=config` 失敗 |
 | 改批次 prompt 或解析規則 | 跳過名單（`llm_task_failure`）只以 model 為鍵、不看 prompt：重跑要加 `--retry-blocked`，否則舊失敗繼續擋。`should_skip()` 與 `skip_clause_sql()` 必須等價（`tests/test_llm_failures.py`） |
 | 讀忠實度分數 | 一律經 `app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`／`JUDGE_MODEL_SQL`／`is_current_judge`，不自寫過濾；`LEGACY_JUDGE_MODEL` 永遠不跟著現行預設改 |
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露。網搜暫停與否由 `frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`（功能旗標 `ask.web_search`，讀 `/api/features`）控制，不要刪 web 項；清單為空時 `ComposerTools` 回 null |
@@ -134,7 +134,7 @@ uv run python scripts/ingest_all.py
 
 ### LLM（§2.2 `llm.py` 列、§9）
 - 模型名一律經 `llm_models.resolve_model`，不寫死；`LLM_PROVIDER` 的預設與拼錯時的行為見 §9。
-- 改 `llm.py`、`llm_http.py` 或 `/api/ask` 的錯誤訊息前，先讀 §2.2 的 `llm.py` 列（分派、重試、逾時與截斷語意）與 `web/routers/ask.py` 的 `_LLM_ERROR_DETAILS` 註解。內容審查與 402 **不改走 Claude**（`docs/production_resilience.md`）。
+- 改 `llm.py`、`llm_http.py` 或 `/api/ask` 的錯誤訊息前，先讀 §2.2 的 `llm.py` 列（分派、重試、逾時與截斷語意）與 `web/routers/ask.py` 的 `_LLM_ERROR_DETAILS` 註解。內容審查與 402 **沒有備援後端**（claude CLI 已移除；處置見 `docs/production_resilience.md`）。
 
 ### 閱讀頁、雷達、簡報（讀取路徑零 LLM；§6）
 - 閱讀頁：正典文字是 `clean_extracted(full_text)`，錨點有效與否只在後端判；`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性，不要清。`PdfViewer.tsx` 的 `PagePointerProvider` 要在 `Rotate` 之內，複製走 `frontend/src/lib/clipboard.ts`（理由在各自的註解）。

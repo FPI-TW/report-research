@@ -177,7 +177,7 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
    碰不到 NAS 的部署（EC2，正式環境）設 `SYNC_SOURCE=r2-inbox`：第 2、3 段改成 `scripts/r2_inbox.py pull`，把本地鏡像沒有或大小不同的 inbox 物件拉回 `研報自動匯入/`（保留 mtime）並寫同格式的 delta，第 4 段起完全相同。部分失敗仍匯入已落地的檔，失敗檔下一輪重拉；拉取／推送有失敗時均記告警並抑制完整成功心跳。`originals/` 不能拿來代替 inbox：那裡只有 SHA256 與 sha256 metadata，沒有檔名與 mtime。
 4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest（單篇流程在 `scripts/_ingest_core.py` 的 `ingest_one`，sync 依它回的結果計數、寫失敗紀錄與跳過名單），每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。匯入 rc 不是 0 也不是 75 時 delta 保留在 `data/`，殼依時間序列出所有保留的 delta 與 `--delta … --hashes-out data/sync_hashes_retained_<時間>.txt` 重放指令（`--hashes-out` 讓每份重放的 hashes 各寫一份，不覆寫 `data/.sync_last_hashes`；只列殼產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`）。中途中止前已入庫的篇，importer 寫到 `<hashes_out>.partial`，殼改名保留成 `data/sync_hashes_retained_<時間>_partial.txt` 並印三段補跑指令（重放時它們會變 `skip_exists`，不會進重放的 hashes）。
 5. 以 `--hashes-file data/.sync_last_hashes` 依序跑摘要、標題、摘錄。**不可改成 `--since-days`**：它濾的是 `report_date`，會漏掉近九成。
-6. 訊號 `--limit ${SYNC_SIGNAL_LIMIT:-100}`，排跨全語料積壓，`--limit` 是安全機制不是效能旋鈕（不限量會佔住 CLI 鎖 80 小時以上）。
+6. 訊號 `--limit ${SYNC_SIGNAL_LIMIT:-100}`，排跨全語料積壓，`--limit` 是安全機制不是效能旋鈕（不限量會長時間佔住批次鎖，擋住之後每一輪 sync）。
 7. 簡報（無參數；沒有自己的 timer 是刻意的，要讀當輪剛擷取的評等變動）。
 8. 標題積壓 `--limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`，補一年以上舊檔（永遠不會進 `--hashes-file`）。
 
@@ -271,7 +271,6 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 | state | HTTP | 條件 |
 |---|---|---|
-| `disabled` | 200 | 問答主答沒有解析到 DeepSeek，且沒有金鑰 |
 | `unknown` | 200 | 還沒有完成過查詢 |
 | `ok` | 200 | 餘額 ≥ `LLM_BALANCE_FLOOR`（預設 70） |
 | `low` | 503 | 0 < 餘額 < 門檻 |
@@ -279,8 +278,9 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | `auth_failed` | 503 | 查詢回 401，或問答主答走 DeepSeek 卻沒有金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
 | `indeterminate` | 503 | 缺該幣別、其他幣別非零、金額讀不懂、端點設定錯 |
+| `misconfigured` | 503 | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱 |
 
-問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15；其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
+`misconfigured` 時不查餘額（每題都回設定有誤；只看主答，其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
 
 ### 對外 API（`/external/v1/*`）
 
@@ -368,7 +368,7 @@ make sync-once
 
 | 症狀 | 看哪裡 |
 |---|---|
-| 網搜問答失敗、`FileNotFoundError: 'claude'` | 只有解析到 Claude 的任務（網搜，目前暫停）還走 CLI；web unit 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf`。`scripts/check_web_health.sh` 的 rc=5 已由 health unit 的空 `HEALTH_DEP_DROPIN=` 停用 |
+| 問答每題回「帳號異常」／「設定有誤」 | `/healthz/llm`（`scripts/check_web_health.sh` rc=7／8）與 web 日誌的啟動自檢（金鑰、白名單外的模型名、`ASK_ENABLE_WEB`）；處置見 `docs/production_resilience.md` |
 | 原檔下載／PDF 檢視全數 503，其餘正常 | R2 bucket 或憑證（repo root `.env` 與 `/etc/default/report-mark-sync` 兩份要逐字相同）；`scripts/check_web_health.sh` rc=6 就是這個，細節在 web 日誌的「healthz 物件儲存探測失敗」 |
 | 摘要、摘錄無聲漏跑 | `make llm-blocked`（跳過名單）與各批次 `*_failures.log`；DeepSeek 帳號狀態看 `scripts/check_web_health.sh` rc=7／8 |
 | 批次 rc=75 | 撞 LLM 批次鎖，不是錯誤；`make freshness` 判是否停更 |
@@ -376,7 +376,7 @@ make sync-once
 | `/api/progress` 回 422 | router 檔輔助函式夾在裝飾器與 handler 之間 |
 | SPA 回 503 | `frontend/dist` 不存在，`make build-web` |
 | 閱讀頁 PDF 整頁空白、伺服器零錯誤 | R2 bucket CORS |
-| 訊號大量 `rejected` | 批次併發搶 CLI，不是資料壞 |
+| 訊號大量 `rejected` | `data/signal_failures.log` 每列的原因：`API[<kind>]` 是呼叫失敗（逾時、過載多半是 DeepSeek 端暫時的，下一輪會重打），「回應不是合法 JSON」之類是有回應但不能用（連續 3 輪進跳過名單，`make llm-blocked`）；不是資料壞 |
 | `make db-audit` 紅 | `fsync=off` 殘留（`make restore-durability`）、孤兒列、`content_norm` 漂移 |
 | 評測退出碼 3 | 新指標未在 `scripts/eval_compare.py` 的 `METRIC_SPECS` 補方向 |
 | 評測退出碼 2，訊息是「量尺只有 … 有記錄」 | 一邊是記錄量尺之前的舊結果檔（例如 `eval/baselines/baseline-2026-09-02.json`）；兩邊都用同一版 `eval/run_ragas.py` 重跑，不是放寬比較器 |

@@ -1,7 +1,7 @@
 """M1 eval 編排：讀題集 → 逐題 retrieve→generate→三指標 → aggregate → 寫基準線。
 
 生成端刻意用 build_user_prompt + stream_completion（非 answer_question）以隔離檢索與
-生成、避開 qa_log 寫入/overview/off-topic。有界併發（claude CLI spawn 吃 IO）、逐題
+生成、避開 qa_log 寫入/overview/off-topic。有界併發（限制同時的 DeepSeek 請求數）、逐題
 fail-open（任一階段異常記 error、不計均值、不中斷批次）。
 
 M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--agentic 走 agentic
@@ -87,7 +87,6 @@ from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision
 from app.services.zh_hant import looks_simplified  # noqa: E402
 from eval.judge import (  # noqa: E402
     DEFAULT_JUDGE_MODEL,
-    DEFAULT_JUDGE_RETRIES,
     DEFAULT_JUDGE_TIMEOUT,
     JUDGE_MAX_TOKENS,
     JudgeAccountError,
@@ -539,8 +538,9 @@ def _sha256_file(path) -> str:
 
 
 def judge_provider(model: str) -> str:
-    """judge 實際走哪個 backend：與 `stream_completion` 同一份白名單分派（`is_http_model`）。"""
-    return "deepseek_http" if is_http_model(model) else "claude_cli"
+    """judge 走哪個 backend。白名單外的 model 已沒有 backend（PR-M 移除 claude CLI；judge 對它拋
+    `JudgeAccountError`、入口預檢先擋），記 `unsupported`。舊結果檔裡的 `claude_cli` 是 CLI 時代的值。"""
+    return "deepseek_http" if is_http_model(model) else "unsupported"
 
 
 # 量尺系譜（PR-26/27；`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
@@ -606,7 +606,6 @@ def build_config(
             "provider": judge_provider(judge_model),
             "model": judge_model,
             "timeout": DEFAULT_JUDGE_TIMEOUT,
-            "retries": DEFAULT_JUDGE_RETRIES,
             "prompt_sha": judge_prompt_sha(),
             "schema_version": JUDGE_SCHEMA_VERSION,
             "lineage": judge_lineage(judge_model),
@@ -860,7 +859,7 @@ async def run(
         if saved is not None:
             print(f"續跑 {q['id']} #{run_idx + 1}/{repeat}", file=sys.stderr, flush=True)
             return saved["result"], saved["judge_observed"]
-        async with sem:  # 限制同時 spawn 的 claude CLI 數，避開 IO 風暴
+        async with sem:  # 限制同時的 LLM 請求數
             local_observer = _JudgeObserver()
 
             async def _judge(system: str, user: str):

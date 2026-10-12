@@ -37,7 +37,7 @@ vCPU、RAM、磁碟、IOPS 到底要多少，repo 裡從來沒有任何工具在
 
 ### 2. 分元件用 cgroup v2，不掃 `/proc/<pid>`
 
-批次腳本會 fork 出 `claude` CLI 與 BGE-M3 子行程，**按 PID 掃一定會漏掉它們**，
+批次腳本會 fork 出 BGE-M3 子行程（PR-M 前還有 `claude` CLI），**按 PID 掃一定會漏掉它們**，
 而那正是全天尖峰的來源。cgroup 天然把子孫行程算進父 unit。
 
 容器同理，且**直接讀 `/sys/fs/cgroup/docker/<id>/` 而不是 `docker stats`**：實測後者
@@ -131,7 +131,7 @@ python3 scripts/analyze_resource_usage.py --json   # 給其他工具消費
 **CPU 幾乎全部花在 cross-encoder rerank**：`qa_timing` 顯示 rerank 27–39 秒、
 retrieve 0.7–9.5 秒、embed 1 毫秒（後者是 `embed_query_cached` 的 lru_cache 命中，
 冷值約 0.16–1.5 秒）。**rerank 是這套服務唯一需要獨立算力的元件**，其餘的本機 CPU
-都是零頭；`app/services/llm.py` 那一段是 spawn `claude` CLI，屬 token 成本不是算力。
+都是零頭；`app/services/llm.py` 那一段當時是 spawn `claude` CLI（PR-M 起是 DeepSeek HTTP 呼叫），屬 token 成本不是算力。
 
 ### 為什麼「峰值 10.4 核」不是「需要 10 顆核心」
 

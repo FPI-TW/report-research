@@ -1,17 +1,16 @@
 """為缺摘要的研報產生 2-3 句中文摘要 → research_report.summary
 
 - 來源：DB 既有 full_text（語料已導入，無須重跑 ingest）
-- 每篇用 `claude -p`(Sonnet) headless 產出 JSON {"summary": "..."}，parse_summary() 解析
+- 每篇呼叫 LLM（DeepSeek，`scripts/_claude_cli.run_claude`）產出 JSON {"summary": "..."}，parse_summary() 解析
 - 冪等可續傳：只挑 summary IS NULL 者；重跑天然跳過已補的
-- 並發用 asyncio.Semaphore 控制同時的 CLI 呼叫數；失敗重試，壞檔記 data/summary_failures.log
+- 並發用 asyncio.Semaphore 控制同時的 LLM 呼叫數；失敗重試，壞檔記 data/summary_failures.log
 - 回應解析不出摘要的研報記入 research.llm_task_failure，連續 3 輪後不再重打
   （規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）
 
 用法：uv run python scripts/generate_summaries.py [--workers 2] [--limit N] [--excerpt 12000]
 
-注意：每篇都會冷啟動一個 `claude -p` agent；workers 越高、同時冷啟動越多，磁碟
-小檔 I/O（使用時間%）越容易被頂滿。預設壓到 2，並用 --setting-sources '' 略過
-全域 settings/hooks/plugins 以降低每次冷啟動的 I/O。
+注意：workers 預設壓到 2。CLI 時代是因為每篇冷啟動一個 claude 子行程、頂滿磁碟小檔 I/O；
+PR-M 後不再 spawn 子行程，低併發留著控制 DeepSeek 的請求速率與 DB 連線數。
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
-from app.services.llm_models import TASK_SUMMARY, is_http_model, resolve_model  # noqa: E402
+from app.services.llm_models import TASK_SUMMARY, resolve_model  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
     CliNotFoundError,
@@ -44,14 +43,13 @@ from scripts._claude_cli import (  # noqa: E402
     record_escalation,
     run_claude,
 )
-from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
-# SUMMARY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+# SUMMARY_MODEL 旋鈕，未設時查預設表（app/services/llm_models.py）。
 MODEL = resolve_model(TASK_SUMMARY)
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。摘要約 150 字，1024 已留兩倍以上。
+# 輸出上限（第二版計畫 §8）。摘要約 150 字，1024 已留兩倍以上。
 MAX_TOKENS = 1024
 MAX_SUMMARY_CHARS = 400  # 安全上限，避免模型暴走輸出整段
 
@@ -87,8 +85,8 @@ def parse_summary(raw: str, *, allow_plain_text: bool = True) -> Optional[str]:
 
     `allow_plain_text=False`（DeepSeek 路徑，審查 D11）：沒有大括號也算解析失敗。純文字 fallback
     是給 CLI 時代偶爾不守格式的 Claude 用的；DeepSeek 不守 JSON 格式時多半是在閒聊或拒答
-    （「抱歉，我無法……」），把那段話當摘要寫進 DB 比沒有摘要更糟。CLI 路徑維持原狀，
-    免得遷移前後同一篇研報的結果因解析規則而不同。
+    （「抱歉，我無法……」），把那段話當摘要寫進 DB 比沒有摘要更糟。PR-M 移除 CLI 後批次一律傳 False；
+    預設值 True 留給直接呼叫解析器的工具與測試。
     """
     if not raw:
         return None
@@ -119,15 +117,10 @@ def parse_summary(raw: str, *, allow_plain_text: bool = True) -> Optional[str]:
     return to_traditional(cleaned)[:MAX_SUMMARY_CHARS]
 
 
-def build_cli_args(prompt: str) -> list[str]:
-    """組 `claude -p` 的 argv（本腳本固定用 MODEL；實作見 scripts/_claude_cli.py）。"""
-    return _build_cli_args(prompt, MODEL)
-
-
 def call_cli(
     prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
 ) -> CliResult:
-    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`，DeepSeek）。回 (text, None) 或 (None, 失敗原因)。名稱是 CLI 時代的歷史值。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None`——那個
     tuple 的第二項讓第一項完全沒有意義（Exception 已涵蓋 TimeoutExpired），
@@ -154,17 +147,16 @@ async def summarize_one(
     prompt = build_prompt(file_name, full_text, excerpt)
     summary: Optional[str] = None
     # 保留最後一次的失敗原因：log 要分得出「環境壞了」與「回了但解析不採信」
-    last_error = "CLI 無回應"
+    last_error = "LLM 無回應"
     # 只有「回了但不能用」才記入跳過名單；環境型失敗不記（見 llm_failures 模組說明）。
     # 值是要記的 reason：解析失敗＝unparseable；HTTP 的審查／截斷／空回應／400 取 failure_kind。
     fail_reason: Optional[str] = None
-    strict = is_http_model(MODEL)
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
             res = await asyncio.to_thread(call_cli, prompt, file_hash=file_hash, report_id=rid)
             if res.text:
-                summary = parse_summary(res.text, allow_plain_text=not strict)
+                summary = parse_summary(res.text, allow_plain_text=False)
                 if summary:
                     break
                 last_error = "回應無法解析為摘要"
@@ -172,7 +164,7 @@ async def summarize_one(
             elif res.error:
                 last_error = res.error
             if res.text is None and not is_retryable(res):
-                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                # API 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
                 fail_reason = failure_kind(res) or fail_reason
                 break
 

@@ -46,7 +46,7 @@
 
 分工鐵律：Python 做所有決定性的事，LLM（DeepSeek）只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
 
-技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 預設走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；網搜仍解析到 `claude` CLI（`claude -p`），而 CLI 已於 2026-09-23 放棄，所以網搜**暫停中**：生產以 `ASK_ENABLE_WEB=0` 關閉，前端不列網搜開關、請求一律送 `web=false`（`frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`，讀 `/api/features` 的功能旗標 `ask.web_search`，上限就是 `ASK_ENABLE_WEB`）。旗標 `ask.web_search` 預設關，所以即使 `ASK_ENABLE_WEB` 未設（＝1）也不會出現網搜開關。恢復條件是 DeepSeek 版網搜（Tavily 工具迴圈）完成，屆時把 `ASK_ENABLE_WEB` 設 1、在管理後台「功能旗標」頁覆寫開啟（可先限定給部分使用者），前端不必改。
+技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 只走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；claude CLI 已於 2026-09-23 放棄、PR-M 移除，網搜因此**沒有後端**：`ASK_ENABLE_WEB` 預設 0，前端不列網搜開關、請求一律送 `web=false`（`frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`，讀 `/api/features` 的功能旗標 `ask.web_search`，上限就是 `ASK_ENABLE_WEB`）。旗標 `ask.web_search` 預設也關。恢復條件是 DeepSeek 版網搜（Tavily 工具迴圈）完成，屆時把 `ASK_ENABLE_WEB` 設 1、在管理後台「功能旗標」頁覆寫開啟（可先限定給部分使用者），前端不必改。
 
 ## 快速開始
 
@@ -68,7 +68,7 @@ make serve-preview            # DEV_NO_AUTH=1 免登入看版面，另開 8098
 make search Q="AI 伺服器散熱" MARKET=TW   # CLI 檢索
 ```
 
-DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同。`claude` CLI 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf` 留到 PR-M 移除。
+DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同。claude CLI 已於 PR-M 移除（連同 web unit 的 PATH drop-in），LLM 只剩 DeepSeek。
 
 ## 專案結構
 
@@ -117,7 +117,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
-| GET | `/healthz/llm` | — | `{"llm":"disabled"\|"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"}`；後五種回 503，問答主答（`ASK_ANSWER_MODEL`）沒有用到 DeepSeek 時改回 200 並加 `_unused` 後綴。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
+| GET | `/healthz/llm` | — | `{"llm":"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"\|"misconfigured"}`；後六種回 503（`misconfigured`＝問答主答 `ASK_ANSWER_MODEL` 解析到白名單外的名稱，不查餘額）。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
 | GET | `/healthz/security` | — | `{"security":"ok"\|"unknown"\|"audit_chain_broken"\|"elevate_failures"\|"account_failures"\|"login_failures"}`；後四種回 503（多項同時成立回最前面那一個），`unknown`（判不出來）回 200。**不回任何計數、IP 或帳號** | 安全事件的狀態型告警（Admin v2），**免登入但只回答本機直連**（其餘 404）。判斷是 `security_ops.evaluate_alerts`：`SECURITY_WINDOW_MINUTES`（15）分鐘內全站登入失敗（含被限流擋下的請求）達 `SECURITY_LOGIN_FAILURE_THRESHOLD`（20）、同一帳號「上次登入成功之後」連續失敗達 `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5）、權限提升失敗達 `SECURITY_ELEVATE_FAILURE_THRESHOLD`（3）、稽核鏈驗證失敗（快取 `AUDIT_VERIFY_CACHE_SECONDS`）。結論快取 30 秒、最多等 8 秒（逾時＝unknown）。給 `scripts/check_security_health.sh` 用（`audit_chain_broken` 為退出碼 1、其餘告警 2、判不出來 3），接 P5 instance `report-mark-security-incident`；明細在 `/api/admin/security/alerts` |
 | GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next`；第二步 form `step=totp`、`code`、`next` | 302／303 | 登入頁免登入；帳號不分大小寫。失敗回 `/login?error=1|locked|insecure|disabled|unavailable`（`disabled` 只在密碼正確時出現）。帳號開了兩步驟驗證時，密碼正確只發 5 分鐘、`Path=/login` 的簽章暫時憑證 `tf_mfa` 並導向 `/login?step=totp`，第二步驗證碼正確才發 session；錯誤回 `?step=totp&error=totp`（計入每 IP 失敗限流）、暫時憑證缺漏或逾時回 `?error=expired`。暫時憑證不可重放。登出只撤銷這一個 session |
 | GET | `/api/me` | — | `{id, username, role, is_super, scopes, elevated_until, totp_enabled, mfa_enrollment_required, mfa_policy_locked}` | 目前登入身分；`role` 為 `admin`／`user`，`scopes` 是實際生效的 scope，`elevated_until` 是本 session 權限提升的到期時刻（未提升為 null）。`mfa_enrollment_required`＝管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟而本人還沒開 TOTP，此時 `/api/admin/*`、`/api/review/*`、`/api/progress` 一律 403 `mfa_enrollment_required`，前端管理後台改顯示 TOTP 設定；`mfa_policy_locked`＝政策開啟且本人是管理員，不能自行關閉 TOTP。免登入開發模式回 `id: null`、`username: "dev"`、super admin 全部 scope（不受 TOTP 強制） |
@@ -256,14 +256,14 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | 唯一留在 `app/services/db.py` 的 getenv |
 | `LOG_LEVEL` | `INFO` | 調到 WARNING 會失去登入成功稽核、`qa_timing`、`/api/*` 請求耗時與檢索遙測。每行帶 `rid=`，與回應的 `X-Request-Id` 相同 |
 | `DB_POOL_SIZE`、`DB_MAX_OVERFLOW`、`DB_POOL_TIMEOUT`、`DB_POOL_RECYCLE` | 5、15、10、1800 | per-process 上限 20；改併發前依 `.env.example` 算式重算 |
-| `DB_STATEMENT_TIMEOUT_MS`、`DB_IDLE_TX_TIMEOUT_MS`、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS` | 60000、0、0 | idle 預設 0 是刻意的（sync 在交易內 spawn CLI）；維運長查詢走 `relax_statement_timeout()` |
+| `DB_STATEMENT_TIMEOUT_MS`、`DB_IDLE_TX_TIMEOUT_MS`、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS` | 60000、0、0 | idle 預設 0 是刻意的（sync 在交易內呼叫 LLM 與嵌入）；維運長查詢走 `relax_statement_timeout()` |
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
-| `LLM_HTTP_TOTAL_TIMEOUT` | `600` | DeepSeek 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註，CLI 路徑不讀 |
+| `LLM_HTTP_TOTAL_TIMEOUT` | `600` | DeepSeek 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註 |
 | `LLM_BUDGET_CURRENCY`、`LLM_BALANCE_FLOOR` | `CNY`、`70` | 只有 web 讀（`/healthz/llm`，設在 repo 根 `.env`）：只看餘額裡這個幣別那一筆，低於門檻回 503 → 探針退出碼 7（用罄、認證失敗等停擺為 8）。月上限 ¥350 是儲值紀律，不是旋鈕（`docs/production_resilience.md`） |
-| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `deepseek`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`deepseek` 表除網搜外都是 `deepseek-flash`（兩個 judge 自 2026-09 起也是）；未設、空值都當成 `deepseek`，未知值線上當成 `deepseek`（記 ERROR）、批次與評測預檢 rc=2 並印原始值。`claude_cli`（遷移前的表）與 `claude_only`（遷移期的回退值）仍是合法值，但 claude CLI 已於 2026-09-23 放棄，設了等於 LLM 全部停擺。清單與語意見 `.env.example` |
+| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `deepseek`、查表 | 任務旋鈕非空就用，否則查預設表（`app/services/llm_models.py`）：除網搜外都是 `deepseek-flash`（兩個 judge 自 2026-09 起也是），網搜沒有模型（空字串）。`LLM_PROVIDER` 唯一合法值是 `deepseek`（未設、空值同）；PR-M 退役的 `claude_cli`／`claude_only` 與拼錯的值線上當成 `deepseek`（記 ERROR）、批次與評測預檢 rc=2 並印原始值。模型名只接受 DeepSeek 白名單，`claude-*` 等其他名稱線上以設定錯誤失敗、批次 rc=2。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、16 候選 | rerank fail-open；50 候選在 2026-09-29 的線上壓測易逾時 |
-| `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`deepseek-flash`（`claude_cli` 表是 `claude-haiku-4-5`）、`ASK_FAITHFULNESS_TIMEOUT` 依 judge（DeepSeek 90、Claude CLI 240） | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`，自 judge 切成 DeepSeek 起歸「其他 judge」）。`ASK_FAITHFULNESS_TIMEOUT` 是每次 judge 呼叫的總期限；未設時依 judge 決定（DeepSeek 90，依探測延遲訂；Claude CLI 240；計算在 `app/config.py`），設了就照設的值 |
+| `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`deepseek-flash`、`ASK_FAITHFULNESS_TIMEOUT` 90 | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`，自 judge 切成 DeepSeek 起歸「其他 judge」）。`ASK_FAITHFULNESS_TIMEOUT` 是每次 judge 呼叫的總期限；未設時依 judge 決定（DeepSeek 90，依探測延遲訂；Claude CLI 240；計算在 `app/config.py`），設了就照設的值 |
 | `EXTRACTOR`、`EXTRACTION_REVIEW_MIN`、`EXTRACTION_REVIEW_MIN_COVERAGE`、`EXTRACTION_REVIEW_MAX_GARBLED` | `pypdf`、0.6、0.30、0.02 | 抽取器（部署主機的 sync 環境檔設 `pdfplumber`）與 `needs_review` 三道門檻（只標記不擋，`docs/EXTRACTION.md` §5） |
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
 | `EXTERNAL_FILE_URL_TTL_SECONDS` | 600 | 對外 API 原檔連結（presign）的有效期（秒，60..3600）；站內連結仍用 `R2_PRESIGN_TTL_SECONDS`。超出範圍或不是整數啟動即拒絕，不退回預設 |
@@ -344,7 +344,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 
 | Unit | 排程 | 做什麼 |
 |---|---|---|
-| `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`，PATH drop-in 給 `claude` |
+| `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`（PR-M 前的 PATH drop-in 已刪除） |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
 | `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：二十張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`、`api_client`、`api_client_entitlement`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |

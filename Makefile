@@ -1,5 +1,5 @@
 # 廷豐研報 運作流程編排
-# 流程：deps/db/schema → sample → extract → worklist → [Claude 標註] → ingest → serve
+# 流程：deps/db/schema → sample → extract → worklist → [LLM 標註] → ingest → serve
 # 詳見 docs/WORKFLOW.md
 
 PORT ?= 8097
@@ -81,7 +81,7 @@ schema-stamp-baseline:  ## 既有庫導入 Alembic：零 drift＋全庫備份才
 
 setup: deps schema  ## 一次完成基礎建設（deps + db + schema）
 
-# ───── 管線（Claude 標註前）─────
+# ───── 管線（LLM 標註前）─────
 sample:  ## ① 分層抽樣 ~80 檔
 	uv run python scripts/select_sample.py
 
@@ -91,14 +91,16 @@ extract:  ## ② 抽文字 + 檔名 metadata
 worklist:  ## ③ 產工作清單 + 分批（resume-aware）
 	uv run python scripts/make_worklist.py
 
-prep: sample extract worklist  ## ①②③ 一次跑完（停在 Claude 標註前）
+prep: sample extract worklist  ## ①②③ 一次跑完（停在 LLM 標註前）
 
-tag-info:  ## ④ 印出 Claude 標註步驟說明
-	@echo "④ 市場標註由 Claude Code 執行（非 make）："
-	@echo "   在 Claude Code 中以 Workflow 工具執行 workflows/tag_reports.workflow.js"
+tag-info:  ## ④ 印出 LLM 標註步驟說明
+	@echo "④ 市場標註走 DeepSeek 批次（非 make）："
+	@echo "   uv run python scripts/extract_all.py && uv run python scripts/tag_all_cli.py --workers 8"
+	@echo "   （tag_all_cli 讀 extract_all 的 data/extracted/<hash>.json 快取；抽樣原型的 worklist 分批檔"
+	@echo "    原本給 Claude Code workflow 用，已隨 PR-M 移除）"
 	@echo "   產出 data/tags/<file_hash>.json，完成後執行：make ingest"
 
-# ───── 管線（Claude 標註後）─────
+# ───── 管線（LLM 標註後）─────
 ingest:  ## ⑤ 切塊 + BGE-M3 嵌入 + upsert pgvector（首次下載模型 ~2-4GB）
 	uv run python scripts/run_ingest.py
 
@@ -119,7 +121,7 @@ boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語
 	uv run python scripts/build_boilerplate.py
 
 # ───── LLM 批次（互斥）─────
-# 下面五支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（預設 DeepSeek HTTP；名稱裡的
+# 下面五支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（DeepSeek HTTP；名稱裡的
 # claude 是 CLI 時代的遺留），互斥防的是重複計費、摘錄 DELETE+INSERT 互撞與 DB 連線數。
 # 互斥由 scripts/_claude_lock.py 的 flock 跨進程鎖強制（清單見 tests/test_claude_lock.py 的
 # LOCKED_SCRIPTS）：撞車時後啟動者會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，
@@ -227,7 +229,7 @@ clamav-smoke:  ## 上傳掃描冒煙（EICAR→FOUND、PDF→OK；可帶 SMOKE_P
 	uv run python scripts/clamav_smoke.py $(if $(SMOKE_PDF),--pdf "$(SMOKE_PDF)")
 
 # ───── 維運 ─────
-pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟
+pipeline: prep tag-info  ## 跑 ①②③ 並提示 LLM 標註步驟
 
 reset-db:  ## 清空 canonical 與向量表（保留 schema）
 	$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \

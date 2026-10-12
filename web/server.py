@@ -39,7 +39,7 @@ configure_logging()
 
 from app import request_context  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.services import accounts, db, llm, llm_http, llm_models, usage_events  # noqa: E402
+from app.services import accounts, db, llm_http, llm_models, usage_events  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
@@ -114,8 +114,8 @@ async def _warmup_models() -> None:
 def _check_llm_models() -> None:
     """啟動自檢：線上任務解析到的模型各自需要什麼，缺了就說出來（不擋啟動）。
 
-    `/healthz` 只探 DB。claude 不在 PATH 上（2026-09-02 原生安裝路徑漂移）、DeepSeek 金鑰沒填、
-    模型名打錯，三種都會讓每一題問答回 SSE error 而健康檢查照樣 ok。判準在
+    `/healthz` 只探 DB。DeepSeek 金鑰沒填、模型名不在白名單（含 PR-M 前的 `claude-*`）、網搜總閘開著
+    卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而健康檢查照樣 ok。判準在
     `llm_models.diagnose`（純函式）；金鑰只看有沒有值，不記任何內容。
     """
     resolved = llm_models.resolve_all(llm_models.ONLINE_TASKS)
@@ -124,12 +124,10 @@ def _check_llm_models() -> None:
         llm_models.provider(),
         "、".join(f"{task}={model}" for task, model in resolved.items()),
     )
-    has_claude = any(llm_models.is_claude_model(m) for m in resolved.values())
     findings = llm_models.diagnose(
         resolved,
         has_key=bool((os.environ.get("DEEPSEEK_API_KEY") or "").strip()),
-        claude_path=llm.claude_cli_path() if has_claude else None,
-        path_env=os.environ.get("PATH", ""),
+        web_enabled=get_settings().ask_enable_web,
     )
     for level, message in findings:
         logger.log(level, "%s", message)
@@ -202,7 +200,7 @@ async def lifespan(app: FastAPI):
         "pgvector 版本：%s",
         pgvector_version or "查不到（DB 不可用，交由 /healthz 回報）",
     )
-    # LLM 自檢（claude CLI 路徑、DeepSeek 金鑰、未知模型名）：問答壞掉時 /healthz 只探 DB
+    # LLM 自檢（DeepSeek 金鑰、白名單外的模型名、網搜總閘）：問答壞掉時 /healthz 只探 DB
     # 照樣回 ok。只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
     _check_llm_models()
     await _check_accounts()

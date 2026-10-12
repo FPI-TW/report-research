@@ -53,7 +53,7 @@ EXTS = {".pdf", ".docx", ".doc"}
 # **哪些計數器代表「這篇本來該入庫、卻沒進 DB」。**
 #
 # 分界不是看名字，是看「重跑會不會不一樣」：
-#   - `skip_untagged`：標註的前置條件失敗（claude CLI 壞掉、逾時、回應無法解析）。
+#   - `skip_untagged`：標註的前置條件失敗（逾時、過載、回應無法解析；帳號層級的失敗整批中止）。
 #     檔案本身沒問題，環境修好後重跑就會入庫 ⇒ **異常**。
 #   - `skip_blocked`：行內標註被模型供應商的內容審查擋下（DeepSeek 的 content_filter）。
 #     重跑不會不一樣（同一份輸入再送一次結果不變），但它確實是「本該入庫卻沒進 DB」，要人處理
@@ -360,7 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="只印將匯入清單，不呼叫 claude、不寫 DB",
+        help="只印將匯入清單，不呼叫 LLM、不寫 DB",
     )
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=32)
@@ -382,7 +382,7 @@ def main() -> None:
     # 取鎖之前：缺金鑰或模型名打錯是「跑了也白跑」，要在撞鎖（rc=75＝不跑）之前說出來。
     if not args.dry_run:  # --dry-run 不標註、不呼叫 LLM
         require_llm_key({TASK_TAG: TAG_MODEL})
-    # 這支也 spawn claude（行內標註，見 _ingest_core._tag_via_cli），而且它跑在排程路徑上、是三小時
+    # 這支也呼叫 LLM（行內標註，見 _ingest_core._tag_via_cli；名稱是 CLI 時代的歷史值），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):
         try:

@@ -98,8 +98,8 @@ def _spec(key, description, default, env, ceiling) -> tuple[str, FlagSpec]:
 # 旗標清單（唯一定義）。預設值的原則：fail-open 的派生功能預設 true（不設 DB 時行為與 v1 完全相同，
 # 由環境變數決定）；會改變使用者可見行為的營運開關預設 false。
 # ask.web_search 例外、預設 false：v1 的前端把網搜寫死成暫停（不論 ASK_ENABLE_WEB 都看不到開關、請求一律
-# web=false），而網搜後端（claude CLI）已不存在。預設關才是「零行為改變」——即使環境變數未設（＝1），
-# 也要上限開 AND DB 明確覆寫開，網搜開關才會出現。
+# web=false），而網搜後端（claude CLI）已不存在。預設關才是「零行為改變」——上限 `ASK_ENABLE_WEB` 的程式
+# 預設也是關，要上限開 AND DB 明確覆寫開，網搜開關才會出現。
 REGISTRY: dict[str, FlagSpec] = dict([
     _spec("ask.web_search", "問答網路搜尋（前後端同一個來源；預設關，網搜後端完成後再以覆寫開啟）", False,
           "ASK_ENABLE_WEB", lambda s: s.ask_enable_web),

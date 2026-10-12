@@ -152,7 +152,7 @@ CONDENSE_TIMEOUT = _S.ask_condense_timeout
 
 ROUTE_MODEL = INTENT_MODEL
 ROUTE_TIMEOUT = INTENT_TIMEOUT
-# 輸出上限（只作用在 HTTP 路徑，CLI 忽略；第二版計畫 §8）：分類只要一個 token，改寫是一句
+# 輸出上限（第二版計畫 §8）：分類只要一個 token，改寫是一句
 # 獨立查詢加一行分類。
 ROUTE_MAX_TOKENS = 16
 CONDENSE_MAX_TOKENS = 256

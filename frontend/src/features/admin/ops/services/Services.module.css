@@ -17,15 +17,30 @@
 
 /* ── 服務表 ── */
 .groupCount { font-family: var(--ac-mono); font-size: 11px; }
-.nameCell { max-width: 300px; }
-.name { font-family: var(--ac-mono); font-size: 12.5px; color: var(--ac-t1); text-decoration: none; }
+.name { font-family: var(--ac-mono); font-size: 12.5px; color: var(--ac-t1); text-decoration: none; overflow-wrap: anywhere; }
 .name:hover { color: var(--ac-goldt); text-decoration: underline; }
 .desc { margin-top: 2px; font-size: 11.5px; color: var(--ac-t5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cellMono { font-family: var(--ac-mono); font-size: 11.5px; color: var(--ac-t4); white-space: nowrap; }
 .cellMono[data-bad] { color: var(--ac-badt); }
-.svcErr { margin-top: 3px; max-width: 260px; font-size: 11.5px; color: var(--ac-badt); overflow-wrap: anywhere; }
+.svcErr { margin-top: 3px; font-size: 11.5px; color: var(--ac-badt); }
 .rowOpen td { background: var(--ac-hover); }
-.deps { display: flex; flex-wrap: wrap; gap: 4px; }
+.deps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+/* 欄寬固定：依賴的晶片（服務名）比欄寬長就截斷，完整名稱在晶片的 title。 */
+.deps > span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.depsMore { font-family: var(--ac-mono); font-size: 10.5px; color: var(--ac-t5); white-space: nowrap; }
+/* 核心、重要、輔助三張表共用同一組欄寬（<colgroup>＋固定版面），上下對得齊。「服務」欄不給寬度，吃剩下的。
+   min-width＝各欄寬度加上服務欄的下限：卡片比它窄時三張表一起橫向捲（操作欄釘在右邊），欄位照樣對齊。
+   固定版面下內容不會把欄撐寬：等寬的格子改成可折行（很長的 ActiveState 折成兩行，不蓋到隔壁欄），說明與錯誤訊息照欄寬折或截。 */
+.table { table-layout: fixed; min-width: 1090px; }
+.table .cellMono { white-space: normal; overflow-wrap: anywhere; }
+.table td { overflow-wrap: anywhere; }
+.col[data-col='status'] { width: 92px; }
+.col[data-col='state'] { width: 132px; }
+.col[data-col='result'] { width: 88px; }
+.col[data-col='lastRun'] { width: 136px; }
+.col[data-col='timer'] { width: 168px; }
+.col[data-col='deps'] { width: 150px; }
+.col[data-col='actions'] { width: 140px; }
 .meta { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 11.5px; color: var(--ac-t5); }
 .meta b { font-family: var(--ac-mono); font-weight: 400; color: var(--ac-t4); }
 

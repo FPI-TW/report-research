@@ -46,7 +46,7 @@ function UsageTable({ caption, keyLabel, rows, showCost }: {
         <tbody>
           {rows.map(r => (
             <tr key={r.key}>
-              <td className={c.mono}>{r.key}</td>
+              <td className={c.mono}><span className={`${c.truncate} ${styles.nameCol}`} title={r.key}>{r.key}</span></td>
               <td className={R}>{fmtInt(r.calls)}</td>
               <td className={R}>{r.failures ? <span className={styles.failNum}>{fmtInt(r.failures)}</span> : 0}</td>
               <td className={R}>{fmtInt(r.prompt_hit_tokens)}</td>

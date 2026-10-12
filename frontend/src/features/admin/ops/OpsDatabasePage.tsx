@@ -159,7 +159,10 @@ function TablesCard({ ov }: { ov: DbOverviewResponse }) {
               <tbody>
                 {(t.items ?? []).map(it => (
                   <tr key={`${it.schema_name}.${it.table}`}>
-                    <td className={c.mono}>{it.table}<div className={c.sub}>{it.schema_name}</div></td>
+                    <td className={c.mono}>
+                      <span className={`${c.truncate} ${styles.nameCol}`} title={it.table}>{it.table}</span>
+                      <div className={c.sub}>{it.schema_name}</div>
+                    </td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtBytes(it.total_bytes)}</td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtInt(it.row_estimate)}</td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtPct(it.dead_ratio)}<div className={c.sub}>{fmtInt(it.dead_tuples)} 列</div></td>
@@ -198,7 +201,7 @@ function UnusedIndexesCard({ ov }: { ov: DbOverviewResponse }) {
               <tbody>
                 {items.map(it => (
                   <tr key={`${it.schema_name}.${it.index}`}>
-                    <td className={c.mono}>{it.index}</td>
+                    <td className={c.mono}><span className={`${c.truncate} ${styles.nameCol}`} title={it.index}>{it.index}</span></td>
                     <td className={c.mono}>{it.schema_name}.{it.table}</td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtBytes(it.size_bytes)}</td>
                     <td>{it.is_primary ? '主鍵' : it.is_unique ? '唯一' : '一般'}</td>

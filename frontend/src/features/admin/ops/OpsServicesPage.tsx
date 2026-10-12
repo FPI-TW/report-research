@@ -22,6 +22,8 @@ const FILTERS: Record<Filter, { label: string; pass: (s: OpsServiceStatus) => bo
 }
 const FILTER_KEYS = Object.keys(FILTERS) as Filter[]
 
+const MAX_DEP_CHIPS = 2
+
 const HELP = (
   <>
     服務狀態、依賴關係與最近日誌（唯讀）經主機上的維運代理取得，代理不可用時研報平台的其他功能不受影響。
@@ -32,7 +34,7 @@ const HELP = (
 )
 
 function TimerCell({ s }: { s: OpsServiceStatus }) {
-  if (!s.timer) return <span className={c.muted}>常駐</span>
+  if (!s.timer) return <span className={`${c.muted} ${c.nowrap}`}>常駐</span>
   const t = s.timer_state
   return (
     <>
@@ -49,8 +51,19 @@ function TimerCell({ s }: { s: OpsServiceStatus }) {
 function DependsOn({ node, deps }: { node?: OpsDependencyNode; deps: DependencyLookup }) {
   if (!deps.nodes) return <span className={c.muted} title={deps.isPending ? '載入中' : '依賴關係載入失敗'}>—</span>
   if (!node || node.depends_on.length === 0) return null
-  return <div className={styles.deps}>{node.depends_on.map(n => <Chip key={n} mono>{n}</Chip>)}</div>
+  // 清單裡最多兩個晶片，其餘收成「＋N」（完整清單在 title 與抽屜）：依賴多的服務才不會把表格撐寬。
+  const shown = node.depends_on.slice(0, MAX_DEP_CHIPS)
+  const rest = node.depends_on.length - shown.length
+  return (
+    <div className={styles.deps} title={rest > 0 ? node.depends_on.join('、') : undefined}>
+      {shown.map(n => <Chip key={n} mono title={n}>{n}</Chip>)}
+      {rest > 0 && <span className={styles.depsMore}>＋{rest}</span>}
+    </div>
+  )
 }
+
+/** 核心、重要、輔助三張表共用同一組欄寬（`Services.module.css` 的 `.col`），上下對得齊；第一欄「服務」吃剩下的寬度。 */
+const COLS = ['name', 'status', 'state', 'result', 'lastRun', 'timer', 'deps', 'actions'] as const
 
 interface TableProps {
   items: OpsServiceStatus[]
@@ -65,11 +78,12 @@ interface TableProps {
 function ServiceTable({ items, deps, openName, detailHref, onOpen, onAction }: TableProps) {
   return (
     <div className={c.tableWrap}>
-      <table className={c.table}>
+      <table className={`${c.table} ${styles.table}`}>
+        <colgroup>{COLS.map(col => <col key={col} className={styles.col} data-col={col} />)}</colgroup>
         <thead>
           <tr>
             <th>服務</th><th>狀態</th><th>ActiveState</th><th>Result</th><th>最近執行</th><th>排程</th><th>依賴</th>
-            <th className={c.tdRight}>操作</th>
+            <th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -82,7 +96,7 @@ function ServiceTable({ items, deps, openName, detailHref, onOpen, onAction }: T
               .filter(Boolean).join(' ')
             return (
               <tr key={s.name} className={rowClass} onClick={() => onOpen(s.name)}>
-                <td className={styles.nameCell}>
+                <td>
                   {/* 鍵盤與分享連結的入口；點擊由連結自己處理，不再冒泡到列。 */}
                   <Link className={styles.name} to={detailHref(s.name)} onClick={e => e.stopPropagation()}>{s.name}</Link>
                   <div className={styles.desc} title={s.description || s.target}>{s.description || s.target}</div>
@@ -96,7 +110,7 @@ function ServiceTable({ items, deps, openName, detailHref, onOpen, onAction }: T
                 <td className={styles.cellMono}>{fmtDateTime(lastRunAt(s))}</td>
                 <td><TimerCell s={s} /></td>
                 <td><DependsOn node={deps.nodes?.get(s.name)} deps={deps} /></td>
-                <td className={c.tdActions}>
+                <td className={`${c.tdActions} ${c.stickyRight}`}>
                   <RowActions label={`${s.name} 的更多操作`}
                     primary={s.actions.includes('logs') ? { label: '日誌', to: logsHref(s.name) } : undefined}
                     more={more} />

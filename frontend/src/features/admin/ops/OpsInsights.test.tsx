@@ -217,7 +217,7 @@ test('資料健康：立即執行要先確認；取消不送出，確認後送�
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   expect(posts()).toEqual([])
   fireEvent.click(screen.getByRole('button', { name: '立即執行 freshness' }))
-  fireEvent.click(screen.getByRole('button', { name: '確定立即執行' }))
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '立即執行' }))
   expect(await screen.findByText('已送出 freshness，等同 timer 觸發一次')).toBeInTheDocument()
   // 還在驗證視窗內：不再詢問
   expect(posts()).toEqual(['/api/admin/ops/services/freshness/run'])
@@ -226,7 +226,7 @@ test('資料健康：立即執行要先確認；取消不送出，確認後送�
 test('資料健康：不在驗證視窗內，立即執行要先重新驗證身分', async () => {
   const m = mount('/admin/operations/data-health', HEALTH_ROUTE, healthWithOps(), OPERATE)
   fireEvent.click(await screen.findByRole('button', { name: '立即執行 freshness' }))
-  fireEvent.click(screen.getByRole('button', { name: '確定立即執行' }))
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '立即執行' }))
   const dialog = await screen.findByRole('dialog', { name: '重新驗證身分' })
   expect(dialog).toHaveTextContent('「立即執行 freshness」需要重新驗證')
   expect(urls(m, 'POST')).toEqual([])
@@ -241,7 +241,7 @@ test('資料健康：同一組工作正在跑（409）→ 提示原因，不當�
   mount('/admin/operations/data-health', HEALTH_ROUTE,
     healthWithOps(() => json({ detail: '同一組工作執行中', code: 'already_running' }, 409)), ELEVATED)
   fireEvent.click(await screen.findByRole('button', { name: '立即執行 freshness' }))
-  fireEvent.click(screen.getByRole('button', { name: '確定立即執行' }))
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: '立即執行' }))
   expect(await screen.findByText(/同一組工作正在執行中/)).toBeInTheDocument()
 })
 

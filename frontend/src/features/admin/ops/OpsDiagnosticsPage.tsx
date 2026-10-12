@@ -32,8 +32,7 @@ const DAILY_REASON: Record<string, string> = {
 }
 
 function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
-  // 外面包一層：Status 是 inline-flex，接在一行文字前面時基線會落在燈號上，整塊往下掉
-  return <span className={styles.pill}><Status tone={LAMP_TONE[tone]}>{children}</Status></span>
+  return <Status tone={LAMP_TONE[tone]}>{children}</Status>
 }
 
 /** 等寬且可在任意字元斷行：commit、路徑、bundle 檔名。 */

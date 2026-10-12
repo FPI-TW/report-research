@@ -75,7 +75,7 @@ export function useServiceActions(): {
         body={pending?.action === 'restart'
           ? `確定要重新啟動「${pending.name}」？重啟期間服務會短暫中斷，這個頁面也會短暫連不上。`
           : `確定要立即執行「${pending?.name ?? ''}」一次？`}
-        confirmLabel={pending ? `確定${WRITE_ACTION_LABELS[pending.action]}` : '確定'}
+        confirmLabel={pending ? WRITE_ACTION_LABELS[pending.action] : '確定'}
         onConfirm={() => { if (pending) void execute(pending) }}
         onCancel={() => setPending(null)}
       />

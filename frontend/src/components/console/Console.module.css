@@ -44,6 +44,9 @@
 }
 .btnDanger:hover:not(:disabled) { filter: brightness(1.06); }
 .btnGhost { border-color: transparent; background: none; }
+/* 危險但不是主要動作（批次停用、抽屜的「退回」）：紅字、不填色。實心紅留給確認框的最後一步。 */
+.btnDangerText, .btnDangerText:hover:not(:disabled) { color: var(--ac-badt); }
+.btnDangerText:hover:not(:disabled) { border-color: var(--ac-bad); }
 .iconBtn {
   flex: none; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: none;
   display: inline-flex; align-items: center; justify-content: center; color: var(--ac-t5); cursor: pointer;
@@ -67,6 +70,10 @@
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ac-t5); min-width: 0; }
 .fieldLabel { display: flex; justify-content: space-between; gap: 8px; }
 .counter { font-family: var(--ac-mono); }
+.fieldHint { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--ac-t5); }
+.checkGroup { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.checkRow { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ac-t2); cursor: pointer; }
+.checkRow[data-disabled] { opacity: 0.55; cursor: not-allowed; }
 .searchBox {
   display: flex; align-items: center; gap: 8px; height: 32px; width: 220px; padding: 0 10px;
   border: 1px solid var(--ac-l3); border-radius: 6px; background: var(--ac-sunk); color: var(--ac-t5);
@@ -87,6 +94,9 @@
 .segBtn:hover { color: var(--ac-t1); }
 .segBtn[aria-pressed='true'], .segBtn[aria-checked='true'] { background: var(--ac-segon); box-shadow: var(--ac-segsh); color: var(--ac-t1); }
 .segCount { font-family: var(--ac-mono); font-size: 11px; color: var(--ac-t5); }
+.segBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 選項很多時（三十幾個服務）改成換行，不橫向捲。 */
+.segWrap { display: flex; flex-wrap: wrap; }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--ac-l1); overflow-x: auto; scrollbar-width: none; }
 .tab {
   position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px;
@@ -138,6 +148,14 @@
 .t3 { color: var(--ac-t3); }
 .muted { color: var(--ac-t5); }
 .sub { margin-top: 2px; font-size: 11.5px; color: var(--ac-t5); }
+/* 卡片上方或標題列的一行中繼資料（範圍、筆數、產生時間）。 */
+.meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t5); }
+/* 整列可點的表格裡，列內當鍵盤入口的按鈕：看起來是文字，實際是 button。 */
+.rowLink {
+  padding: 0; border: none; background: none; color: var(--ac-t1); font: inherit; text-align: left; cursor: pointer;
+  max-width: 100%; overflow-wrap: anywhere;
+}
+.rowLink:hover { color: var(--ac-goldt); }
 
 /* ── 晶片 ── */
 .chip {
@@ -153,7 +171,7 @@
 .chipMono { font-family: var(--ac-mono); }
 
 /* ── 狀態（燈號＋文字） ── */
-.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; color: var(--ac-t4); }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; color: var(--ac-t4); vertical-align: middle; }
 .status[data-tone='ok'] { color: var(--ac-okt); }
 .status[data-tone='warn'] { color: var(--ac-warnt); }
 .status[data-tone='bad'] { color: var(--ac-badt); }

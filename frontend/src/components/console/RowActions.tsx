@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router'
 import { Icon } from '../primitives/Icon'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
@@ -14,9 +15,12 @@ export interface RowAction {
   hint?: string
 }
 
+/** 主要動作是導頁時給 `to`：畫成真的連結（可以中鍵開新分頁），`onClick` 不用給。 */
+export type RowPrimary = RowAction | { label: string; to: string; hint?: string }
+
 interface Props {
-  /** 主要動作：一顆 26px 按鈕。沒有就只有「更多」。 */
-  primary?: RowAction
+  /** 主要動作：一顆 26px 按鈕（或連結）。沒有就只有「更多」。 */
+  primary?: RowPrimary
   /** 「更多 ▾」選單的項目；空陣列或不給就不畫選單。falsy 的項目會略過，方便寫條件式。 */
   more?: readonly (RowAction | false | null | undefined)[]
   /** 選單的無障礙名稱，例如「jason.wu 的更多操作」。 */
@@ -84,10 +88,12 @@ export function RowActions({ primary, more, label }: Props) {
 
   return (
     <div className={o.rowActions} onClick={stop}>
-      {primary && (
+      {primary && ('to' in primary ? (
+        <Link to={primary.to} className={`${c.btn} ${c.btnSm}`} title={primary.hint}>{primary.label}</Link>
+      ) : (
         <button type="button" className={`${c.btn} ${c.btnSm}`} onClick={primary.onClick}
           disabled={primary.disabled} title={primary.hint}>{primary.label}</button>
-      )}
+      ))}
       {ordered.length > 0 && (
         <button ref={btnRef} type="button" className={`${c.btn} ${c.btnSm} ${o.moreBtn}`} aria-haspopup="menu"
           aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label}

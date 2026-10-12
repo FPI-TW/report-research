@@ -4,8 +4,9 @@ import { useState } from 'react'
 import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  Button, ConfirmDialog, Drawer, DrawerSection, FormDialog, Field, PageHeader, RowActions, Segmented, Tabs, Toaster,
-  TrendBars, dismissToast, isElevationCancelled, toast, TOAST_MS, useElevate, useQueryParam,
+  Button, CheckRow, ConfirmDialog, Dialog, DialogActions, DialogBody, Drawer, DrawerSection, FieldGroup, FormDialog, Field,
+  PageHeader, RowActions, Segmented, StatTile, Tabs, Toaster,
+  TrendBars, dismissToast, isElevationCancelled, toast, TOAST_BAD_MS, TOAST_MS, useElevate, useQueryParam,
 } from './index'
 
 afterEach(() => {
@@ -193,12 +194,22 @@ describe('toast', () => {
     act(() => toast('已停用「jason.wu」'))
     expect(screen.getByRole('status')).toHaveTextContent('已停用「jason.wu」')
     act(() => { vi.advanceTimersByTime(TOAST_MS - 100) })
-    act(() => toast('匯出失敗', { tone: 'bad' }))
-    expect(screen.getByRole('status')).toHaveTextContent('匯出失敗')
-    expect(screen.getByRole('status')).toHaveAttribute('data-tone', 'bad')
+    act(() => toast('已啟用「jason.wu」'))
+    expect(screen.getByRole('status')).toHaveTextContent('已啟用「jason.wu」')
     act(() => { vi.advanceTimersByTime(TOAST_MS - 100) })
     expect(screen.getByRole('status')).toBeInTheDocument()
     act(() => { vi.advanceTimersByTime(200) })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('失敗的訊息停久一點（多半是後端的 detail，比較長）', () => {
+    vi.useFakeTimers()
+    render(<Toaster />)
+    act(() => toast('至少要保留一位啟用中的管理員', { tone: 'bad' }))
+    expect(screen.getByRole('status')).toHaveAttribute('data-tone', 'bad')
+    act(() => { vi.advanceTimersByTime(TOAST_MS + 500) })
+    expect(screen.getByRole('status')).toHaveTextContent('至少要保留一位啟用中的管理員')
+    act(() => { vi.advanceTimersByTime(TOAST_BAD_MS - TOAST_MS) })
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })
@@ -322,5 +333,59 @@ describe('小元件', () => {
     expect(bars[2].firstElementChild).toHaveAttribute('data-tone', 'warn')
     expect(bars[3].firstElementChild).toHaveAttribute('data-tone', 'gold')
     expect(container.querySelector('[title="門檻 85%"]')).not.toBeNull()
+  })
+
+  it('RowActions 的主要動作給 to 就是真的連結', () => {
+    render(<MemoryRouter><RowActions primary={{ label: '日誌', to: '/admin/operations/logs?service=web' }} /></MemoryRouter>)
+    expect(screen.getByRole('link', { name: '日誌' })).toHaveAttribute('href', '/admin/operations/logs?service=web')
+  })
+
+  it('Segmented 停用時每一顆都不能按', () => {
+    const onChange = vi.fn()
+    render(<Segmented label="狀態" value="open" onChange={onChange} disabled wrap options={[{ value: 'open', label: '待處理' }, { value: 'done', label: '已處理' }]} />)
+    expect(screen.getByRole('button', { name: '已處理' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '已處理' }))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('StatTile 給 name 就是具名的群組；補充文字的完整內容在 title', () => {
+    render(<StatTile name="今日超額" label="今日超額" value={3} unit="次" sub="alice、bob…" subTitle="alice、bob、carol" />)
+    const tile = within(screen.getByRole('group', { name: '今日超額' }))
+    expect(tile.getByText('3')).toBeInTheDocument()
+    expect(tile.getByText('alice、bob…')).toHaveAttribute('title', 'alice、bob、carol')
+  })
+
+  it('FieldGroup 不是 label：點標題不會誤觸裡面的控制項；CheckRow 回報勾選狀態', () => {
+    const onCheck = vi.fn(); const onSeg = vi.fn()
+    render(
+      <FieldGroup label="角色" hint="調整後對方的下一個動作就生效">
+        <Segmented label="角色選項" value="user" onChange={onSeg} options={[{ value: 'user', label: '一般使用者' }, { value: 'admin', label: '管理員' }]} />
+        <CheckRow checked={false} onChange={onCheck}>查看問答內容</CheckRow>
+        <CheckRow checked disabled onChange={onCheck}>super admin 已含</CheckRow>
+      </FieldGroup>,
+    )
+    const group = screen.getByRole('group', { name: '角色' })
+    expect(group.tagName).toBe('DIV')
+    expect(group.querySelector('label > [role="group"]')).toBeNull()
+    fireEvent.click(within(group).getByText('角色'))
+    expect(onSeg).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox', { name: '查看問答內容' }))
+    expect(onCheck).toHaveBeenCalledWith(true)
+    expect(screen.getByRole('checkbox', { name: 'super admin 已含' })).toBeDisabled()
+  })
+
+  it('Dialog 設 dismissible={false}：Esc 與點遮罩都不關，只能按裡面的按鈕', () => {
+    const onClose = vi.fn()
+    render(
+      <Dialog open title="新金鑰" width={500} dismissible={false} onClose={onClose}>
+        <DialogBody>這把金鑰只會顯示這一次。</DialogBody>
+        <DialogActions><Button variant="primary" onClick={onClose}>我已複製，關閉</Button></DialogActions>
+      </Dialog>,
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.mouseDown(screen.getByRole('dialog', { name: '新金鑰' }).parentElement!)
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '我已複製，關閉' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

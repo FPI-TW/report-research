@@ -20,13 +20,18 @@ interface DialogProps {
   top?: boolean
   /** 忙碌中：Esc 與點遮罩都不關。 */
   locked?: boolean
+  /** false＝只能用對話框裡的按鈕關（只顯示一次的金鑰：不能被 Esc 或點遮罩誤關）。 */
+  dismissible?: boolean
 }
 
 /**
  * 主控台對話框的底：遮罩＋置中面板，portal 到 body，Esc 與點遮罩關閉，焦點鎖在面板內。
  * 一般用 `ConfirmDialog`／`FormDialog`；內容特殊（例如只顯示一次的金鑰）才直接用這個。
  */
-export function Dialog({ open, onClose, title, children, width, role = 'dialog', closeButton, top, locked }: DialogProps) {
+export function Dialog({
+  open, onClose, title, children, width, role = 'dialog', closeButton, top, locked: busyLocked, dismissible = true,
+}: DialogProps) {
+  const locked = busyLocked || !dismissible
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   useFocusTrap(panelRef, open)
@@ -69,6 +74,16 @@ export function Dialog({ open, onClose, title, children, width, role = 'dialog',
     </div>,
     document.body,
   )
+}
+
+/** 直接用 `Dialog` 時的內文段落（12.5px）。 */
+export function DialogBody({ children }: { children: ReactNode }) {
+  return <p className={o.dialogBody}>{children}</p>
+}
+
+/** 直接用 `Dialog` 時底部靠右的按鈕列。 */
+export function DialogActions({ children }: { children: ReactNode }) {
+  return <div className={o.dialogActions}>{children}</div>
 }
 
 interface ConfirmProps {

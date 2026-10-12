@@ -1,4 +1,4 @@
-"""五類問題範圍路由：用 Haiku 將提問分類為 OFF_TOPIC/OVERVIEW/CORPUS_QA/TIME_SENSITIVE/ADVICE_RISK。
+"""五類問題範圍路由：用 LLM（`ASK_INTENT_MODEL`）將提問分類為 OFF_TOPIC/OVERVIEW/CORPUS_QA/TIME_SENSITIVE/ADVICE_RISK。
 
 分層決策：overview 確定性優先（零 LLM、零向量） → safety_precheck 詞表命中（時效/個人化）
 → LLM 四類分類。每層覆蓋機率輸出，避免漂移。
@@ -157,7 +157,7 @@ ROUTE_TIMEOUT = INTENT_TIMEOUT
 ROUTE_MAX_TOKENS = 16
 CONDENSE_MAX_TOKENS = 256
 
-# 判準是這條路徑上唯一的槓桿——只有 Haiku 讀得到它，單元測試測不了模型判斷，
+# 判準是這條路徑上唯一的槓桿——只有 LLM 讀得到它，單元測試測不了模型判斷，
 # 所以每次改動都要拿真實分類器 A/B 量測，不能用猜的。
 #
 # 2026-07-30 實測（18 條邊界問句 × 每題 3 次多數決，逾時不計入分母）：
@@ -292,7 +292,7 @@ async def condense_and_route(
     model: str = CONDENSE_MODEL,
     timeout: float = CONDENSE_TIMEOUT,
 ) -> tuple[str, RouteDecision]:
-    """一次 Haiku 呼叫：改寫追問為獨立查詢並分類 → (standalone_query, RouteDecision)。
+    """一次 LLM 呼叫：改寫追問為獨立查詢並分類 → (standalone_query, RouteDecision)。
 
     解析後以「改寫後問題」重新執行確定性判定：overview 優先，其次安全前檢——
     兩者皆覆蓋 LLM 的 ROUTE token（確定性規則勝過機率輸出）。

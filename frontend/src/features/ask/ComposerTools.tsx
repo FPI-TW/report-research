@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Popover } from '../../components/primitives/Popover'
 import { Pressable } from '../../components/primitives/Pressable'
 import { Icon, type IconName } from '../../components/primitives/Icon'
-import { setWebSearch, useWebSearch, WEB_SEARCH_PAUSED } from '../../lib/useWebSearch'
+import { setWebSearch, useWebSearch, useWebSearchPaused } from '../../lib/useWebSearch'
 import styles from './ComposerTools.module.css'
 
 /** 一項可開關的工具。新增工具＝在 useTools() 的陣列裡多加一筆，其餘不必改。 */
@@ -16,13 +16,14 @@ export interface ComposerTool {
 
 /** 工具清單。狀態各自住在自己的 store（網搜在 useWebSearch），這裡只做組裝。
  *
- * 網搜暫停期間（`WEB_SEARCH_PAUSED`，理由與接回點見該常數）不列 web 項：清單因此是空的，
+ * 網搜暫停期間（`useWebSearchPaused`＝旗標 `ask.web_search` 沒開，理由與接回點見該 hook）不列 web 項：清單因此是空的，
  * `ComposerTools` 整個不渲染。殘留的 localStorage 開啟狀態也不會以膠囊外露——膠囊取自這份清單。
  */
 function useTools(): ComposerTool[] {
   const web = useWebSearch()
+  const paused = useWebSearchPaused()
   const tools: ComposerTool[] = []
-  if (!WEB_SEARCH_PAUSED) {
+  if (!paused) {
     tools.push({ key: 'web', icon: 'globe', name: '網路搜尋', on: web, toggle: () => setWebSearch(!web) })
   }
   return tools

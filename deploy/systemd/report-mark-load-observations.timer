@@ -1,0 +1,11 @@
+[Unit]
+Description=每 5 分鐘把監控 spool 匯入 DB
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+# 錯過的匯入沒有補跑價值（下一輪會把積壓一起讀完），不設 Persistent=true。
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

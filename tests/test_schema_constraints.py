@@ -1,17 +1,13 @@
 # tests/test_schema_constraints.py
 """`research` schema 的 CHECK 約束清單對帳（golden：`db/expected_constraints.txt`）。
 
-**要關掉的破口**：本 repo 沒有 migration 工具，`db/schema.sql` 全部用
-`CREATE TABLE IF NOT EXISTS`。對**既有**表那是完全的 no-op ——欄位還有
-`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 補，CHECK 約束一個都沒有。所以：
+**緣起**：導入 Alembic 之前 `db/schema.sql` 全部用 `CREATE TABLE IF NOT EXISTS`，改了 CHECK
+在既有庫是 no-op、`make schema` 照樣印 0 錯誤，症狀是生產寫入被拒。現在 schema 變更走
+revision（`db/migrations/versions/`），既有庫與空庫跑的是同一段 SQL，但 golden 仍有價值：
+它讓「約束改了」在 diff 裡被看見，而且 pg_get_constraintdef 的實際輸出不必靠人抄。
 
-    有人在 schema.sql 的 CHECK 加了一個新的 enum 值
-    → 乾淨的庫（測試／新機器）有，生產庫沒有
-    → `make schema` 照樣印 0 錯誤
-    → 症狀是生產寫入被拒（或某個新狀態永遠存不進去），而 schema.sql 看起來完全正確
-
-這支測試對「套完 schema.sql 的乾淨庫」抓出實際生效的約束定義，逐行與 golden 比對。
-變更會變紅，逼提交者同時寫出給既有庫用的 ALTER（並在 golden 留下痕跡）。
+這支測試對「空庫 `alembic upgrade head` 之後」抓出實際生效的約束定義，逐行與 golden 比對。
+刻意改約束時：寫 revision，再用 REPORT_MARK_WRITE_CONSTRAINTS=1 對剛升級的空庫重生 golden。
 
 **排序刻意在 Python 端做**（`sorted()`），不靠 SQL 的 `ORDER BY 1`：後者受 DB
 initdb 的 collation locale 影響，換一顆映像就可能換順序，那種紅是假的。
@@ -117,13 +113,13 @@ class AppliedSchemaMatchesGoldenTests(unittest.TestCase):
             "CHECK 約束與 db/expected_constraints.txt 不符。\n"
             f"golden 有但庫裡沒有（{len(missing)}）：\n  " + "\n  ".join(missing) + "\n"
             f"庫裡有但 golden 沒有（{len(extra)}）：\n  " + "\n  ".join(extra) + "\n"
-            "若這是刻意的變更：(1) 用 REPORT_MARK_WRITE_CONSTRAINTS=1 重寫 golden，"
-            "(2) 為既有庫寫出對應的 ALTER TABLE（CREATE TABLE IF NOT EXISTS 補不到）。",
+            "若這是刻意的變更：(1) 確認變更寫在新的 revision（db/migrations/versions/），"
+            "(2) 對剛 upgrade head 的空庫用 REPORT_MARK_WRITE_CONSTRAINTS=1 重寫 golden。",
         )
 
 
 class IsResearchNotNullSourceTests(unittest.TestCase):
-    """不需要 DB：`db/schema.sql` 的收斂敘述必須存在且順序正確。
+    """不需要 DB：baseline（`db/schema.sql`）的收斂敘述必須存在且順序正確。
 
     `NOT NULL` 不是 CHECK 約束（走 `pg_attribute.attnotnull`），所以上面那組
     golden 對帳完全看不到它。而它最可能的壞法是**順序**：回填晚於 `SET NOT NULL`

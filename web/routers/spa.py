@@ -1,5 +1,5 @@
 # web/routers/spa.py
-"""SPA 與靜態資產服務：/、/monitor、/help（導向 SPA）、/app 深連結殼，與
+"""SPA 與靜態資產服務：/、/monitor、/help（舊入口轉址）、/app 深連結殼，與
 /app/assets、/static 兩個 StaticFiles Mount。純服務、無業務邏輯。
 
 從 web/server.py 拆出（收尾）。**整組（路由＋Mount＋掛載順序）刻意留在同一模組**：
@@ -48,8 +48,9 @@ async def index():
 
 @router.get("/monitor")
 async def monitor():
-    # 舊 vanilla 監控頁已退場，導向 SPA 監控頁（保留舊路徑/書籤相容）
-    return RedirectResponse("/app/monitor", status_code=302)
+    # 導入監控已搬進管理後台（/app/admin/operations/pipeline，限管理員）；舊書籤多半來自
+    # 一般使用者，一律回檢索頁，與 SPA 的 /app/monitor 同一個落點
+    return RedirectResponse("/app/search", status_code=302)
 
 
 @router.get("/help")

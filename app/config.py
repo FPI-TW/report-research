@@ -95,6 +95,23 @@ def _r2_presign_ttl() -> int:
     return ttl
 
 
+def _external_file_url_ttl() -> int:
+    """對外 API 原檔連結（presign）的有效期：比站內更短，界線同樣 fail-closed。
+
+    presign 是持有即可下載的憑證，交給 API 用戶端後我們收不回來；預設 600 秒夠對方
+    拿到就下載，下限 60 秒避免設錯成幾秒讓連結還沒用就失效。超出範圍或不是整數就
+    拒絕啟動（同 `_r2_presign_ttl`），不靜默退回預設——憑證壽命打錯字不能變成另一個值。
+    """
+    raw = os.getenv("EXTERNAL_FILE_URL_TTL_SECONDS", "600")
+    try:
+        ttl = int(raw)
+    except ValueError as exc:
+        raise ValueError("EXTERNAL_FILE_URL_TTL_SECONDS 必須是 60..3600 的整數") from exc
+    if not 60 <= ttl <= 3600:
+        raise ValueError("EXTERNAL_FILE_URL_TTL_SECONDS 必須介於 60..3600 秒")
+    return ttl
+
+
 
 def _positive_float(name: str, default: float) -> float:
     """正數秒數；空值、非數字、nan／inf 或 ≤0 退回預設並警告。
@@ -115,6 +132,21 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _positive_int(name: str, default: int, *, upper: int | None = None) -> int:
+    """正整數；空值、非整數、≤0 或超過 upper 退回預設並警告（同 `_positive_float` 的理由：拼錯不可靜默變 0）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0 or (upper is not None and value > upper):
+        logging.getLogger(__name__).warning("%s=%r 不是合法的正整數，退回 %d", name, raw, default)
+        return default
+    return value
+
+
 def _budget_currency() -> str:
     """`/healthz/llm` 只讀 `balance_infos` 裡這個幣別的那一筆；三個英文字母，其餘退回 CNY 並警告。"""
     raw = (os.getenv("LLM_BUDGET_CURRENCY") or "").strip().upper()
@@ -124,6 +156,63 @@ def _budget_currency() -> str:
         logging.getLogger(__name__).warning("LLM_BUDGET_CURRENCY=%r 不是三碼幣別，退回 CNY", raw)
         return "CNY"
     return raw
+
+
+# 維運代理（ops_agent/）每個環境固定的 socket 路徑。與 `ops_agent/protocol.py` 的 `CANONICAL_SOCKETS`
+# 逐字相同（tests/test_admin_ops_api.py 釘住）；這裡不 import ops_agent，是為了讓設定層不依賴代理套件。
+_OPS_SOCKETS = {
+    "production": "/run/report-mark-ops/agent.sock",
+    "staging": "/run/report-mark-ops-staging/agent.sock",
+    "development": "/run/report-mark-ops-dev/agent.sock",
+}
+
+
+def _ops_agent_environment() -> str:
+    """web 要操作的環境。未知值不退回 production，而是回空字串＝停用（維運端點回 503）：
+
+    寧可看不到，也不要讓拼錯的 dev 設定默默去讀生產的代理。
+    """
+    raw = (os.getenv("OPS_AGENT_ENVIRONMENT") or "production").strip().lower()
+    if raw not in _OPS_SOCKETS:
+        logging.getLogger(__name__).warning(
+            "OPS_AGENT_ENVIRONMENT=%r 不是合法環境（可用：%s），維運代理停用", raw, "/".join(_OPS_SOCKETS))
+        return ""
+    return raw
+
+
+def _ops_agent_socket(environment: str) -> str:
+    """有設 OPS_AGENT_SOCKET 就用它（本機冒煙的臨時 socket）；否則用該環境的固定路徑。"""
+    return (os.getenv("OPS_AGENT_SOCKET") or "").strip() or _OPS_SOCKETS.get(environment, "")
+
+
+def _ratio(name: str, default: float) -> float:
+    """(0, 1] 之間的比例；空值、非數字、nan 或超出範圍退回預設並警告（門檻打錯不可變成永遠不告警）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or not 0 < value <= 1:
+        logging.getLogger(__name__).warning("%s=%r 不在 (0, 1]，退回 %g", name, raw, default)
+        return default
+    return value
+
+
+def _int_at_least(name: str, default: int, minimum: int) -> int:
+    """整數且不小於 minimum；空值、非整數或太小退回預設並警告。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = minimum - 1
+    if value < minimum:
+        logging.getLogger(__name__).warning("%s=%r 不是 ≥%d 的整數，退回 %d", name, raw, minimum, default)
+        return default
+    return value
 
 
 # 問答抽查逾時的預設值（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
@@ -139,6 +228,24 @@ def _ask_faithfulness_timeout() -> float:
     if raw:
         return float(raw)
     return ASK_FAITHFULNESS_TIMEOUT_HTTP
+
+
+# 管理員 TOTP 強制（使用者定案 10）只認這幾個「明確關閉」的寫法；其餘一律視為開啟。
+_MFA_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+_MFA_ON_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _admin_mfa_required() -> bool:
+    """`ADMIN_MFA_REQUIRED`：管理員 TOTP 全域強制，**預設關**（2026-10-07 使用者決定：現階段只依個人設定開關）。
+
+    只有明確寫成 1／true／yes／on（不分大小寫、去前後空白）才開啟；沒設、空字串、0／false／no／off 都是關閉，
+    無法辨識的值記 warning 後也視為關閉（維持現狀，不會意外把管理員擋在門外）。刻意不做成 DB 功能旗標：
+    要啟用全域強制是部署層級的決定，改環境檔並重啟 web（app/services/feature_flags.py 的 docstring）。
+    """
+    raw = (os.getenv("ADMIN_MFA_REQUIRED") or "").strip().lower()
+    if raw and raw not in _MFA_OFF_VALUES and raw not in _MFA_ON_VALUES:
+        logging.getLogger(__name__).warning("ADMIN_MFA_REQUIRED=%r 不是可辨識的值，視為關閉", raw)
+    return raw in _MFA_ON_VALUES
 
 
 def _faithfulness_min() -> float:
@@ -258,6 +365,99 @@ class Settings:
     # 月上限 ¥350 是儲值紀律（docs/production_resilience.md），刻意不寫成程式旋鈕。
     llm_budget_currency: str = "CNY"
     llm_balance_floor: float = 70.0
+    # 維運代理（web/ops_client.py → ops_agent/ 的 Unix socket）。環境空字串＝停用；socket 預設跟著環境。
+    # 逾時涵蓋連線＋一來一回，要大於代理的 request_timeout（catalog 預設 15 秒），否則代理還在算就先斷線。
+    ops_agent_environment: str = "production"
+    ops_agent_socket: str = _OPS_SOCKETS["production"]
+    ops_agent_timeout: float = 20.0
+    # 檢索回歸檢查（app/services/retrieval_regression.py、scripts/retrieval_regression.py；零 LLM）。
+    # k 只在擷取基準時用（比對一律用基準記下的 k）；三個門檻決定 rc=1（告警）；可用記憶體不足就略過
+    # 那一次（rc=2）而不是硬載 BGE-M3 跟 web 搶。基準檔路徑空字串＝repo 根 data/retrieval_regression/baseline.json。
+    retrieval_regression_k: int = 10
+    retrieval_regression_min_mean_recall: float = 0.8
+    retrieval_regression_min_question_recall: float = 0.5
+    retrieval_regression_max_degraded_questions: int = 2
+    retrieval_regression_min_available_gib: float = 4.0
+    retrieval_regression_baseline: str = ""
+    # ClamAV clamd（app/services/clamd.py；上傳管線的病毒掃描閘門，deploy/clamav/）。安全閘門一律 fail-closed：
+    # 連不上、逾時、病毒碼太舊或判斷不出來都不放行（不適用派生功能的 fail-open）。容器只綁 127.0.0.1:3310。
+    # 逾時是每一次 socket 操作的期限（連線、送一塊、等結果）：clamd 收完整份串流才開始掃，25 MB 的 PDF
+    # 掃描本身可達數十秒；`ConcurrentDatabaseReload no` 時重載病毒碼的 30–60 秒內新連線會被晾著，
+    # 120 秒讓重載中的掃描自然等過去，而不是每次都記一筆逾時。
+    clamd_host: str = "127.0.0.1"
+    clamd_port: int = 3310
+    clamd_timeout: float = 120.0
+    # 病毒碼（VERSION 回應裡的日期）超過這個年齡就不掃、回暫時性錯誤 signatures_stale（設計決策 12：72 小時）。
+    clamd_signature_max_age_hours: float = 72.0
+    # 客戶端自己的串流上限，與 deploy/clamav/conf/clamd.conf 的 `StreamMaxLength 30M` 一致
+    # （tests/test_clamav_deploy.py 對帳）。超過就不再送、直接判「超限＝未通過」，不依賴 clamd 怎麼回。
+    clamd_stream_max_bytes: int = 30 * 1024 * 1024
+    # 研報上傳的收檔（web/routers/admin_uploads.py、app/services/quarantine.py；Admin v1.5）。
+    # 旗標預設關閉：worker（掃毒、入庫）上線並經同意之前，收檔端點一律 503 `uploads_disabled`。
+    # 大小上限 25 MiB（語料最大 19.5 MB、p99 5.3 MB）；nginx 那條 location 給 30m，比這裡寬，
+    # 所以超過上限的請求由 App 回統一格式的 413，而不是 nginx 的 HTML 錯誤頁。
+    # 隔離區空字串＝repo 根 data/quarantine/。配額：每人每日（台北時間的日曆日）與全站處理中
+    # （quarantined／scanning／clean／processing）的件數；剩餘空間低於門檻（MiB）就不收（503）。
+    upload_enabled: bool = False
+    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_quarantine_dir: str = ""
+    upload_daily_quota: int = 30
+    upload_max_in_flight: int = 50
+    upload_min_free_mb: int = 1024
+    # 研報上傳的審核（web/routers/admin_uploads.py、app/services/upload_review.py）：退回後的清除寬限期（小時）。
+    # 期間內管理員可撤銷退回；過期後由上傳 worker 清除語料與檔案（設計決策 13：24 小時，與刪帳一致）。
+    upload_reject_grace_hours: int = 24
+    # 研報上傳 worker（scripts/process_uploads.py、app/services/upload_worker.py）。兩個都是路徑，空字串＝repo 根預設：
+    # - 整輪鎖（非阻塞 flock，忙就 rc 0 退出）：data/.upload_worker.lock。殼與 Python 子命令共用同一個檔。
+    # - 掃描通過後的乾淨檔：data/uploads/clean/<hash>/<原始檔名>（research_report.file_path；必須與隔離區同一個
+    #   檔案系統，os.replace 才是原子的——不同時 worker 退回「複製＋驗 SHA＋刪來源」）。
+    upload_worker_lock_file: str = ""
+    upload_clean_dir: str = ""
+    # 入庫前檢查子行程（app/services/pdf_preflight.py）的虛擬記憶體上限（MiB）：300 頁的密集文字 PDF 以
+    # pdfplumber 試抽字實測 RSS 1.68 GB，2048 通過、1536 不通過。調高前先算 worker unit 的 MemoryMax=4G 放不放得下。
+    upload_preflight_memory_mb: int = 2048
+    # ── Admin v2 ─────────────────────────────────────────────────────────────
+    # 管理員 TOTP 強制（web/authz.py 的 require_admin）：開啟時角色為 admin 而沒開 TOTP 的帳號，
+    # /api/admin/*、/api/review/* 一律 403 `mfa_enrollment_required`（/api/me/*、登出不受影響）。
+    # 預設關：現階段 TOTP 依個人設定開關；要全域強制時在環境檔設 1（`_admin_mfa_required`）。
+    admin_mfa_required: bool = False
+    # 用量收集（app/services/usage_events.py；web/server.py 的 usage middleware 與 lifespan 的 flusher）。
+    # 記憶體累加器每 usage_events_flush_seconds 秒與關機時 upsert 進 usage_daily／usage_counter／llm_usage_daily。
+    # enabled=0 時 flusher 不啟動、LLM observer 不註冊（middleware 仍在記憶體計數，受上限約束、不落庫）；
+    # tests/conftest.py 以賦值設 0，測試不寫任何庫。max_keys 是三張表合計的相異鍵上限，超過的新鍵丟棄並計數。
+    usage_events_enabled: bool = True
+    usage_events_flush_seconds: float = 60.0
+    usage_events_max_keys: int = 50_000
+    # 每人每日配額（Quota lane：app/services/quota.py）。上傳沿用 upload_daily_quota（UPLOAD_DAILY_QUOTA，30）。
+    # QUOTA_ENFORCE 是「正式阻擋」的環境上限，預設 0＝影子模式（只計數、記錄本來會擋）；即使設 1，
+    # 還要 DB 旗標 quota.enforce 打開才擋（feature_flags 的 registry 預設關，使用者定案 5：觀察兩週再決定）。
+    quota_ask_daily: int = 100
+    quota_export_daily: int = 20
+    quota_enforce: bool = False
+    # 保留期（天）。清除工作由各 lane 實作；這裡是唯一的數值來源。
+    # auth_event 至少 365（使用者定案 7，設更小會被拉回 365）；db_stat_snapshot 逐時 30、每日 400（定案 14）；
+    # 過期 session 超過 90 天刪除（user_session 從未清理）；usage_counter、llm_usage_daily 400。
+    auth_event_retention_days: int = 365
+    usage_counter_retention_days: int = 400
+    llm_usage_daily_retention_days: int = 400
+    session_expired_retention_days: int = 90
+    db_snapshot_hourly_retention_days: int = 30
+    db_snapshot_daily_retention_days: int = 400
+    # Analytics（Analytics lane）：主題格子的最小不重複人數 k（定案 2：3，總量不設門檻）；即時查 qa_log 的天數。
+    analytics_min_users: int = 3
+    analytics_live_window_days: int = 90
+    # 功能旗標（app/services/feature_flags.py）：DB 覆寫的快取秒數（同行程寫入立即失效，定案 12）。
+    feature_flag_cache_seconds: float = 5.0
+    # 安全告警（Security lane：/healthz/security、scripts/check_security_health.sh）。視窗內全站登入失敗數、
+    # 同一帳號連續失敗數、權限提升失敗數達門檻即判定異常；稽核鏈驗證結果快取秒數。前兩個是起始值，上線後依實測調。
+    security_window_minutes: int = 15
+    security_login_failure_threshold: int = 20
+    security_account_failure_threshold: int = 5
+    security_elevate_failure_threshold: int = 3
+    audit_verify_cache_seconds: int = 3600
+    # 對外 API（GET /external/v1/reports/{report_id}/file-url）交出的 presign 有效期（秒，60..3600）；
+    # 站內的原檔連結仍用 r2_presign_ttl_seconds。經 ObjectStorage.presign_get(ttl_seconds=...) 傳入。
+    external_file_url_ttl_seconds: int = 600
 
 
 def _load() -> Settings:
@@ -300,7 +500,7 @@ def _load() -> Settings:
         extraction_review_min_coverage=float(os.getenv("EXTRACTION_REVIEW_MIN_COVERAGE", "0.30")),
         extraction_review_max_garbled=float(os.getenv("EXTRACTION_REVIEW_MAX_GARBLED", "0.02")),
         ask_rerank_enabled=_flag("ASK_RERANK_ENABLED", "1"),
-        ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "50")),
+        ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "16")),
         # per-path 逾時：prod 實測（20 核 CPU）50 對 ~34s、120 對 ~93s；預設須蓋過
         # 實測值 + 忙碌餘裕，否則 rerank 靜默 fail-open 形同全關（M1b 基準線 10/10 逾時）。
         ask_rerank_timeout=float(os.getenv("ASK_RERANK_TIMEOUT", "60")),
@@ -310,7 +510,8 @@ def _load() -> Settings:
         qa_planner_model=resolve_model(TASK_QA_PLANNER),
         # 20 秒過緊：prod 實測 claude CLI 光冷啟動的 ttft 就約 10s（每次呼叫都重付
         # ~24K token 系統提示），規劃 prompt 比分類長，於是每一題都逾時 →
-        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。
+        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。（CLI 時代的量測；改走
+        # DeepSeek 後未重量，調低前先量。）
         qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "45")),
         qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
         qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
@@ -321,8 +522,8 @@ def _load() -> Settings:
         # 忠實度查核 / faithfulness（M8 里程碑）
         ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),
         # 新名 FAITHFULNESS_MIN；讀不到時退回舊名 REPORT_FAITHFULNESS_MIN（研報 PDF 功能移除前的
-        # 鍵名，生產環境檔可能還設著）。讀者只有監控頁 `_FAITHFULNESS_MIN` 與
-        # scripts/eval_faithfulness.py，都是「低於門檻」的判準。
+        # 鍵名，保留相容）。讀者是管線分頁與待複核佇列的 `_FAITHFULNESS_MIN`（web/stats_snapshot.py、
+        # web/routers/review.py）與 scripts/eval_faithfulness.py，都是「低於門檻」的判準。
         faithfulness_min=_faithfulness_min(),
         ask_faithfulness_sample_rate=float(
             os.getenv("ASK_FAITHFULNESS_SAMPLE_RATE", "1.0")
@@ -405,7 +606,7 @@ def _load() -> Settings:
         db_statement_timeout_ms=int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "60000")),
         # **預設 0（關）是刻意的，不是漏設。** 批次匯入會在交易開著的情況下做長時間
         # 的非 DB 工作：scripts/sync_new_reports.py 先 report_exists() 開了交易，接著
-        # 才呼叫 LLM 標註（硬逾時 150s）與 BGE-M3 嵌入（大檔可達數分鐘），
+        # 才做 LLM 標註（預設 DeepSeek HTTP）與 BGE-M3 嵌入（大檔可達數分鐘），
         # 中間完全沒有 commit。設了這個值＝生產每 3 小時一次的同步會把報告靜默丟進
         # FAIL_LOG。web 行程沒有這個形態（2026-07-29 的 AST 複驗：44 個
         # `async with SessionFactory()` 區塊沒有一個含 yield 或 LLM 串流），所以要開就
@@ -425,6 +626,52 @@ def _load() -> Settings:
         llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
         llm_budget_currency=_budget_currency(),
         llm_balance_floor=_positive_float("LLM_BALANCE_FLOOR", 70.0),
+        ops_agent_environment=(ops_env := _ops_agent_environment()),
+        ops_agent_socket=_ops_agent_socket(ops_env),
+        ops_agent_timeout=_positive_float("OPS_AGENT_TIMEOUT", 20.0),
+        retrieval_regression_k=_int_at_least("RETRIEVAL_REGRESSION_K", 10, 1),
+        retrieval_regression_min_mean_recall=_ratio("RETRIEVAL_REGRESSION_MIN_MEAN_RECALL", 0.8),
+        retrieval_regression_min_question_recall=_ratio("RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL", 0.5),
+        retrieval_regression_max_degraded_questions=_int_at_least("RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS", 2, 0),
+        retrieval_regression_min_available_gib=_positive_float("RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB", 4.0),
+        retrieval_regression_baseline=(os.getenv("RETRIEVAL_REGRESSION_BASELINE") or "").strip(),
+        clamd_host=(os.getenv("CLAMD_HOST") or "").strip() or "127.0.0.1",
+        clamd_port=_positive_int("CLAMD_PORT", 3310, upper=65535),
+        clamd_timeout=_positive_float("CLAMD_TIMEOUT", 120.0),
+        clamd_signature_max_age_hours=_positive_float("CLAMD_SIGNATURE_MAX_AGE_HOURS", 72.0),
+        clamd_stream_max_bytes=_positive_int("CLAMD_STREAM_MAX_BYTES", 30 * 1024 * 1024),
+        upload_enabled=_flag("UPLOAD_ENABLED", "0"),
+        upload_max_bytes=_int_at_least("UPLOAD_MAX_BYTES", 25 * 1024 * 1024, 1),
+        upload_quarantine_dir=(os.getenv("UPLOAD_QUARANTINE_DIR") or "").strip(),
+        upload_daily_quota=_int_at_least("UPLOAD_DAILY_QUOTA", 30, 1),
+        upload_max_in_flight=_int_at_least("UPLOAD_MAX_IN_FLIGHT", 50, 1),
+        upload_min_free_mb=_int_at_least("UPLOAD_MIN_FREE_MB", 1024, 0),
+        upload_reject_grace_hours=_int_at_least("UPLOAD_REJECT_GRACE_HOURS", 24, 1),
+        upload_worker_lock_file=(os.getenv("UPLOAD_WORKER_LOCK_FILE") or "").strip(),
+        upload_clean_dir=(os.getenv("UPLOAD_CLEAN_DIR") or "").strip(),
+        upload_preflight_memory_mb=_int_at_least("UPLOAD_PREFLIGHT_MEMORY_MB", 2048, 256),
+        admin_mfa_required=_admin_mfa_required(),
+        usage_events_enabled=_flag("USAGE_EVENTS_ENABLED", "1"),
+        usage_events_flush_seconds=_positive_float("USAGE_EVENTS_FLUSH_SECONDS", 60.0),
+        usage_events_max_keys=_positive_int("USAGE_EVENTS_MAX_KEYS", 50_000),
+        quota_ask_daily=_int_at_least("QUOTA_ASK_DAILY", 100, 0),
+        quota_export_daily=_int_at_least("QUOTA_EXPORT_DAILY", 20, 0),
+        quota_enforce=_flag("QUOTA_ENFORCE", "0"),
+        auth_event_retention_days=max(365, _int_at_least("AUTH_EVENT_RETENTION_DAYS", 365, 1)),
+        usage_counter_retention_days=_int_at_least("USAGE_COUNTER_RETENTION_DAYS", 400, 1),
+        llm_usage_daily_retention_days=_int_at_least("LLM_USAGE_DAILY_RETENTION_DAYS", 400, 1),
+        session_expired_retention_days=_int_at_least("SESSION_EXPIRED_RETENTION_DAYS", 90, 1),
+        db_snapshot_hourly_retention_days=_int_at_least("DB_SNAPSHOT_HOURLY_RETENTION_DAYS", 30, 1),
+        db_snapshot_daily_retention_days=_int_at_least("DB_SNAPSHOT_DAILY_RETENTION_DAYS", 400, 1),
+        analytics_min_users=_int_at_least("ANALYTICS_MIN_USERS", 3, 1),
+        analytics_live_window_days=_int_at_least("ANALYTICS_LIVE_WINDOW_DAYS", 90, 1),
+        feature_flag_cache_seconds=_positive_float("FEATURE_FLAG_CACHE_SECONDS", 5.0),
+        security_window_minutes=_int_at_least("SECURITY_WINDOW_MINUTES", 15, 1),
+        security_login_failure_threshold=_int_at_least("SECURITY_LOGIN_FAILURE_THRESHOLD", 20, 1),
+        security_account_failure_threshold=_int_at_least("SECURITY_ACCOUNT_FAILURE_THRESHOLD", 5, 1),
+        security_elevate_failure_threshold=_int_at_least("SECURITY_ELEVATE_FAILURE_THRESHOLD", 3, 1),
+        audit_verify_cache_seconds=_int_at_least("AUDIT_VERIFY_CACHE_SECONDS", 3600, 0),
+        external_file_url_ttl_seconds=_external_file_url_ttl(),
     )
 
 

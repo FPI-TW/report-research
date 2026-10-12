@@ -1,14 +1,19 @@
 # tests/test_lost_anchors_to_delta.py
-"""`scripts/lost_anchors_to_delta.py`：SQL 形狀與 delta 檔格式。不連 DB。
+"""`scripts/lost_anchors_to_delta.py`：SQL 形狀、bind 參數與 delta 檔格式。不連 DB。
 
-釘住兩件事：(1) 輸出格式與 `extract_takeaways.read_hashes_file` 的「一行一個 hash」一致，
+釘住三件事：(1) 輸出格式與 `extract_takeaways.read_hashes_file` 的「一行一個 hash」一致，
 否則補救鏈接不起來；(2) SQL 用 `anchor_method IS NULL` 當「錨不回」的判準——那正是
-`store.reanchor_takeaways` 錨不回時寫入的值。
+`store.reanchor_takeaways` 錨不回時寫入的值；(3) bind 參數恰好是呼叫端傳的三個——
+`(:since_days::int)` 曾讓 text() 回溯出不存在的 `since_day`，每次執行都失敗。
 """
 import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from sqlalchemy import text as sql_text
+from sqlalchemy.dialects.postgresql import asyncpg
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -46,6 +51,64 @@ class DeltaFormatTests(unittest.TestCase):
         text = self.mod.render_delta([("c" * 64, 1, 1, None)])
         hashes = [ln.strip() for ln in text.splitlines() if ln.strip()]
         self.assertEqual(hashes, ["c" * 64])
+
+
+class BindParameterTests(unittest.TestCase):
+    """全 repo 的同類寫法由 `tests/test_sql_bind_casts.py` 掃描。"""
+
+    EXPECTED = {"since_days", "min_lost", "limit"}
+
+    def test_bind_names_are_exactly_the_three_parameters(self):
+        stmt = sql_text(_load().LOST_SQL)
+        self.assertNotIn("since_day", stmt._bindparams)
+        self.assertEqual(set(stmt._bindparams), self.EXPECTED)
+
+        compiled = stmt.compile(dialect=asyncpg.dialect())
+        self.assertEqual(set(compiled.binds), self.EXPECTED)
+        # 沒綁上的參數名會原樣留在送進 PG 的 SQL 裡。
+        self.assertNotRegex(str(compiled), r"(?<![:\w]):[A-Za-z_]\w*")
+        for since_days in (None, 0, 30):
+            with self.subTest(since_days=since_days):
+                params = {"min_lost": 1, "since_days": since_days, "limit": 5}
+                self.assertEqual(compiled.construct_params(params), params)
+
+
+class FetchBindingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_binds_every_placeholder_for_optional_date_filter(self):
+        mod = _load()
+        rows = [("a" * 64, 2, 3, None)]
+        for since_days in (None, 0, 30):
+            with self.subTest(since_days=since_days):
+                seen = {}
+
+                class Session:
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *args):
+                        return False
+
+                    async def execute(self, statement, parameters):
+                        compiled = statement.compile(dialect=asyncpg.dialect())
+                        seen["sql"] = str(compiled)
+                        seen["bound"] = compiled.construct_params(parameters)
+
+                        class Result:
+                            def fetchall(self):
+                                return rows
+
+                        return Result()
+
+                with patch.object(mod, "SessionFactory", return_value=Session()):
+                    result = await mod.fetch(2, since_days, 10)
+
+                self.assertEqual(result, rows)
+                self.assertEqual(
+                    seen["bound"], {"min_lost": 2, "since_days": since_days, "limit": 10},
+                )
+                self.assertNotIn(":since_days", seen["sql"])
+                # asyncpg must receive a typed NULL for the unbounded-date case too.
+                self.assertIn("CAST($1 AS int) IS NULL", seen["sql"])
 
 
 if __name__ == "__main__":

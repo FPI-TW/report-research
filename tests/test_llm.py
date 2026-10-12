@@ -659,6 +659,7 @@ class CallSiteMaxTokensValuesTests(unittest.TestCase):
         ("app/services/agentic_qa.py", "'qa_agentic_eval'"): 1024,
         ("app/services/followups.py", "'ask_followup'"): 512,
         ("eval/run_ragas.py", "'eval_answer'"): 8192,
+        ("eval/qa_adversarial.py", "'eval_answer'"): 8192,
     }
 
     def test_values(self):

@@ -11,7 +11,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # admin-v*-integration：Admin 後台多分支平行開發的整合分支，各 lane 的 PR 先合進那裡、
+    # 驗收後才整批進 main——那些 PR 同樣要跑完整 CI，否則整合分支上沒有任何自動驗證。
+    branches: [main, 'admin-v*-integration']
   push:
     branches: [main]
 
@@ -33,9 +35,9 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -64,7 +66,7 @@ jobs:
       # tests/test_pre_split_guards.py 用合成 dist 骨架守「mount 順序」那條，
       # 這裡守的是另一半：真產物的 serving 與快取契約。
       - name: 上傳 dist 給後端 job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: frontend/dist
@@ -99,10 +101,10 @@ jobs:
       # （例如找到的字型不含中文字符對應）。
       REPORT_MARK_REQUIRE_CJK: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安裝 uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -127,7 +129,7 @@ jobs:
       #                            （61.2MB / 24.7 分鐘 ≈ 40KB/s），apt 的任何逾時設定
       #                            對它完全無效 —— 理由見下面 Acquire::http::Timeout 那條。
       - name: 還原 CJK 字型 .deb 快取
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         # 快取服務本身也是網路呼叫（要拉 61MB），沒有上界的話它也能吃掉整個 job 的 25 分鐘
         # —— 與這次事故同型。服務不可用時 actions/cache 是 warning 不是失敗，會自然退回下載路徑。
         timeout-minutes: 5
@@ -201,9 +203,9 @@ jobs:
               || fail "fc-list 找不到 ${fam}；PDF 中文內容測試會靜默退化成 skip"
           done
 
-      # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那題會 skip 而非跑。
+      # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那幾題會直接紅（缺 dist 是 fail 不是 skip）。
       - name: 取回前端 dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: frontend/dist
@@ -247,10 +249,10 @@ jobs:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安裝 uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -260,19 +262,56 @@ jobs:
 
       # runner 映像目前自帶 psql，但那不是契約（映像內容會變）。明確裝一次，
       # 否則哪天不見了會表現為「schema job 突然找不到指令」而不是可讀的訊息。
-      - name: 安裝 psql（套 schema 用）
+      # 下面的 stamp 演練要用它以舊流程建庫。
+      - name: 安裝 psql（stamp 演練用）
         run: |
           command -v psql >/dev/null || {
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends postgresql-client
           }
 
-      # 跑兩次驗冪等：db/schema.sql 沒有 migration 工具，它自稱冪等是被依賴的
-      # 前提（`make schema` 在既有庫上會被重複執行）。第二次要一樣安靜地成功。
-      - name: 套用 db/schema.sql（兩次，驗冪等）
+      # 空庫 upgrade head（與新機器、災難還原同一條路）。第二次是對「已有資料的庫」：
+      # 必須帶確認才放行，且無事可做。revision 鏈必須只有一個 head（平行分支合併後最常壞在這）。
+      - name: 套用 migration（空庫 upgrade head）
         run: |
-          psql -h localhost -U postgres -d research -v ON_ERROR_STOP=1 -f db/schema.sql
-          psql -h localhost -U postgres -d research -v ON_ERROR_STOP=1 -f db/schema.sql
+          uv run alembic upgrade head
+          if uv run alembic upgrade head; then
+            echo "::error::已有資料的庫沒帶 REPORT_MARK_MIGRATE_CONFIRM 卻放行了"; exit 1
+          fi
+          REPORT_MARK_MIGRATE_CONFIRM=localhost:5432/research uv run alembic upgrade head
+          test "$(uv run alembic heads | grep -c '(head)')" = 1
+
+      # checker 自己的一致性：剛升級的庫對同一台伺服器上重建的基準必須零 drift。
+      # 這一步紅＝checker 有假陽性，那麼它對生產說的「有 drift」也不可信。
+      - name: schema drift 自我一致
+        run: uv run python scripts/schema_baseline.py check
+
+      # 版本 drift：剛 upgrade head 的庫必須與程式的 head 一致；每日檢查（版本＋完整比對＋狀態檔）必須回 0。
+      - name: 版本 drift 與每日檢查
+        run: |
+          uv run python scripts/schema_baseline.py check --expect-head
+          uv run python scripts/schema_baseline.py scheduled --status-file "$RUNNER_TEMP/schema_check.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['exit_code']==0 and d['problems']==[], d" \
+            "$RUNNER_TEMP/schema_check.json"
+
+      # 既有庫導入 Alembic 的完整演練（P0-ops 的同一條路）：以舊流程（psql 套 baseline）建庫
+      # → upgrade 必須拒絕（baseline 只接受空庫）→ 零 drift → stamp → 讀回 0001。
+      - name: 既有庫 stamp 演練
+        env:
+          REPORT_MARK_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/legacy
+          REPORT_MARK_MIGRATE_CONFIRM: localhost:5432/legacy
+        run: |
+          psql -h localhost -U postgres -d research -c "CREATE DATABASE legacy"
+          psql -h localhost -U postgres -d legacy -q -v ON_ERROR_STOP=1 -f db/schema.sql
+          if uv run alembic upgrade head; then
+            echo "::error::baseline 不該套在已有物件的庫上（必須走 drift 驗證＋stamp）"; exit 1
+          fi
+          uv run python scripts/schema_baseline.py check
+          uv run python scripts/schema_baseline.py stamp --no-dump
+          test "$(uv run alembic current 2>/dev/null | awk '{print $1}')" = 0001
+          # stamp 成 0001 的庫對程式的 head 是「落後」（退出碼 1），不可回 0。
+          set +e; uv run python scripts/schema_baseline.py check --expect-head; rc=$?; set -e
+          test "$rc" = 1 || { echo "::error::stamp 成 0001 的庫 --expect-head 應回 1（落後），實際 $rc"; exit 1; }
 
       # 這兩支測試在本機一律走 skip 路徑（沒有 CI 的 DB 就驗不到），所以它們
       # 存在但等於沒跑。這個 job 就是為了讓它們真的跑起來。
@@ -283,7 +322,7 @@ jobs:
         run: uv run pytest -q tests/test_schema_constraints.py
 
       # E1b：extraction_log 的 upsert 與 research_report 新欄位，只有套完 schema 的乾淨庫
-      # 驗得到；本機連到的是生產庫，測試一律 rollback。
+      # 驗得到；本機預設連到的是測試環境的真實資料庫，測試一律 rollback。
       - name: extraction_log 與抽取欄位對帳
         run: uv run pytest -q tests/test_extraction_log_db.py
 
@@ -296,6 +335,100 @@ jobs:
       - name: 待複核佇列查詢
         run: uv run pytest -q tests/test_review_db.py
 
+      # 個別帳號：大小寫不分的唯一帳號、session 撤銷與停用立即生效、最後一位管理員的
+      # 列鎖、稽核與變更同交易。空庫才驗得到「最後一位管理員」那一題（本機那個真實資料庫會 skip）。
+      - name: 帳號與 session
+        run: uv run pytest -q tests/test_accounts_db.py
+
+      # 問答紀錄依使用者隔離：兩個使用者加 NULL 舊歷史，服務層 SQL 與 HTTP 都只看得到自己的。
+      - name: 問答紀錄每人隔離
+        run: uv run pytest -q tests/test_qa_isolation_db.py
+
+      # 研報隱藏／恢復：隱藏的研報從檢索、選篇、閱讀、雷達、總覽、簡報與 presign 全部消失，
+      # 恢復即回來，重新入庫（換新 report_id）後旗標仍在。
+      - name: 研報可見性
+        run: uv run pytest -q tests/test_report_visibility_db.py
+
+      # 單篇入庫核心的 pre_upsert hook 與 upsert_report 同一個交易：upsert 失敗時 hook 的寫入
+      # 一起 rollback、hook 之前沒有任何 commit（上傳 worker 的草稿標記靠這一點）。
+      - name: 入庫 hook 同交易
+        run: uv run pytest -q tests/test_ingest_core_db.py
+
+      # 字面路可重現：命中超過 cap 時取 chunk id 最小的 cap 列、距離平手以 id 決勝，在 generic
+      # plan 與強迫平行掃描下結果也逐列相同（假 session 只釘得到 SQL 字串，planner 要真的庫）。
+      - name: 字面路可重現
+        run: uv run pytest -q tests/test_lexical_determinism_db.py
+
+      # 監控投影：同一份 spool 匯入兩次不重複、批次 running → finished／lost 只前進不倒退、
+      # 被 CHECK 拒絕的列只略過那一列。
+      - name: 監控觀測與批次執行紀錄
+        run: uv run pytest -q tests/test_ops_monitoring_db.py
+
+      # 監控觀測的保留與聚合：跨 0–24h／2 天／10 天／100 天的觀測聚合到正確粒度、數值正確、
+      # 90 天以前清除、24h 內原封不動；重跑結果相同；聚合寫入失敗時原始觀測不被刪除。
+      - name: 監控觀測保留與聚合
+        run: uv run pytest -q tests/test_ops_rollup_db.py
+
+      # 研報上傳的收檔：partial unique index 擋同一 hash 兩筆進行中（撞 index 轉 409）、語料／進行中／曾感染
+      # 的重複判定、每日與全站處理中配額、INSERT 與稽核 upload.create 同交易（稽核失敗紀錄不留）。
+      - name: 研報上傳收檔
+        run: uv run pytest -q tests/test_admin_uploads_db.py
+
+      # 研報上傳的審核：發布前草稿在混合檢索查不到、發布後查得到；每個寫入端點的狀態閘門；狀態與稽核同交易
+      # （稽核失敗狀態不變）；退回後草稿仍不可見；撤銷退回推導回正確狀態；兩個交易並發只有一個成功
+      # （並發那組要 commit，只在語料與上傳表皆空的拋棄式庫上跑——這個 job 的庫正是）；清除守門。
+      - name: 研報上傳審核
+        run: uv run pytest -q tests/test_upload_review_db.py
+
+      # 研報上傳 worker：掃描、入庫、清除的狀態轉移全集；每一次 commit 當下從另一條連線確認草稿不可見、
+      # upload_draft_mismatch 不成立；清除守門（已發布過的研報不會被刪）。整組都會 commit，只在語料與上傳表
+      # 皆空的拋棄式庫上跑（非空即 skip、REQUIRE_DB=1 時紅）——這個 job 的庫正是。
+      - name: 研報上傳 worker
+        run: uv run pytest -q tests/test_upload_worker_db.py
+
+      # Admin v2 接線（revision 0011）：用量 upsert 的 hits 相加與 users 取 GREATEST、已刪除帳號的個人計數被濾掉、
+      # llm_usage_daily 的 NULL 使用者靠 COALESCE 唯一索引併成一列；功能旗標的 text[]／uuid[] 讀回。一律 rollback。
+      - name: Admin v2 用量收集與功能旗標
+        run: uv run pytest -q tests/test_usage_events_db.py
+
+      # Admin v2 DB 與事件趨勢：即時快照五段的系統目錄查詢在真庫上能跑；以內建低權限角色（SET LOCAL ROLE
+      # pg_signal_backend）模擬 RDS 窄權限時不拋例外、真的 42501／57014 分類正確且只回滾該段；pg_stat_statements
+      # 不存在時回 extension_missing、絕不建立擴充；快照逐時→每日彙總→保留期刪除冪等；事件週趨勢、MTTR／p50／p90
+      # 只算 resolved、批次失敗率。一律 rollback。
+      - name: Admin v2 DB 快照與事件趨勢
+        run: uv run pytest -q tests/test_db_insights_db.py
+
+      # Admin v2 每人配額：原子遞增在上限封頂、超額記 <kind>_over、上限 0／NULL（不限）、覆寫與同交易稽核、上傳讀覆寫、
+      # 線上 LLM 用量日彙總（rollback）；並發遞增恰好發出 limit 個名額（要 commit，只在相關表皆空的拋棄式庫跑——這個
+      # job 的庫正是；非空即 skip、REQUIRE_DB=1 時紅）。
+      - name: Admin v2 每人配額
+        run: uv run pytest -q tests/test_quota_db.py
+
+      # Admin v2 Security：auth_event 只刪超過 365 天的列、session 只刪結束超過 90 天的；告警的視窗計數（含被限流的
+      # 彙總 count）與「上次成功之後」的連續失敗；可疑 IP、高風險時間線分類；撤銷單一 session 與稽核同交易。一律 rollback。
+      - name: Admin v2 安全維運
+        run: uv run pytest -q tests/test_security_ops_db.py
+
+      # Admin v2 使用分析：k=3 門檻（2 人抑制、3 人顯示、NULL 使用者不計人數、跨日人數取最大值）與互補抑制、回應不含 user_id／
+      # 帳號名／問答文字、忠實度只計現行 judge、每晚彙總冪等與回填不覆寫已保留的日子、即時＋彙總兩段合併。一律 rollback。
+      - name: Admin v2 使用分析
+        run: uv run pytest -q tests/test_analytics_db.py
+
+      # 功能旗標的寫入（Admin v2 Flags lane）：覆寫與稽核 flag.update 同交易（稽核失敗旗標不留）、相同內容不記、
+      # 作用域 text[]／uuid[] 往返、匯出匯入以帳號名稱往返且有錯誤整份不寫、PUT 經真的 DB 讀回。一律 rollback。
+      - name: Admin v2 功能旗標寫入與匯出匯入
+        run: uv run pytest -q tests/test_feature_flags_db.py
+
+      # 對外 API 用戶端：建立後金鑰 resolve 得到、停用與輪替立即生效、每日額度到上限＋1 被拒且換日重置、
+      # 刪除時授權範圍與用量 cascade、寫入與稽核同交易且 detail 不含原始金鑰或 key_hash。
+      - name: 對外 API 用戶端
+        run: uv run pytest -q tests/test_api_clients_db.py
+
+      # 對外 API 的資料邊界：file-url 用的查詢取不到隱藏、草稿與授權範圍外的研報；混合檢索的 dense 與
+      # 字面兩路帶 entitlement 時，授權範圍外的研報不會出現。
+      - name: 對外 API 資料邊界
+        run: uv run pytest -q tests/test_external_api_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest
@@ -305,7 +438,7 @@ jobs:
     steps:
       # fetch-depth: 0 是必要的——掃全歷史才抓得到「同一個 PR 裡先 commit 再移除」
       # 的 secret。淺 clone 只看得到最終樹，那種 secret 仍然留在 git 物件裡。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

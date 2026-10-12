@@ -1,0 +1,34 @@
+[Unit]
+Description=容器事件偵測與通知（消費容器探針結果，含去重與提醒節奏）
+# 跑的是與 web、LineBot、邊緣完全相同的 scripts/incident_handler.sh，只換一組 INCIDENT_* 環境變數。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# webhook secret 的落點，與 report-mark-incident.service 共用同一個檔（0600 root:root）。
+EnvironmentFile=-/etc/report-mark/alert.env
+# ── 指向容器那一組訊號 ───────────────────────────────────────────────────
+Environment=INCIDENT_PROBE_UNIT=report-mark-container-health.service
+Environment=INCIDENT_TIMER_UNIT=report-mark-container-health.timer
+Environment=INCIDENT_COMPONENT=container
+Environment=INCIDENT_MONITOR_COMPONENT=container_monitor
+# **狀態目錄必須與其他組分開**：`handler.lock` 與 `probe_observation.state` 是固定檔名。
+Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-container
+# 探針 OnBootSec=5min，開機後的合理空窗 300 + 90（探針最壞耗時）≈ 390，取 480（同邊緣那組）。
+Environment=INCIDENT_BOOTSTRAP_SECONDS=480
+# **探針的 exit 3 是依 tier 去抖的確認期：hold（不開也不關），不是健康。** 當健康會讓進行中的事件在
+# 另一個容器剛開始抖動的那一輪被 RESOLVED 關掉；當故障就等於沒有去抖。web 與 LineBot 兩組不設。
+Environment=INCIDENT_HOLD_EXIT_CODES=3
+# 事件投影的 journal 片段只擷取探針（容器自己的 log 在 docker logs，不在 journald）。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

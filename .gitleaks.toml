@@ -53,3 +53,19 @@ description = "測試 fixture 的固定假 secret"
 regexes = [
   '''fixed-test-secret-[0-9a-z]+''',
 ]
+
+# stopwords：命中的「secret」本身含這些字就放行（比對對象是被抓出的值，不是整行）。
+#
+# `Ec2SubnetChoice`：2026-10-02 誤報。`deploy/aws/parameters-staging.json` 的
+# `"ParameterKey": "Ec2SubnetChoice"` 被 `generic-api-key` 判成金鑰（鍵名含 Key、值夠長）。
+# 它是 CloudFormation 範本的參數名稱，不是祕密。CI 以 fetch-depth: 0 掃**所有分支**的歷史，
+# 這一行只要還在任何遠端分支上，每個 PR 的 gitleaks 都會紅。
+#
+# 刻意逐字列出這一個參數名稱，不寫成「所有 ParameterKey 行」的 regex：
+# - gitleaks 8.30 的 `[allowlist]` 不能與可設 regexTarget 的 `[[allowlists]]` 並存；
+# - 本表的 regexes 比對的是值，每條都要能匹配測試假值（tests/test_secret_scan_config.py），
+#   放不進參數名稱。
+# 日後別的參數名稱誤報時，逐字加進來並寫明出處。
+stopwords = [
+  "Ec2SubnetChoice",
+]

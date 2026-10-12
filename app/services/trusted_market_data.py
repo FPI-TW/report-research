@@ -172,6 +172,16 @@ def validate_point(
     return None
 
 
+async def _flag_allows() -> bool:
+    """功能旗標 `trusted_data`（Admin v2 的降級開關）：`TRUSTED_DATA_ENABLED`（環境變數上限，也是測試替換點）之下
+    再 AND 一層。DB 沒有覆寫或讀不到＝開，行為與 v1 相同。身分取自 `request_context`（這裡沒有 user 參數）；
+    批次與背景工作沒有身分，有作用域的覆寫對它們視為關。失敗出口仍是同一個 TrustedDataUnavailable。"""
+    from app import request_context
+    from app.services import feature_flags
+
+    return await feature_flags.policy("trusted_data", request_context.current_user_id())
+
+
 async def fetch_trusted(
     category: Category,
     question: str,
@@ -181,12 +191,14 @@ async def fetch_trusted(
 ) -> TrustedDataPoint:
     """取得一筆已驗證的受信任時效資料；失敗一律 TrustedDataUnavailable。
 
-    順序：總開關 → provider → 快取 → 速率限制 → fetch(逾時) → 驗證 → 寫快取。
+    順序：總開關（環境變數，再 AND 功能旗標 trusted_data）→ provider → 快取 → 速率限制 → fetch(逾時) → 驗證 → 寫快取。
     CancelledError 原樣上拋且不寫快取（取消傳播）。
     """
     now = now or datetime.now(timezone.utc)
     if not TRUSTED_DATA_ENABLED:
         raise TrustedDataUnavailable("trusted data disabled")
+    if not await _flag_allows():
+        raise TrustedDataUnavailable("trusted data paused")
     entry = _registry.get(category)
     if entry is None:
         raise TrustedDataUnavailable(f"no provider for category: {category}")

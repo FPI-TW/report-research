@@ -100,7 +100,7 @@ def summarize(rows: list[dict], min_score: float, *, judge_model: str | None = N
         "lineage": lineage,
         # 窗期內現行 judge 最早的一筆（日期）；與監控卡的 judge_since 同義。
         "judge_since": min((str(r["created_at"])[:10] for r in checked), default=None),
-        # 比照監控卡：DeepSeek 系譜且窗期內還有其他判定尺的列＝剛換尺（frontend/src/features/monitor/judgeScale.ts）。
+        # 比照監控卡：DeepSeek 系譜且窗期內還有其他判定尺的列＝剛換尺（frontend/src/lib/judgeScale.ts）。
         "new_scale": lineage == JUDGE_LINEAGE_DEEPSEEK and other > 0,
         "total": total,
         "checked": len(checked),

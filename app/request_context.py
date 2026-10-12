@@ -12,6 +12,13 @@
 **不要與 `qa_log.request_id` 混淆**：那是 `/api/ask` 由前端產生的冪等鍵（UUID，
 落庫、UNIQUE），語意是「同一次送出」；這裡的是伺服器端每個 HTTP 請求一個的日誌關聯鍵，
 不落庫。批次腳本沒有 HTTP 請求，值恆為 `NO_REQUEST`。
+
+**使用者 id**（Admin v2）：同一個機制再帶一個值——這個請求是哪個帳號發的。`web/server.py` 的
+`require_login` 在 session 查驗通過後設值（開發模式免登入的 `DEV_USER` 沒有 id，維持 None），
+讓不經參數傳遞的地方也能歸因：`llm_http` 的 observer（線上 LLM 用量歸到人，`llm_usage_daily`）、
+usage middleware（`usage_counter`）。忠實度抽查是 `create_task` 起的背景任務，複製了 context，
+所以也歸得到發問的人。**它只是歸因用的標記，不是授權**——授權一律經 `web/authz.py` 讀
+`request.state.user`。批次腳本恆為 None。
 """
 
 from __future__ import annotations
@@ -51,3 +58,20 @@ def set_request_id(value: str):
 
 def reset_request_id(token) -> None:
     _request_id.reset(token)
+
+
+_user_id: ContextVar[str | None] = ContextVar("http_user_id", default=None)
+
+
+def current_user_id() -> str | None:
+    """這個請求的帳號 UUID；沒有登入身分（批次、免登入開發模式、白名單路徑）時為 None。"""
+    return _user_id.get()
+
+
+def set_user_id(value: str | None):
+    """回傳 token，呼叫端負責在 finally 以 `reset_user_id` 還原。"""
+    return _user_id.set(value)
+
+
+def reset_user_id(token) -> None:
+    _user_id.reset(token)

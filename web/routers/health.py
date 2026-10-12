@@ -46,6 +46,35 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 402／401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`，**不回任何金額**（金額只進
 日誌）。狀態、門檻、快取、402 閂鎖與主答設定錯誤（`misconfigured`）的判定都在 `app/services/llm_health.py`；
 消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
+
+## `/healthz/security`：安全事件的狀態型告警（Admin v2）
+
+同樣另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡。回應只有 `{"security": state}`，**不回任何事件細節**
+（計數與帳號在 `/api/admin/security/alerts`，要登入＋`audit.read`）。判斷是 `security_ops.evaluate_alerts`：
+`SECURITY_WINDOW_MINUTES`（15）分鐘內全站登入失敗（含被限流擋下的請求）達 `SECURITY_LOGIN_FAILURE_THRESHOLD`（20）、
+同一帳號「上次登入成功之後」連續失敗達 `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5）、權限提升失敗達
+`SECURITY_ELEVATE_FAILURE_THRESHOLD`（3）、稽核鏈驗證失敗（結果快取 `AUDIT_VERIFY_CACHE_SECONDS`）。
+state：`ok`（200）、`unknown`（判不出來，200）、`audit_chain_broken`／`elevate_failures`／`account_failures`／
+`login_failures`（503；多項同時成立回最前面那一個）。結論快取 `_SECURITY_TTL` 秒、整個判斷最多 `_SECURITY_WAIT` 秒
+（逾時＝unknown）。每次重算前順手把到期的限流彙總落庫（探針每 2 分鐘打一次，等於彙總的定期 flush）。
+消費端是 `scripts/check_security_health.sh`（接 P5 instance `report-mark-security-incident`）：只送狀態型告警
+（開場／升級／恢復），不為每筆登入事件發 webhook（使用者定案 9）。
+
+## `/api/status`：給一般使用者的粗粒度系統狀態（需登入）
+
+主平台的小燈號用。**任何登入使用者可讀**（不在免登入白名單、不限管理員），所以回應只有
+`{"status": "ok"|"degraded"|"unknown", "message": 一句中文}`，刻意不含服務清單、主機名、環境、
+錯誤細節——那些只在 `/api/admin/ops/*`（管理員＋`ops.read`）。判斷順序：
+
+1. DB 探測（與 `/healthz` 共用同一份 5 秒快取）失敗 → `degraded`。
+2. 問維運代理的 `list`（逾時壓到 `_STATUS_AGENT_TIMEOUT`）：代理不可用、拒絕或格式不符 → `unknown`
+   （fail-open：回 200，不是錯誤；細節只進日誌）。
+3. 只看 `tier = critical` 的服務：任一 `failed`／`not_found`／`idle`（核心服務都是常駐的，停著就是壞了，
+   例如 Docker 重啟後停在 Exited 的 nginx）→ `degraded`；否則任一 `unknown` → `unknown`；
+   其餘（`running`／`transitioning`）→ `ok`。important／supporting 層不影響使用者看到的燈號。
+
+代理那一段的結論以 `web.ttl_cache` 快取 `_STATUS_TTL` 秒（每個使用者的每一頁都會打，不能每次都問代理；
+conftest 每題前後 `reset_all()`）。狀態碼一律 200：這是資訊，不是探活。
 """
 import asyncio
 import logging
@@ -57,9 +86,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.services import llm_health
+from app.services import llm_health, security_ops
 from app.services.object_storage import get_object_storage
-from web import deps, dev_mode
+from web import deps, dev_mode, ops_client
+from web.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +112,23 @@ _STORAGE_FAIL_TTL = 60.0
 _STORAGE_FAILS_TO_DEGRADE = 2
 _STORAGE_WAIT = 4.0
 _STORAGE_INITIAL = _StorageState("unknown", 0, 0.0)
+
+# /api/status：代理那一段的結論快取（key 固定）；代理逾時壓短，別讓主平台的小燈號等 20 秒。
+_STATUS_TTL = 30.0
+_STATUS_AGENT_TIMEOUT = 3.0
+_STATUS_CACHE = TTLCache(ttl=_STATUS_TTL, max_entries=1, name="api_status_ops")
+_STATUS_MESSAGES = {
+    "ok": "系統運作正常",
+    "degraded": "部分核心服務異常，檢索或問答可能暫時受影響",
+    "unknown": "暫時無法取得完整的系統狀態",
+}
+_DB_DEGRADED_MESSAGE = "資料庫連線異常，檢索或問答可能暫時無法使用"
+# 核心服務停著（idle）也算壞：catalog 的 critical 層都是常駐服務。
+_CRITICAL_BAD = frozenset({"failed", "not_found", "idle"})
+# /healthz/security：結論快取（key 固定）與整個判斷的時限（探針的 curl 逾時是 10 秒）。
+_SECURITY_TTL = 30.0
+_SECURITY_WAIT = 8.0
+_SECURITY_CACHE = TTLCache(ttl=_SECURITY_TTL, max_entries=1, name="healthz_security")
 _storage: _StorageState = _STORAGE_INITIAL
 _storage_task: asyncio.Task | None = None
 
@@ -99,6 +146,70 @@ async def _probe_db() -> bool:
         # 細節只進日誌,不進回應——這是對外免認證端點
         logger.warning("healthz DB 探測失敗", exc_info=True)
         return False
+
+
+async def _db_ok() -> bool:
+    """DB 探測結果（`_TTL` 秒快取）；`/healthz` 與 `/api/status` 共用。"""
+    global _cache
+    now = time.monotonic()
+    ts, ok = _cache
+    if now - ts >= _TTL:
+        ok = await _probe_db()
+        _cache = (now, ok)
+    return ok
+
+
+async def _critical_services_state() -> str:
+    """問維運代理、只看 critical 層，回 ok／degraded／unknown。永不拋例外（fail-open）。"""
+    cached = _STATUS_CACHE.get("critical")
+    if cached is not None:
+        return cached
+    state = "unknown"
+    try:
+        client = ops_client.default_client()
+        client.timeout = min(client.timeout, _STATUS_AGENT_TIMEOUT)
+        result = await client.request("list")
+        summaries = [
+            item.get("summary") for item in result.get("items", [])
+            if isinstance(item, dict) and item.get("tier") == "critical"
+        ]
+        if any(s in _CRITICAL_BAD for s in summaries):
+            state = "degraded"
+        elif summaries and all(s in ("running", "transitioning") for s in summaries):
+            state = "ok"
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # 代理不可用、拒絕、格式不符：都只是「不知道」，細節只進日誌
+        logger.info("/api/status 取不到維運代理狀態：%s", exc)
+    _STATUS_CACHE.put("critical", state)
+    return state
+
+
+async def _security_state() -> str:
+    """安全事件的狀態字串（`security_ops.HEALTH_STATES`）。永不拋例外：逾時或任何失敗都是 unknown。"""
+    cached = _SECURITY_CACHE.get("state")
+    if cached is not None:
+        return cached
+    try:
+        async with asyncio.timeout(_SECURITY_WAIT):
+            await security_ops.flush_tallies(deps.accounts)
+            ev = await security_ops.evaluate_alerts(deps.accounts.verify_audit_chain)
+        state = ev.state
+        if ev.triggered:
+            # 只有計數與門檻（沒有 IP、帳號）：P5 的通知只說「哪一條」，細節到安全頁看。
+            logger.warning(
+                "安全告警 state=%s triggered=%s window=%smin login_failures=%s/%s accounts_over=%s "
+                "elevate_failures=%s/%s audit_chain=%s",
+                state, ",".join(ev.triggered), ev.window_minutes, ev.login_failures, ev.login_failure_threshold,
+                len(ev.accounts_over), ev.elevate_failures, ev.elevate_failure_threshold, ev.audit_chain.state,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("healthz 安全狀態判斷失敗或逾時（視為 unknown）", exc_info=True)
+        state = security_ops.STATE_UNKNOWN
+    _SECURITY_CACHE.put("state", state)
+    return state
 
 
 async def _refresh_storage() -> None:
@@ -138,16 +249,31 @@ async def _storage_state() -> str:
     return _storage.state
 
 
+def storage_snapshot() -> dict:
+    """物件儲存探測的**被動**讀取（給 `/api/admin/diagnostics`）：只讀上一次的結論，不觸發探測。
+
+    每次探測是一個計費的 R2 list 操作，診斷頁不得多打。`last_probe_age_s` 由到期時刻反推
+    （成功快取 `_STORAGE_OK_TTL`、失敗 `_STORAGE_FAIL_TTL`）；從未探測過為 None。
+    """
+    if not get_object_storage().enabled:
+        return {"state": "disabled", "consecutive_failures": 0, "last_probe_age_s": None, "last_probe_ok": None}
+    snap = _storage
+    if snap.expires_at <= 0:
+        return {"state": snap.state, "consecutive_failures": 0, "last_probe_age_s": None, "last_probe_ok": None}
+    ttl = _STORAGE_FAIL_TTL if snap.consecutive_failures else _STORAGE_OK_TTL
+    age = max(0.0, time.monotonic() - (snap.expires_at - ttl))
+    return {
+        "state": snap.state,
+        "consecutive_failures": snap.consecutive_failures,
+        "last_probe_age_s": round(age, 1),
+        "last_probe_ok": snap.consecutive_failures == 0,
+    }
+
+
 @router.get("/healthz")
 async def healthz() -> JSONResponse:
     """存活探測。健康 200 `{"status":"ok"}`；DB 不可用 503 `{"status":"degraded"}`。"""
-    global _cache
-    now = time.monotonic()
-    ts, ok = _cache
-    if now - ts >= _TTL:
-        ok = await _probe_db()
-        _cache = (now, ok)
-    if ok:
+    if await _db_ok():
         return JSONResponse({"status": "ok"})
     return JSONResponse({"status": "degraded"}, status_code=503)
 
@@ -180,3 +306,27 @@ async def healthz_llm(request: Request) -> JSONResponse:
         currency=settings.llm_budget_currency, floor=settings.llm_balance_floor,
     )
     return JSONResponse({"llm": state}, status_code=status)
+
+
+@router.get("/healthz/security")
+async def healthz_security(request: Request) -> JSONResponse:
+    """安全事件的狀態。**只回答本機直連的請求**，其餘一律 404。
+
+    回 `{"security": state}`；告警狀態（`security_ops.ALERT_STATES`）回 503，ok／unknown 回 200。
+    由 `scripts/check_security_health.sh` 消費（audit_chain_broken 為退出碼 1、其餘告警為 2、判不出來為 3）。
+    """
+    if not dev_mode.is_direct_loopback(request):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    state = await _security_state()
+    return JSONResponse({"security": state}, status_code=503 if state in security_ops.ALERT_STATES else 200)
+
+
+@router.get("/api/status")
+async def system_status() -> JSONResponse:
+    """一般使用者看的粗粒度系統狀態（需登入）。只回 `{status, message}`；規則見模組 docstring。"""
+    if not await _db_ok():
+        status, message = "degraded", _DB_DEGRADED_MESSAGE
+    else:
+        status = await _critical_services_state()
+        message = _STATUS_MESSAGES[status]
+    return JSONResponse({"status": status, "message": message}, headers={"Cache-Control": "no-store"})

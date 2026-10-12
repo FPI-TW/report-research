@@ -46,6 +46,11 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
   `get_settings()` 是 import 期就快取的單例（`app/services/db.py`），先快取到空值就一路空到底。
 - **不用 openai SDK**：它內建的重試會吃掉失敗原因，違反 `scripts/_claude_cli.py` 開頭四天
   停擺紀錄的教訓（失敗原因必須說得出口）。
+- **observer hook**（Admin v2，`add_observer`）：`_log_call` 每次呼叫恰好一次，順便把**同一份 metadata**
+  （任務、模型、成敗、token、耗時——與那行 log 相同，沒有 prompt、沒有回答、沒有 header）交給已註冊的
+  observer。web 在 lifespan 註冊 `app.services.usage_events.observe_llm_call`，把線上用量歸到人
+  （`llm_usage_daily`）；批次行程不註冊，行為不變。observer 只能是同步、便宜的函式，例外一律吞掉
+  （用量歸因不能讓 LLM 呼叫失敗）。註冊表只用標準庫，本模組仍是葉模組。
 - **judge 走非串流 JSON 模式**（`complete_json`，遷移 PR-18）：judge 不需要串流，而非串流回應才帶
   `system_fingerprint`（9/24 探測）。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），呼叫端再依自己的
   預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
@@ -65,7 +70,7 @@ import re
 import threading
 import time
 import weakref
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 
 import httpx
@@ -444,10 +449,63 @@ def last_quota_at() -> float:
     return _quota_seen_at
 
 
+# ── observer hook（模組 docstring「observer hook」）────────────────────────────
+_OBSERVERS: list[Callable[[dict], None]] = []
+_observer_warned = False
+
+
+def add_observer(fn: Callable[[dict], None]) -> None:
+    """註冊一個呼叫收尾的 observer（同一個函式只註冊一次）。"""
+    if fn not in _OBSERVERS:
+        _OBSERVERS.append(fn)
+
+
+def remove_observer(fn: Callable[[dict], None]) -> None:
+    if fn in _OBSERVERS:
+        _OBSERVERS.remove(fn)
+
+
+def call_metadata(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> dict:
+    """交給 observer 的 metadata：只有 `_log_call` 那行 log 本來就有的欄位。**沒有 prompt、回答、header、金鑰**。
+
+    tokens 的鍵與 `scripts/_claude_cli.record_usage` 寫進 jsonl 的 `tokens` 同名（hit／miss／completion／reasoning）；
+    沒有用量（失敗在第一個 chunk 之前）時為 None。
+    """
+    usage = out.usage if isinstance(out.usage, dict) else None
+    tokens = None
+    if usage is not None:
+        details = usage.get("completion_tokens_details") or {}
+        tokens = {
+            "hit": usage.get("prompt_cache_hit_tokens"), "miss": usage.get("prompt_cache_miss_tokens"),
+            "completion": usage.get("completion_tokens"),
+            "reasoning": details.get("reasoning_tokens") if isinstance(details, dict) else None,
+        }
+    return {
+        "task": task, "model": model, "model_resp": out.model_resp, "kind": out.kind,
+        "finish_reason": out.finish_reason, "attempts": attempts, "ttft_ms": out.ttft_ms,
+        "total_ms": out.total_ms, "tokens": tokens,
+    }
+
+
+def _notify_observers(task: str, model: str, out: ChatOutcome, attempts: int) -> None:
+    global _observer_warned
+    if not _OBSERVERS:
+        return
+    meta = call_metadata(task, model, out, attempts)
+    for fn in list(_OBSERVERS):
+        try:
+            fn(dict(meta))
+        except Exception:  # noqa: BLE001 — 用量歸因不能讓 LLM 呼叫失敗
+            if not _observer_warned:
+                _observer_warned = True
+                logger.warning("llm_http observer 失敗（之後同類失敗不再記錄）", exc_info=True)
+
+
 def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> None:
     """每次呼叫一行結構化 log（不含 prompt、不含 header）；402 另記下時刻（見 `_quota_seen_at`）。
 
     放在這裡是因為它是線上（`astream_chat`）與批次（`complete_chat`）共同的收尾點，每次呼叫恰好一次。
+    同一份 metadata 也交給已註冊的 observer（`add_observer`）。
     """
     global _quota_seen_at
     if out.kind == QUOTA:
@@ -462,6 +520,7 @@ def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> Non
         usage.get("prompt_cache_miss_tokens"), usage.get("completion_tokens"),
         details.get("reasoning_tokens"), out.system_fingerprint,
     )
+    _notify_observers(task, model, out, attempts)
 
 
 

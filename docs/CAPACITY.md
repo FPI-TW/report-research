@@ -63,7 +63,7 @@ vCPU、RAM、磁碟、IOPS 到底要多少，repo 裡從來沒有任何工具在
 
 雲端架構本來就會把它們放在不同機器上（既有評估簡報的雙路徑正是這個切法），所以
 「服務合計」的分位數是兩者尖峰疊加的產物，**對任何一邊都不是正確答案**。分析器因此
-另外給「線上路徑合計（web＋DB＋邊緣）」與「批次路徑合計（sync 等）」兩條，並在窗期
+另外給「線上路徑合計（web＋DB＋邊緣＋ClamAV）」與「批次路徑合計（sync 等）」兩條，並在窗期
 有超過 20% 的樣本正在跑批次時明講「這不是典型的一天」。
 
 ### 6. 批次元件的分位數只涵蓋它執行中的樣本
@@ -83,7 +83,7 @@ make metrics-once
 # 前景取樣一小時（臨時量測用）
 make metrics-collect DURATION=3600
 
-# 常駐取樣（生產用；真相來源在 deploy/，改完要 cp 過去）
+# 常駐取樣（辦公室主機用；真相來源在 deploy/，改完要 cp 過去）
 sudo cp deploy/systemd/report-mark-metrics.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-metrics.service
@@ -178,7 +178,7 @@ retrieve 0.7–9.5 秒、embed 1 毫秒（後者是 `embed_query_cached` 的 lru
 
 ## 受控負載：把「單條問答吃多少硬體」量出來
 
-`scripts/bench_load.py` 對**真實端點**打可控負載，跑完用分析器框出那段窗期：
+`scripts/bench_load.py` 的 HTTP 模式對**真實端點**打可控負載，跑完用分析器框出那段窗期：
 
 ```bash
 python3 scripts/bench_load.py --dry-run --limit 4          # 先看計畫
@@ -233,10 +233,126 @@ HTTP 那一層，繞過去就量不到。題目取自同一份凍結題集 `eval
 
 ---
 
+## 問答 rerank 延遲重測（2026-09-29）
+
+從辦公室主機的語料庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離 PostgreSQL；在本工作樹
+`127.0.0.1:8099` 啟動單 worker API，載入既有 DeepSeek 設定，對同一組前 8 題各送
+一次真實登入後的 `/api/ask` SSE 請求。依序量單併發、三併發，再把預設
+`ASK_RERANK_CANDIDATES` 從 50 改為 16，重跑相同兩輪；其餘設定、語料和主機不變。
+結果原檔在未版控的 `data/eval_frozen/metrics/`，以下秒數是這四輪的實測：
+
+| 指標 | 50 候選，併發 1 | 16 候選，併發 1 | 50 候選，併發 3 | 16 候選，併發 3 |
+|---|---:|---:|---:|---:|
+| 成功／錯誤 | 8/0 | 8/0 | 8/0 | 8/0 |
+| 全請求 p50 | 45.81 | 19.65 | 71.00 | 31.06 |
+| 全請求 p95 | 135.59 | 47.68 | 160.67 | 63.38 |
+| 首 token p50 | 39.71 | 14.85 | 66.47 | 26.87 |
+
+50 候選的 `qa_timing` 首輪重排約需 36–54 秒，補查重排有兩筆耗盡 90 秒期限；三併發
+也觀察到首輪重排逾時、退回融合排序。16 候選的 16 筆請求首輪重排全數實際套用，
+沒有超時。另以相同快照、前 8 題、`--agentic` 與 DeepSeek judge 比對兩個候選上限：
+50 候選 F/CP/AR = 0.984/0.849/0.686、檢索加生成平均 54.9 秒；16 候選為
+0.968/0.852/0.713、平均 23.2 秒。`make eval-compare` 退出碼 0，三項仍過既定門檻。
+這是 8 題、單次重跑的探索性對照；正式 18 題×3 次品質基準刻意關閉重排與補查，
+兩者不可混成一個分數。本輪未同步採樣 cgroup，**不能從延遲推算核心秒、吞吐量或雲端機型**。
+
+新 `qa_timing` 欄位把 rerank semaphore 排隊（`rerank_queue_ms`）與交給執行緒後的耗時
+（`rerank_compute_ms`）分開，另記 `rerank_applied` 與 `rerank_timed_out`。
+`compute_ms` 含 `asyncio.to_thread` 的排程等待；若已逾時，背景推論可能在 log 後才結束，
+該欄位可能為空。這些欄位只涵蓋首輪檢索；agentic 補查沒有累計進來。
+
+唯一的推論改動是 CPU cross-encoder 由 `torch.no_grad()` 改用
+`torch.inference_mode()`；tokenizer、batch 大小、候選順序、分數計算與排序規則不變。
+可用已快取的模型完全離線重測（沒有 DB、語料、HTTP 或 LLM 呼叫）：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run python scripts/bench_load.py \
+  --offline-rerank --limit 8 --repeat 5 --torch-threads 4
+```
+
+微基準固定 8 個合成片段與問題，模型先暖機一次，再交錯跑舊路徑與現行路徑；結果 JSON
+含每輪秒數、各自中位數、逐筆最大分數差與名次是否完全一致。這是單一模型、單一 CPU
+執行緒配置的推論測試；排序一致只對該合成樣本成立，不能代替 `eval/run_ragas.py` 的
+真實語料品質評測。也不能從微基準推算端到端問答速度。
+
+本機 Intel Core i7-14700、PyTorch 4 執行緒、快取的 `BAAI/bge-reranker-v2-m3`：
+
+| 指標 | 舊 `no_grad` | 現行 `inference_mode` |
+|---|---:|---:|
+| 5 輪秒數 | 6.662、6.503、5.535、5.098、4.950 | 6.230、6.196、5.196、4.730、4.861 |
+| 中位數 | 5.535s | 5.196s |
+
+微基準中位數差為 0.339s（6.1%）；五組配對測量皆為現行路徑較快。8 筆逐筆分數的最大
+絕對差為 **0**，完整名次一致。CPU 背景負載與模型暖機後狀態仍使各輪時間波動，這個
+百分比只描述本機這組合成輸入與配置。
+
+## 常駐元件：ClamAV
+
+上傳管線（Admin v1.5）用常駐的 clamd 容器 `report-mark-clamav`（`deploy/clamav/docker-compose.yml`，
+`make up-clamav`）掃描上傳的 PDF。**選型結論：常駐約 1.2–1.6 GB，不隨上傳量變化**——clamd 把整份病毒碼
+（數百萬筆簽章）載進記憶體，閒置與掃描中的差別只是單一檔案的工作區。這一塊是線上路徑的固定開銷：
+流量變少它不會變小，也不能攤進「每條請求的邊際成本」。
+
+| 項目 | 值 |
+|---|---|
+| 預估常駐 | 約 1.2–1.6 GB（設計估計，**未實測**） |
+| 容器上限 | `mem_limit: 2g` |
+| 實測 RSS（p50／p95／max） | **待補**：上線後量一週再填，量到之前不寫數字 |
+| 一週內 OOM 次數 | **待補** |
+
+三個設定直接決定這個數字，改之前先看這裡：
+
+- `ConcurrentDatabaseReload no`（`deploy/clamav/conf/clamd.conf`）：預設的不中斷重載會先把新病毒碼整份載進來
+  再換掉舊的，期間約翻倍到 ~3 GB，必然撞上 2g 的上限。關掉的代價是重載期間 30–60 秒不能掃（上傳只是晚一點掃）。
+- `TestDatabases yes`（`deploy/clamav/conf/freshclam.conf`）：freshclam 換上新病毒碼前會先在自己的行程裡試載一次，
+  與 clamd 同在一個 cgroup。若一週內看到 OOM，第一個要評估的就是改成 `no`。
+- `FRESHCLAM_CHECKS=4`（compose 的 environment）：一天最多 4 次檢查，只有真的有新病毒碼才重載。
+
+量測方式不必另寫：取樣器（`scripts/collect_resource_usage.py`）會自動把容器的 cgroup 以容器名
+`report-mark-clamav` 記成一個元件；分析器把它列在 `ONLINE_FIXED_COMPONENTS`（線上路徑、固定開銷），
+報表的記憶體段會多一列「線上固定開銷 anon」。上線一週後補上面的表：
+
+```bash
+make metrics SINCE=7d                                            # 看 report-mark-clamav anon 與 cgroup 歷史峰值
+docker stats --no-stream report-mark-clamav                      # 當下的用量與上限
+docker inspect -f '{{.State.OOMKilled}} {{.State.Health.Status}} {{.RestartCount}}' report-mark-clamav
+```
+
+**改成按需的條件**（設計決策 1）：主機可用記憶體常態低於 3 GiB 時，改成按需執行（apt 的 clamscan 加
+freshclam timer，執行時才暫時多約 1 GB、每輪多 20–40 秒載入病毒碼）。設計時量到的背景：主機總記憶體
+19 GiB、可用約 6 GiB、swap 已用 7/8 GiB（這台同時是開發機）。
+
+## 批次元件：上傳 worker
+
+`report-mark-upload.service`（Admin v1.5，`scripts/process_uploads.sh`，timer 每 5 分鐘；各主機是否安裝見 `docs/DEPLOYMENT_STATUS.md`）。取樣器依 unit
+名自動把它記成元件 `upload`，分析器列在 `BATCH_COMPONENTS`（批次，不算線上路徑）。每輪大多只是幾個空查詢；有乾淨檔
+要入庫時才延遲載入 BGE-M3，入庫段取 claude 鎖、與 sync 互斥，主機尖峰維持「web 一份＋一支批次一份」。
+backfill（`scripts/backfill_extraction.py`，也載 BGE-M3、不取 claude 鎖）正在跑時只掃描、不入庫。
+
+| 項目 | 值 |
+|---|---|
+| unit 限制 | `MemoryMax=4G`、`Nice=19`、`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=4` |
+| 入庫前檢查子行程 | `RLIMIT_AS`＝`UPLOAD_PREFLIGHT_MEMORY_MB`（預設 2048）、逾時 300 秒、頁數上限 300 |
+| 合成 PDF 的 pdfplumber 試抽（2026-10-07，每頁約 2,700 字） | 50 頁 RSS 0.34 GB、100 頁 0.61 GB、300 頁 1.68 GB（每頁約 5.5 MB；1536 MB 上限下 300 頁 ENOMEM）；pypdf 300 頁約 60 MB |
+| 實測 RSS（idle 一輪／入庫一篇的 p50／p95／max） | **待補**：上線後量一週再填，量到之前不寫數字 |
+| 一週內 cgroup OOM 次數 | **待補** |
+
+**已知風險**：入庫核心（`scripts/_ingest_core.py` 的 `ingest_one`）會在 worker 主行程再抽一次字，已載入 BGE-M3
+（約 2–3 GB）時再抽一份 300 頁的密集文字 PDF（約 1.7 GB）會逼近 4G。撞到時 cgroup OOM 砍掉這一輪，殘留回收把那一筆
+退回 `clean`，同一份檔被中止 3 次就轉 `failed`（不會無限重試）。上線一週後用下面的指令補表；若真的撞到，先評估
+調降 `UPLOAD_PREFLIGHT_MEMORY_MB`（讓過大的檔在子行程就被擋下）或頁數上限，而不是放寬 `MemoryMax`。
+
+```bash
+make metrics SINCE=7d                                    # 看 upload 元件的 anon 與 cgroup 歷史峰值
+systemctl show report-mark-upload -p MemoryPeak -p Result # 單輪峰值（需 systemd ≥ 255）與是否 oom-kill
+journalctl -u report-mark-upload -g "oom" --since -7d
+```
+
 ## 不在量測範圍內的成本
 
-`app/services/llm.py` 不是本機推論（量測時是 spawn `claude` CLI，PR-M 起是 DeepSeek HTTP 呼叫）——**問答的模型成本
-不會出現在任何 CPU 數字裡**。那一側屬於 token 成本（DeepSeek 按量計費），是既有評估簡報涵蓋的範圍，
+現行問答 LLM 是遠端 DeepSeek API，不是本機推論；上表 2026-09-02 的舊量測則含當時的
+Claude CLI 父程序。**問答的模型成本不會出現在任何 CPU 數字裡**。
+那一側屬於 token／API 成本，是既有評估簡報涵蓋的範圍，
 兩者不可互相取代：把本機量到的 CPU 拿去推論「模型很便宜」是錯的，反過來也是。
 
 同理，BGE-M3 嵌入與 cross-encoder rerank **確實**是本機 CPU（`torch` CPU-only），

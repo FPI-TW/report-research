@@ -7,7 +7,7 @@
 跑在 CI 的「schema 契約」job；本機沒有 DB 就 skip（`REPORT_MARK_REQUIRE_DB` 設定時改成
 紅燈，與 tests/test_extraction_log_db.py 同一套語意）。
 
-**一律 rollback、絕不 commit**：這支測試在本機會連到生產庫。測試資料以一個隨機標記字串
+**一律 rollback、絕不 commit**：這支測試在本機會連到測試環境的真實資料庫。測試資料以一個隨機標記字串
 做搜尋條件，所以不受庫裡既有對話影響，也不假設庫是空的。
 """
 
@@ -100,14 +100,17 @@ class ListConversationsDbTests(unittest.TestCase):
                 yield session
 
             with mock.patch.object(ans, "SessionFactory", _same_session):
-                hits = await ans.list_conversations(limit=50, q=tag)
+                hits = await ans.list_conversations(limit=50, q=tag, user_id=None)
                 ids = [h["conversation_id"] for h in hits]
                 pages = [
-                    [h["conversation_id"] for h in await ans.list_conversations(limit=2, offset=off, q=tag)]
+                    [
+                        h["conversation_id"]
+                        for h in await ans.list_conversations(limit=2, offset=off, q=tag, user_id=None)
+                    ]
                     for off in (0, 2, 4)
                 ]
-                literal = await ans.list_conversations(limit=50, q=f"{tag} 成長 50%")
-                as_wildcard = await ans.list_conversations(limit=50, q=f"{tag} 成長 5_%")
+                literal = await ans.list_conversations(limit=50, q=f"{tag} 成長 50%", user_id=None)
+                as_wildcard = await ans.list_conversations(limit=50, q=f"{tag} 成長 5_%", user_id=None)
             return ids, pages, literal, as_wildcard, {
                 "title": str(title_hit), "followup": str(followup_hit), "inactive": str(inactive_only),
                 "offtopic": str(offtopic_only), "wildcard": str(wildcard),

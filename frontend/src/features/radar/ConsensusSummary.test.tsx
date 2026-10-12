@@ -347,6 +347,42 @@ describe('ConsensusSummary', () => {
     expect(within(table).getByText('USD，未納入目前口徑')).toBeInTheDocument()
   })
 
+  it('複製表格：只在表格檢視出現，複製的是 TSV 且帶口徑欄，成功要說出來', async () => {
+    const clipboard = await import('../../lib/clipboard')
+    const spy = vi.spyOn(clipboard, 'copyText').mockResolvedValue()
+    mount([
+      broker(),
+      broker({
+        broker: 'gs', broker_display: '高盛', latest_target_currency: 'USD',
+        latest_target_price: 15, latest_eps_value: null,
+        report_link: { report_id: 'r-gs', broker: 'gs' },
+      }),
+    ])
+    // 點圖檢視時沒有「一張表」可言。
+    expect(screen.queryByRole('button', { name: '複製表格' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '切換表格檢視' }))
+    fireEvent.click(screen.getByRole('button', { name: '複製表格' }))
+
+    const tsv = spy.mock.calls[0][0]
+    const [header, ...rows] = tsv.split('\n').map(line => line.split('\t'))
+    expect(header).toContain('納入目標價口徑')
+    const gs = rows.find(r => r[0] === '高盛')!
+    expect(gs[header.indexOf('目標價')]).toBe('15')
+    expect(gs[header.indexOf('納入目標價口徑')]).toBe('否') // 與表格上那行小字同一個判準
+    expect(await screen.findByText('已複製，可貼入 Excel')).toBeInTheDocument()
+    spy.mockRestore()
+  })
+
+  it('複製失敗要說出來（區網 HTTP 下剪貼簿可能被拒）', async () => {
+    const clipboard = await import('../../lib/clipboard')
+    const spy = vi.spyOn(clipboard, 'copyText').mockRejectedValue(new Error('denied'))
+    mount([broker()])
+    fireEvent.click(screen.getByRole('button', { name: '切換表格檢視' }))
+    fireEvent.click(screen.getByRole('button', { name: '複製表格' }))
+    expect(await screen.findByText('複製失敗，請再試一次')).toBeInTheDocument()
+    spy.mockRestore()
+  })
+
   it('切到「90 天內」時濾掉過期券商，且被濾掉者的選取一併失效', () => {
     const brokers = [
       ...sampleBrokers(),

@@ -1,0 +1,10 @@
+[Unit]
+Description=每小時執行到期的帳號刪除排程（提出後 24 小時，最多再晚一小時）
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

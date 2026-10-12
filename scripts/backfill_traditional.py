@@ -19,7 +19,7 @@ generate_summaries / extract_takeaways / signal_extract 四處），這支負責
       原文（英文或其他語言），保留原樣正是它存在的理由。
   research_report.full_text、report_chunk.content
       語料本身，不是 LLM 產出。全語料有 63 篇研報原文就是簡體，那是來源事實。
-      chunk 另有獨立理由碰不得（見 CLAUDE.md 對 make normalize 死法的記載）。
+      chunk 另有獨立理由碰不得（見 docs/WORKFLOW.md 對 make normalize 死法的記載）。
 
 用法：
     uv run python scripts/backfill_traditional.py            # 唯讀，只列出會改什麼

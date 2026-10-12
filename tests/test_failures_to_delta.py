@@ -250,19 +250,22 @@ class ImporterContractTests(unittest.TestCase):
             self.assertEqual([p.name for p in Path(d).iterdir()], [".sync_last_stats"])
 
     def test_all_fail_log_writes_use_path_stage_reason(self):
-        """四個寫入點的欄位語意必須一致，否則補救時第 0 欄拿到的不是路徑。
+        """所有寫入點的欄位語意必須一致，否則補救時第 0 欄拿到的不是路徑。
 
-        E1b 起第四個寫入點：extract_text 自己接住的損毀檔（res.error）也留一行，
-        階段同樣是 extract。遷移 PR-12 起第五個：行內標註被內容審查擋下（tag_blocked）或被截斷
-        （tag_truncated），兩者共用同一行寫入。
+        階段：extract（抽字拋例外、或 extract_text 自己接住的損毀檔 res.error）、tag、
+        tag_blocked／tag_truncated（行內標註被內容審查擋下或被截斷）、ingest。單篇流程抽進
+        scripts/_ingest_core.py 之後，sync 依 Outcome.stage 寫：tag、tag_blocked／tag_truncated、
+        其餘（extract／ingest）共三行寫入；入庫核心本身不寫 FAIL_LOG。
         """
         body = IMPORTER.read_text(encoding="utf-8")
         writes = [
             ln.strip() for ln in body.splitlines() if "fl.write(" in ln
         ]
-        self.assertEqual(len(writes), 5, writes)
+        self.assertEqual(len(writes), 3, writes)
         for w in writes:
-            self.assertIn("{path}", w, f"第 0 欄不是路徑：{w}")
+            self.assertTrue(w.startswith('fl.write(f"{path}\\t'), f"第 0 欄不是路徑：{w}")
+        core = (IMPORTER.parent / "_ingest_core.py").read_text(encoding="utf-8")
+        self.assertNotIn("fl.write(", core, "失敗紀錄由呼叫端依 Outcome 寫，核心不寫")
 
 
 if __name__ == "__main__":

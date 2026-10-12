@@ -1,0 +1,60 @@
+# Focused staging controls. Run this against the JSON-normalized template described
+# in deploy/aws/README.md because Guard does not parse CloudFormation YAML short tags.
+
+rule ec2_inbound_is_only_https_from_cloudflare {
+  Resources.Ec2SecurityGroup.Properties.SecurityGroupIngress == [{"Description":"HTTPS from Cloudflare edges to origin nginx","FromPort":443,"IpProtocol":"tcp","SourcePrefixListId":{"Ref":"CloudflareOriginPrefixList"},"ToPort":443}]
+  Resources.CloudflareOriginPrefixList.Properties.AddressFamily == "IPv4"
+  Resources.CloudflareOriginPrefixList.Properties.Entries[*].Cidr != "0.0.0.0/0"
+  Resources.Ec2Instance.Properties.KeyName !exists
+  Resources.Ec2Instance.Properties.SecurityGroupIds == [{"Ref":"Ec2SecurityGroup"}]
+}
+
+rule ec2_requires_imdsv2_and_encrypted_root {
+  Resources.Ec2Instance.Properties.MetadataOptions.HttpEndpoint == "enabled"
+  Resources.Ec2Instance.Properties.MetadataOptions.HttpTokens == "required"
+  Resources.Ec2Instance.Properties.BlockDeviceMappings == [{"DeviceName":"/dev/sda1","Ebs":{"DeleteOnTermination":true,"Encrypted":true,"VolumeSize":100,"VolumeType":"gp3"}}]
+}
+
+rule ec2_elastic_ip_is_vpc_scoped_and_attached_to_stack_instance {
+  Resources.Ec2ElasticIp.Properties.Domain == "vpc"
+  Resources.Ec2ElasticIpAssociation.Properties.AllocationId == {"Fn::GetAtt":["Ec2ElasticIp","AllocationId"]}
+  Resources.Ec2ElasticIpAssociation.Properties.InstanceId == {"Ref":"Ec2Instance"}
+}
+
+rule database_is_private_single_az_and_encrypted {
+  Resources.Database.Properties.PubliclyAccessible == false
+  Resources.Database.Properties.MultiAZ == false
+  Resources.Database.Properties.StorageEncrypted == true
+  Resources.Database.Properties.StorageType == "gp3"
+  Resources.Database.Properties.AllocatedStorage == "100"
+  Resources.Database.Properties.MaxAllocatedStorage == 500
+  Resources.Database.Properties.VPCSecurityGroups == [{"Ref":"RdsSecurityGroup"}]
+}
+
+rule database_has_deletion_safeguards {
+  Resources.Database.DeletionPolicy == "Retain"
+  Resources.Database.UpdateReplacePolicy == "Retain"
+  Resources.Database.Properties.DeletionProtection == true
+  Resources.Database.Properties.BackupRetentionPeriod >= 7
+}
+
+rule database_uses_managed_credentials_and_tls {
+  Resources.Database.Properties.ManageMasterUserPassword == true
+  Resources.Database.Properties.MasterUsername == "report_admin"
+  Resources.DbParameterGroup.Properties.Family == "postgres16"
+  Resources.DbParameterGroup.Properties.Parameters == {"rds.force_ssl":"1"}
+}
+
+rule database_ingress_is_only_from_ec2 {
+  Resources.RdsSecurityGroup.Properties.SecurityGroupIngress == [{"Description":"PostgreSQL from SSM-managed EC2 host","FromPort":5432,"IpProtocol":"tcp","SourceSecurityGroupId":{"Ref":"Ec2SecurityGroup"},"ToPort":5432}]
+}
+
+rule database_subnets_are_private {
+  Resources.PrivateDbSubnetA.Properties.MapPublicIpOnLaunch == false
+  Resources.PrivateDbSubnetB.Properties.MapPublicIpOnLaunch == false
+  Resources.DbSubnetGroup.Properties.SubnetIds == [{"Ref":"PrivateDbSubnetA"},{"Ref":"PrivateDbSubnetB"}]
+}
+
+rule ec2_secret_access_is_scoped_to_managed_rds_secret {
+  Resources.Ec2Role.Properties.Policies == [{"PolicyName":"ReadManagedRdsMasterSecret","PolicyDocument":{"Version":"2012-10-17","Statement":[{"Sid":"ReadOnlyTheManagedDatabaseSecret","Effect":"Allow","Action":["secretsmanager:DescribeSecret","secretsmanager:GetSecretValue"],"Resource":{"Fn::GetAtt":["Database","MasterUserSecret.SecretArn"]}}]}}]
+}

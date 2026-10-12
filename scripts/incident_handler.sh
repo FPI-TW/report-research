@@ -49,6 +49,20 @@ COMPONENT="${INCIDENT_COMPONENT:-web}"
 MONITOR_COMPONENT="${INCIDENT_MONITOR_COMPONENT:-monitor}"
 STATE_DIR="${INCIDENT_STATE_DIR:-}"
 REMINDER_SECONDS="${INCIDENT_REMINDER_SECONDS:-1800}"   # 30 分鐘
+# **哪些探針退出碼代表「這個元件判不出來」**（逗號或空白分隔；預設空＝沒有）。
+# 命中時走狀態機的 hold：**既不開也不關**，已有的事件照常提醒。
+# 為什麼需要：邊緣探針的 exit 3＝「對外失敗，但本機 origin 也壞了」，那是 web 元件的
+# 事件，邊緣這一組判不出邊緣層本身好不好。若沿用 web 探針「3＝寬限＝健康」的語意，
+# 進行中的 edge 事件會在 web 重啟那一輪被 RESOLVED 關掉並刪掉狀態檔——送出一則不實的
+# 「已恢復」。web 與 LineBot 兩組不設這個旋鈕，行為不變（3 仍視為健康）。
+# 非數字的項目一律忽略（與其他旋鈕同樣 fail-open：寫錯不得讓 handler 死掉）。
+HOLD_EXIT_CODES=" "
+IFS=$', \t\n' read -r -a _hold_items <<< "${INCIDENT_HOLD_EXIT_CODES:-}" || true
+for _c in "${_hold_items[@]+"${_hold_items[@]}"}"; do
+    case "$_c" in ''|*[!0-9]*) continue ;; esac
+    HOLD_EXIT_CODES="$HOLD_EXIT_CODES$(( 10#$_c )) "
+done
+unset _c _hold_items
 
 # ── 門檻：全部由 2026-08-19 的生產實測校準，不是猜的 ──────────────────────
 # P4 的穩態間隔**不是 120 秒**。OnUnitActiveSec 從 service 進入 active 起算，
@@ -144,7 +158,8 @@ fi
 log() { echo "$*"; }
 
 # status 與 reason 都是**封閉詞彙**：消費端（人或後續工具）要能窮舉。
-# status ∈ ok | web_incident | monitor_blind | bootstrap | in_flight | tooling
+# status ∈ ok | web_incident | monitor_blind | bootstrap | in_flight | tooling | held
+# （held＝探針退出碼列於 INCIDENT_HOLD_EXIT_CODES，本輪不開也不關）
 # current_probe 與 last_completed 是**分開的兩件事**：前者是觀測的生命週期，後者是
 # 最近一次完成的結論。把兩者混成一個欄位正是 2026-08-20 那次中斷的成因——只印
 # `status=in_flight action=skip`，operator 完全看不出「上一次其實是 fail」。
@@ -384,6 +399,152 @@ notify() {
     esac
 }
 
+# ── 事件投影的 spool（附加；P5 的告警語意完全不依賴它）──────────────────────
+# 每次**已落地**的狀態轉換（FIRING、REMINDER、ESCALATED、RESOLVED——就是狀態檔真的改寫成那個結論的
+# 那幾個分支）多寫一行 JSONL 到 <spool>/incidents-YYYYMMDD.jsonl，由 scripts/load_observations.py 冪等
+# 匯入 research.incident／incident_event。DB 只是 projection：這裡不碰 DB、不呼叫 web，web 或 DB 掛掉時
+# P5 照樣告警，紀錄先落在本機、事後補匯入。
+#
+# **它不得改變告警的任何一件事**，所以：
+#   - 一律在 notify、狀態檔寫入與 emit **之後**才呼叫，而且呼叫端只用 `_spool`：背景子 shell、
+#     stdin／stdout／stderr 全部接 /dev/null、失敗吞掉。子 shell 讓這裡的任何錯誤（含 set -u）都不可能
+#     波及狀態機；背景執行讓 journalctl 再慢也不會延後同一輪另一個元件的通知；輸出丟棄讓 stdout 的
+#     結構化輸出逐行不變。退出前等它寫完（EXIT trap 只 wait，不改退出碼——bash 保留 `exit N` 的 N）。
+#   - 落點不是可寫目錄（不存在且建不起來、權限、測試把 OPS_SPOOL_DIR 指到 /dev/null）就整段略過；
+#     寫到一半失敗（磁碟滿）只少那一行。tests/test_incident_handler.py 的 SpoolTests 證明這些情況下
+#     stdout、退出碼、狀態檔與 webhook 呼叫次數都與沒有這個功能時一樣。
+#   - 不依賴 python／venv（理由同檔頭），只用 coreutils／flock／journalctl。
+#
+# journal 片段（只在 FIRING 與 RESOLVED；完整 log 仍以 journald 為準）：
+#   FIRING   [當下−視窗, 當下]：成因通常在第一筆失敗觀測之前，取最新的那一端（tail）
+#   RESOLVED [開場, min(開場＋視窗, 當下)]：開場之後那一段，取最早的那一端（head）
+# 兩者合起來就是「事件前後約 10 分鐘」。有大小上限（超過就截斷並標記）、journalctl 有逾時，**找不到
+# `timeout` 就不擷取**（寧可沒有片段也不要一個可能卡住的 journalctl）；擷取失敗只是沒有片段。
+_spool_cfg() {
+    SPOOL_DIR="${INCIDENT_SPOOL_DIR:-${OPS_SPOOL_DIR:-$ROOT/data/ops_spool}}"
+    # 預設只擷取探針 unit；設空字串＝不擷取。逗號或空白分隔。
+    JOURNAL_UNITS="${INCIDENT_JOURNAL_UNITS-$PROBE_UNIT}"
+    JOURNAL_WINDOW="${INCIDENT_JOURNAL_WINDOW_SECONDS:-600}"
+    JOURNAL_MAX_BYTES="${INCIDENT_JOURNAL_MAX_BYTES:-65536}"
+    JOURNAL_TIMEOUT="${INCIDENT_JOURNAL_TIMEOUT:-3}"
+    case "$JOURNAL_WINDOW"    in ''|*[!0-9]*) JOURNAL_WINDOW=600 ;; esac
+    case "$JOURNAL_MAX_BYTES" in ''|*[!0-9]*) JOURNAL_MAX_BYTES=65536 ;; esac
+    case "$JOURNAL_TIMEOUT"   in ''|*[!0-9]*) JOURNAL_TIMEOUT=3 ;; esac
+    JOURNAL_WINDOW=$(( 10#$JOURNAL_WINDOW )); JOURNAL_MAX_BYTES=$(( 10#$JOURNAL_MAX_BYTES ))
+    JOURNAL_TIMEOUT=$(( 10#$JOURNAL_TIMEOUT ))
+    # 硬上限與 research.incident_event.journal_excerpt 的 CHECK（256 KiB）一致；逾時最多 10 秒
+    [ "$JOURNAL_MAX_BYTES" -gt 262144 ] && JOURNAL_MAX_BYTES=262144
+    [ "$JOURNAL_TIMEOUT" -gt 10 ] && JOURNAL_TIMEOUT=10
+    [ "$JOURNAL_TIMEOUT" -lt 1 ] && JOURNAL_TIMEOUT=1
+    HOST_ID="$(uname -n 2>/dev/null)"
+    HOST_ID="$(printf '%s' "$HOST_ID" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-64)"
+    [ -n "$HOST_ID" ] || HOST_ID=unknown
+}
+
+# 參數：comp action severity incident_severity first_seen reason status summary notified journal(none|pre|post)
+spool_event() {
+    local comp="$1" action="$2" sev="$3" isev="$4" first="$5" reason="$6" status="$7" summary="$8"
+    local notified="$9" jmode="${10:-none}"
+    _spool_cfg
+    [ -n "$SPOOL_DIR" ] || return 0
+    [ -d "$SPOOL_DIR" ] || mkdir -p -- "$SPOOL_DIR" 2>/dev/null || return 0
+    { [ -d "$SPOOL_DIR" ] && [ -w "$SPOOL_DIR" ]; } || return 0
+    case "$first" in ''|*[!0-9]*) return 0 ;; esac
+    local safe_comp kind incident_id event_id
+    safe_comp="$(printf '%s' "$comp" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-64)"
+    kind=service
+    [ "$comp" = "$MONITOR_COMPONENT" ] && kind=monitor_blind
+    incident_id="$HOST_ID:$safe_comp:$first"
+    event_id="$incident_id:$now_epoch:$action"
+    [ "${#summary}" -gt "$NOTIFY_MAX_SUMMARY" ] && summary="${summary:0:$NOTIFY_MAX_SUMMARY}…"
+
+    local jfile="" jbytes=0 jtrunc=false jsince="" juntil="" junits_out=""
+    if [ "$jmode" != none ] && [ -n "$JOURNAL_UNITS" ] && [ "$JOURNAL_MAX_BYTES" -gt 0 ] \
+       && command -v journalctl >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+        local jdir="$SPOOL_DIR/journal" jname u tmp s_epoch u_epoch
+        local -a jargs=() junits=()
+        IFS=$', \t\n' read -r -a junits <<< "$JOURNAL_UNITS" || true
+        for u in "${junits[@]+"${junits[@]}"}"; do
+            case "$u" in ''|-*|*[!A-Za-z0-9@._:-]*) continue ;; esac
+            jargs+=(-u "$u"); junits_out="${junits_out:+$junits_out,}$u"
+        done
+        if [ "$jmode" = pre ]; then
+            s_epoch=$(( now_epoch - JOURNAL_WINDOW )); u_epoch="$now_epoch"
+        else
+            s_epoch="$first"; u_epoch=$(( first + JOURNAL_WINDOW ))
+            [ "$u_epoch" -gt "$now_epoch" ] && u_epoch="$now_epoch"
+        fi
+        jname="${safe_comp}-${first}-${now_epoch}-${action}.log"
+        if [ "${#jargs[@]}" -gt 0 ] && mkdir -p -- "$jdir" 2>/dev/null; then
+            tmp="$jdir/.$jname.tmp.$$"
+            if [ "$jmode" = pre ]; then
+                timeout "$JOURNAL_TIMEOUT" journalctl --no-pager -q -o short-iso \
+                    --since "@$s_epoch" --until "@$u_epoch" "${jargs[@]}" 2>/dev/null \
+                    | tail -c "$(( JOURNAL_MAX_BYTES + 1 ))" > "$tmp" 2>/dev/null
+            else
+                timeout "$JOURNAL_TIMEOUT" journalctl --no-pager -q -o short-iso \
+                    --since "@$s_epoch" --until "@$u_epoch" "${jargs[@]}" 2>/dev/null \
+                    | head -c "$(( JOURNAL_MAX_BYTES + 1 ))" > "$tmp" 2>/dev/null
+            fi
+            jbytes="$(wc -c < "$tmp" 2>/dev/null || echo 0)"
+            jbytes="${jbytes//[!0-9]/}"; [ -n "$jbytes" ] || jbytes=0
+            if [ "$jbytes" -gt "$JOURNAL_MAX_BYTES" ]; then
+                if [ "$jmode" = pre ]; then
+                    tail -c "$JOURNAL_MAX_BYTES" "$tmp" > "$tmp.cut" 2>/dev/null
+                else
+                    head -c "$JOURNAL_MAX_BYTES" "$tmp" > "$tmp.cut" 2>/dev/null
+                fi
+                mv -f "$tmp.cut" "$tmp" 2>/dev/null
+                jbytes="$(wc -c < "$tmp" 2>/dev/null || echo 0)"
+                jbytes="${jbytes//[!0-9]/}"; [ -n "$jbytes" ] || jbytes=0
+                jtrunc=true
+            fi
+            if [ "$jbytes" -gt 0 ] && [ "$jbytes" -le "$JOURNAL_MAX_BYTES" ] && mv -f "$tmp" "$jdir/$jname" 2>/dev/null; then
+                jfile="journal/$jname"
+                jsince="$(date -Iseconds -d "@$s_epoch" 2>/dev/null)"
+                juntil="$(date -Iseconds -d "@$u_epoch" 2>/dev/null)"
+            else
+                rm -f "$tmp" "$tmp.cut" 2>/dev/null; jbytes=0; jtrunc=false
+            fi
+        fi
+    fi
+
+    local jfile_json=null jsince_json=null juntil_json=null junits_json=null notified_json=false
+    if [ -n "$jfile" ]; then
+        jfile_json="\"$(_json_escape "$jfile")\""
+        [ -n "$jsince" ] && jsince_json="\"$(_json_escape "$jsince")\""
+        [ -n "$juntil" ] && juntil_json="\"$(_json_escape "$juntil")\""
+        junits_json="\"$(_json_escape "$junits_out")\""
+    fi
+    [ "$notified" = yes ] && notified_json=true
+    local occurred first_iso line target
+    occurred="$(date -Iseconds -d "@$now_epoch" 2>/dev/null)" || return 0
+    first_iso="$(date -Iseconds -d "@$first" 2>/dev/null)" || return 0
+    line=$(printf '{"v":1,"type":"incident_event","event_id":"%s","incident_id":"%s","host":"%s","component":"%s","kind":"%s","probe_unit":"%s","action":"%s","severity":"%s","incident_severity":"%s","reason":"%s","status":"%s","summary":"%s","notified":%s,"occurred_at":"%s","first_seen_at":"%s","journal_file":%s,"journal_bytes":%s,"journal_truncated":%s,"journal_since":%s,"journal_until":%s,"journal_units":%s}' \
+        "$(_json_escape "$event_id")" "$(_json_escape "$incident_id")" "$(_json_escape "$HOST_ID")" \
+        "$(_json_escape "$safe_comp")" "$kind" "$(_json_escape "$PROBE_UNIT")" "$(_json_escape "$action")" \
+        "$(_json_escape "$sev")" "$(_json_escape "$isev")" "$(_json_escape "$reason")" "$(_json_escape "$status")" \
+        "$(_json_escape "$summary")" "$notified_json" "$occurred" "$first_iso" \
+        "$jfile_json" "$jbytes" "$jtrunc" "$jsince_json" "$juntil_json" "$junits_json")
+    target="$SPOOL_DIR/incidents-$(date -d "@$now_epoch" +%Y%m%d 2>/dev/null).jsonl"
+    # 多個 P5 實例（web／LineBot／邊緣／容器／主機）寫同一個日檔：以檔案鎖序列化（等不到就照寫，
+    # O_APPEND 的單次寫入不會交錯到行中間）。上一次寫到一半（磁碟滿）留下沒有換行的殘行時先補一個換行，
+    # 免得這一行黏上去一起壞掉——loader 只會把那個殘行算成 malformed。
+    {
+        command -v flock >/dev/null 2>&1 && flock -w 2 8
+        if [ -s "$target" ] && [ -n "$(tail -c 1 "$target" 2>/dev/null)" ]; then
+            printf '\n%s\n' "$line" >> "$target"
+        else
+            printf '%s\n' "$line" >> "$target"
+        fi
+    } 8>>"$SPOOL_DIR/.incidents.lock"
+}
+
+_spool() {
+    ( spool_event "$@" ) </dev/null >/dev/null 2>&1 &
+}
+trap 'wait 2>/dev/null || true' EXIT
+
 # ── 通用狀態機 ────────────────────────────────────────────────────────────
 # 兩個元件（web / monitor）共用同一套 FIRING/CLOSED 轉換與提醒節奏，但**狀態檔
 # 各自獨立**。這是刻意的：監控失明不得把進行中的 web 事件覆蓋或誤判成已恢復。
@@ -406,6 +567,9 @@ run_state_machine() {
             if [ "$NOTIFY_OK" = yes ]; then
                 rm -f "$STATE_DIR/$comp.state" 2>/dev/null
                 emit "$status" resolved RESOLVED CLOSED "$reason" "$NOTIFY_SENT" "$comp"
+                # 投影：事件已關（狀態檔已刪）。附開場後那一段 journal。
+                _spool "$comp" RESOLVED RESOLVED "${st_severity:-WARNING}" "$st_first_seen" "$reason" "$status" \
+                    "已恢復，本次事件持續 ${dur}s、共 ${st_count} 次失敗觀測" "$NOTIFY_SENT" post
             else
                 # 刪掉狀態檔＝「已恢復」永遠不會送達，而操作者最後看到的是 FIRING。
                 # 保留事件，下一輪仍為健康時重試 RESOLVED。
@@ -425,6 +589,10 @@ run_state_machine() {
         return 0
     fi
 
+    # hold 不帶自己的嚴重度（它只知道「這輪不知道」），一律沿用進行中事件的那一個。
+    # 不在這裡補，開場通知的重送分支會以空的 severity 送出 FIRING 並寫進狀態檔。
+    [ "$verdict" = hold ] && severity="${st_severity:-WARNING}"
+
     # failing，或 hold 但已有進行中的事件（後者不得因為「這輪不知道」就靜音）
     # 第二個條件是重試：事件已記錄但開場通知從未送達。**必須以 FIRING 重送而不是
     # 讓它掉進提醒分支**——否則操作者收到的第一則是「仍未恢復」，而他從沒收到過
@@ -442,6 +610,13 @@ run_state_machine() {
             write_state "$comp" FIRING "$severity" "$ffirst" 0 "$obs" "$fcount" no
         fi
         emit "$status" firing "$severity" FIRING "$reason" "$NOTIFY_SENT" "$comp"
+        # 投影：開場那一輪不論是否送達都記（狀態檔已是 FIRING），附事件前那一段 journal；開場通知的
+        # 補送只在 opened_sent 真的前進時記一筆（與狀態檔一致），不附片段（開場那一筆已有）。
+        if [ "$st_state" = CLOSED ]; then
+            _spool "$comp" FIRING "$severity" "$severity" "$ffirst" "$reason" "$status" "$detail" "$NOTIFY_SENT" pre
+        elif [ "$NOTIFY_OK" = yes ]; then
+            _spool "$comp" FIRING "$severity" "$severity" "$ffirst" "$reason" "$status" "$detail" "$NOTIFY_SENT" none
+        fi
         return 0
     fi
 
@@ -456,6 +631,8 @@ run_state_machine() {
         notify "$comp" ESCALATED CRITICAL "$detail" "$reason"
         if [ "$NOTIFY_OK" = yes ]; then
             write_state "$comp" FIRING CRITICAL "$st_first_seen" "$now_epoch" "$obs" "$count" "$st_opened_sent"
+            # 投影只記落地的升級（沒送到時狀態檔停在 WARNING、下一輪重試，那時才記）
+            _spool "$comp" ESCALATED CRITICAL CRITICAL "$st_first_seen" "$reason" "$status" "$detail" "$NOTIFY_SENT" none
         else
             # 升級沒送到卻把 severity 記成 CRITICAL，下一輪的升級條件就不再成立，
             # 「惡化了」這件事於是永遠不會再嘗試送出。停在 WARNING 才能重試。
@@ -476,6 +653,11 @@ run_state_machine() {
         [ "$NOTIFY_OK" = yes ] && rnotify="$now_epoch"
         write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$rnotify" "$obs" "$count" "$st_opened_sent"
         emit "$status" reminder "$eff_severity" FIRING "$reason" "$NOTIFY_SENT" "$comp"
+        # 投影只記提醒時鐘真的前進的那一則（與狀態檔一致）；投遞失敗的重試不記，免得端點掛著時每輪一筆。
+        if [ "$NOTIFY_OK" = yes ]; then
+            _spool "$comp" REMINDER "$eff_severity" "$eff_severity" "$st_first_seen" "$reason" "$status" \
+                "仍未恢復，已持續 ${dur}s、共 ${count} 次失敗觀測（${detail}）" "$NOTIFY_SENT" none
+        fi
     else
         write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$st_last_notified" "$obs" "$count" "$st_opened_sent"
         emit "$status" suppress "$eff_severity" FIRING "$reason" no "$comp"
@@ -830,6 +1012,13 @@ fi
 # 7 服務提醒（/healthz 正常但 DeepSeek 餘額低於門檻、尚未停擺：/healthz/llm 回 503 llm_low）
 # 8 服務降級（/healthz 正常但 DeepSeek 帳號不可用或判斷不出來：/healthz/llm 回 low 以外的 503）
 # 多項同時成立時探針回 8→6→7 中最前面那一個（理由見 check_web_health.sh 的 L3 段）。
+# INCIDENT_HOLD_EXIT_CODES 命中時優先於下面的分級（例如邊緣那一組的 3）。
+case "$HOLD_EXIT_CODES" in
+    *" $web_status "*)
+        run_state_machine "$COMPONENT" hold "" "probe_exit_$web_status" "$web_obs" held \
+            "探針回報 exit=$web_status（列於 INCIDENT_HOLD_EXIT_CODES＝此元件判不出來；本輪不開也不關事件，result=$web_result）${web_detail_suffix}"
+        exit "$EXIT_OK" ;;
+esac
 case "$web_status" in
     0|3) run_state_machine "$COMPONENT" healthy "" healthy "$web_obs" ok "" ;;
     1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$web_status" "$web_obs" web_incident \
@@ -849,6 +1038,11 @@ case "$web_status" in
     # （run_state_machine 的升級分支），不必等 30 分鐘的提醒。判斷不出來（indeterminate、本體讀不懂）也算這裡。
     8)   run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_8" "$web_obs" web_incident \
              "LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常（exit=8 result=$web_result；判斷不出來也歸這裡，處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
+    # 9＝容器／主機探針「important／supporting tier 連續確認的失敗」（check_container_health.sh、
+    # check_host_health.sh）。沒有這一行時 9 落進下面的未知分支，嚴重度同樣是 WARNING——這一行只把
+    # 原因與說明換成看得懂的字；web、LineBot、邊緣三支探針從不回 9，行為不變。
+    9)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_9" "$web_obs" web_incident \
+             "元件降級：important／supporting tier 的項目連續確認失敗（exit=9 result=$web_result；是哪一項見探針 unit 的 journal）${web_detail_suffix}" ;;
     *)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_unknown" "$web_obs" web_incident \
              "探針回報未知退出碼（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
 esac

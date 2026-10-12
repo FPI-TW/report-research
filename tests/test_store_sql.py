@@ -107,16 +107,40 @@ class LexHitsSqlShapeTests(unittest.TestCase):
         self.assertIn("(SELECT count(*) FROM lex_base) AS lex_hits", sql)
         self.assertNotIn("count(*) OVER", sql)
 
-    def test_no_order_by_before_cap(self):
-        """刻意不加穩定排序鍵：ORDER BY 會逼掃完全部命中列。
 
-        cap 截斷本來就不穩定（heap 物理順序 + synchronize_seqscans），但加排序鍵是
-        「慢且仍不完整」的淨損失。先用 lex_hits 量發生率，見 _lexical_sql docstring。
-        """
+
+class LexicalDeterminismSqlTests(unittest.TestCase):
+    """字面路必須可重現：同一語料、同一查詢，候選集與最終列每次相同。
+
+    原本 `LIMIT :cap` 之前沒有 ORDER BY，取哪 cap 列由計畫決定；兩字詞走 parallel
+    seq scan 時 Gather 的列序每次不同（2026-10-06 devdb 實測：33 個查詢中 14 個連跑 5 次
+    得到 5 組候選）。數字與取捨見 `store._lexical_sql` docstring。
+    """
+
+    def _head(self, sql: str) -> str:
+        return sql[: sql.index("LIMIT :cap")]
+
+    def test_cap_is_preceded_by_stable_unique_order(self):
         for per_report in (False, True):
-            sql = _lexical_sql(1, [], per_report=per_report)
-            head = sql[: sql.index("LIMIT :cap")]
-            self.assertNotIn("ORDER BY", head, f"per_report={per_report}")
+            with self.subTest(per_report=per_report):
+                head = self._head(_lexical_sql(1, ["r.market = :market"], per_report=per_report))
+                # 排序鍵必須是唯一鍵（主鍵），且緊接在 LIMIT :cap 之前：非唯一鍵在平手處
+                # 一樣會漂移，放在別處則管不到 cap 取哪些列。
+                self.assertRegex(head, r"ORDER BY c\.id\s*$")
+                # 過濾條件全部在排序之前（WHERE 之內），不得被擠到 cap 之後
+                self.assertLess(head.index("r.market = :market"), head.index("ORDER BY c.id"))
+
+    def test_final_order_breaks_distance_ties_by_id(self):
+        """內容相同的 chunk 距離完全相同，`LIMIT :limit` 切在平手中間時會漂移。"""
+        sql = _lexical_sql(1, [], per_report=False)
+        self.assertIn("ORDER BY distance, l.id", sql)
+        self.assertLess(sql.index("ORDER BY distance, l.id"), sql.index("LIMIT :limit"))
+
+    def test_per_report_distinct_on_and_final_order_break_ties_by_id(self):
+        sql = _lexical_sql(1, [], per_report=True)
+        # DISTINCT ON 取每篇「第一列」：同距離的兩個 chunk 誰先由 id 決定
+        self.assertIn("ORDER BY c.report_id, c.distance, c.id", sql)
+        self.assertIn("ORDER BY l.distance, l.id", sql)
 
 
 class _RowsSession:
@@ -142,6 +166,42 @@ def _raw_row(chunk_id: str, lex_hits: int) -> tuple:
     row[ChunkRow._fields.index("content")] = "內容"
     row[ChunkRow._fields.index("distance")] = 0.25
     return tuple(row) + (lex_hits,)
+
+
+class _RecordingRowsSession(_RowsSession):
+    """同 _RowsSession，另記下每一次 execute 的 SQL 文字（依序）。"""
+
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.statements: list[str] = []
+
+    async def execute(self, stmt, params=None):
+        self.statements.append(str(stmt))
+        return await super().execute(stmt, params)
+
+
+class LexicalCustomPlanTests(unittest.IsolatedAsyncioTestCase):
+    """字面查詢之前必須在同一交易 `SET LOCAL plan_cache_mode = force_custom_plan`。
+
+    asyncpg 快取 prepared statement，PG 跑過 5 次後可能改用 generic plan；generic plan
+    不知道 pattern 是兩字（抽不出 trigram），devdb 實測兩字詞 3.3–4.2 秒、加上 cap 前的
+    ORDER BY 後「散熱」29.6 秒（custom plan 0.5 秒內）。見 `search_chunks_lexical` 註解。
+    """
+
+    async def test_custom_plan_is_forced_before_the_lexical_query(self):
+        session = _RecordingRowsSession([_raw_row("c1", 1)])
+        await search_chunks_lexical(session, [0.1], ["%散熱%"])
+        self.assertEqual(len(session.statements), 2)
+        self.assertEqual(
+            session.statements[0].strip(), "SET LOCAL plan_cache_mode = force_custom_plan"
+        )
+        self.assertIn("c.content_norm LIKE :t0", session.statements[1])
+
+    async def test_set_is_transaction_local_not_session_wide(self):
+        """連線是池化的：session 級 SET 會流到下一個借用者（同 db.relax_statement_timeout）。"""
+        session = _RecordingRowsSession([])
+        await search_chunks_lexical(session, [0.1], ["%ai%"])
+        self.assertTrue(session.statements[0].lstrip().startswith("SET LOCAL "))
 
 
 class SearchChunksLexicalReturnTests(unittest.IsolatedAsyncioTestCase):

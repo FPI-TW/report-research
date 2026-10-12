@@ -3,8 +3,6 @@ import sys
 import unittest
 from pathlib import Path
 
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -81,9 +79,8 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
 class LexicalTruncationFlagTests(unittest.IsolatedAsyncioTestCase):
     """檢索頁必須把「字面候選被 cap 截斷」帶出去。
 
-    截斷本身是靜默的：`LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由 heap 物理順序決定
-    （`synchronize_seqscans` 預設 on ⇒ 併發 seq scan 從任意 block 起掃），也就是同一
-    查詢在不同時刻可能回不同結果，而回應裡沒有任何線索。
+    截斷本身是靜默的：`LIMIT :cap` 只取 chunk id 最小的 cap 個命中（可重現，見
+    `store._lexical_sql`），其餘命中進不了候選，而回應裡沒有任何線索。
     """
 
     async def _search_with_stats(self, filler):

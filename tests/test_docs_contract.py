@@ -24,7 +24,7 @@ vs 已追蹤 94），以 `git ls-files` 為基準又擋不住「加了測試但�
 正解是**把數字從文件裡刪掉**，那已經做了。
 
 ════════════════════════════════════════════════════════════════════════
-掃描範圍為什麼只有五份
+掃描範圍為什麼只涵蓋現況文件
 ════════════════════════════════════════════════════════════════════════
 只涵蓋「對現況做斷言」的文件。設計稿、實作計畫與架構檢視報告會**刻意指名
 不存在的檔案**——前者是提案（`app/errors.py`、`db/migrations/`），後者是
@@ -43,12 +43,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # 對現況做斷言的文件。新增這類文件時要一併加進來。
 LIVING_DOCS = (
-    "CLAUDE.md",
     "AGENTS.md",
     "README.md",
     "docs/WORKFLOW.md",
     "docs/ARCHITECTURE.md",
     "docs/EXTRACTION.md",
+    "docs/DEPLOYMENT_STATUS.md",
 )
 
 # 走訪檔案系統時整棵剪掉的目錄（產物、相依、快取、唯讀來源）。
@@ -80,17 +80,10 @@ _GLOBAL_ALLOW = {
     "worklist_batch*.json",          # data/ 底下的執行期分批檔
 }
 
-# **刻意指名不存在的東西**——只在指定文件裡放行。範圍收到單一文件是重點：
-# 例如 CLAUDE.md 拿 `app/api/` 說明「這個 repo 不是 FinDB」是正確敘述，但同一個
-# 字串出現在 README 就是必須抓到的陳舊引用。全域放行等於自廢武功。
-_DOC_ALLOW = {
-    "CLAUDE.md": {
-        "app/api/",              # 用來說明「這個 repo 不是 FinDB」，正因不存在才要寫
-    },
-    "README.md": {
-        "Project/CLAUDE.md",     # repo 之外的上層專案目錄
-    },
-}
+# **刻意指名不存在的東西**——只在指定文件裡放行，形如 {"README.md": {"路徑", ...}}。
+# 範圍收到單一文件是重點：某份文件拿不存在的路徑當反例是正確敘述，同一個字串
+# 出現在別份文件就是必須抓到的陳舊引用。全域放行等於自廢武功。目前沒有任何特例。
+_DOC_ALLOW: dict[str, set[str]] = {}
 
 
 def _iter_repo_files() -> set[str]:
@@ -172,7 +165,7 @@ class DocPathsExist(unittest.TestCase):
         self.assertEqual(
             [], broken,
             "文件指向不存在的檔案。改名或刪檔時要同步改文件；若是刻意指名不存在的"
-            "東西（提案、反例），加進 _PATH_ALLOWLIST 並寫明理由：\n  "
+            "東西（提案、反例），加進 _DOC_ALLOW 該文件的集合並寫明理由：\n  "
             + "\n  ".join(broken),
         )
 
@@ -268,7 +261,7 @@ class ApiSurfaceIsDocumented(unittest.TestCase):
         """反向：文件寫了、程式碼沒有的端點（刪掉端點後忘記改文件）。"""
         live = {p for _, p, _, _ in _declared_routes()}
         dead: list[str] = []
-        for doc in _API_DOCS + ("CLAUDE.md",):
+        for doc in _API_DOCS + ("AGENTS.md",):
             text = (REPO_ROOT / doc).read_text(encoding="utf-8")
             for m in _BACKTICK.finditer(text):
                 s = m.group(1).strip()

@@ -28,8 +28,8 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
 
   // 一律 portal 到 document.body。`.scrim` 是 position: fixed，而 fixed 的定位基準
   // 不必然是視窗——祖先只要有 backdrop-filter／filter／transform 就會成為它的
-  // containing block。側欄 SideRail 的 `.rail` 正是磨砂玻璃（backdrop-filter）且
-  // overflow: hidden，所以歷史對話的刪除確認框原本被鎖在 272px 寬的側欄裡、
+  // containing block。側欄 SideRail 的 `.sidebar` 正是磨砂玻璃（backdrop-filter），歷史對話
+  // 面板又 overflow: hidden，所以歷史對話的刪除確認框原本被鎖在側欄裡、
   // 貼著畫面最左側顯示並被裁切。這條缺陷不會有任何錯誤訊息，只會「窗開錯地方」。
   return createPortal(
     <AnimatePresence>

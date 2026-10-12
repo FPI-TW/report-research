@@ -15,6 +15,8 @@ vi.mock('./askApi', () => ({
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
   sendFeedback: (...a: unknown[]) => sendFeedback(...(a as [])),
 }))
+import { ApiError } from './api'
+import { getConversation } from './askApi'
 import { useAskController } from './useAskController'
 
 afterEach(() => vi.clearAllMocks())
@@ -133,4 +135,27 @@ test('每次問答完成都會刷新 conversations 快取', async () => {
 
   expect(invalidate).toHaveBeenNthCalledWith(1, { queryKey: ['conversations'] })
   expect(invalidate).toHaveBeenNthCalledWith(2, { queryKey: ['conversations'] })
+})
+
+test('載入對話 404（不存在或不是自己的）→ 改當新對話，下一題不帶那個 conversation_id', async () => {
+  vi.mocked(getConversation).mockRejectedValueOnce(new ApiError(404, 'HTTP 404'))
+  const g = gated([{ event: 'done', data: { conversation_id: 'c-new', qa_id: 'qa1' } }])
+  streamAsk.mockReturnValueOnce(g.gen)
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+
+  await act(async () => { await result.current.loadConversation('someone-elses') })
+  expect(result.current.conversationId).toBeNull()
+
+  act(() => result.current.submit('新題'))
+  expect(streamAsk.mock.calls[0][0]).not.toHaveProperty('conversation_id')
+  await act(async () => { g.release(); await Promise.resolve() })
+})
+
+test('載入對話的其他失敗（網路、500）維持現況', async () => {
+  vi.mocked(getConversation).mockRejectedValueOnce(new ApiError(500, 'HTTP 500'))
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+  await act(async () => { await result.current.loadConversation('c1') })
+  expect(result.current.conversationId).toBe('c1')
 })

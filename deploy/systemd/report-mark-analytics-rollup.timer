@@ -1,0 +1,14 @@
+[Unit]
+Description=每晚彙總前一天的使用分析指標（analytics_daily）
+
+[Timer]
+# 02:20：錯開 sync（每 3 小時整點）、夜間回填（01:00）與備份（03:30）、稽核錨定（04:15）；
+# 台北午夜之後，前一天已經結束。
+OnCalendar=*-*-* 02:20:00
+# 每天一次：錯過的那一晚開機後補跑（腳本本身也會補齊窗期內缺的日子）；短命、每天一個交易，被砍在中途
+# 不留半成品（那一天整筆 rollback）。
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

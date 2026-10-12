@@ -1,0 +1,12 @@
+[Unit]
+Description=每小時聚合舊的監控觀測並清除 90 天以前的資料
+
+[Timer]
+# 每小時一次：原始觀測停在 24–25 小時、每輪只有短交易。排在 :20，避開整點與 :00/:30 的批次。
+OnCalendar=*-*-* *:20:00
+RandomizedDelaySec=120
+# 錯過的那一輪沒有補跑價值（下一輪會把積壓一起搬完），不設 Persistent=true。
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

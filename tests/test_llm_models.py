@@ -208,6 +208,7 @@ class ModuleConstantsTests(unittest.TestCase):
 
         from app.services import signal_extract
         from scripts import (
+            _ingest_core,
             extract_takeaways,
             generate_brief,
             generate_summaries,
@@ -218,7 +219,8 @@ class ModuleConstantsTests(unittest.TestCase):
 
         self.assertEqual(tag_all_cli.MODEL, "deepseek-flash")
         self.assertEqual(sync_new_reports.TAG_MODEL, "deepseek-flash")
-        default = inspect.signature(sync_new_reports._tag_via_cli).parameters["model"].default
+        self.assertEqual(_ingest_core.TAG_MODEL, "deepseek-flash")
+        default = inspect.signature(_ingest_core._tag_via_cli).parameters["model"].default
         self.assertEqual(default, "deepseek-flash")
         self.assertEqual(generate_summaries.MODEL, "deepseek-flash")
         self.assertEqual(generate_titles.MODEL, "deepseek-flash")

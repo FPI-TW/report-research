@@ -1,0 +1,11 @@
+[Unit]
+Description=每日依 tombstone 檢查已刪除帳號的資料沒有因還原而復活
+
+[Timer]
+# 排在每日備份（03:30）與稽核錨定（04:15）之後。
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

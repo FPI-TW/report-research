@@ -117,7 +117,6 @@ tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, t
 """
 import hashlib
 import json
-import os
 import re
 import sys
 import threading
@@ -127,9 +126,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from app.services import llm_failures, llm_http
+from app.services import llm_failures, llm_http, llm_usage
 from app.services.llm_models import HTTP_MODELS, is_http_model
-from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path, sync_round_id
+from scripts._llm_env import BREAKER_TTL_S, breaker_path, sync_round_id
 
 
 class CliNotFoundError(RuntimeError):
@@ -404,8 +403,11 @@ _usage_warned = False
 
 
 def usage_log_path() -> Path:
-    """`LLM_USAGE_LOG` 只給測試用（conftest 指到 os.devnull）；生產一律 `data/llm_usage.jsonl`。"""
-    return Path(os.environ.get("LLM_USAGE_LOG") or ROOT / "data" / "llm_usage.jsonl")
+    """`LLM_USAGE_LOG` 只給測試用（conftest 指到 os.devnull）；生產一律 `data/llm_usage.jsonl`。
+
+    路徑的唯一定義在 `app/services/llm_usage.py`（管理後台的用量頁讀同一份檔）。
+    """
+    return llm_usage.usage_log_path()
 
 
 def _tokens(usage: Optional[dict]) -> Optional[dict]:

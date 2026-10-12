@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { useAskController } from '../../lib/useAskController'
+import { useFeatures } from '../../lib/useFeatures'
 import { AskEmptyState } from './AskEmptyState'
 import { TurnRow, type TurnActions } from './TurnRow'
 import { SourcesDrawer } from './SourcesDrawer'
@@ -10,6 +11,8 @@ import type { AnswerView } from '../../lib/askReducer'
 import styles from './AskPage.module.css'
 
 export default function AskPage() {
+  // 功能旗標（/api/features）在頁面層抓一次，輸入框與訊息經 useWebSearchPaused 讀（網搜開關）。
+  useFeatures()
   const ctrl = useAskController()
   const { turns } = ctrl.state
   const [params, setParams] = useSearchParams()

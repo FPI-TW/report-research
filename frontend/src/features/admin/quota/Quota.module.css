@@ -1,0 +1,4 @@
+/* 配額頁：表格格子內的「用量／上限」與標記。色全部走 --tf-* token。 */
+.usage { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-variant-numeric: tabular-nums; }
+.full { font-weight: 600; color: var(--tf-warn-text); }
+.over { font-size: 11.5px; font-weight: 600; color: var(--tf-error-text); }

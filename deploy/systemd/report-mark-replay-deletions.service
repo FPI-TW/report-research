@@ -1,0 +1,17 @@
+[Unit]
+Description=廷豐智能研報 依 NAS tombstone 重放帳號刪除（還原舊備份後已刪除的資料不復活，純 SQL，零 LLM）
+After=network-online.target
+Wants=network-online.target
+# 發現已刪除使用者的資料又出現（rc=1，已重新刪除）、落點不存在或 DB 不可用（rc=2）都要告警。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/replay_deletions.py'
+TimeoutStartSec=300

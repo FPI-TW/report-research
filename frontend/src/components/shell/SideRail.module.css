@@ -1,40 +1,38 @@
-/* 外層軌道：唯一持續存在的元素，寬度 60↔272 過渡即「平滑展開／收合」動畫；overflow 裁掉離場層多出的寬度。
-   側欄是常駐 chrome，走磨砂玻璃：它透出的是 AppShell 的氛圍暈染層（.shell::before）。
-   退場路徑（不支援 backdrop-filter／使用者開啟「降低透明度」）由 tokens.css 統一改寫 token 值，此處不必重複。 */
-.rail {
-  position: relative; flex: none; height: 100%; width: 272px;
+/* 外層：圖示軌＋歷史對話面板，合計 60↔320。側欄是常駐 chrome，走磨砂玻璃：它透出的是
+   AppShell 的氛圍暈染層（.shell::before）。玻璃只掛在這一層（只有一個 backdrop-filter），
+   軌與面板之間用髮絲線分隔。退場路徑（不支援 backdrop-filter／使用者開啟「降低透明度」）
+   由 tokens.css 統一改寫 token 值，此處不必重複。 */
+.sidebar {
+  position: relative; flex: none; height: 100%; display: flex;
   background: var(--tf-glass);
   -webkit-backdrop-filter: var(--tf-glass-filter);
   backdrop-filter: var(--tf-glass-filter);
   border-right: 1px solid var(--tf-glass-border);
-  overflow: hidden;
-  transition: width var(--tf-dur-3) var(--tf-ease-out);
 }
-.rail[data-collapsed='true'] { width: 60px; }
-/* 兩態層疊放於軌道內（絕對定位、各保自身寬度），以 opacity 交叉淡入淡出；非當前態層不可互動。 */
-.mini, .full {
-  position: absolute; top: 0; left: 0; height: 100%;
-  display: flex; flex-direction: column;
-  transition: opacity var(--tf-dur-2) var(--tf-ease-out);
-}
-.mini { width: 60px; align-items: center; padding: 14px 0; }
-.full { width: 272px; }
-.rail[data-collapsed='false'] .mini { opacity: 0; pointer-events: none; }
-.rail[data-collapsed='true'] .full { opacity: 0; pointer-events: none; }
-/* 收合態品牌／展開鈕同格：logo 與展開圖示疊放，hover 淡入淡出互換。
-   置中於 60px 軌道 → 中心 x≈30，展開後與 .glyphSmall logo 同座標、完整銜接。 */
-.glyphSmall { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }
+
+/* 圖示軌：常駐，兩態幾何完全相同（logo 中心 x≈30），展開／收合時導覽 icon 不位移。 */
+.rail { flex: none; width: 60px; height: 100%; display: flex; flex-direction: column; align-items: center; padding: 14px 0; }
+.sidebar[data-collapsed='false'] .rail { border-right: 1px solid var(--tf-glass-border); }
+
+/* 品牌標記：收合態是展開鈕（logo 與展開圖示疊放，hover 淡入淡出互換），展開態是靜態 logo，兩者同尺寸同座標。 */
+.brandStatic { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }
 .brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: var(--tf-radius-md); color: var(--tf-text-3); }
 .brandToggle:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-graphite); }
 /* 置中偏移（x/y -50%）與 opacity/scale crossfade 皆由 Motion 驅動（見 SideRail.tsx）；此處僅絕對定位錨點 */
 .brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; display: inline-flex; }
-/* miniNav 起始 Y 與間距對齊 fullNav，讓兩態導覽 icon 完整銜接不位移（同原版幾何）。 */
-.miniNav { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.nav { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .spacer { flex: 1; }
-/* 展開態 header：幾何同原版（高 60、logo 中心 x≈30、label 左緣 50）。 */
-.header { padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px; }
-.title { flex: 1; font-family: var(--tf-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--tf-text-1); }
-.toggleFull { border: none; background: none; border-radius: var(--tf-radius-md); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
-.toggleFull:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-2); }
-.fullNav { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
-.divider { height: 1px; background: var(--tf-glass-border); margin: 12px 12px 8px; }
+
+/* 歷史對話面板：寬度 0↔260 過渡即「平滑展開／收合」動畫；內層固定寬度，overflow 裁掉收合時多出的部分，
+   內容不會跟著寬度被擠壓重排。260 接近 ChatGPT 的比例，對話標題才放得下一行。 */
+.panel {
+  flex: none; height: 100%; width: 260px; overflow: hidden;
+  transition: width var(--tf-dur-3) var(--tf-ease-out), opacity var(--tf-dur-2) var(--tf-ease-out);
+}
+.sidebar[data-collapsed='true'] .panel { width: 0; opacity: 0; pointer-events: none; }
+.panelInner { width: 260px; height: 100%; display: flex; flex-direction: column; }
+/* 標頭高度與圖示軌的 logo 列對齊（上內距 14、34px 高）。 */
+.header { padding: 14px 8px 10px 18px; display: flex; align-items: center; gap: 2px; }
+.title { flex: 1; min-width: 0; font-family: var(--tf-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.headBtn { border: none; background: none; border-radius: var(--tf-radius-md); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
+.headBtn:hover, .headBtn[aria-pressed='true'] { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); }

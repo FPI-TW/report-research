@@ -21,8 +21,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -90,8 +88,6 @@ class AssetsMountPrecedesSpaCatchAllTests(unittest.TestCase):
 
     def test_assets_served_by_mount_not_spa_shell(self):
         env = os.environ.copy()
-        env.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-        env.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
         env.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
         proc = subprocess.run(
             [sys.executable, "-c", _SUBPROCESS_PROBE],

@@ -19,8 +19,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -148,7 +146,7 @@ class JudgeFilterTests(unittest.TestCase):
 
 
 class ScaleLineageTests(unittest.TestCase):
-    """審查低5：比照監控卡標出系譜與新量尺；判準同 frontend/src/features/monitor/judgeScale.ts。"""
+    """審查低5：比照監控卡標出系譜與新量尺；判準同 frontend/src/lib/judgeScale.ts。"""
 
     def _rows(self):
         return [
@@ -207,6 +205,7 @@ class ProgressHttpTests(unittest.TestCase):
     def _get(self):
         from fastapi.testclient import TestClient
 
+        from web import stats_snapshot
         from web.routers import monitor
         from web.server import app
 
@@ -216,7 +215,7 @@ class ProgressHttpTests(unittest.TestCase):
         async def fake_snapshot():
             return dict(self._SNAPSHOT)
 
-        with patch.object(monitor, "_db_stats_snapshot", fake_snapshot), \
+        with patch.object(stats_snapshot, "db_stats_snapshot", fake_snapshot), \
                 patch.object(monitor, "_gather_runtime", lambda: {}):
             return c.get("/api/progress")
 
@@ -253,7 +252,7 @@ class SnapshotShapeTests(unittest.TestCase):
     """快照的 evaluation 形狀契約——前端 zod schema 依此宣告，漂了就整塊被剝除。"""
 
     def test_router_builds_expected_keys(self):
-        src = (REPO_ROOT / "web" / "routers" / "monitor.py").read_text(encoding="utf-8")
+        src = (REPO_ROOT / "web" / "stats_snapshot.py").read_text(encoding="utf-8")
         for key in ("degraded", "below_min", "avg_score", "min_score",
                     "judge_model", "judge_since", "other_judge_checked"):
             self.assertIn(f'"{key}"', src, f"snapshot 缺 {key}")
@@ -261,9 +260,9 @@ class SnapshotShapeTests(unittest.TestCase):
     def test_threshold_shared_with_eval_script(self):
         """監控頁的「待複核」門檻與離線評測（scripts/eval_faithfulness.py）共用同一顆旋鈕。"""
         from app.config import get_settings
-        from web.routers import monitor
+        from web import stats_snapshot
 
-        self.assertEqual(monitor._FAITHFULNESS_MIN, get_settings().faithfulness_min)
+        self.assertEqual(stats_snapshot._FAITHFULNESS_MIN, get_settings().faithfulness_min)
 
 
 if __name__ == "__main__":

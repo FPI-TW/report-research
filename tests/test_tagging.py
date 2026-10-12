@@ -41,7 +41,7 @@ class MarketVocabularyTests(unittest.TestCase):
     """代碼清單是**與 findb 的跨 repo 契約**，不是本 repo 想改就能改的東西。"""
 
     def test_exact_findb_market_codes(self):
-        # 逐字寫死：CLAUDE.md、README、docs/WORKFLOW.md 都複述這一組，
+        # 逐字寫死：AGENTS.md、README、docs/WORKFLOW.md 都複述這一組，
         # 而「多一個」或「少一個」的後果是 ingest 靜默丟棄或寫進 findb 不認的代碼。
         self.assertEqual(
             MARKETS,
@@ -61,7 +61,7 @@ class MarketVocabularyTests(unittest.TestCase):
     def test_deliberate_downgrades_are_pinned(self):
         """findb 沒有債券與原物料市場，故歸最接近者。
 
-        這兩條是**決定**而不是巧合（CLAUDE.md 與 tagging.py 檔頭都記載），
+        這兩條是**決定**而不是巧合（tagging.py 檔頭有記載），
         改掉它們等於改變既有 1.4 萬列的分類語意。
         """
         self.assertEqual(LEGACY_TO_FINDB["債券"], "MACRO")

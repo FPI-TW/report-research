@@ -1,0 +1,19 @@
+[Unit]
+Description=廷豐智能研報 執行到期的帳號刪除排程（先寫 NAS tombstone 再刪 DB，純 SQL，零 LLM）
+After=network-online.target
+Wants=network-online.target
+# 有排程刪除失敗（rc=1）、tombstone 落點不存在或 DB 不可用（rc=2）都要有人知道：
+# 停用中的帳號會一直等不到刪除。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# REPORT_MARK_ROOT 與 tombstone 落點 REPORT_MARK_BACKUP_DIR 都由這個檔提供。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/execute_deletions.py'
+TimeoutStartSec=300

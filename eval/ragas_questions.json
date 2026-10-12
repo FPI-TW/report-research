@@ -1,7 +1,8 @@
 {
-  "version": 1,
-  "generated_at": "2026-07-09T02:45:59.965573+00:00",
-  "count": 8,
+  "version": 2,
+  "generated_at": "2026-09-29T00:00:00+08:00",
+  "count": 18,
+  "_note": "corpus_qa 凍結題集；q009–q016 取自 eval/queryset.json 與 eval/queryset-entity.json，q017–q018 是數值與跨券商題。正式升格前須在同一份正式語料快照逐題確認有可用來源；本工作樹無資料，不宣稱已驗證來源或分數。",
   "questions": [
     {
       "id": "q001",
@@ -13,13 +14,13 @@
     },
     {
       "id": "q002",
-      "question": "分析台灣市場",
+      "question": "比較研報對台股大盤走勢與風險的看法",
       "filters": {},
       "scope": "corpus_qa"
     },
     {
       "id": "q003",
-      "question": "材料行業分析報告'",
+      "question": "研報如何評估材料產業的需求與風險？",
       "filters": {},
       "scope": "corpus_qa"
     },
@@ -37,20 +38,98 @@
     },
     {
       "id": "q006",
-      "question": "台積電最新展望如何？",
+      "question": "台積電先進製程的營運展望如何？",
       "filters": {},
       "scope": "corpus_qa"
     },
     {
       "id": "q007",
-      "question": "材料行業分析報告",
+      "question": "散熱產業供應鏈的成長動能如何？",
       "filters": {},
       "scope": "corpus_qa"
     },
     {
       "id": "q008",
-      "question": "台積電先進封裝",
+      "question": "台積電先進封裝產能與需求如何？",
       "filters": {},
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q009",
+      "question": "台指期近期盤勢與多空看法",
+      "filters": {
+        "market": "WTX"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q010",
+      "question": "選擇權盤後分析與籌碼",
+      "filters": {
+        "market": "WTX"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q011",
+      "question": "FOMC 會議結果對市場的影響",
+      "filters": {
+        "market": "MACRO"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q012",
+      "question": "美國通膨與 CPI 數據的解讀",
+      "filters": {
+        "market": "MACRO"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q013",
+      "question": "輝達 NVIDIA 的財報與展望",
+      "filters": {},
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q014",
+      "question": "聯發科的營運與成長動能",
+      "filters": {
+        "market": "TW"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q015",
+      "question": "勤美最近的營運狀況如何",
+      "filters": {
+        "market": "TW"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q016",
+      "question": "台驊控股法說會重點是什麼",
+      "filters": {
+        "market": "TW"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q017",
+      "question": "研報對台積電 2026 年資本支出的估計是多少？請標明數值單位與報告日期。",
+      "filters": {
+        "market": "TW"
+      },
+      "scope": "corpus_qa"
+    },
+    {
+      "id": "q018",
+      "question": "比較兩家券商對台積電目標價與獲利預估的看法，並指出數字的幣別與年度。",
+      "filters": {
+        "market": "TW"
+      },
       "scope": "corpus_qa"
     }
   ]

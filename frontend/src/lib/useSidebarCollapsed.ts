@@ -2,9 +2,10 @@ import { useCallback, useState } from 'react'
 
 const KEY = 'tf.sidebar.collapsed'
 
+/** 預設收合（只留圖示軌）；使用者展開或收合過就記住，之後照他的選擇。 */
 export function useSidebarCollapsed() {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(KEY) === '1' } catch { return false }
+    try { return localStorage.getItem(KEY) !== '0' } catch { return true }
   })
   const toggle = useCallback(() => {
     setCollapsed((c) => {

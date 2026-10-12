@@ -1,0 +1,13 @@
+[Unit]
+Description=每 2 分鐘探測對外邊緣健康（對外網址的 /healthz）
+
+[Timer]
+# 開機後要等 Docker Desktop 把 nginx 與 cloudflared 容器拉起來、隧道連上，比 web 那組
+# （2 分鐘）久；取 5 分鐘，與 LineBot 那組相同。
+OnBootSec=5min
+OnUnitActiveSec=2min
+# 刻意不設 Persistent=true 與 RandomizedDelaySec，理由同 report-mark-health.timer。
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

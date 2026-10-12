@@ -26,10 +26,17 @@ interface Props {
   onWindowChange: (w: Window) => void
   onBack: () => void
   onBrowseReports: () => void
+  /**
+   * 展開哪家券商的歷程。給了就是受控（RadarPage 把它放在網址的 `broker`，
+   * 「你看一下某券商對這一檔的歷程」才貼得出連結）；沒給則自己記，行為與先前相同。
+   */
+  openBroker?: string | null
+  onOpenBrokerChange?: (brokerKey: string | null) => void
 }
 
 export function RadarOverview({
   market, code, window, onWindowChange, onBack, onBrowseReports,
+  openBroker: controlledBroker, onOpenBrokerChange,
 }: Props) {
   const q = useInstrumentRadar(code, market, window)
   const eventQueryKey = `${market}:${code}:${window}`
@@ -39,7 +46,13 @@ export function RadarOverview({
   const [reportName, setReportName] = useState<string | undefined>()
   // 券商歷程的展開狀態提到這一層：市場共識摘要的「查看券商觀點」與券商列自己的
   // 展開鈕指的是同一個面板，兩份狀態會互相覆蓋。
-  const [openBroker, setOpenBroker] = useState<string | null>(null)
+  const [localBroker, setLocalBroker] = useState<string | null>(null)
+  const brokerControlled = controlledBroker !== undefined
+  const openBroker = brokerControlled ? controlledBroker : localBroker
+  const setOpenBroker = useCallback((key: string | null) => {
+    if (brokerControlled) onOpenBrokerChange?.(key)
+    else setLocalBroker(key)
+  }, [brokerControlled, onOpenBrokerChange])
   const brokerSectionRef = useRef<HTMLElement>(null)
   const reduced = useReducedMotion()
 
@@ -63,7 +76,7 @@ export function RadarOverview({
         ?.querySelector<HTMLElement>(`[data-testid="broker-row-${CSS.escape(brokerKey)}"]`)
         ?.focus()
     })
-  }, [reduced])
+  }, [reduced, setOpenBroker])
 
   const data = q.data
   const fullEvents = useRadarEvents(

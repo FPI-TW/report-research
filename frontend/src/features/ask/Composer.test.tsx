@@ -4,12 +4,12 @@ import { expect, test, vi, afterEach, beforeEach } from 'vitest'
 import { AI_NOTE, Composer } from './Composer'
 import { setWebSearch } from '../../lib/useWebSearch'
 
-// 網搜暫停（WEB_SEARCH_PAUSED，DeepSeek 遷移 PR-W）以可切換的 getter 模擬：預設走「恢復後」的行為，
+// 網搜暫停（useWebSearchPaused：旗標 ask.web_search 沒開）以可切換的 mock 模擬：預設走「恢復後」的行為，
 // 讓開關本身的測試在暫停期間繼續守著接回點；暫停中的行為另成一組，把旗標設成 true。
 const paused = vi.hoisted(() => ({ value: false }))
 vi.mock('../../lib/useWebSearch', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../lib/useWebSearch')>()
-  return { ...mod, get WEB_SEARCH_PAUSED() { return paused.value } }
+  return { ...mod, useWebSearchPaused: () => paused.value }
 })
 beforeEach(() => { paused.value = false })
 

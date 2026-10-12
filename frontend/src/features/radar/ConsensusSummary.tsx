@@ -5,7 +5,9 @@ import { Popover } from '../../components/primitives/Popover'
 import { Pressable } from '../../components/primitives/Pressable'
 import { springThumb } from '../../lib/motionTokens'
 import type { BrokerSummary, RatingConsensus, Window } from '../../lib/radarSchemas'
+import { copyText } from '../../lib/clipboard'
 import { BrokerDotPlot } from './BrokerDotPlot'
+import { brokerTableTsv } from './consensusExport'
 import { ConsensusSnapshot } from './ConsensusSnapshot'
 import {
   brokerKey, brokerName, buildEpsSeries, buildTargetSeries, epsBases, epsBasisKey,
@@ -272,6 +274,12 @@ export function ConsensusSummary({
           切換表格檢視
         </Pressable>
 
+        {/* 只在表格檢視出現：複製的就是眼前這張表（同一個 visible／currency／basis），
+            點圖檢視時沒有「一張表」可言。 */}
+        {tableView && visible.length > 0 ? (
+          <CopyTableButton brokers={visible} currency={currency} basis={basis} />
+        ) : null}
+
         <div className={styles.detail}>
           <h3 className={styles.detailTitle}>已選券商</h3>
           {selectedBroker ? (
@@ -290,6 +298,31 @@ export function ConsensusSummary({
         </div>
       </aside>
     </div>
+  )
+}
+
+/**
+ * 把表格複製成 TSV（貼進 Excel／Sheets 自動分欄，數值是原始數字；見 consensusExport.ts）。
+ * 不用 animate-ui 的 CopyButton：那顆只有圖示，而這裡需要說出「貼到哪裡」的文字標籤。
+ * 失敗要說出來——區網 HTTP 下剪貼簿可能被拒，靜默失敗的話使用者貼出來的是上一次的內容。
+ */
+function CopyTableButton({ brokers, currency, basis }: Pick<TableProps, 'brokers' | 'currency' | 'basis'>) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onCopy = useCallback(() => {
+    const done = (next: 'copied' | 'failed') => {
+      setState(next)
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setState('idle'), 2000)
+    }
+    copyText(brokerTableTsv(brokers, currency, basis)).then(() => done('copied'), () => done('failed'))
+  }, [brokers, currency, basis])
+  return (
+    <Pressable type="button" className={styles.viewToggle} hoverScale={1} onClick={onCopy}>
+      <span aria-live="polite">
+        {state === 'copied' ? '已複製，可貼入 Excel' : state === 'failed' ? '複製失敗，請再試一次' : '複製表格'}
+      </span>
+    </Pressable>
   )
 }
 

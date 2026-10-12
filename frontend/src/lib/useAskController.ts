@@ -5,7 +5,7 @@ import { parseAskEvent } from './askSchemas'
 import { streamAsk, getConversation, sendFeedback, stopAsk, getQaVersions } from './askApi'
 import { ApiError } from './api'
 import { useLocale } from './useLocale'
-import { useWebSearch, WEB_SEARCH_PAUSED } from './useWebSearch'
+import { useWebSearch, useWebSearchPaused } from './useWebSearch'
 
 let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
@@ -32,8 +32,9 @@ export function useAskController(): UseAskController {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const locale = useLocale()  // M10b：輸出語言，注入 /api/ask 請求
   // M11：搜尋網路開關。與 locale 同樣在送出當下取值——切換不影響已在跑的那一輪。
-  // 網搜暫停期間一律送 false（理由見 WEB_SEARCH_PAUSED）；hook 照呼叫，恢復時只改常數。
-  const web = useWebSearch() && !WEB_SEARCH_PAUSED
+  // 網搜暫停期間一律送 false（理由見 useWebSearchPaused：旗標 ask.web_search 沒開）；hook 照呼叫。
+  const paused = useWebSearchPaused()
+  const web = useWebSearch() && !paused
   const qc = useQueryClient()
   const convRef = useRef<string | null>(null)
   const reqId = useRef(0)
@@ -204,7 +205,16 @@ export function useAskController(): UseAskController {
       const items = await getConversation(id)
       if (my !== reqId.current) return
       dispatch({ type: 'load', turns: items.map(turnFromHistory) })
-    } catch { /* 載入失敗不破壞現況 */ }
+    } catch (err) {
+      // 404＝這串不存在或不是你的（後端兩者回同一個 404，看不出差別）。若還掛著這個
+      // conversation_id，下一題送出時 /api/ask 也會回 404、畫面卡死——改當新對話。
+      if (my === reqId.current && err instanceof ApiError && err.status === 404) {
+        convRef.current = null
+        setConversationId(null)
+        dispatch({ type: 'reset' })
+      }
+      /* 其他失敗不破壞現況 */
+    }
   }, [abortAsk])
 
   const newConversation = useCallback(() => {

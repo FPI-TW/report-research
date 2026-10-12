@@ -39,12 +39,28 @@ LOWIO_SH = REPO_ROOT / "scripts" / "ingest_lowio.sh"
 BACKUP_SERVICE = SYSTEMD_DIR / "report-mark-backup.service"
 BACKUP_TIMER = SYSTEMD_DIR / "report-mark-backup.timer"
 
-# 「不可重建」的四張表：研報原檔裡沒有、刪了就永遠沒有的東西。
+# 「不可重建」的二十張表：研報原檔裡沒有、刪了就永遠沒有的東西。
 REQUIRED_TABLES = (
     "research.qa_log",
     "research.report_takeaway",
     "research.report_signal",
     "research.report_brief",
+    "research.review_state",
+    "research.app_user",
+    "research.admin_audit_log",
+    "research.user_scope",
+    "research.account_deletion",
+    "research.report_visibility",
+    "research.incident",
+    "research.incident_event",
+    "research.report_upload",
+    "research.user_quota",
+    "research.feature_flag",
+    "research.usage_daily",
+    "research.analytics_daily",
+    "research.auth_event",
+    "research.api_client",
+    "research.api_client_entitlement",
 )
 
 
@@ -158,6 +174,8 @@ class ConfigResolutionRuntimeTests(unittest.TestCase):
 
     def _run(self, env: dict[str, str]) -> subprocess.CompletedProcess:
         merged = {**os.environ, **env}
+        # 此處測的是 mkdir 診斷；避免 Docker daemon 探測偶發卡住在診斷之前。
+        merged["DOCKER_BIN"] = "/bin/false"
         return subprocess.run(
             ["bash", str(BACKUP_SH)],
             capture_output=True, text=True, timeout=60, env=merged,
@@ -205,6 +223,7 @@ class ConfigResolutionRuntimeTests(unittest.TestCase):
             merged = {k: v for k, v in os.environ.items()
                       if k not in ("REPORT_MARK_BACKUP_MOUNT", "REPORT_MARK_BACKUP_DIR")}
             merged.update(env)
+            merged["DOCKER_BIN"] = "/bin/false"
             got = subprocess.run(
                 ["bash", str(BACKUP_SH)],
                 capture_output=True, text=True, timeout=60, env=merged,

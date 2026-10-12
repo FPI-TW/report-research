@@ -134,7 +134,8 @@ class EndpointContractTests(unittest.TestCase):
     """四個端點都改讀寫新格式；只有轉檔腳本還認得 all.jsonl。"""
 
     def test_no_script_reads_or_writes_all_jsonl(self):
-        for name in ("extract_all", "sync_new_reports", "ingest_all", "tag_all_cli"):
+        # sync 的抽取快取寫入在 sync 與上傳 worker 共用的入庫核心（scripts/_ingest_core.py）
+        for name in ("extract_all", "_ingest_core", "ingest_all", "tag_all_cli"):
             src = (ROOT / "scripts" / f"{name}.py").read_text(encoding="utf-8")
             body = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#") and '"""' not in ln)
             with self.subTest(script=name):

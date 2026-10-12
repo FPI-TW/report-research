@@ -25,14 +25,21 @@ _RERANK_TIMEOUT = float(os.getenv("REPORT_MARK_RERANK_TIMEOUT", "30"))
 _rerank_semaphore = asyncio.Semaphore(_RERANK_WORKERS)
 
 
-async def _run_rerank(question, scored, *, top_m, timer, deadline):
+async def _run_rerank(question, scored, *, top_m, timer, deadline, stats=None):
     """執行緒工作由此 task 持有 semaphore；呼叫端取消不會釋放仍在跑的 CPU 工作，
     但 deadline 使被放棄的工作在批次邊界提早收手（釋放 CPU 與 semaphore）。"""
+    queued_at = time.monotonic()
     async with _rerank_semaphore:
-        return await asyncio.to_thread(
+        started_at = time.monotonic()
+        if stats is not None:
+            stats["rerank_queue_ms"] = round((started_at - queued_at) * 1000, 1)
+        result = await asyncio.to_thread(
             rerank_scored, question, scored, top_m=top_m, timer=timer,
             deadline=deadline,
         )
+        if stats is not None:
+            stats["rerank_compute_ms"] = round((time.monotonic() - started_at) * 1000, 1)
+        return result
 
 
 def _consume_rerank_result(task: asyncio.Task) -> None:
@@ -46,31 +53,54 @@ def _consume_rerank_result(task: asyncio.Task) -> None:
 
 
 async def _rerank_stage(
-    question, scored, *, top_m, timeout, timer
+    question, scored, *, top_m, timeout, timer, stats=None
 ) -> tuple[list, bool]:
     """單次 rerank 段（fail-open）：回 (scored, applied)。
 
     applied=False ＝ rerank 未實際套用——(a) asyncio.wait_for 逾時；或
     (b) rerank_scored 回傳「與輸入同一 list 物件」（其 fail-open 契約，見
-    rerank.rerank_scored docstring）。retrieve_context 忽略 applied；
-    retrieve_context_multi 據此決定多查詢降級。逾時預算含排隊等待 semaphore。
+    rerank.rerank_scored docstring）。retrieve_context 據此決定是否傳 gate_scores。
+    逾時預算含排隊等待 semaphore。
     """
     task = asyncio.create_task(
         _run_rerank(
             question, scored, top_m=top_m, timer=timer,
             deadline=time.monotonic() + timeout,
+            stats=stats,
         )
     )
+    if stats is not None:
+        stats["rerank_timed_out"] = False
     try:
         reranked = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
     except TimeoutError:
+        if stats is not None:
+            stats["rerank_timed_out"] = True
+            stats["rerank_applied"] = False
         logger.warning("rerank timed out; using fused ranking")
         task.add_done_callback(_consume_rerank_result)
         return scored, False
     except asyncio.CancelledError:
         task.add_done_callback(_consume_rerank_result)
         raise
-    return reranked, reranked is not scored
+    applied = reranked is not scored
+    if stats is not None:
+        stats["rerank_applied"] = applied
+    return reranked, applied
+
+
+async def ask_rerank_top_m(configured: int, user_id: str | None = None) -> int:
+    """問答路徑這一題的 rerank 候選數：`configured`（`answer.ASK_RERANK_TOP_M`，環境變數 `ASK_RERANK_ENABLED`
+    關時為 0＝上限關）AND 功能旗標 `ask.rerank`（Admin v2 的降級開關；DB 沒有覆寫或讀不到＝開，行為不變）。
+
+    只給問答路徑用：`retrieve_context` 本身不讀旗標——評測（`eval/run_ragas.py`）與 `scripts/judge_agreement.py`
+    以 `rerank_top_m` 明確指定 rerank 開關，線上降級不可以靜默改掉它們的設定（批次不讀 web 的旗標，設計 §1.4）。
+    """
+    if configured <= 0:
+        return 0
+    from app.services import feature_flags  # 函式內 import：與 answer 之間的取用一律如此（循環依賴是刻意的）
+
+    return configured if await feature_flags.policy("ask.rerank", user_id) else 0
 
 
 async def retrieve_context(
@@ -96,8 +126,9 @@ async def retrieve_context(
 
     `stats` 給定時原樣轉給 hybrid_search 填寫字面路召回遙測（lex_hits／lex_cap／
     lex_truncated）與兩路的分段耗時（dense_ms／lex_ms，毫秒；字面路未執行時
-    lex_ms 為 0），由呼叫端決定要不要記錄——本函式不 log，避免同一份資訊在管線裡
-    出現兩次而對不上。"""
+    lex_ms 為 0），另記 rerank_queue_ms、rerank_compute_ms、rerank_applied、
+    rerank_timed_out。compute 包含 asyncio.to_thread 排程等待；逾時後背景工作仍
+    可能補寫 compute。由呼叫端決定要不要記錄——本函式不 log，避免資訊重複。"""
     filters = filters or {}
     qvec = await asyncio.to_thread(embed_query_cached, question)
     if timer is not None:
@@ -124,7 +155,7 @@ async def retrieve_context(
         # 推論（ask 50 / report 120 對候選）阻塞單一 asyncio event loop 凍結全站併發。
         timeout = rerank_timeout if rerank_timeout is not None else _RERANK_TIMEOUT
         scored, applied = await _rerank_stage(
-            question, scored, top_m=rerank_top_m, timeout=timeout, timer=timer
+            question, scored, top_m=rerank_top_m, timeout=timeout, timer=timer, stats=stats,
         )
         if not applied:
             # 未套用＝fused 未被覆蓋，gate 直接比 fused 等價；傳 None 讓「有沒有

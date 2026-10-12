@@ -4,7 +4,7 @@
 還沒 `make schema` 就 skip（`REPORT_MARK_REQUIRE_DB` 設定時改成紅燈，與
 tests/test_schema_constraints.py 同一套語意）。
 
-**一律 rollback、絕不 commit**：這支測試在本機會連到生產庫。`upsert_report` 自己會
+**一律 rollback、絕不 commit**：這支測試在本機會連到測試環境的真實資料庫。`upsert_report` 自己會
 commit，所以把 session.commit 換成 no-op 再整個 rollback。
 """
 

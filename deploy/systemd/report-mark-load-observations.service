@@ -1,0 +1,25 @@
+[Unit]
+Description=廷豐智能研報 監控 spool 匯入 DB（服務觀測與批次執行紀錄；冪等，零 LLM）
+# 收集器（report-mark-metrics）只寫本機 spool（data/ops_spool/），不連 DB；這支把 spool 冪等匯入
+# research.service_observation／job_execution。DB 掛掉時 rc=2、spool 保留，恢復後補匯入。
+# 細節見 scripts/load_observations.py 檔頭。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure=report-mark-alert@%n.service**：DB 掛掉時這支每 5 分鐘 rc=2，而
+# report-mark-alert@ 沒有去重；DB 掛掉本身已由 web 探針（/healthz 探 DB）經 P5 帶去重地告警。
+# 匯入停擺只會讓管理後台的監控頁變舊，不影響告警（告警不經 DB）。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/load_observations.py'
+# 75＝另一份正在跑（不跑，不是跑壞）。
+SuccessExitStatus=75
+# 單輪最多讀 64 MiB（DB 長期掛掉後的積壓分批補），正常一輪數秒；取 4 分鐘，小於 timer 的 5 分鐘間隔。
+TimeoutStartSec=240
+Nice=10

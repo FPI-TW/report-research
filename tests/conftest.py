@@ -2,7 +2,7 @@
 pytest 測試環境初始化。
 
 1. 將 repo root 加入 sys.path（pytest 預設不加），讓 `web`、`app` 等頂層套件可被匯入。
-2. 為 web.auth fail-closed env var 設定測試預設值（individual 測試可在匯入前覆蓋）。
+2. 固定 cookie 簽章金鑰，並把帳號服務換成記憶體假物件（見 _fake_accounts）。
 """
 
 from __future__ import annotations
@@ -18,11 +18,8 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-# web.auth is fail-closed: raise RuntimeError if these are unset at import time.
-# These defaults are applied before any test module is imported, so per-module
-# setdefault() calls (e.g. in test_auth.py) intentionally defer to these values.
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
+# cookie 簽章金鑰：固定值讓 token 測試可重現（未設時 web.auth 會隨機產生並記 warning）。
+# 帳號不再來自環境變數：見下方 _fake_accounts（tester／testpass 管理員）。
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 # LLM 付費 API：**刻意用賦值，不用上面那種 setdefault**。
@@ -74,6 +71,47 @@ os.environ.pop("SYNC_ROUND_ID", None)
 # 批次用量記錄（scripts/_claude_cli.usage_log_path）：同理不得寫進部署目錄的 data/llm_usage.jsonl
 # （那是費用歸因的依據）。指到 os.devnull：寫得進去、什麼都不留；要驗內容的測試自己指到 tempfile。
 os.environ["LLM_USAGE_LOG"] = os.devnull
+# 監控 spool（scripts/collect_resource_usage.py 寫、scripts/load_observations.py 匯入；預設落點是 repo 根的
+# data/ops_spool/，而 repo 根就是部署目錄）：同理用賦值指到 os.devnull——不是目錄，收集器開不了 spool
+# （只停用觀測那一段）、loader 視為沒有東西可匯入。要驗 spool 的測試自己給 --spool-dir 或 tempfile。
+os.environ["OPS_SPOOL_DIR"] = os.devnull
+# 容器／主機探針的連續失敗次數（scripts/_health_streak.sh；預設 repo 根的 data/.health-streaks/）：同理用賦值指到
+# 不存在的目錄——寫不進去時探針改成「每筆失敗都算確認」，不會在部署目錄留下狀態。要驗去抖的測試自己給 tempfile。
+os.environ["HEALTH_STREAK_DIR"] = "/nonexistent/report-mark-health-streaks"
+# 每日 schema 檢查的狀態檔（scripts/schema_baseline.py scheduled；預設 repo 根的 data/schema_check.json，
+# 管理頁讀它）：同理用賦值指到不存在的目錄——寫入只警告、不建目錄，部署目錄的狀態檔不會被測試的假結果
+# 蓋掉。要驗內容的測試自己給 tempfile。
+os.environ["SCHEMA_CHECK_STATUS_FILE"] = "/nonexistent/report-mark-schema-check/schema_check.json"
+# 資料健康結果檔（app/services/data_health.py；db_audit.py 與 reconcile_object_storage.py 跑完時寫，預設 repo 根的
+# data/health/）：同理用賦值指到不存在的目錄——寫入 fail-open、讀取當作「還沒跑過」。要驗內容的測試自己給 tempfile。
+os.environ["DATA_HEALTH_DIR"] = "/nonexistent/report-mark-data-health"
+# 檢索回歸的基準檔（app/services/retrieval_regression.py；預設 repo 根的 data/retrieval_regression/baseline.json）：
+# 同理用賦值指到不存在的路徑——讀取當作「還沒有基準」、擷取寫不進去。要驗內容的測試自己給 tempfile。
+os.environ["RETRIEVAL_REGRESSION_BASELINE"] = "/nonexistent/report-mark-retrieval-regression/baseline.json"
+# 研報上傳的隔離區（app/services/quarantine.py；預設 repo 根的 data/quarantine/）：同理用賦值指到不存在的路徑——
+# 收檔建不出目錄就回 503 `quarantine_unavailable`，部署目錄不會留下測試寫的 .part／.bin。要寫檔的測試自己給 tempfile。
+os.environ["UPLOAD_QUARANTINE_DIR"] = "/nonexistent/report-mark-quarantine"
+# 上傳 worker 的整輪鎖與乾淨檔目錄（app/services/upload_worker.py；預設 repo 根的 data/.upload_worker.lock、
+# data/uploads/clean/）：同理用賦值指到不存在的路徑。要跑 worker 的測試自己給 tempfile（Ctx 的路徑欄位）。
+# 告警 webhook：worker 偵測到感染時會送；測試一律不得送出（要驗的測試自己給假的 runner 與 URL）。
+os.environ["UPLOAD_WORKER_LOCK_FILE"] = "/nonexistent/report-mark-upload-worker/.upload_worker.lock"
+os.environ["UPLOAD_CLEAN_DIR"] = "/nonexistent/report-mark-uploads-clean"
+os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
+# 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器同時是測試環境的部署主機，代理裝上之後預設 socket
+# 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
+os.environ["OPS_AGENT_ENVIRONMENT"] = "production"
+os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
+# 管理員 TOTP 強制（app/config.py 的 ADMIN_MFA_REQUIRED，預設關）：既有測試的管理員（tester 等）都沒開 TOTP，
+# 若部署目錄 .env 或執行者 shell 設成開，每一支管理端點測試都會 403。
+# **用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
+# 開啟時的行為由 tests/test_admin_mfa.py 在自己的範圍內換掉 Settings 驗證。
+os.environ["ADMIN_MFA_REQUIRED"] = "0"
+# 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／
+# llm_usage_daily——測試以 `with TestClient(app)` 觸發 lifespan 時，那就是寫進 REPORT_MARK_DB_URL 指的庫
+# （本機預設是測試環境的真實資料庫）。
+# **用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
+# 要驗寫入的測試自己給假的 session factory（tests/test_usage_events.py）。
+os.environ["USAGE_EVENTS_ENABLED"] = "0"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -107,23 +145,53 @@ def _protect_repo_dotenv():
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _fake_accounts():
+    """整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`）。
+
+    個別帳號上線後登入要查 DB；測試不連 DB，而既有約三十支測試以 tester／testpass 走
+    `/login`。預設這份放一個同名的**管理員**（待複核等管理端點的測試也照樣能打）。
+    要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份。
+
+    session 範圍而非每題：有些測試在 setUpClass 就登入，每題換一份會讓那個 session 失效。
+    **刻意不主動 import** `web.deps`（理由同下方的監控快取）；測試模組在收集階段就 import
+    了 web.server，所以這裡跑的時候它已經在 sys.modules 裡。真的帳號 SQL 由
+    `tests/test_accounts_db.py` 對 PostgreSQL 驗。
+    """
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield None
+        return
+    from fake_accounts import default_accounts
+
+    orig = mod.accounts
+    mod.accounts = default_accounts()
+    try:
+        yield mod.accounts
+    finally:
+        mod.accounts = orig
+
+
 @pytest.fixture(autouse=True)
 def _reset_monitor_caches():
-    """`web.routers.monitor` 的三個模組級 TTL 快取每題前後各清一次。
+    """監控的三個模組級 TTL 快取每題前後各清一次：`web.routers.monitor` 的 runtime 與
+    tag 檔數兩個，加上 `web.stats_snapshot` 的 DB 快照（/api/stats、/api/progress、
+    /api/review/judge-scale 共用）。
 
     沒有這層的話：A 測試 patch 掉 `_gather_runtime` 後打一次 `/api/progress`，
     假值就進了 `_RUNTIME_CACHE`，B 測試即使 patch 成別的值也拿得到 A 的——兩邊
     形狀相同時完全看不出來，只會在某個排序下莫名失敗。DB 快照那一份原本靠各測試
     自己在 setUp 裡清，那是「記得寫才有效」的防線。
 
-    **刻意不主動 import** `web.routers.monitor`：純單元測試（textnorm、chunk 之類）
+    **刻意不主動 import** 這兩個模組：純單元測試（textnorm、chunk 之類）
     不該為了清一個快取去拉起 web 相依鏈。模組沒被載入就等於沒有快取要清。
     """
 
     def _clear() -> None:
-        mod = sys.modules.get("web.routers.monitor")
-        if mod is not None and hasattr(mod, "reset_caches"):
-            mod.reset_caches()
+        for name, reset in (("web.routers.monitor", "reset_caches"), ("web.stats_snapshot", "reset_cache")):
+            mod = sys.modules.get(name)
+            if mod is not None and hasattr(mod, reset):
+                getattr(mod, reset)()
 
     _clear()
     yield
@@ -164,6 +232,65 @@ def _reset_ttl_caches():
     _clear()
     yield
     _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_v2_state():
+    """Admin v2 的兩個模組級狀態每題前後各清一次：用量累加器（`app.services.usage_events`）與功能旗標的
+    DB 覆寫快取（`app.services.feature_flags`）。旗標快取會影響行為：A 測試的假覆寫不能漏到 B。
+    同樣不主動 import——模組沒載入就沒有狀態要清。"""
+
+    def _clear() -> None:
+        usage = sys.modules.get("app.services.usage_events")
+        if usage is not None:
+            usage.reset()
+        flags = sys.modules.get("app.services.feature_flags")
+        if flags is not None:
+            flags.invalidate()
+        security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
+        if security is not None:
+            security.reset()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_external_rate_limit():
+    """`web.external_auth` 的每分鐘限流 token bucket 每題前後各清一次（理由同上面的監控快取）。
+
+    bucket 以 client id 為鍵：兩個測試用同一個假用戶端 id 時，前一題用掉的 token 會讓下一題
+    莫名 429。同樣不主動 import——模組沒載入就沒有狀態要清。
+    """
+
+    def _clear() -> None:
+        mod = sys.modules.get("web.external_auth")
+        if mod is not None:
+            mod.reset_state()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _stub_feature_flag_db():
+    """功能旗標的讀取（`app.services.feature_flags` 沒給 session_factory 時用的 `SessionFactory`）預設讀成「沒有
+    任何覆寫」：問答、上傳等既有測試在 registry 預設下跑（＝只看環境變數，與 v1 相同），而不是去讀
+    `REPORT_MARK_DB_URL` 指的庫——本機預設是測試環境的真實資料庫，那裡的覆寫會讓測試結果跟著那個庫的設定變。
+    驗旗標本身的測試明確傳 session_factory，或在範圍內用 `fake_feature_flags.flag_rows()` 換成指定的覆寫。
+    旗標模組很輕（只依賴 app.config 與 app.services.db），這裡直接 import。"""
+    from fake_feature_flags import NoRowsSession
+
+    from app.services import feature_flags as flags
+
+    orig = flags.SessionFactory
+    flags.SessionFactory = NoRowsSession
+    try:
+        yield
+    finally:
+        flags.SessionFactory = orig
 
 
 @pytest.fixture(autouse=True)
@@ -216,3 +343,54 @@ def _stub_query_planner_llm():
         yield
     finally:
         qp.stream_completion = orig
+
+
+@pytest.fixture(autouse=True)
+def _stub_ask_ownership_checks():
+    """`/api/ask`、`/api/ask/stop` 在串流前會查「參照的對話串／回答是不是別人的」
+    （`deps.conversation_is_foreign`、`deps.qa_is_foreign`，真的實作會連 DB）。
+
+    測試不連 DB：預設 stub 成「不是別人的」，帶 conversation_id／regenerate_of 的既有
+    測試照舊走到 answer_question。要驗 404 的測試在自己範圍內覆寫（tests/test_qa_isolation.py）。
+    同樣不主動 import——web.deps 沒載入就沒有東西要 stub。
+    """
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield
+        return
+
+    async def _not_foreign(*_a, **_k):
+        return False
+
+    orig = (mod.conversation_is_foreign, mod.qa_is_foreign)
+    mod.conversation_is_foreign = _not_foreign
+    mod.qa_is_foreign = _not_foreign
+    try:
+        yield
+    finally:
+        mod.conversation_is_foreign, mod.qa_is_foreign = orig
+
+
+@pytest.fixture(autouse=True)
+def _stub_quota_charge():
+    """問答與匯出每次都會計配額（`deps.quota.charge`，真的實作寫 `usage_counter`）。測試不連 DB：預設換成
+    「放行、不計數」的代理，其餘屬性照舊轉給真的模組。要驗配額的測試自己把 `deps.quota` 換成假物件
+    （tests/test_quota_api.py）。同樣不主動 import——web.deps 沒載入就沒有東西要 stub。"""
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield
+        return
+    real = mod.quota
+
+    class _AllowAll:
+        async def charge(self, user, kind, **_kw):
+            return real.Decision(kind=kind, allowed=True)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    mod.quota = _AllowAll()
+    try:
+        yield
+    finally:
+        mod.quota = real

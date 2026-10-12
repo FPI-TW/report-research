@@ -1,0 +1,36 @@
+[Unit]
+Description=廷豐智能研報 schema 與 alembic 版本 drift 每日檢查（對目標庫唯讀；同伺服器建刪暫存庫逐項比對系統目錄，零 LLM）
+# scripts/schema_baseline.py scheduled：先比 DB 的 alembic_version 與程式的 head（版本 drift），版本可對應時
+# 再以 DB 的 revision 在同一台伺服器建暫存庫、逐項比對系統目錄（schema drift），比完一定刪掉並確認。
+# 結果另寫 data/schema_check.json（管理頁讀；格式見該腳本的 build_status_payload）。
+After=network-online.target
+Wants=network-online.target
+# 告警分流（退出碼定義在 scripts/schema_baseline.py 檔頭）：
+# - 1＝schema drift 或版本落後（換了程式、忘了 make schema；新程式在舊 schema 上會壞）→ 告警。
+# - 2＝版本超前／未接管／不明確、無法比對、**暫存庫清理失敗**（生產伺服器上留了一個 schema_ref_* 庫，
+#   訊息裡有手動清理指令）→ 告警。帳密錯、沒有 CREATEDB 也落在這裡：設定錯誤不會自己好。
+# - 3＝目標 DB 連不上（只在第一次接觸目標時判定）→ 列為成功、不告警。DB 掛掉本身已由 web 探針經 P5
+#   帶去重地告警；report-mark-alert@ 沒有去重，這裡再叫一次只是重複通知（比照 rollup-observations 的 rc=2）。
+#   這一天的檢查就此跳過，狀態檔記 db_unavailable；比到一半才斷線則清理失敗或無法比對，仍是 2。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# REPORT_MARK_ROOT、（DB 不在本機時的）REPORT_MARK_DB_URL，以及 SCHEMA_CHECK_MODE 都由這個檔提供。
+EnvironmentFile=-/etc/default/report-mark-sync
+# 選用：staging 要做完整比對時，基準暫存庫改用有 CREATEDB 的帳號建（app 帳號沒有）。這個檔放
+# SCHEMA_CHECK_REFERENCE_URL_ENV=SCHEMA_CHECK_REFERENCE_URL 與 SCHEMA_CHECK_REFERENCE_URL=<連線字串>，
+# 以 install -m 0600 -o root -g root 安裝（systemd 以 root 讀，行程照樣拿得到）；repo 裡不放任何帳密。
+# 辦公室主機不需要這個檔（postgres 帳號本來就能建庫）。細節見 docs/production_resilience.md。
+EnvironmentFile=-/etc/default/report-mark-schema-check
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/schema_baseline.py scheduled'
+# 3＝目標 DB 連不上（理由見上方 OnFailure 的註解）。只放行這一個：1 與 2 放行就是無聲的 drift。
+SuccessExitStatus=3
+# 正常一輪數秒（建暫存庫、套 baseline＋各 revision、讀兩邊目錄）；連不上時 asyncpg 的連線逾時是 60 秒。
+TimeoutStartSec=900
+Nice=10

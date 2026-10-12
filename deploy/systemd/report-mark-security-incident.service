@@ -1,0 +1,37 @@
+[Unit]
+Description=安全事件偵測與通知（消費安全探針結果，含去重與提醒節奏）
+# 跑的是與 web、LineBot、邊緣完全相同的 scripts/incident_handler.sh，只換一組 INCIDENT_* 環境變數
+# （**不改那支腳本**）。Slack 只會收到 FIRING／ESCALATED／REMINDER／RESOLVED 這類狀態型通知，
+# 不會為每筆登入事件發一則（使用者定案 9）；本 lane 不新增任何直接送 webhook 的程式。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# webhook secret 的落點，與 report-mark-incident.service 共用同一個檔（0600 root:root）。
+EnvironmentFile=-/etc/report-mark/alert.env
+# ── 指向安全那一組訊號 ───────────────────────────────────────────────────
+Environment=INCIDENT_PROBE_UNIT=report-mark-security-health.service
+Environment=INCIDENT_TIMER_UNIT=report-mark-security-health.timer
+Environment=INCIDENT_COMPONENT=security
+Environment=INCIDENT_MONITOR_COMPONENT=security_monitor
+# **狀態目錄必須與其他組分開**：`handler.lock` 與 `probe_observation.state` 是固定檔名，
+# 共用目錄會讓實例互相覆寫觀測快取。
+Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-security
+# 探針 OnBootSec=5min，開機後的合理空窗 300 + 60（探針最壞耗時）≈ 360，取 480（同邊緣那組）。
+Environment=INCIDENT_BOOTSTRAP_SECONDS=480
+# **探針的 exit 3 是 hold（不開也不關），不是健康。** 3＝判不出來（web 連不上、端點不存在、DB 查不到）。
+# handler 預設把 3 當健康（web 探針的 3 是啟動寬限）；沿用那個語意會讓進行中的安全事件在 web 重啟那一輪被
+# RESOLVED 關掉——送出一則不實的「已恢復」。
+Environment=INCIDENT_HOLD_EXIT_CODES=3
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

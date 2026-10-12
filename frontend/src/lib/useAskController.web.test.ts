@@ -7,12 +7,12 @@ import { setWebSearch } from './useWebSearch'
 import * as api from './askApi'
 import type { RawSSEEvent } from './readSSE'
 
-// 網搜暫停（WEB_SEARCH_PAUSED，DeepSeek 遷移 PR-W）以可切換的 getter 模擬：預設走「恢復後」的行為，
+// 網搜暫停（useWebSearchPaused：旗標 ask.web_search 沒開）以可切換的 mock 模擬：預設走「恢復後」的行為，
 // 讓開關本身的測試在暫停期間繼續守著接回點；暫停中的行為另成一組，把旗標設成 true。
 const paused = vi.hoisted(() => ({ value: false }))
 vi.mock('./useWebSearch', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./useWebSearch')>()
-  return { ...mod, get WEB_SEARCH_PAUSED() { return paused.value } }
+  return { ...mod, useWebSearchPaused: () => paused.value }
 })
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -68,7 +68,7 @@ describe('useAskController web-search threading (M11)', () => {
 
 // 網搜暫停中（PR-W）：localStorage 殘留的 web=true 不送出。送了會被伺服器總閘 ASK_ENABLE_WEB=0 擋掉，
 // 但 qa_log.filters.web 會記到一個使用者在畫面上看不到的開關狀態。
-describe('網搜暫停中（WEB_SEARCH_PAUSED）', () => {
+describe('網搜暫停中（useWebSearchPaused）', () => {
   beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); setWebSearch(false); paused.value = true })
   afterEach(() => { setWebSearch(false); localStorage.clear(); paused.value = false })
 

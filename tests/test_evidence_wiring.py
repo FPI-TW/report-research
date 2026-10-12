@@ -174,7 +174,7 @@ class LogQaSqlTests(unittest.IsolatedAsyncioTestCase):
             manifest = {"schema_version": 1, "evidence": []}
             qa_id = await ans._log_qa(
                 "問題", "答案", [], {}, 5, [], [],
-                evidence_manifest=manifest,
+                evidence_manifest=manifest, user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -188,7 +188,7 @@ class LogQaSqlTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _FakeSession(recorded)
         try:
-            await ans._log_qa("問題", "答案", [], {}, 5, [], [])
+            await ans._log_qa("問題", "答案", [], {}, 5, [], [], user_id=None)
         finally:
             ans.SessionFactory = orig
         _, params = recorded[0]

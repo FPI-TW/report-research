@@ -87,7 +87,8 @@ class IngestAllObjectStorageTests(unittest.TestCase):
         self.assertEqual(calls, ["rollback"])
 
     def test_sync_path_rechecks_hash_before_upload_call(self):
-        source = (ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        # sync 的單篇入庫（含 R2 上傳）在 sync 與上傳 worker 共用的入庫核心
+        source = (ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8")
         check = source.index("if file_sha256(path) != res.file_hash")
         upload = source.index("storage.upload_file, path, source_object_key, expected_sha256=res.file_hash")
         self.assertLess(check, upload)

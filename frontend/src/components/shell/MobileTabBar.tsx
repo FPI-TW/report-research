@@ -9,7 +9,6 @@ export function MobileTabBar() {
       <NavItem to="/ask" icon="messages" label="問答" variant="mobile" />
       <NavItem to="/radar" icon="compass" label="觀點" variant="mobile" />
       <NavItem to="/brief" icon="fileText" label="簡報" variant="mobile" />
-      <NavItem to="/monitor" icon="activity" label="監控" variant="mobile" />
       <div className={styles.account}><AccountMenu variant="mobile" /></div>
     </div>
   )

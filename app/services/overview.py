@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.filename import BROKER_MAP, SOURCE_DISPLAY, source_display
 from app.services.tagging import INSTRUMENT_DISPLAY, MARKET_DISPLAY
 from app.services.textnorm import norm_for_match
+from app.services.visibility import visible_report_sql
 
 # 聚合/枚舉提示詞：命中任一即視為「總覽題」
 _OVERVIEW_CUES = (
@@ -294,6 +295,8 @@ async def aggregate_facets(
 ) -> CorpusOverview:
     """對 research.research_report 跑分面聚合（WHERE = is_research + 解析到的條件）。"""
     where, params = _build_where(f)
+    # 被管理員隱藏的研報不進總覽的母體（app/services/visibility.py）。
+    where = f"{where} AND {visible_report_sql('r')}"
     base = f"FROM research.research_report r WHERE {where}"
 
     totals = (

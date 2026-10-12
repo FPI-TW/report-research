@@ -1,0 +1,27 @@
+[Unit]
+Description=安全事件探針（/healthz/security：登入失敗、同一帳號連續失敗、權限提升失敗、稽核鏈）
+# 判斷在 web 行程（app/services/security_ops.py）；本探針只把 {"security": state} 轉成退出碼，
+# 交給 report-mark-security-incident.service（同一支 scripts/incident_handler.sh）。
+After=network-online.target report-mark-web.service
+Wants=network-online.target
+# **刻意不宣告 OnFailure**，理由與 report-mark-health.service 相同：探針每 2 分鐘一次，同一次事件會觸發
+# 約 30 次／小時；去重、提醒節奏、恢復判定屬於 P5（report-mark-security-incident.service）。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 /root，不受 User= 影響。tests/test_deploy_units.py 靜態守這條。
+Environment=HOME=/home/kashionz
+# 只需要 curl／coreutils。**刻意不含 nvm 與 uv 的路徑**：探針不得相依 Python／.venv。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_security_health.sh"'
+# 3＝判不出來（web 連不上、端點不存在、unknown）：不是故障，unit 不該停在 failed。
+# security-incident 那組另以 INCIDENT_HOLD_EXIT_CODES=3 把它當 hold（不開也不關事件）。
+SuccessExitStatus=3
+# 最壞情況＝2 次 × 10 秒逾時 ＋ 1 次 × 10 秒等待 ＝ 30 秒。取 60 秒＝2 倍餘裕，且嚴格小於 timer 的 120 秒間隔。
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -113,6 +113,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
             return [(0, 0.99, "reranked")]
 
         t = _Timer()
+        stats = {}
         with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
              mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
              mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
@@ -120,7 +121,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(rp, "rerank_scored", _fake_rerank):
             await rp.retrieve_context(
                 "q", k=15, dense_scan=400, max_reports=15,
-                max_passages=4, max_chars=20000, rerank_top_m=50, timer=t,
+                max_passages=4, max_chars=20000, rerank_top_m=50, timer=t, stats=stats,
             )
         self.assertEqual(seen["top_m"], 50)
         self.assertEqual(seen["build_scored"], [(0, 0.99, "reranked")])  # 重排結果進 build_context
@@ -130,6 +131,10 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         # 少了它，select_reports 就會拿 rerank 的 sigmoid [0,1] 分去比以 fused 尺度
         # 校準的 ASK_RELEVANCE_FLOOR=0.62（量綱錯配，會誤剔 tier 0 高相關候選）。
         self.assertEqual(seen["build_kw"]["gate_scores"], {"c1": 0.5, "c2": 0.71})
+        self.assertTrue(stats["rerank_applied"])
+        self.assertFalse(stats["rerank_timed_out"])
+        self.assertGreaterEqual(stats["rerank_queue_ms"], 0)
+        self.assertGreaterEqual(stats["rerank_compute_ms"], 0)
 
     async def test_rerank_timeout_expiry_falls_back_to_fused(self):
         import time as _time
@@ -160,16 +165,19 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
              mock.patch.object(rp, "build_context", _fake_build), \
              mock.patch.object(rp, "rerank_scored", _slow_rerank):
+            stats = {}
             out = await rp.retrieve_context(
                 "q", k=15, dense_scan=400, max_reports=15,
                 max_passages=4, max_chars=20000,
-                rerank_top_m=50, rerank_timeout=0.05,
+                rerank_top_m=50, rerank_timeout=0.05, stats=stats,
             )
             await asyncio.sleep(0.3)  # 讓背景 task 收尾，避免 loop 關閉警告
         self.assertEqual(out, (["S"], "CTX"))
         self.assertIs(seen["build_scored"], hybrid_out)  # 逾時 → 用原 fused 序
         # 逾時＝分數未被覆寫，gate 快照不傳（比 fused 等價，且讓「有無覆寫」可讀）
         self.assertIsNone(seen["build_kw"]["gate_scores"])
+        self.assertTrue(stats["rerank_timed_out"])
+        self.assertFalse(stats["rerank_applied"])
 
     async def test_rerank_timeout_none_falls_back_to_module_default(self):
         import time as _time

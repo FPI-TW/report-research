@@ -18,18 +18,18 @@ patch 會**安靜落空**（不是報錯，是測試照樣綠但根本沒 patch 
 
 ## 為什麼這裡自己載 .env
 
-web/auth.py 在 import 時就 fail-closed 檢查 REPORT_MARK_ACCESS_USERNAME/_PASSWORD
-（見 web/auth.py 開頭），所以 .env 必須早於它被載入。原本這個順序只由
-web/server.py 開頭的 load_env_file 保證；一旦路由模組可以被獨立 import（拆分後
-必然如此），先碰到 auth 的那條路徑就會在 import 期 RuntimeError。
+web/auth.py 與 app.services.db 在 import 時就讀環境變數（session 簽章金鑰、DB
+連線字串），所以 .env 必須早於它們被載入。原本這個順序只由 web/server.py 開頭的
+load_env_file 保證；一旦路由模組可以被獨立 import（拆分後必然如此），先碰到它們的
+那條路徑就會拿到預設值——簽章金鑰變成隨機值、DB 連到預設庫，而且沒有任何錯誤。
 
 load_env_file 預設 override=False（只填未存在的鍵），重複呼叫無副作用，故這裡
 直接自備一份，讓任何 import 順序都安全，而不是依賴呼叫端的紀律。
 
 驗證這件事時注意：**git worktree 內沒有 .env**（它被 gitignore，不隨 worktree
 複製），load_env_file 遇不到檔案會直接 return，於是「先 import deps」與「不 import
-deps」都會 fail-closed 失敗——看起來像機制無效，其實只是沒檔案可載。要在 worktree
-裡驗，得先把 .env 複製進來。
+deps」的結果一樣——看起來像機制無效，其實只是沒檔案可載。要在 worktree 裡驗，得先
+把 .env 複製進來。
 """
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ async def _with_heartbeat(gen, interval: float = SSE_HEARTBEAT_INTERVAL):
                 return
     finally:
         # 用戶端中斷時，先收掉尚未完成的 __anext__，再讓底層產生器跑自己的 finally
-        # （研報逐節路徑靠它 kill 子程序）。
+        # （LLM 串流靠它關閉底層連線或子程序）。
         if pending is not None:
             pending.cancel()
             with _suppress(BaseException):
@@ -122,11 +122,38 @@ def _valid_uuid(s) -> bool:
 #
 # 只放「測試會 mock 的服務函式」；純資料轉換（source_display / clean_text /
 # MARKETS 等，測試不 mock）仍由各處直接 import，不進這裡。
+# 帳號服務以「模組物件」整個放進依賴面：middleware、登入頁與管理端點都呼叫
+# deps.accounts.X，測試只要換掉這一個名字（tests/fake_accounts.py）就整組接管。
+# 研報隱藏／恢復的管理端（web/routers/admin_reports.py）同理：deps.report_visibility.X。
+# 監控投影的唯讀查詢（web/routers/admin_monitoring.py）同理：deps.ops_monitoring.X。
+# 資料健康與 LLM 用量（web/routers/admin_data_health.py）同理：deps.data_health.X、deps.llm_usage.X。
+# 診斷快照（web/routers/admin_diagnostics.py）同理：deps.diagnostics.snapshot。
+# 檢索回歸（web/routers/admin_retrieval_regression.py）同理：deps.retrieval_regression.X。
+# 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X；審核同理：deps.upload_review.X。
+# DB 快照、慢查詢、趨勢與事件趨勢（web/routers/admin_db.py、admin_monitoring.py）同理：deps.db_insights.X。
+# 每人配額（ask.py、admin_exports.py 的計數，admin_quota.py、me_quota.py 的查詢與覆寫）同理：deps.quota.X。
+# API 用戶端（對外 API 的認證 web/external_auth.py 與管理端 web/routers/admin_api_clients.py）同理：deps.api_clients.X。
+from app.services import (  # noqa: E402
+    accounts,
+    api_clients,
+    data_health,
+    db_insights,
+    diagnostics,
+    llm_usage,
+    ops_monitoring,
+    quota,
+    retrieval_regression,
+    upload_intake,
+    upload_review,
+)
+from app.services import visibility as report_visibility  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
+    conversation_is_foreign,
     delete_qa,
     list_qa_versions,
     log_stopped_qa,
+    qa_is_foreign,
 )
 from app.services.brief import (  # noqa: E402
     fetch_by_date as fetch_brief_by_date,
@@ -180,7 +207,13 @@ __all__ = [
     "_sse",
     "_valid_uuid",
     "_with_heartbeat",
+    "accounts",
     "answer_question",
+    "api_clients",
+    "conversation_is_foreign",
+    "data_health",
+    "db_insights",
+    "diagnostics",
     "delete_qa",
     "embed_query_cached",
     "embed_texts",
@@ -203,7 +236,15 @@ __all__ = [
     "hybrid_search",
     "list_qa_versions",
     "list_radar_instruments",
+    "llm_usage",
     "log_stopped_qa",
+    "ops_monitoring",
+    "qa_is_foreign",
+    "quota",
     "rank_reports",
+    "report_visibility",
     "rerank_warmup",
+    "retrieval_regression",
+    "upload_intake",
+    "upload_review",
 ]

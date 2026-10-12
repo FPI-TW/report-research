@@ -37,7 +37,14 @@ export default function RadarPage() {
   }, [patch])
 
   const onClearInstrument = useCallback(() => {
-    patch({ code: null })
+    patch({ code: null, broker: null })
+  }, [patch])
+
+  // 展開哪家券商進網址（replace，不堆歷史）。其餘檢視偏好（卡片／表格、口徑切換）刻意
+  // 不放：那些是看的人自己的偏好，放進連結只會蓋掉對方的。
+  const openBroker = params.get('broker')
+  const onOpenBrokerChange = useCallback((brokerKey: string | null) => {
+    patch({ broker: brokerKey })
   }, [patch])
 
   const onBrowseReports = useCallback(() => {
@@ -76,6 +83,8 @@ export default function RadarPage() {
               onWindowChange={onWindowChange}
               onBack={onClearInstrument}
               onBrowseReports={onBrowseReports}
+              openBroker={openBroker}
+              onOpenBrokerChange={onOpenBrokerChange}
             />
           ) : (
             <InstrumentPicker

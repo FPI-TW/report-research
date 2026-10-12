@@ -1,0 +1,10 @@
+[
+  {
+    "ParameterKey": "DbEngineVersion",
+    "ParameterValue": "16.15"
+  },
+  {
+    "ParameterKey": "Ec2SubnetChoice",
+    "ParameterValue": "a"
+  }
+]

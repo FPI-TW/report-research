@@ -5,6 +5,7 @@ import { CopyButton } from '../../components/animate-ui/components/buttons/copy'
 import { ThinkingSteps } from './ThinkingSteps'
 import { renderAnswer } from '../../lib/askMarkdown'
 import { visibleAnswerView, type AnswerView, type Turn } from '../../lib/askReducer'
+import { noticeDisplayText, useWebSearchPaused } from '../../lib/useWebSearch'
 import styles from './AssistantMessage.module.css'
 
 interface Props {
@@ -22,13 +23,16 @@ interface Props {
 }
 
 export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
+  const webPaused = useWebSearchPaused()
   if (turn.phase === 'notice') {
     // 時效題刻意不給「換個說法重新提問」：系統缺的是資料不是措辭，換說法只會讓
     // 使用者反覆改寫同一題，每一次再吃一輪完整檢索。離題題才是換個說法就有救。
     const retry = turn.noticeKind === 'time_sensitive'
       ? undefined
       : { label: '換個說法重新提問', onClick: onNoticeRetry }
-    return <Callout variant="warning" action={retry}>{turn.noticeText ?? '無法回答此問題'}</Callout>
+    // 網搜暫停期間剝掉「可開網搜」那一句（理由見 noticeDisplayText）。
+    const text = turn.noticeText == null ? '無法回答此問題' : noticeDisplayText(turn.noticeText, turn.noticeKind, webPaused)
+    return <Callout variant="warning" action={retry}>{text}</Callout>
   }
   if (turn.phase === 'error') {
     // 串流中斷/發生錯誤時仍保留已串出的部分答案（reducer 有保留 turn.answer），僅在下方補錯誤提示，

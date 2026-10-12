@@ -19,7 +19,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-SCHEMA_SQL = (REPO_ROOT / "db" / "schema.sql").read_text(encoding="utf-8")
+# baseline（db/schema.sql）＋所有 revision 的 SQL：之後的 revision 新增的索引也要掃得到。
+from app.services.schema_migrations import schema_source_text  # noqa: E402
+
+SCHEMA_SQL = schema_source_text()
 
 # ANALYZE 這三處是「匯入的最後一步」——被砍掉或漏表都只留下靜默過期的統計。
 _INGEST_SCRIPTS = (

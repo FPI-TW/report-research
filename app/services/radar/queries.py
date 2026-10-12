@@ -21,6 +21,7 @@ from app.services.radar.types import (
 )
 from app.services.retrieval import _LIKE_ESC
 from app.services.tagging import MARKETS
+from app.services.visibility import visible_report_sql
 
 VALID_STATUSES = ["valid", "partial"]
 
@@ -104,6 +105,7 @@ def _instrument_signals_sql(broker: bool) -> str:
         "JOIN research.research_report r ON r.id = s.report_id "
         "WHERE s.market = :market AND s.instrument_code = :code "
         "  AND s.extraction_status = ANY(:statuses) "
+        f"  AND {visible_report_sql('r')} "
         f"{where_broker}"
         f"{order}"
     )
@@ -143,6 +145,7 @@ _BATCH_SIGNALS_SQL = text(
     "WHERE (s.market, s.instrument_code) IN ("
     "  SELECT m, c FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c)) "
     "  AND s.extraction_status = ANY(:statuses) "
+    f"  AND {visible_report_sql('r')} "
     f"ORDER BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL} ASC NULLS LAST, "
     "         s.report_date DESC NULLS LAST, s.created_at DESC, s.id DESC"
 )
@@ -181,7 +184,7 @@ async def fetch_signals_for_instruments(
 # 註：現況約 1.4 萬列且 full_text 多半 TOAST 出去，單次全掃的量級估算只有數十毫秒（未實測）
 # ——這是「規模一放大就線性惡化」的預防，不是已量測到的加速。
 _COVERAGE_SQL = text(
-    """
+    f"""
     SELECT
       (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
          FROM research.research_report r
@@ -190,21 +193,25 @@ _COVERAGE_SQL = text(
           AND s.market = :market
           AND s.instrument_code = :code
          WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
-           AND r.is_research IS NOT FALSE) AS brokers_total,
+           AND r.is_research IS NOT FALSE
+           AND {visible_report_sql("r")}) AS brokers_total,
       (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
          FROM research.report_signal s
          JOIN research.research_report r ON r.id = s.report_id
          WHERE s.market = :market AND s.instrument_code = :code
            AND s.extraction_status = ANY(:statuses)
            AND r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
-           AND r.is_research IS NOT FALSE) AS brokers_extracted,
+           AND r.is_research IS NOT FALSE
+           AND {visible_report_sql("r")}) AS brokers_extracted,
       (SELECT count(*) FROM research.research_report r
          WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
-           AND r.is_research IS NOT FALSE) AS reports_available,
+           AND r.is_research IS NOT FALSE
+           AND {visible_report_sql("r")}) AS reports_available,
       (SELECT r.company_name FROM research.research_report r
          WHERE r.market = :market AND r.stock_code = :code
            AND r.company_name IS NOT NULL
            AND r.is_research IS NOT FALSE
+           AND {visible_report_sql("r")}
          ORDER BY r.report_date DESC NULLS LAST, r.created_at DESC, r.id
          LIMIT 1) AS instrument_name
     """
@@ -244,6 +251,7 @@ _BROKER_COVERAGE_SQL = text(
     WHERE r.market = :market
       AND r.stock_targets @> ARRAY[:code]::text[]
       AND r.is_research IS NOT FALSE
+      AND {visible_report_sql("r")}
     """
 )
 
@@ -273,6 +281,7 @@ def _catalog_cte() -> str:
         "  FROM research.report_signal s"
         "  JOIN research.research_report r ON r.id = s.report_id"
         "  WHERE r.is_research IS NOT FALSE"
+        f"    AND {visible_report_sql('r')}"
         "    AND s.market = r.market"
         "    AND s.market = ANY(:markets)"
         # 同 _COVERAGE_SQL 的理由改寫成 @>；右運算元是外層關聯的欄位而非 bind，nested loop
@@ -303,6 +312,7 @@ def _catalog_cte() -> str:
         "   AND s.market = r.market"
         "   AND s.instrument_code = st"
         "  WHERE r.is_research IS NOT FALSE"
+        f"    AND {visible_report_sql('r')}"
         "    AND r.market = ANY(:markets)"
         "  GROUP BY r.market, st"
         "), cat AS ("

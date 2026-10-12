@@ -1,0 +1,16 @@
+[
+  {
+    "AllowedOrigins": ["https://research.tingfong.com"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["Range"],
+    "ExposeHeaders": [
+      "Accept-Ranges",
+      "Content-Disposition",
+      "Content-Length",
+      "Content-Range",
+      "Content-Type",
+      "ETag"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]

@@ -1,5 +1,5 @@
 # web/routers/auth_pages.py
-"""登入流程頁面路由：GET/POST /login、POST /logout。
+"""登入流程頁面路由：GET/POST /login、POST /logout，以及目前登入身分 GET /api/me。
 
 從 web/server.py 拆出（收尾）。認證的 deny-by-default middleware（require_login）
 與其 _auth_allowed 白名單仍在 server.py——middleware 必須註冊在 app 上、且要包住
@@ -18,17 +18,37 @@ INFO**。失敗／鎖定／遭拒是異常，值得在把 `LOG_LEVEL` 調成 WAR
 **代價寫在這裡**：`LOG_LEVEL=WARNING` 會失去「誰在何時登入」的那一半稽核，只剩
 攻擊面那一半（`.env.example` 的 LOG_LEVEL 註解同步寫了這條）。
 
-**絕對不記密碼，連長度都不記**：長度會把暴力破解的搜尋空間直接縮小。帳號也不記
-原樣字串——那個欄位很常被誤填成密碼——只記 `auth.username_matches()` 的布林結果。
+**絕對不記密碼，連長度都不記**：長度會把暴力破解的搜尋空間直接縮小。失敗時帳號也
+不記原樣字串——那個欄位很常被誤填成密碼——只記「帳號是否存在」的布林結果；成功時
+帳號已證實是帳號，才記名稱。
+
+帳號與 session 都在 DB（`deps.accounts`）：登入成功＝開一個 `user_session`，登出＝
+撤銷那一個 session（其他裝置不受影響）。帳號服務掛掉時導向 `?error=unavailable`，
+不記成登入失敗、也不計入限流——那不是使用者打錯。
+
+**兩步驟驗證（TOTP）**：密碼正確但帳號開了 TOTP 時不發 session，改發 5 分鐘、path=/login 的
+簽章暫時憑證（`web.auth.set_mfa_cookie`）並導向 `/login?step=totp`；同一個 POST /login 帶
+`step=totp` 與 `code` 完成第二步。第二步也走同一套 HTTPS 檢查與每 IP 失敗限流，驗證碼錯一次
+算一次失敗。暫時憑證不可重放（指紋綁最後使用的時間步，見 `accounts.mfa_fingerprint`），
+仍留著的話只會讓第二步失敗、要求重新輸入密碼。路徑仍只有 /login，認證白名單不必變。
+
+**登入事件（`research.auth_event`，Admin v2）**：除了上面的日誌，每種結果也寫一列事件給管理後台的安全頁與
+`/healthz/security`（成功、密碼錯、帳號不存在、停用、TOTP 錯、第二步憑證失效、被限流、非 HTTPS 遭拒、登出）。
+一律經 `security_ops.record_event`（fail-open、有時限）：**記不了事件絕不影響登入**。事件**不含帳號名稱**
+（帳號存在時只有 UUID，不存在時連 UUID 都沒有）。被限流、非 HTTPS 遭拒與第二步沒有有效暫時憑證的請求只在
+記憶體計數、定期寫一列彙總（`security_ops.ThrottledTally`），被攻擊時不會放大成 DB 寫入。每 IP 失敗限流
+（`web.auth`）原封不動。
 """
 import logging
 import time
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
-from web import auth, deps
+from app.services import accounts, security_ops
+from app.services.accounts import User
+from web import auth, authz, deps
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +79,73 @@ def _static_page(name: str) -> FileResponse:
     return FileResponse(deps.STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
 
 
+async def _cookie_user(request: Request) -> User | None:
+    """cookie 對應的使用者（簽章有效且 DB 仍認可）；任何失敗都當作沒登入。
+
+    只看簽章不夠：已撤銷的 cookie 簽章照樣有效，登入頁若據此導向首頁，middleware 又會
+    把它導回登入頁——無限迴圈。
+    """
+    session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), int(time.time()))
+    if session is None:
+        return None
+    try:
+        return await deps.accounts.resolve_session(session.session_id)
+    except Exception:
+        logger.warning("登入頁 session 查驗失敗（視為未登入）", exc_info=True)
+        return None
+
+
+def _ua(request: Request) -> str | None:
+    return request.headers.get("user-agent")
+
+
+async def _event(event: str, **fields) -> None:
+    """寫一列登入事件；fail-open（`security_ops.record_event` 吞掉所有失敗）。**呼叫端不得傳帳號名稱**。"""
+    await security_ops.record_event(deps.accounts, event, **fields)
+
+
+async def _login_totp_step(request: Request, code: str, nxt: str, err_q: str, now: int, ip: str):
+    """POST /login 的第二步（step=totp）。憑暫時憑證找回帳號、驗驗證碼，通過才發 session。"""
+    pending = auth.parse_mfa_token(request.cookies.get(auth.MFA_COOKIE_NAME), now)
+    if pending is None:
+        await security_ops.note_throttled(deps.accounts, security_ops.EXPIRED_CHALLENGE_TALLY, ip)
+        logger.warning("登入第二步遭拒：暫時憑證不存在、簽章不符或已逾時 ip=%s", ip)
+        resp = RedirectResponse(f"/login?error=expired{err_q}", status_code=303)
+        auth.clear_mfa_cookie(resp)
+        return resp
+    user_id, fingerprint = pending
+    session_id = None
+    try:
+        user = await deps.accounts.complete_totp_login(user_id, fingerprint, code)
+        if user is not None and user.id is not None:
+            session_id = await deps.accounts.create_session(
+                user.id, max_age_seconds=auth.MAX_ABSOLUTE_TTL, ip=ip,
+                user_agent=request.headers.get("user-agent"),
+            )
+    except Exception:
+        logger.exception("登入第二步失敗：帳號服務無法使用 ip=%s", ip)
+        return RedirectResponse(f"/login?step=totp&error=unavailable{err_q}", status_code=303)
+    if user is None or session_id is None:
+        auth.record_failure(ip, now)
+        await _event("login.totp_failure", reason="bad_code", user_id=user_id, ip=ip, user_agent=_ua(request))
+        logger.warning("登入第二步失敗（驗證碼錯誤、已用過或暫時憑證已失效）ip=%s 視窗內失敗次數=%s",
+                       ip, auth.failure_count(ip, now))
+        return RedirectResponse(f"/login?step=totp&error=totp{err_q}", status_code=303)
+    auth.reset(ip)
+    await _event("login.success", reason="totp", user_id=user.id, session_id=session_id, ip=ip,
+                 user_agent=_ua(request))
+    logger.info("登入成功（兩步驟驗證）ip=%s peer=%s user=%s role=%s",
+                ip, auth.peer_ip(request), user.username, user.role)
+    resp = RedirectResponse(nxt, status_code=303)
+    auth.clear_mfa_cookie(resp)
+    auth.set_session_cookie(resp, now, session_id=session_id, secure=auth.request_is_secure(request))
+    return resp
+
+
 @router.get("/login")
 async def login_page(request: Request):
     nxt = _safe_next(request.query_params.get("next"))
-    if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), int(time.time())):
+    if await _cookie_user(request) is not None:
         return RedirectResponse(nxt, status_code=302)
     return _static_page("login.html")
 
@@ -73,12 +156,17 @@ async def login_submit(
     username: str = Form(""),
     password: str = Form(""),
     next: str = Form(""),
+    step: str = Form(""),
+    code: str = Form(""),
 ):
     nxt = _safe_next(next)
     err_q = "&next=" + quote(nxt, safe="") if nxt != "/" else ""
     now = int(time.time())
     ip = auth.client_ip(request)
+    # 到期的限流彙總順手落庫（每次登入請求都檢查一次，沒到期就什麼都不做）。
+    await security_ops.flush_tallies(deps.accounts)
     if not auth.login_allowed(request):
+        await security_ops.note_throttled(deps.accounts, security_ops.INSECURE_TALLY, ip)
         # peer 與 x-forwarded-proto 是這條分支唯一有用的線索：要判斷該不該把某個
         # 位址加進 REPORT_MARK_TRUSTED_PROXY_CIDRS（或改用 X-Edge-Secret），
         # 得先知道 uvicorn 實際看到的對端是誰。
@@ -90,26 +178,94 @@ async def login_submit(
         )
         return RedirectResponse(f"/login?error=insecure{err_q}", status_code=303)
     if auth.is_locked(ip, now):
+        await security_ops.note_throttled(deps.accounts, security_ops.LOCKED_TALLY, ip)
         logger.warning("登入遭限流鎖定 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
-        return RedirectResponse(f"/login?error=locked{err_q}", status_code=303)
-    if auth.check_credentials(username, password):
+        locked_step = "step=totp&" if step == "totp" else ""
+        return RedirectResponse(f"/login?{locked_step}error=locked{err_q}", status_code=303)
+    if step == "totp":
+        return await _login_totp_step(request, code, nxt, err_q, now, ip)
+    try:
+        result = await deps.accounts.authenticate(username, password)
+        session_id = None
+        if result.user is not None and result.user.id is not None:
+            session_id = await deps.accounts.create_session(
+                result.user.id,
+                max_age_seconds=auth.MAX_ABSOLUTE_TTL,
+                ip=ip,
+                user_agent=request.headers.get("user-agent"),
+            )
+    except Exception:
+        logger.exception("登入失敗：帳號服務無法使用 ip=%s", ip)
+        return RedirectResponse(f"/login?error=unavailable{err_q}", status_code=303)
+    if result.reason == "totp_required" and result.challenge is not None:
+        # 還沒登入成功：不重設失敗計數，也只記 user_id（帳號名稱留到真正登入成功那一行）。
+        logger.info("登入第一步通過，等待驗證碼 ip=%s user_id=%s", ip, result.challenge.user_id)
+        resp = RedirectResponse(f"/login?step=totp{err_q}", status_code=303)
+        auth.set_mfa_cookie(resp, now, user_id=result.challenge.user_id,
+                            fingerprint=result.challenge.fingerprint, secure=auth.request_is_secure(request))
+        return resp
+    if result.user is not None and session_id is not None:
         auth.reset(ip)
-        logger.info("登入成功 ip=%s peer=%s", ip, auth.peer_ip(request))
+        await _event("login.success", reason="password", user_id=result.user.id, session_id=session_id, ip=ip,
+                     user_agent=_ua(request))
+        logger.info(
+            "登入成功 ip=%s peer=%s user=%s role=%s",
+            ip, auth.peer_ip(request), result.user.username, result.user.role,
+        )
         resp = RedirectResponse(nxt, status_code=303)
-        auth.set_session_cookie(resp, now, secure=auth.request_is_secure(request))
+        auth.set_session_cookie(
+            resp, now, session_id=session_id, secure=auth.request_is_secure(request),
+        )
         return resp
     auth.record_failure(ip, now)
+    # reason 只會是 unknown_user／bad_password／disabled；user_id 在帳號不存在時是 None（帳號欄打了什麼都不留）。
+    failure_reason = result.reason if result.reason in ("unknown_user", "bad_password", "disabled") else "unknown_user"
+    await _event("login.failure", reason=failure_reason,
+                 user_id=result.user_id if failure_reason != "unknown_user" else None, ip=ip, user_agent=_ua(request))
+    if result.reason == "disabled":
+        # 只有密碼正確才會走到這裡，所以告訴對方「已停用」不會洩漏給亂猜的人。
+        logger.warning("登入遭拒：帳號已停用 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
+        return RedirectResponse(f"/login?error=disabled{err_q}", status_code=303)
     logger.warning(
-        "登入失敗 ip=%s 帳號相符=%s 視窗內失敗次數=%s",
+        "登入失敗 ip=%s 帳號存在=%s 視窗內失敗次數=%s",
         ip,
-        auth.username_matches(username),
+        result.reason == "bad_password",
         auth.failure_count(ip, now),
     )
     return RedirectResponse(f"/login?error=1{err_q}", status_code=303)
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request):
+    session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), int(time.time()))
+    if session is not None:
+        try:
+            await deps.accounts.revoke_session(session.session_id)
+        except Exception:
+            # cookie 照樣清掉；DB 那一列會在絕對存活上限到期後失效。
+            logger.warning("登出時撤銷 session 失敗", exc_info=True)
+        # 身分由 middleware 放進 request.state（/logout 不在白名單，走過完整的 session 查驗）。
+        user = getattr(request.state, "user", None)
+        await _event("logout", user_id=getattr(user, "id", None), session_id=session.session_id,
+                     ip=auth.client_ip(request), user_agent=_ua(request))
     resp = RedirectResponse("/login", status_code=303)
     auth.clear_session_cookie(resp)
     return resp
+
+
+@router.get("/api/me")
+async def me(user: User = Depends(authz.current_user)):
+    """目前登入的身分。前端據此顯示帳號名稱與決定要不要露出管理頁入口——
+    那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。
+
+    `mfa_enrollment_required`：管理員 TOTP 強制開啟、而這位管理員還沒開 TOTP（管理端點此時一律 403
+    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。"""
+    return {
+        "id": user.id, "username": user.username, "role": user.role,
+        "is_super": user.is_super, "scopes": sorted(user.scopes),
+        "elevated_until": user.elevated_until.isoformat() if user.is_elevated else None,
+        "totp_enabled": user.totp_enabled,
+        "mfa_enrollment_required": authz.mfa_enrollment_required(user),
+        # 管理員 TOTP 強制政策是否作用在這個帳號上（管理員＋政策開啟）：前端據此不顯示「關閉兩步驟驗證」。
+        "mfa_policy_locked": user.id is not None and accounts.admin_mfa_policy_locks(user.role),
+    }

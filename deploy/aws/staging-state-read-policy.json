@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadStagingEc2RoleForCloudFormation",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRoleTags"
+      ],
+      "Resource": "arn:aws:iam::607063196781:role/report-research-staging-Ec2Role-uhIYo8BjnDrT"
+    },
+    {
+      "Sid": "ReadStagingInstanceProfileForCloudFormation",
+      "Effect": "Allow",
+      "Action": ["iam:GetInstanceProfile"],
+      "Resource": "arn:aws:iam::607063196781:instance-profile/report-research-staging-Ec2InstanceProfile-3DGBXDbAQNmD"
+    }
+  ]
+}

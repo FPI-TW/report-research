@@ -1,0 +1,27 @@
+[Unit]
+Description=廷豐智能研報 對外邊緣健康探針（對外網址的 /healthz：Cloudflare → 隧道 → nginx → web）
+# 為什麼需要它：2026-09-24 Docker Desktop 重啟後 deploy-nginx-1 沒有起來，外網 502 約 36 小時，
+# 而 report-mark-health（本機 :8097）全程健康。細節見 scripts/check_edge_health.sh 檔頭。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：與 report-mark-health.service 同一個理由——通知由 P5
+# （report-mark-edge-incident）帶去重地擁有，這裡結構上不可能通知。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+# 只需要 curl／coreutils，刻意不含 uv 與 nvm 路徑（探針不得相依 Python）。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# EDGE_HEALTH_URL（對外網址，不寫進 repo）與 REPORT_MARK_ROOT 都在這裡。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_edge_health.sh"'
+# 退出碼 3＝對外失敗但本機 origin 也不健康，由 web 元件負責，**不是邊緣故障**。
+SuccessExitStatus=3
+# 最壞情況＝3 次 × 10 秒逾時 ＋ 2 次 × 15 秒等待 ＋ origin 歸因 5 秒＝65 秒；
+# 取 90 秒，且嚴格小於 timer 的 120 秒間隔（tests 釘死）。
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

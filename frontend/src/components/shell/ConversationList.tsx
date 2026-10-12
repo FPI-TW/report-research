@@ -15,8 +15,22 @@ const delVariants = {
   hover: { opacity: 1, x: 0 },
 }
 
-export function ConversationList() {
+interface ConversationListProps {
+  /** 搜尋框是否展開：由側欄標頭的搜尋 icon 控制，收起時清空並回到完整清單。 */
+  searchOpen: boolean
+  /** 在搜尋框按 Escape：請側欄把搜尋收起來。 */
+  onSearchClose: () => void
+}
+
+export function ConversationList({ searchOpen, onSearchClose }: ConversationListProps) {
   const [search, setSearch] = useState('')
+  // 收起搜尋就清掉字：下次展開從空白開始，而不是殘留上次的查詢。
+  // 在 render 期間比對前值後調整（React 建議的作法），不用 effect 多繞一輪 render。
+  const [prevOpen, setPrevOpen] = useState(searchOpen)
+  if (prevOpen !== searchOpen) {
+    setPrevOpen(searchOpen)
+    if (!searchOpen) setSearch('')
+  }
   // 250ms：逐字輸入（含注音／倉頡組字過程）不要每個字都打一次 API。
   const q = useDebouncedValue(search, 250)
   const { items, isLoading, hasMore, isFetchingMore, loadMore } = useConversations(q)
@@ -36,22 +50,26 @@ export function ConversationList() {
 
   return (
     <>
+      {searchOpen && (
+        <div className={styles.searchWrap}>
+          <Icon name="search" size={14} className={styles.searchIcon} />
+          <input
+            type="search"
+            className={styles.search}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') onSearchClose() }}
+            placeholder="搜尋提問"
+            aria-label="搜尋歷史對話"
+            maxLength={200}
+            autoFocus
+          />
+        </div>
+      )}
       <div className={styles.newWrap}>
-        <MotionLink to="/ask" className={styles.newBtn} whileTap={{ scale: 0.97 }}><Icon name="plus" size={17} /> 新對話</MotionLink>
+        <MotionLink to="/ask" className={styles.newBtn} whileTap={{ scale: 0.98 }}><Icon name="compose" size={18} />新對話</MotionLink>
       </div>
       <div className={styles.heading}>歷史對話</div>
-      <div className={styles.searchWrap}>
-        <Icon name="search" size={14} className={styles.searchIcon} />
-        <input
-          type="search"
-          className={styles.search}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="搜尋提問"
-          aria-label="搜尋歷史對話"
-          maxLength={200}
-        />
-      </div>
       {del.isError && (
         // 只讓 deleteConversation throw 還不夠——沒有任何畫面反應等於仍是靜默失敗，
         // 而使用者的下一步是再按一次刪除。role="alert" 讓螢幕閱讀器也收得到。

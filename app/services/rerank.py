@@ -47,7 +47,8 @@ class _CrossEncoder:
     def compute_score(self, pairs, normalize: bool = False) -> list[float]:
         """回每個 (query, passage) pair 的分數；normalize=True 走 sigmoid → [0,1]。恆回 list。"""
         torch = self._torch
-        with torch.no_grad():
+        # 純推論不需要 autograd metadata；輸入與模型運算保持原樣。
+        with torch.inference_mode():
             inputs = self._tokenizer(
                 list(pairs),
                 padding=True,

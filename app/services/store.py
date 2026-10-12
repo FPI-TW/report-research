@@ -11,7 +11,9 @@ from typing import Optional, Sequence
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.entitlement import Entitlement
 from app.services.rows import ChunkRow
+from app.services.visibility import visible_report_sql
 
 
 @dataclass
@@ -75,6 +77,43 @@ REVIEW_MIN_COVERAGE = 0.30
 REVIEW_MAX_GARBLED = 0.02
 
 
+# 要人看的原因（封閉詞彙；前端 lib/reviewSchemas.ts 逐字鏡像）。順序即判定順序。
+REVIEW_REASONS = ("pages_failed", "low_score", "low_coverage", "garbled")
+
+
+def review_reasons(
+    quality_score: Optional[float],
+    pages_failed: Optional[Sequence[int]],
+    review_min: float,
+    flags: Optional[dict] = None,
+    *,
+    min_coverage: float = REVIEW_MIN_COVERAGE,
+    max_garbled: float = REVIEW_MAX_GARBLED,
+) -> list[str]:
+    """這一篇為什麼要人看——`needs_review` 的判定本體，回傳成立的原因（可多個）。
+
+    分數低於門檻、有任何頁級失敗、coverage 低於 `min_coverage`、亂碼率高於 `max_garbled`，
+    都算。分數或旗標為 None（pypdf 路徑、沒 render）不算低分——沒量到不是壞。
+
+    獨立成函式是因為「要不要看」與「為什麼要看」必須是同一份邏輯：待複核佇列要把原因列出來，
+    而全庫實測被標到的研報分數多在 0.87–0.93（是 coverage 或亂碼率過線，不是分數低）——
+    只顯示分數的話，使用者看到的是一排不低的分數、完全看不出為什麼要複核。
+    """
+    reasons: list[str] = []
+    if pages_failed:
+        reasons.append("pages_failed")
+    if quality_score is not None and quality_score < review_min:
+        reasons.append("low_score")
+    if flags:
+        cov = flags.get("layout_coverage")
+        if isinstance(cov, (int, float)) and not isinstance(cov, bool) and cov < min_coverage:
+            reasons.append("low_coverage")
+        g = flags.get("garbled_ratio")
+        if isinstance(g, (int, float)) and not isinstance(g, bool) and g > max_garbled:
+            reasons.append("garbled")
+    return reasons
+
+
 def needs_review(
     quality_score: Optional[float],
     pages_failed: Optional[Sequence[int]],
@@ -84,21 +123,13 @@ def needs_review(
     min_coverage: float = REVIEW_MIN_COVERAGE,
     max_garbled: float = REVIEW_MAX_GARBLED,
 ) -> bool:
-    """品質閘的判定：只標記不擋。分數低於門檻、有任何頁級失敗、coverage 低於 `min_coverage`、
-    亂碼率高於 `max_garbled`，都算要人看。分數或旗標為 None（pypdf 路徑、沒 render）不算
-    低分——沒量到不是壞。"""
-    if pages_failed:
-        return True
-    if quality_score is not None and quality_score < review_min:
-        return True
-    if flags:
-        cov = flags.get("layout_coverage")
-        if isinstance(cov, (int, float)) and not isinstance(cov, bool) and cov < min_coverage:
-            return True
-        g = flags.get("garbled_ratio")
-        if isinstance(g, (int, float)) and not isinstance(g, bool) and g > max_garbled:
-            return True
-    return False
+    """品質閘的判定：只標記不擋。任一原因成立即為 True（原因見 `review_reasons`）。"""
+    return bool(
+        review_reasons(
+            quality_score, pages_failed, review_min, flags,
+            min_coverage=min_coverage, max_garbled=max_garbled,
+        )
+    )
 
 
 async def upsert_extraction_log(session: AsyncSession, row: ExtractionLogRow) -> None:
@@ -418,7 +449,8 @@ async def list_reports(
     relates_futures, stock_targets, futures_targets, summary)。
     呼叫端以位移解包，欄序即契約。
     """
-    conds: list[str] = []
+    # 被管理員隱藏的研報不列（app/services/visibility.py）；別名 r 只為了這個片段。
+    conds: list[str] = [visible_report_sql("r")]
     params: dict = {}
     if market:
         conds.append("market = :market")
@@ -433,11 +465,11 @@ async def list_reports(
     if report_type:
         conds.append("report_type = :report_type")
         params["report_type"] = report_type
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    where = "WHERE " + " AND ".join(conds)
     order = _BROWSE_SORT.get(sort, _BROWSE_SORT["date_desc"])
     total = (
         await session.execute(
-            text(f"SELECT count(*) FROM research.research_report {where}"), params
+            text(f"SELECT count(*) FROM research.research_report r {where}"), params
         )
     ).scalar_one()
     rows = await session.execute(
@@ -446,7 +478,7 @@ async def list_reports(
             SELECT id::text, file_hash, file_name, title, market, source, report_date,
                    report_type, instrument_types, relates_stock, relates_futures,
                    stock_targets, futures_targets, summary
-            FROM research.research_report
+            FROM research.research_report r
             {where}
             ORDER BY {order}
             LIMIT :limit OFFSET :offset
@@ -483,6 +515,19 @@ def _meta_filters(
     return conds
 
 
+def _entitlement_filters(params: dict, entitlement: Optional[Entitlement]) -> list[str]:
+    """API 用戶端 entitlement 的 WHERE 條件（dense／字面雙路共用，別名固定 `r`）。
+
+    `None` 回空清單、不碰 params：未帶 entitlement 的既有呼叫端送出的 SQL 與參數
+    必須逐字不變（`tests/test_retrieval_entitlement_sql.py` 釘住）。
+    """
+    if entitlement is None:
+        return []
+    clause, binds = entitlement.sql("r")
+    params.update(binds)
+    return [clause]
+
+
 def _meta_columns(chunk_alias: str) -> str:
     """dense / 字面雙路共用的 SELECT 欄位列表；首欄 chunk_id 供跨路去重。
 
@@ -508,6 +553,8 @@ async def search_chunks_meta(
     relates_stock: Optional[bool] = None,
     relates_futures: Optional[bool] = None,
     report_type: Optional[str] = None,
+    *,
+    entitlement: Optional[Entitlement] = None,
 ):
     """掃描前 scan 個最近鄰片段，連同報告 metadata 回傳（供伺服器分組）。
 
@@ -527,10 +574,16 @@ async def search_chunks_meta(
         LIMIT :scan
     """
     params: dict = {"q": _vec_literal(query_embedding), "scan": scan}
-    conds = _meta_filters(
-        params, market, instrument_type, relates_stock, relates_futures, report_type
+    # 可見性片段與 metadata 過濾同一種性質（都是 HNSW 之後 recheck 的 post-filter，靠
+    # iterative_scan 補足 LIMIT）；被隱藏的研報極少，對召回深度沒有可量的影響。
+    # entitlement 同理是 post-filter，在 SQL 內由 iterative_scan 補足 LIMIT；不可改成
+    # Python 事後過濾（scan 名額會被不可見的研報吃掉，k 與召回數一起偏掉）。
+    conds = (
+        _meta_filters(params, market, instrument_type, relates_stock, relates_futures, report_type)
+        + _entitlement_filters(params, entitlement)
+        + [visible_report_sql("r")]
     )
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    where = "WHERE " + " AND ".join(conds)
     # ef_search 須 ≥ scan，否則 HNSW 最多只回 ef_search 列（預設 40 會默默截斷）；
     # iterative_scan 讓帶過濾的查詢持續掃到滿足 LIMIT 為止（pgvector 0.8+）
     await session.execute(text(f"SET LOCAL hnsw.ef_search = {max(120, scan)}"))
@@ -549,7 +602,7 @@ def _lexical_sql(
 ) -> str:
     """組 lexical 召回 SQL。per_report=True 時每報告只取最近距離 chunk（DISTINCT ON）。
 
-    per_report=False 時結構與原查詢完全一致（問答路徑沿用，不可變更語意）。
+    per_report=False 是問答路徑（每列一個 chunk、依距離取前 limit 列）；檢索頁走 per_report=True。
 
     末欄 `lex_hits` ＝**受 cap 限制後**實際取到的候選列數，用來讓 `LIMIT :cap` 的截斷
     可觀測（`lex_hits == cap` 即已截斷）。刻意寫成「對已 cap 的 CTE 下 scalar
@@ -557,12 +610,34 @@ def _lexical_sql(
     計算，放進 CTE 會強迫掃完全部命中列才算得出計數——那正好摧毀 `LIMIT` 提早結束
     掃描的能力（熱門詞可能是數十萬列）。對已 materialize 的 ≤cap 列再數一次幾乎免費。
 
-    **刻意不加 ORDER BY 到 cap 之前。** 現況「取哪 cap 列」由 heap 物理順序決定
-    （而且 `synchronize_seqscans` 預設 on，併發 seq scan 會從任意 block 起掃，同一
-    查詢在不同時刻本來就可能拿到不同的 cap 列）。加 `ORDER BY c.id` 會強迫掃完全部
-    命中列再取前 cap＝把「快而不完整」換成「慢且仍不完整」，是淨損失。唯一有語義的
-    排序鍵是報告新近度，而那要 join `research_report.report_date`，成本更高。先用
-    `lex_hits` 量出「實際被截斷的查詢佔比」再決定，不要照架構檢視報告直接加排序。
+    **cap 之前以 `c.id` 排序（穩定鍵），取「id 最小的 cap 個命中」。** 這是為了可重現：
+    同一語料、同一查詢，候選集與最終列每次相同。原本刻意不排序（理由是「ORDER BY 會逼
+    掃完全部命中列＝把快而不完整換成慢且仍不完整」），2026-10-06 在 devdb（辦公室主機資料庫的複本，
+    61.9 萬 chunk）實測推翻了那個取捨：
+
+    - 不排序時取哪 cap 列取決於計畫。兩字中文詞（「散熱」「台積」，純中文重探挑出的詞
+      多半就是兩字）抽不出 trigram、GIN 幫不上，custom plan 走 **parallel seq scan**，
+      Gather 的列序每次不同。33 個測試查詢有 22 個命中超過 cap，其中走 seq scan 的
+      14 個連跑 5 次得到 5 組不同的候選；三字以上走 bitmap heap scan 的才碰巧穩定
+      （heap 物理順序，換計畫或 VACUUM 後一樣會變）。
+    - 「慢」沒有想像中嚴重：這個 cap 是**隨機但固定的抽樣**（uuid 與內容無關），選中
+      列與「全部命中依距離取前 200」的重疊率和不排序時相同（0.22 對 0.22）；延遲
+      p50 25→43 ms、p95 249→278 ms。兩字詞本來就要掃全表（約 250–300 ms），三字以上的
+      熱門詞多付 recheck 全部命中的成本（「台積電」1.6 萬命中 19→152 ms）；命中極多的
+      兩字詞（「ai」15.7 萬）planner 改走主鍵索引順掃、找滿 cap 就停，反而只要 27 ms。
+    - 排序鍵刻意用 `c.id` 而不是報告新近度（`r.report_date DESC`）：新近度會改變
+      「哪些研報進得了字面路」的語意，要另跑 ragas 才能決定；id 抽樣只換掉不可重現的
+      那部分，召回品質不變。重新入庫（`upsert_report` 換新 chunk id）會換掉抽樣，那是
+      語料變了，不違反「同一語料可重現」。
+    - 最終 `ORDER BY distance` 與 per_report 的 `DISTINCT ON` 都補 `id` 決勝：內容相同的
+      chunk（重複上傳、共用免責聲明）距離完全相同，`LIMIT :limit` 切在平手中間時一樣會
+      漂移。
+
+    `cap` 的大小是召回深度與延遲的取捨，不是可重現性的條件：同一組量測裡 cap 8000 的
+    重疊率 0.54（p50 124 ms、p95 370 ms），cap 20000 為 0.76（p50 253 ms、p95 441 ms）；
+    改 `LEX_CAP` 會改變問答取到的來源，要先跑 ragas，不在這裡順手調。
+    排序必須配合 `search_chunks_lexical` 的 `plan_cache_mode = force_custom_plan`
+    （理由見該函式），否則 generic plan 下這個 ORDER BY 會變成災難。
     """
     # `c.embedding IS NOT NULL` 是**防 500**，不是效能過濾：`embedding` 允許 NULL，
     # 而 `NULL <=> vector` 回 NULL，呼叫端 `retrieval.hybrid_search` 對每一列做
@@ -571,10 +646,12 @@ def _lexical_sql(
     # 2026-07-30 實測生產 0 列 embedding IS NULL——所以這是**潛在**而非現行故障，但
     # ingest 中途被砍、或未來加入「先寫 chunk 後補嵌入」的流程就會踩到。
     # 放在 CTE 內（不是最外層）：讓 NULL 列連 `:cap` 名額都不佔。
+    # 可見性片段放在 CTE 內（與 embedding IS NOT NULL 同理）：被隱藏的研報連 `:cap` 名額都不佔。
     conds = (
         [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)]
         + ["c.embedding IS NOT NULL"]
         + extra_conds
+        + [visible_report_sql("r")]
     )
     where = " AND ".join(conds)
     final_limit = "\n        LIMIT :limit" if limit is not None else ""
@@ -587,6 +664,7 @@ def _lexical_sql(
             FROM research.report_chunk c
             JOIN research.research_report r ON r.id = c.report_id
             WHERE {where}
+            ORDER BY c.id
             LIMIT :cap
         ),
         lex_ranked AS MATERIALIZED (
@@ -598,14 +676,14 @@ def _lexical_sql(
             SELECT DISTINCT ON (c.report_id)
                    c.id, c.report_id, c.chunk_index, c.content, c.embedding, c.distance
             FROM lex_ranked c
-            ORDER BY c.report_id, c.distance
+            ORDER BY c.report_id, c.distance, c.id
         )
         SELECT {_meta_columns("l")},
                l.distance,
                (SELECT count(*) FROM lex_base) AS lex_hits
         FROM lex l
         JOIN research.research_report r ON r.id = l.report_id
-        ORDER BY l.distance{final_limit}
+        ORDER BY l.distance, l.id{final_limit}
     """
     return f"""
         WITH lex AS MATERIALIZED (
@@ -613,6 +691,7 @@ def _lexical_sql(
             FROM research.report_chunk c
             JOIN research.research_report r ON r.id = c.report_id
             WHERE {where}
+            ORDER BY c.id
             LIMIT :cap
         )
         SELECT {_meta_columns("l")},
@@ -620,7 +699,7 @@ def _lexical_sql(
                (SELECT count(*) FROM lex) AS lex_hits
         FROM lex l
         JOIN research.research_report r ON r.id = l.report_id
-        ORDER BY distance{final_limit}
+        ORDER BY distance, l.id{final_limit}
     """
 
 
@@ -637,6 +716,7 @@ async def search_chunks_lexical(
     relates_stock: Optional[bool] = None,
     relates_futures: Optional[bool] = None,
     report_type: Optional[str] = None,
+    entitlement: Optional[Entitlement] = None,
 ) -> tuple[list[ChunkRow], int]:
     """字面比對路：content_norm 同時含全部 LIKE pattern 的片段，依向量距離排序。
 
@@ -649,8 +729,9 @@ async def search_chunks_lexical(
     消費端靜默指到錯欄。它在 SQL 裡是 ChunkRow 之後的末欄，故用 `ChunkRow._fields`
     推導切點，不寫死數字。
 
-    MATERIALIZED CTE 先過濾（走 trgm GIN 索引），再對最多 cap 列算精確距離，避免
-    planner 因 ORDER BY 走 HNSW。
+    MATERIALIZED CTE 先過濾（三字以上走 trgm GIN 索引，兩字詞走 seq scan），依 `c.id`
+    取前 cap 列（可重現，見 `_lexical_sql`），再對這些列算精確距離，避免 planner 因
+    ORDER BY distance 走 HNSW。
 
     per_report=True 時，每篇報告只回最近的 chunk（DISTINCT ON c.report_id）；
     `limit=None` 可省略最終 lexical 報告數上限；預設 False＝現況，不變動語意。
@@ -662,10 +743,24 @@ async def search_chunks_lexical(
         params["limit"] = limit
     for i, pat in enumerate(term_patterns):
         params[f"t{i}"] = pat
+    # entitlement 與 metadata 過濾一起進 `_lexical_sql` 的 cap CTE（per_report／不限
+    # limit 兩條分支共用同一個 WHERE）：不可見的研報連 `:cap` 名額都不佔，也不改
+    # cap 前 `ORDER BY c.id` 的可重現排序——只是候選集合變小。
     extra = _meta_filters(
         params, market, instrument_type, relates_stock, relates_futures, report_type
-    )
+    ) + _entitlement_filters(params, entitlement)
     sql = _lexical_sql(len(term_patterns), extra, per_report, limit=limit)
+    # **force_custom_plan 是這條查詢能用的前提，不是微調。** asyncpg 經 SQLAlchemy 對每條
+    # 連線快取 prepared statement，PG 在同一 statement 跑過 5 次後可能改用 generic plan；
+    # 而 `LIKE :t0` 的 pattern 長度在 generic plan 裡是未知數：
+    # - 兩字詞（抽不出 trigram）在 generic plan 下仍走 GIN，等於整棵索引掃一遍（44.9 萬
+    #   列、lossy bitmap），2026-10-06 devdb 實測 3.3–4.2 秒；custom plan 走 seq scan
+    #   只要 250–300 ms。
+    # - 加上 cap 前的 `ORDER BY c.id` 之後更糟：generic plan 對「散熱」改走主鍵索引順掃
+    #   ＋逐列過濾，實測 29.6 秒（custom plan 0.5 秒內）。
+    # 每次重新規劃約 1 ms。SET LOCAL 只活到本交易結束（同 search_chunks_meta 的 hnsw
+    # 設定），之後同交易內的查詢也會改用 custom plan，對它們只是多付規劃時間。
+    await session.execute(text("SET LOCAL plan_cache_mode = force_custom_plan"))
     result = await session.execute(text(sql), params)
     # 明確轉 tuple 再切片：SQLAlchemy Row 的 slice/int 存取語意隨版本變動過，而這裡切錯
     # 一欄不會拋錯、只會讓每一列的欄位整體位移（正是 _meta_columns docstring 的事故）。
@@ -707,9 +802,9 @@ async def pick_title_lead_term(
             text(
                 "SELECT a FROM unnest(CAST(:c AS text[])) AS a "
                 "WHERE EXISTS (SELECT 1 FROM research.research_report r "
-                "              WHERE r.title LIKE a || '%') "
+                f"              WHERE r.title LIKE a || '%' AND {visible_report_sql('r')}) "
                 "ORDER BY (SELECT count(*) FROM research.research_report r "
-                "          WHERE r.title LIKE a || '%') DESC, length(a) ASC "
+                f"          WHERE r.title LIKE a || '%' AND {visible_report_sql('r')}) DESC, length(a) ASC "
                 "LIMIT 1"
             ),
             {"c": list(candidates)},

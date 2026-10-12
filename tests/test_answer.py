@@ -519,7 +519,7 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
             ) = orig
 
         self.assertEqual(captured.get("top_m"), ans.ASK_RERANK_TOP_M)
-        self.assertEqual(ans.ASK_RERANK_TOP_M, 50)  # 預設啟用
+        self.assertEqual(ans.ASK_RERANK_TOP_M, 16)  # 預設啟用；避免併發時重排超時
         self.assertIsNotNone(captured.get("deadline"))  # 問答路徑逾時 → deadline 傳遞
         self.assertEqual(ans.ASK_RERANK_TIMEOUT, 60.0)  # 預設 60s（實測 50 對 ~34s + 餘裕）
 
@@ -527,9 +527,9 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
 class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
     """字面路 cap 截斷必須進 qa_timing。
 
-    截斷是靜默的：`store._lexical_sql` 的 `LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由
-    heap 物理順序決定，而回應與日誌裡原本沒有任何線索。**先量出實際發生率**才有依據
-    決定要不要付排序的代價（加 ORDER BY 會逼掃完全部命中列，見該函式 docstring）。
+    截斷是靜默的：`store._lexical_sql` 的 `LIMIT :cap` 只取 chunk id 最小的 cap 個命中
+    （可重現，但不是依相關度挑的），而回應與日誌裡原本沒有任何線索。量出實際發生率
+    才有依據決定要不要調大 cap（召回深度與延遲的取捨，見該函式 docstring）。
     """
 
     async def _ask_with_lex_stats(
@@ -605,6 +605,10 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("dense_ms=180", line)
         self.assertIn("lex_ms=1420", line)
+        self.assertIn("rerank_queue_ms=", line)
+        self.assertIn("rerank_compute_ms=", line)
+        self.assertIn("rerank_applied=", line)
+        self.assertIn("rerank_timed_out=", line)
 
 
 class StageTimerTests(unittest.TestCase):
@@ -930,6 +934,42 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("conversation_id", events[-1][1])
         self.assertTrue(called["llm"])  # 有跑主 LLM
 
+    async def test_unknown_citation_is_filtered_before_stream_and_persist(self):
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+        saved = self._patch_simplified_stream(ans, "")
+        saved_log = ans._log_qa
+        logged = {}
+
+        async def fake_stream(*a, **k):
+            for piece in ("毛利率 28%[", "9]，實際來源[", "1]。"):
+                yield piece
+
+        async def spy_log(question, body, *a, **k):
+            logged["body"] = body
+            logged["filters"] = a[1]
+            return "qa-1"
+
+        ans.stream_completion = fake_stream
+        ans._log_qa = spy_log
+        try:
+            events = [e async for e in ans.answer_question("可口可樂毛利率")]
+        finally:
+            ans._log_qa = saved_log
+            self._restore_simplified_stream(ans, saved)
+            self._restore(ans, rp, orig)
+
+        expected = "毛利率 28%（無效引用），實際來源[1]。"
+        self.assertEqual("".join(p for k, p in events if k == "token"), expected)
+        self.assertEqual(logged["body"], expected)
+        self.assertEqual(logged["filters"]["invalid_citation_count"], 1)
+        done = next(p for k, p in events if k == "done")
+        self.assertEqual(done["cited"], ["r1"])
+        self.assertNotIn("answer", done)
+
     def _patch_simplified_stream(self, ans, text: str):
         """把主 LLM 換成吐指定字串的串流，並關掉 done 之後的兩個外呼。
 
@@ -1241,6 +1281,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         kinds = [k for k, _ in events]
         self.assertEqual(kinds, ["status", "sources", "notice", "done"])
         self.assertEqual(events[1], ("sources", []))
+        # 功能旗標 ask.web_search 預設關（沒有 DB 覆寫）：即使總閘 ASK_ENABLE_WEB 開，也不附「可開網搜」提示。
         self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE))
         self.assertFalse(called.get("search"))  # 檢索未起跑
         self.assertFalse(called.get("embed"))   # 連 embed 都不必
@@ -1431,7 +1472,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called["search"])  # retrieve_context 未被呼叫
         self.assertFalse(called["embed"])
         notice = next(p for k, p in events if k == "notice")
-        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)  # ask.web_search 預設關：不附網搜提示
         self.assertEqual(events[1], ("sources", []))
 
 
@@ -1679,9 +1720,9 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         # 非 like/dislike/none 一律 False，且不觸碰 DB（純驗證分支）
         from app.services.answer import record_feedback
 
-        self.assertFalse(await record_feedback("any-id", "love"))
-        self.assertFalse(await record_feedback("any-id", ""))
-        self.assertFalse(await record_feedback("any-id", "null"))
+        self.assertFalse(await record_feedback("any-id", "love", user_id=None))
+        self.assertFalse(await record_feedback("any-id", "", user_id=None))
+        self.assertFalse(await record_feedback("any-id", "null", user_id=None))
 
     async def test_none_binds_sql_null_not_the_string(self):
         # 'none'＝使用者再點一次取消。必須綁 SQL NULL：讀取端（/api/history、
@@ -1711,7 +1752,7 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.record_feedback("q1", "none")
+            ok = await ans.record_feedback("q1", "none", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -1740,7 +1781,7 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.record_feedback("missing-id", "like")
+            ok = await ans.record_feedback("missing-id", "like", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -1804,19 +1845,19 @@ class QaLogFailureIsLoggedTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_log_qa_failure_returns_none_and_logs(self):
         with self.assertLogs("app.services.answer", level="ERROR") as cm:
-            qid = await self.ans._log_qa("q", "a", [], {}, 5, [])
+            qid = await self.ans._log_qa("q", "a", [], {}, 5, [], user_id=None)
         self.assertIsNone(qid)
         self.assertIn("qa_log 寫入失敗", "\n".join(cm.output))
 
     async def test_read_and_mutate_failures_keep_return_values_and_log(self):
         qa_id = "66666666-6666-4666-8666-666666666666"
         cases = (
-            (self.ans._load_qa_meta(qa_id), None),
-            (self.ans._count_versions(qa_id), 1),
-            (self.ans.list_qa_versions(qa_id), []),
-            (self.ans.delete_conversation(qa_id), False),
-            (self.ans.record_feedback(qa_id, "like"), False),
-            (self.ans.delete_qa(qa_id), False),
+            (self.ans._load_qa_meta(qa_id, user_id=None), None),
+            (self.ans._count_versions(qa_id, user_id=None), 1),
+            (self.ans.list_qa_versions(qa_id, user_id=None), []),
+            (self.ans.delete_conversation(qa_id, user_id=None), False),
+            (self.ans.record_feedback(qa_id, "like", user_id=None), False),
+            (self.ans.delete_qa(qa_id, user_id=None), False),
             (self.ans._update_followups(qa_id, ["x"]), None),
             (self.ans._update_evaluation(qa_id, {"k": 1}), None),
         )
@@ -1856,7 +1897,7 @@ class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
                 {},
                 5,
                 [{"n": 1, "report_id": "r1"}],
-                [{"title": "外部", "url": "https://x.com"}],
+                [{"title": "外部", "url": "https://x.com"}], user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -1957,6 +1998,25 @@ class HistoryItemTests(unittest.TestCase):
         self.assertTrue(off["is_offtopic"])
         self.assertTrue(ts["is_offtopic"])  # 兩者的舊布林一樣，故前端分不出來
 
+    def test_both_old_and_hinted_time_sensitive_texts_replay_as_notices(self):
+        """文案字串本身是重播的比對鍵：加了網搜提示的新文案與庫裡既有的舊文案都要認得。
+
+        少認一種，那些列就會被當成一般回答重播（附讚／倒讚與重新生成），而不是婉拒框。
+        """
+        from app.services import answer as ans
+
+        for text_ in (
+            ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+            ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT, ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN,
+        ):
+            item = history_item(("idk", "q", text_, date(2026, 6, 1), None, None, None))
+            self.assertEqual(item["notice_kind"], "time_sensitive", text_[:20])
+            self.assertTrue(item["is_offtopic"])
+        # 新文案是「舊文案＋一句」，舊文案一個字都沒動。
+        self.assertTrue(
+            ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT.startswith(ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        )
+
     def test_every_notice_message_maps_to_a_kind(self):
         """新增婉拒文案卻忘了給 kind → 前端悄悄退回離題那顆警告框，不會報錯。"""
         from app.services import answer as ans
@@ -2014,7 +2074,7 @@ class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _RowsSession(rows)
         try:
-            turns = await ans.load_recent_turns("c1")
+            turns = await ans.load_recent_turns("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertEqual(turns, [("舊問", "舊答"), ("新問", "新答")])
@@ -2029,7 +2089,7 @@ class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = Boom()
         try:
-            turns = await ans.load_recent_turns("c1")
+            turns = await ans.load_recent_turns("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertEqual(turns, [])
@@ -2063,7 +2123,7 @@ class ActiveFilterTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            await ans.load_recent_turns("c1")
+            await ans.load_recent_turns("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2089,7 +2149,7 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
         orig_sf = ans.SessionFactory
         ans.SessionFactory = lambda: _RowsSession(rows)
         try:
-            out = await ans.get_conversation("c1")
+            out = await ans.get_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig_sf
         self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
@@ -2129,7 +2189,7 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            items = await ans.get_conversation("c1")
+            items = await ans.get_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2168,7 +2228,7 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            out = await ans.list_qa_versions("root1")
+            out = await ans.list_qa_versions("root1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2201,7 +2261,7 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.delete_conversation("c1")
+            ok = await ans.delete_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertFalse(ok)
@@ -2232,7 +2292,7 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.delete_conversation("c1")
+            ok = await ans.delete_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertTrue(ok)
@@ -2253,7 +2313,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _RowsSession(rows)
         try:
-            out = await ans.list_conversations()
+            out = await ans.list_conversations(user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertEqual(out[0]["conversation_id"], "c1")
@@ -2271,7 +2331,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: session
         try:
-            await ans.list_conversations()
+            await ans.list_conversations(user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2291,7 +2351,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: session
         try:
-            await ans.list_conversations(**kwargs)
+            await ans.list_conversations(**kwargs, user_id=None)
         finally:
             ans.SessionFactory = orig
         return " ".join((session.statement_text or "").split()), session.params
@@ -2328,7 +2388,9 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
 class ConversationStaticContractTests(unittest.TestCase):
     def test_schema_uses_expression_index_for_conversation_lookup(self):
-        schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
+        from app.services.schema_migrations import schema_source_text
+
+        schema = schema_source_text()
         self.assertRegex(
             " ".join(schema.split()),
             r"CREATE INDEX IF NOT EXISTS idx_qa_log_conversation ON research\.qa_log \(\(COALESCE\(conversation_id, id\)\), created_at\);",  # noqa: E501
@@ -2607,7 +2669,7 @@ class LogQaColumnsTests(unittest.IsolatedAsyncioTestCase):
                 "問題", "答案", [], {}, 10, [], [],
                 conversation_id="c1", thinking_ms=5,
                 root_qa_id="root1", stages=["understanding", "generating"],
-                followups=["追問A", "追問B"],
+                followups=["追問A", "追問B"], user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -2638,7 +2700,7 @@ class LogQaColumnsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            await ans._log_qa("q", "a", [], {}, 1, [], [])
+            await ans._log_qa("q", "a", [], {}, 1, [], [], user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2809,7 +2871,7 @@ class LlmFailureStillLogsTests(unittest.IsolatedAsyncioTestCase):
         logged: list[dict] = []
         orig = self._patch(logged, exc=LLMUnavailableError("529 Overloaded"))
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return (None, "conv-1", None)
 
         orig_meta = ans._load_qa_meta
@@ -2857,7 +2919,7 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = self._cap(cap)
         try:
-            await ans._log_qa("q", "a", [], {}, 1, [])
+            await ans._log_qa("q", "a", [], {}, 1, [], user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertIs(cap["params"]["active"], True)
@@ -2869,7 +2931,7 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = self._cap(cap)
         try:
-            await ans._log_qa("q", None, [], {"llm_error": "overloaded"}, 1, [], active=False)
+            await ans._log_qa("q", None, [], {"llm_error": "overloaded"}, 1, [], active=False, user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertIs(cap["params"]["active"], False)
@@ -2885,7 +2947,7 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = self._cap(cap)
         try:
-            qa_id = await ans._log_qa("q", None, [], {}, 1, [], active=False)
+            qa_id = await ans._log_qa("q", None, [], {}, 1, [], active=False, user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertTrue(qa_id)
@@ -2921,7 +2983,7 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
         try:
             qa_id = await ans._log_qa(
                 "編輯後問題", "編輯後答案", [], {}, 1, [],
-                conversation_id="c1", truncate_from=("c1", "TS"),
+                conversation_id="c1", truncate_from=("c1", "TS"), user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -2938,7 +3000,7 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
 
         executed: list[tuple[str, dict]] = []
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return (None, "c1", "TS")
 
         orig = (ans.SessionFactory, ans._load_qa_meta)
@@ -2946,7 +3008,7 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
         ans._load_qa_meta = meta
         try:
             qa_id = await ans.log_stopped_qa(
-                "編輯後問題", "部分答案", edit_of="edited-1",
+                "編輯後問題", "部分答案", edit_of="edited-1", user_id=None,
             )
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
@@ -3210,7 +3272,7 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         try:
             qa_id = await ans.log_stopped_qa(
                 "問題", "部分答", conversation_id="c1",
-                sources=[{"n": 1}], stages=["understanding", "generating"],
+                sources=[{"n": 1}], stages=["understanding", "generating"], user_id=None,
             )
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
@@ -3233,14 +3295,14 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
                 return None
             async def commit(self): return None
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return ("root-x", "c1", None)  # 舊列已有 root
 
         orig = (ans.SessionFactory, ans._load_qa_meta)
         ans.SessionFactory = lambda: _CapSession()
         ans._load_qa_meta = meta
         try:
-            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1")
+            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1", user_id=None)
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
 
@@ -3266,14 +3328,14 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
                 return None
             async def commit(self): return None
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return (None, "c1", None)  # 舊列無 root → 以自身為群組鍵
 
         orig = (ans.SessionFactory, ans._load_qa_meta)
         ans.SessionFactory = lambda: _CapSession()
         ans._load_qa_meta = meta
         try:
-            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1")
+            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1", user_id=None)
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
 
@@ -3298,7 +3360,7 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            await ans.log_stopped_qa("q", "部分", conversation_id="c1")
+            await ans.log_stopped_qa("q", "部分", conversation_id="c1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -3325,7 +3387,7 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         ans.SessionFactory = lambda: _CapSession()
         try:
             qa_id = await ans.log_stopped_qa(
-                "問題", "部分答", request_id="123e4567-e89b-42d3-a456-426614174000",
+                "問題", "部分答", request_id="123e4567-e89b-42d3-a456-426614174000", user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -3411,6 +3473,58 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
              ans.generate_followups) = orig
         self.assertNotIn("followups", [k for k, _ in events])
 
+    async def test_followups_written_to_qa_log_are_traditional(self):
+        """追到落庫點：用真的 generate_followups（conftest 預設 stub 掉），模型分段吐簡體，
+        寫進 qa_log.followups 的 JSON 與 followups 事件都必須已是繁體。"""
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+        from app.services import followups as fu
+
+        followup_writes = []
+
+        class _RecordingSession(_FakeSession):
+            async def execute(self, stmt, params=None, *a, **k):
+                if "SET followups" in str(stmt):
+                    followup_writes.append(params)
+                return None
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
+
+        async def fake_followup_stream(*a, **k):
+            # 「资本开支」跨兩段：轉換必須在整串組好之後
+            yield '["台积电的资本'
+            yield '开支如何影响营收？", "联发科的竞争优势是什么？"]'
+
+        expected = ["台積電的資本開支如何影響營收？", "聯發科的競爭優勢是什麼？"]
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+                ans.generate_followups, fu.stream_completion)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _RecordingSession()
+        ans.classify_non_overview = fake_route
+        ans.generate_followups = fu.generate_followups
+        fu.stream_completion = fake_followup_stream
+        try:
+            events = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+             ans.generate_followups, fu.stream_completion) = orig
+
+        self.assertEqual(len(followup_writes), 1)
+        self.assertEqual(json.loads(followup_writes[0]["f"]), expected)
+        self.assertEqual(next(p for k, p in events if k == "followups"), expected)
+
 
 class RegenerateTests(unittest.IsolatedAsyncioTestCase):
     async def test_regenerate_failure_does_not_deactivate_old_answer(self):
@@ -3419,7 +3533,7 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"logged": False}
 
-        async def fake_meta(qid): return (None, "c1", None)
+        async def fake_meta(qid, *, user_id): return (None, "c1", None)
         async def failed_search(*a, **k): raise RuntimeError("retrieval failed")
         async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
         async def fake_log(*a, **k):
@@ -3448,10 +3562,10 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"logged_root": "unset", "deactivate": None}
 
-        async def fake_meta(qid):
+        async def fake_meta(qid, *, user_id):
             return (None, "c1", None)  # 舊列無 root → 群組=舊 id
 
-        async def fake_count(gk):
+        async def fake_count(gk, *, user_id):
             return 2
 
         async def fake_log(*a, **k):
@@ -3506,7 +3620,7 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"truncated": None}
 
-        async def fake_meta(qid):
+        async def fake_meta(qid, *, user_id):
             return (None, "c1", "TS")  # created_at 標記
 
         async def fake_search(*a, **k):

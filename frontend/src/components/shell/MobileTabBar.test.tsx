@@ -19,5 +19,6 @@ test('五格導覽含觀點與帳號', () => {
   expect(screen.getByRole('link', { name: /檢索/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /問答/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /觀點/ })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
+  // 導入監控已搬進管理後台，主平台導覽不再有入口
+  expect(screen.queryByRole('link', { name: /監控/ })).not.toBeInTheDocument()
 })

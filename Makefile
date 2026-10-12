@@ -11,6 +11,8 @@ DB_PORT ?= 5436
 Q ?= AI 伺服器散熱需求
 MARKET ?=
 EDGE_COMPOSE ?= deploy/docker-compose.yml
+# 上傳掃描的 clamd：獨立 compose 專案（理由見該檔檔頭），不與邊緣共用。
+CLAMAV_COMPOSE ?= deploy/clamav/docker-compose.yml
 # eval-compare 的預設容忍值；BASE/CAND 刻意沒有預設，兩份結果檔必須由呼叫者指名
 # （三套評測的形狀不同，猜錯就是拿 RAGAS 去比檢索）。
 TOL ?= 0.03
@@ -18,17 +20,28 @@ TOL ?= 0.03
 DURATION ?= 3600
 SINCE ?=
 BENCH_ARGS ?= --dry-run
+# make clamav-smoke 的「正常 PDF」；空＝用程式內產生的最小 PDF。
+SMOKE_PDF ?=
+# migration 的目標確認（host:port/dbname，逐字）。刻意沒有預設：對已有資料的庫做變更必須由
+# 呼叫者親手寫出目標，見 app/services/schema_migrations.py。
+CONFIRM ?=
+# schema-stamp-baseline：全庫備份落點；只有非受保護的庫可用 NO_DUMP=1 明確略過。
+DUMP_DIR ?=
+NO_DUMP ?=
+# 全庫備份以 docker exec 在這個容器裡跑 pg_dump；DB 不在容器（正式環境 EC2 的 RDS）時設成空值改用主機的 pg_dump。
+DUMP_CONTAINER ?= $(DB_CONTAINER)
 
 # Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；
 # 都沒有時退回 docker，讓指令自己回報真正的 daemon 錯誤（而非 docker.exe: command not found）。
 DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v docker.exe >/dev/null 2>&1; then echo docker.exe; else echo docker; fi)
 COMPOSE := $(DOCKER) compose
 
-.PHONY: help deps db schema setup sample extract worklist prep tag-info \
-        ingest ingest-lowio restore-durability align serve search build-web \
-        stats reset-db clean-data pipeline signals takeaways titles brief \
+.PHONY: help deps db schema schema-check schema-version schema-stamp-baseline setup sample extract worklist prep tag-info \
+        ingest ingest-lowio restore-durability align boilerplate \
+        serve serve-dev serve-preview search build-web \
+        stats reset-db clean-data pipeline summaries signals takeaways titles brief \
         eval-compare \
-        up-edge down-edge edge-logs edge-reload \
+        up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
         sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
 
@@ -52,9 +65,19 @@ db:  ## 起 pgvector 容器（已存在則啟動）
 	@# 站台開得起來、登入還會成功（登入路徑不碰 DB）、每個查詢 500。
 	$(DOCKER) update --restart unless-stopped $(DB_CONTAINER) >/dev/null
 
-schema: db  ## 套用 DB schema（vector 擴充 + 表 + HNSW 索引）
+schema: db  ## 套用 DB migration（alembic upgrade head；已有資料的庫要 CONFIRM=host:port/db）
 	@for i in $$(seq 1 30); do $(DOCKER) exec $(DB_CONTAINER) pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
-	$(DOCKER) exec -i $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) < db/schema.sql
+	$(if $(CONFIRM),REPORT_MARK_MIGRATE_CONFIRM="$(CONFIRM)" ,)uv run alembic upgrade head
+
+schema-check:  ## 嚴格比對 DB 結構與 migration 基準（零 drift＝0、有 drift＝1；會在同伺服器建刪暫存庫）
+	uv run python scripts/schema_baseline.py check
+
+schema-version:  ## 只比 DB 的 alembic 版本與程式的 head（唯讀、不建暫存庫；0 一致／1 落後／2 超前或無法判斷／3 連不上）
+	uv run python scripts/schema_baseline.py check --expect-head
+
+schema-stamp-baseline:  ## 既有庫導入 Alembic：零 drift＋全庫備份才 stamp（CONFIRM=… DUMP_DIR=…）
+	$(if $(CONFIRM),REPORT_MARK_MIGRATE_CONFIRM="$(CONFIRM)" ,)uv run python scripts/schema_baseline.py stamp \
+	  $(if $(NO_DUMP),--no-dump,--dump-dir "$(DUMP_DIR)" $(if $(DUMP_CONTAINER),--dump-container $(DUMP_CONTAINER),))
 
 setup: deps schema  ## 一次完成基礎建設（deps + db + schema）
 
@@ -98,17 +121,17 @@ boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語
 	uv run python scripts/build_boilerplate.py
 
 # ───── LLM 批次（互斥）─────
-# 下面幾支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（DeepSeek，按量計費），併發會讓
-# 同一篇研報重複付費、摘錄的 DELETE+INSERT 互相覆寫（CLI 時代還會搶 claude CLI）。互斥由
-# scripts/_claude_lock.py 的 flock 跨進程鎖強制，不再只靠這行註解：撞車時後啟動者
-# 會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，不會產出壞資料。
+# 下面五支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（DeepSeek HTTP；名稱裡的
+# claude 是 CLI 時代的遺留），互斥防的是重複計費、摘錄 DELETE+INSERT 互撞與 DB 連線數。
+# 互斥由 scripts/_claude_lock.py 的 flock 跨進程鎖強制（清單見 tests/test_claude_lock.py 的
+# LOCKED_SCRIPTS）：撞車時後啟動者會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，
+# 不會產出壞資料。
 # 排程（report-mark-sync.timer，每 3 小時）也走同一把鎖，所以手動開跑前不必再去
 # 確認 timer 有沒有在跑——真撞上就是不跑，不是跑壞。
-summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（DeepSeek，冪等可續傳，補 summary IS NULL）
+summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（LLM，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
 
-# 勿與 make summaries / signals / takeaways 同時跑（批次鎖會擋；理由見上）。
-titles:  ## 產生顯示標題取代檔名（DeepSeek，冪等可續傳，補 title IS NULL；新→舊優先）
+titles:  ## 產生顯示標題取代檔名（LLM，冪等可續傳，補 title IS NULL；新→舊優先）
 	uv run python scripts/generate_titles.py
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
@@ -189,6 +212,22 @@ edge-logs:  ## 跟看對外邊緣日誌
 edge-reload:  ## 重新套用邊緣設定（重建 nginx 容器）
 	$(COMPOSE) -f $(EDGE_COMPOSE) up -d --force-recreate nginx
 
+# ───── 上傳掃描（ClamAV clamd，只綁 127.0.0.1:3310）─────
+# 首次啟動要下載約 300 MB 病毒碼，健康檢查有 6 分鐘的 start-period；之前 smoke 會連不上，屬正常。
+# 常駐約 1.2–1.6 GB（mem_limit 2g），起之前先看主機可用記憶體（docs/CAPACITY.md「常駐元件：ClamAV」）。
+up-clamav:  ## 啟動上傳掃描用的 clamd 容器（report-mark-clamav；首次會下載病毒碼數分鐘）
+	$(COMPOSE) -f $(CLAMAV_COMPOSE) up -d
+	@echo "等 health 轉 healthy 再跑 make clamav-smoke：$(DOCKER) inspect -f '{{.State.Health.Status}}' report-mark-clamav"
+
+# 刻意不帶 -v：病毒碼 named volume 留著，下次啟動不必重抓。停掉期間上傳只會停在隔離區、不放行。
+down-clamav:  ## 停掉 clamd 容器（保留病毒碼 volume；上傳會停在隔離區）
+	$(COMPOSE) -f $(CLAMAV_COMPOSE) down
+
+# EICAR 要 FOUND、正常 PDF 要 OK（同一條 scan()：病毒碼過舊也算失敗）。EICAR 在執行期拼出來，不落地。
+# SMOKE_PDF＝改用一份真實 PDF；rc 0 通過／1 結果不符／2 clamd 連不上。
+clamav-smoke:  ## 上傳掃描冒煙（EICAR→FOUND、PDF→OK；可帶 SMOKE_PDF=…）
+	uv run python scripts/clamav_smoke.py $(if $(SMOKE_PDF),--pdf "$(SMOKE_PDF)")
+
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 LLM 標註步驟
 
@@ -202,7 +241,7 @@ clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
 
-# 只備「重建不回來」的四張表（qa_log / takeaway / signal / brief）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
+# 只備「重建不回來」的九張表（qa_log / takeaway / signal / brief / review_state / app_user / admin_audit_log / user_scope / account_deletion）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh
@@ -237,7 +276,7 @@ metrics-collect:  ## 前景取樣（用法：make metrics-collect DURATION=3600�
 metrics:  ## 分析取樣結果 → 分位數與上雲選型（用法：make metrics SINCE=24h）
 	/usr/bin/python3 scripts/analyze_resource_usage.py $(if $(SINCE),--since $(SINCE),)
 
-# **這一支會真的花錢**（每題呼叫 DeepSeek 數次，按量計費），故預設題數與併發都最小。
+# **這一支會真的消耗 LLM 額度**（每題打真實 /api/ask，一題含數次 LLM 呼叫），故預設題數與併發都最小。
 # 先 --dry-run 看計畫再拿掉；跑完照它印的指令用 --bench 框窗期換算單條成本。
-metrics-bench:  ## 受控負載壓測（會真的花 DeepSeek 的錢；用法：make metrics-bench BENCH_ARGS="--limit 4")
+metrics-bench:  ## 受控負載壓測（會用掉 LLM 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
 	/usr/bin/python3 scripts/bench_load.py $(BENCH_ARGS)

@@ -126,6 +126,20 @@ class CheckShapeTests(unittest.TestCase):
             with self.subTest(key=c.key):
                 self.assertIn("NOT EXISTS", c.sql.upper())
 
+    def test_upload_draft_mismatch_checks_both_directions(self):
+        """草稿一致性是「若且唯若」：只查一個方向會漏掉另一種壞法。
+
+        上傳說草稿、visibility 不是＝未審核的研報已經可見（洩漏）；visibility 說草稿、上傳不是＝
+        研報永遠卡在不可見。兩者都要用 NOT EXISTS（對不到才算），寫成 JOIN 會數成「一致的列數」。
+        真 DB 上的行為在 tests/test_report_visibility_db.py 驗。
+        """
+        c = next(x for x in db_audit.CHECKS if x.key == "upload_draft_mismatch")
+        self.assertEqual(c.severity, db_audit.SEVERITY_ERROR)
+        self.assertEqual(c.sql.upper().count("NOT EXISTS"), 2)
+        self.assertIn("UNION ALL", c.sql.upper())
+        self.assertIn("u.state = 'draft'", c.sql)
+        self.assertIn("v.publication = 'draft'", c.sql)
+
     def test_signal_mismatch_uses_is_distinct_from(self):
         """`!=` 對 NULL 回 NULL＝不算命中，會把「一邊有市場一邊沒有」全部漏掉。"""
         c = next(x for x in db_audit.CHECKS if x.key == "signal_market_mismatch")

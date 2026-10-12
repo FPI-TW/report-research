@@ -22,7 +22,7 @@ from app.services.zh_hant import lookup_key, to_traditional
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
 EXTRACTION_VERSION = "sig-2026-07-15.v1"
 
-# 數值/證據擷取重準確度 → 預設 Sonnet（現代世代 sonnet-5；批次可用 --model 覆寫）。
+# 數值/證據擷取重準確度；預設模型見 llm_models 的預設表（批次可用 --model 覆寫）。
 # 來源是 SIGNAL_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
 SIGNAL_MODEL_DEFAULT = resolve_model(TASK_SIGNAL)
 

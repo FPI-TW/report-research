@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { Card, PageHeader, Segmented, type SegOption } from '../../../components/console'
+import { Card, PageHeader, Segmented, StatTile, type SegOption } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type { DbOverviewResponse, SectionError, SlowQueryResponse } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
-import { DataStat } from './data/DataStat'
 import { OpsQueryError } from './OpsShared'
 import { OpsTrendChart } from './OpsTrendChart'
 import { type SlowQuerySort, type TrendMetric, useDbOverview, useDbSlowQueries, useDbTrend } from './useDbInsights'
@@ -99,20 +98,25 @@ function Snapshot({ ov }: { ov: DbOverviewResponse }) {
   const errors = [
     { e: db.error, what: '資料庫大小' }, { e: conn.error, what: '連線數' }, { e: a.error, what: '快取與交易統計' },
   ].filter(x => x.e)
+  const connTotal = conn.error ? '—' : fmtInt(conn.total)
+  // 沒有值（「—」）的磚不帶單位；降級的那一段不給補充說明。
+  const tiles: { name: string; value: string; unit?: string; hint?: string }[] = [
+    { name: '資料庫大小', ...bytesStat(db.size_bytes), hint: db.name ? `${db.name}・PostgreSQL ${db.server_version ?? ''}` : undefined },
+    { name: '連線數', value: connTotal, unit: connTotal === '—' ? undefined : `/ ${fmtInt(conn.usable_connections)}`,
+      hint: conn.error ? undefined : `上限 ${fmtInt(conn.max_connections)}（保留 ${fmtInt(conn.reserved_connections)}）・使用率 ${fmtPct(conn.usage_ratio)}` },
+    { name: '快取命中率', ...pctStat(a.cache_hit_ratio, 2),
+      hint: a.error ? undefined : `統計起點 ${a.stats_reset ? fmtDateTime(a.stats_reset) : '資料庫啟動以來'}` },
+    { name: 'dead tuple 比例', ...pctStat(t.dead_ratio, 2),
+      hint: t.error ? undefined : `${fmtInt(t.dead_tuples)} / ${fmtInt((t.live_tuples ?? 0) + (t.dead_tuples ?? 0))} 列（全部 ${fmtInt(t.table_count)} 張表）` },
+    { name: '暫存檔寫入', ...bytesStat(a.temp_bytes), hint: a.error ? undefined : `${fmtInt(a.temp_files)} 個檔（累計）` },
+    { name: 'deadlock', value: fmtInt(a.deadlocks), hint: a.error ? undefined : `rollback ${fmtInt(a.xact_rollback)}／commit ${fmtInt(a.xact_commit)}` },
+  ]
   return (
     <>
       <div className={`${c.tiles} ${styles.wideTiles}`}>
-        <DataStat name="資料庫大小" {...bytesStat(db.size_bytes)} hint={db.name ? `${db.name}・PostgreSQL ${db.server_version ?? ''}` : undefined} />
-        <DataStat
-          name="連線數"
-          value={conn.error ? '—' : fmtInt(conn.total)}
-          unit={`/ ${fmtInt(conn.usable_connections)}`}
-          hint={conn.error ? undefined : `上限 ${fmtInt(conn.max_connections)}（保留 ${fmtInt(conn.reserved_connections)}）・使用率 ${fmtPct(conn.usage_ratio)}`}
-        />
-        <DataStat name="快取命中率" {...pctStat(a.cache_hit_ratio, 2)} hint={a.error ? undefined : `統計起點 ${a.stats_reset ? fmtDateTime(a.stats_reset) : '資料庫啟動以來'}`} />
-        <DataStat name="dead tuple 比例" {...pctStat(t.dead_ratio, 2)} hint={t.error ? undefined : `${fmtInt(t.dead_tuples)} / ${fmtInt((t.live_tuples ?? 0) + (t.dead_tuples ?? 0))} 列（全部 ${fmtInt(t.table_count)} 張表）`} />
-        <DataStat name="暫存檔寫入" {...bytesStat(a.temp_bytes)} hint={a.error ? undefined : `${fmtInt(a.temp_files)} 個檔（累計）`} />
-        <DataStat name="deadlock" value={fmtInt(a.deadlocks)} hint={a.error ? undefined : `rollback ${fmtInt(a.xact_rollback)}／commit ${fmtInt(a.xact_commit)}`} />
+        {tiles.map(x => (
+          <StatTile key={x.name} name={x.name} label={x.name} value={x.value} unit={x.unit} sub={x.hint} subTitle={x.hint} />
+        ))}
       </div>
       {errors.map(x => <SectionNote key={x.what} error={x.e} what={x.what} />)}
       {!conn.error && (

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Chip } from '../../../../components/console'
+import { Chip, StatTile } from '../../../../components/console'
 import c from '../../../../components/console/Console.module.css'
 import type { IncidentTrendsResponse } from '../../../../lib/generated/adminApi'
 import { fmtDateTime } from '../../auditLabels'
@@ -17,16 +17,6 @@ const TREND_RANGES = [
 
 function fmtRate(v: number | null | undefined): string {
   return v == null ? '—' : `${(v * 100).toFixed(1)}%`
-}
-
-function TrendStat({ name, value, hint }: { name: string; value: string; hint?: string }) {
-  return (
-    <div className={`${c.tile} ${styles.tile}`} role="group" aria-label={name}>
-      <span className={c.tileLabel}>{name}</span>
-      <span className={`${c.tileValue} ${styles.tileValue}`}>{value}</span>
-      {hint && <span className={c.tileSub}>{hint}</span>}
-    </div>
-  )
 }
 
 /** 每週（台北時間週一起）依嚴重度堆疊的長條；元件合併計算，元件別的數字看下面的表。 */
@@ -65,13 +55,18 @@ function WeeklyBars({ weeks }: { weeks: IncidentTrendsResponse['weeks'] }) {
 
 function Trends({ data }: { data: IncidentTrendsResponse }) {
   const s = data.summary
+  const tiles: { name: string; value: string; hint?: string }[] = [
+    { name: '事件數', value: String(s.total), hint: `嚴重 ${s.critical}・警告 ${s.warning}` },
+    { name: '平均恢復時間（MTTR）', value: fmtDuration(s.mttr_seconds), hint: `只算已恢復的 ${s.resolved} 件` },
+    { name: '持續時間 p50／p90', value: `${fmtDuration(s.p50_seconds)}／${fmtDuration(s.p90_seconds)}` },
+    { name: '結束不明／進行中', value: `${s.lost}／${s.firing}`, hint: '結束不明不納入 MTTR' },
+  ]
   return (
     <>
-      <div className={c.tiles}>
-        <TrendStat name="事件數" value={String(s.total)} hint={`嚴重 ${s.critical}・警告 ${s.warning}`} />
-        <TrendStat name="平均恢復時間（MTTR）" value={fmtDuration(s.mttr_seconds)} hint={`只算已恢復的 ${s.resolved} 件`} />
-        <TrendStat name="持續時間 p50／p90" value={`${fmtDuration(s.p50_seconds)}／${fmtDuration(s.p90_seconds)}`} />
-        <TrendStat name="結束不明／進行中" value={`${s.lost}／${s.firing}`} hint="結束不明不納入 MTTR" />
+      <div className={`${c.tiles} ${styles.trendTiles}`}>
+        {tiles.map(t => (
+          <StatTile key={t.name} name={t.name} label={t.name} value={<span className={styles.tileValue}>{t.value}</span>} sub={t.hint} />
+        ))}
       </div>
       {data.weeks.length === 0 ? (
         <p className={styles.note}>區間內沒有開過事件。</p>

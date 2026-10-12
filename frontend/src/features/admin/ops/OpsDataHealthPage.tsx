@@ -1,11 +1,10 @@
 import { Fragment } from 'react'
-import { Button, Card, Chip, PageHeader, Status, type LampTone } from '../../../components/console'
+import { Button, Card, Chip, PageHeader, StatTile, Status, type LampTone } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type {
   DataHealthResponse, DbAuditSection, FreshnessSection, R2ReconcileSection, ReconcileStats,
 } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
-import { DataStat } from './data/DataStat'
 import { HEALTH_LABELS, healthTileTone } from './data/healthLabels'
 import { HealthStatus } from './data/HealthStatus'
 import { useRunnableServices } from './data/useRunnable'
@@ -186,16 +185,19 @@ function ReconcileCard({ s }: { s: R2ReconcileSection }) {
 
 function Tiles({ d }: { d: DataHealthResponse }) {
   const stale = d.freshness.findings.filter(f => f.state === 'stale' || f.state === 'upstream_stale').length
+  const tiles = [
+    { name: '整體', status: d.overall, hint: `產生於 ${fmtDateTime(d.generated_at)}・快取 60 秒` },
+    { name: '新鮮度', status: d.freshness.status,
+      hint: stale > 0 ? `${stale} 項停更・共 ${d.freshness.findings.length} 項` : `即時判讀・共 ${d.freshness.findings.length} 項` },
+    { name: '完整性稽核', status: d.db_audit.status, hint: resultHint(d.db_audit) },
+    { name: 'R2 對帳', status: d.r2_reconcile.status, hint: resultHint(d.r2_reconcile) },
+  ]
   return (
     <div className={`${c.tiles} ${styles.wideTiles}`}>
-      <DataStat name="整體" value={HEALTH_LABELS[d.overall]} tone={healthTileTone(d.overall)}
-        hint={`產生於 ${fmtDateTime(d.generated_at)}・快取 60 秒`} />
-      <DataStat name="新鮮度" value={HEALTH_LABELS[d.freshness.status]} tone={healthTileTone(d.freshness.status)}
-        hint={stale > 0 ? `${stale} 項停更・共 ${d.freshness.findings.length} 項` : `即時判讀・共 ${d.freshness.findings.length} 項`} />
-      <DataStat name="完整性稽核" value={HEALTH_LABELS[d.db_audit.status]} tone={healthTileTone(d.db_audit.status)}
-        hint={resultHint(d.db_audit)} />
-      <DataStat name="R2 對帳" value={HEALTH_LABELS[d.r2_reconcile.status]} tone={healthTileTone(d.r2_reconcile.status)}
-        hint={resultHint(d.r2_reconcile)} />
+      {tiles.map(t => (
+        <StatTile key={t.name} name={t.name} label={t.name} value={HEALTH_LABELS[t.status]} tone={healthTileTone(t.status)}
+          sub={t.hint} subTitle={t.hint} />
+      ))}
     </div>
   )
 }

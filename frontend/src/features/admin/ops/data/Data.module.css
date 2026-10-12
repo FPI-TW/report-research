@@ -9,9 +9,7 @@
 .note code, .meta code { font-family: var(--ac-mono); font-size: 0.95em; color: var(--ac-t3); }
 .idle { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ac-t5); }
 
-/* 數字磚：整塊是一個具名的 group（讀屏與測試都找得到）；要放得下一行補充時用 .wideTiles */
-.tileGroup { display: flex; min-width: 0; }
-.tileGroup > * { flex: 1; }
+/* 數字磚要放得下一行補充時用 .wideTiles */
 .wideTiles { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 
 /* 沒有外框卡片的段落（LLM 用量的合計／批次／線上）：標題＋一行說明 */

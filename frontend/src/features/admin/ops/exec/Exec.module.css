@@ -32,8 +32,6 @@ dl.kvWide { grid-template-columns: 112px minmax(0, 1fr); }
 
 /* 主機：數字磚要放得下一行補充（「1 小時最高 80.0%・等待 I/O 3.2%」） */
 .hostTiles { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
-.tileGroup { display: flex; min-width: 0; }
-.tileGroup > * { flex: 1; }
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
 .chartBody { padding: 14px 16px 12px; }
 

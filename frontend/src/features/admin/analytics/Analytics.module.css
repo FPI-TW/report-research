@@ -4,7 +4,8 @@
 
 /* 數字磚：有幾格是「a／b」兩個值並排，比 console 預設的磚寬、字小一點才放得下；六格固定排成 3×2（窄的時候 2×3）。 */
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.statValue { font-size: 18px; font-variant-numeric: tabular-nums; }
+/* block：值自己成一行，不會被磚原本 20px 的行高撐開。 */
+.statValue { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
 
 .sources { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 14px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--ac-t5); }
 .missing { margin: 0 0 14px; }

@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { Card, PageHeader, Segmented, Tabs, TrendBars, type SegOption } from '../../../components/console'
+import { Card, PageHeader, Segmented, StatTile, Tabs, TrendBars, type SegOption } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import type { LlmUsageOnline, LlmUsageResponse, LlmUsageTotals } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
-import { DataStat } from './data/DataStat'
 import { dailyAxis, dailyCalls, dayIn } from './data/usageSeries'
 import { OpsQueryError } from './OpsShared'
 import { useLlmUsage } from './useOps'
@@ -75,7 +74,7 @@ function Totals({ t, costAvailable, prefix = '' }: { t: LlmUsageTotals; costAvai
   return (
     <div className={`${c.tiles} ${styles.wideTiles}`}>
       {tiles.map(([name, value, hint]) => (
-        <DataStat key={name} name={`${prefix}${name}`} label={name} value={value} hint={hint} />
+        <StatTile key={name} name={`${prefix}${name}`} label={name} value={value} sub={hint} subTitle={hint} />
       ))}
     </div>
   )

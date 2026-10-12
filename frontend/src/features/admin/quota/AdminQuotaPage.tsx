@@ -53,10 +53,10 @@ function EnforcementTiles({ data }: { data: QuotaOverview }) {
       <StatTile label="阻擋模式" value={shadow ? '影子模式' : '正式阻擋'}
         sub={shadow ? '照常放行、只記錄' : '超額回 429'} />
       <StatTile label="環境變數 QUOTA_ENFORCE" value={e.env_ceiling ? '開' : '關'}
-        sub={<span title="能力上限；關閉時旗標怎麼設都不會擋">能力上限；關閉時旗標怎麼設都不會擋</span>} />
+        sub="能力上限；關閉時旗標怎麼設都不會擋" subTitle="能力上限；關閉時旗標怎麼設都不會擋" />
       <StatTile label="旗標 quota.enforce" value={e.flag_enabled ? '開' : '關'}
         tone={e.flag_source === 'fallback' ? 'warn' : undefined} lamp={e.flag_source === 'fallback' ? 'warn' : undefined}
-        sub={<span title={flagSub}>{flagSub}</span>} />
+        sub={flagSub} subTitle={flagSub} />
       <StatTile label={`今天超出上限（${shadow ? '本來會擋' : '已擋下'}）`} value={fmtInt(over)} unit="次"
         sub={`問答 ${fmtInt(data.over_today.ask)}・匯出 ${fmtInt(data.over_today.export)}`} />
       <StatTile label="預設每日上限" value={fmtInt(data.defaults.ask)} unit="問答"

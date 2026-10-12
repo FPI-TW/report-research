@@ -44,18 +44,9 @@ function fmtNum(v: number | null | undefined, digits = 2): string {
   return v == null ? '—' : v.toFixed(digits)
 }
 
-/** 數字磚：大數字與單位分開排（「12.5」＋「%」）；整塊是一個具名的 group，讀屏與測試都找得到。 */
-function Stat({ name, value, unit, hint }: { name: string; value: string; unit?: string; hint?: string }) {
-  return (
-    <div className={styles.tileGroup} role="group" aria-label={name}>
-      <StatTile label={name} value={value} unit={value === '—' ? undefined : unit} sub={hint && <span title={hint}>{hint}</span>} />
-    </div>
-  )
-}
-
-/** 百分比類的磚：數字與「%」分開。 */
-function pct(v: number | null): { value: string; unit: string } {
-  return { value: v == null ? '—' : v.toFixed(1), unit: '%' }
+/** 百分比類的磚：數字與「%」分開；沒有值（「—」）時不帶單位。 */
+function pct(v: number | null): { value: string; unit?: string } {
+  return v == null ? { value: '—' } : { value: v.toFixed(1), unit: '%' }
 }
 
 /** 位元組速率的磚：「2.0」＋「KiB/s」。 */
@@ -120,6 +111,19 @@ export default function OpsHostPage() {
   const axis = trendAxis(q.data)
   const charts = CHARTS.map(ch => ({ ...ch, bars: trendSeries(q.data, 'host', ch.metric) }))
     .filter(ch => ch.bars.some(b => b.value != null))
+  const tiles: { name: string; value: string; unit?: string; hint: string }[] = [
+    { name: 'CPU 使用率', ...pct(v('cpu_pct')),
+      hint: `1 小時最高 ${fmtPct(peak(items, 'host', 'cpu_pct'))}・等待 I/O ${fmtPct(v('iowait_pct'))}` },
+    { name: '記憶體使用率', ...pct(v('mem_used_pct')),
+      hint: `可用 ${fmtBytes(v('mem_avail_bytes'))}・Swap ${fmtBytes(v('swap_used_bytes'))}` },
+    { name: 'Load', value: fmtNum(v('load1')), hint: `5 分 ${fmtNum(v('load5'))}・15 分 ${fmtNum(v('load15'))}` },
+    { name: 'I/O 壓力（PSI some，60 秒）', ...pct(v('psi_io_some_avg60')),
+      hint: `full ${fmtPct(v('psi_io_full_avg60'))}・1 小時最高 ${fmtPct(peak(items, 'host', 'psi_io_some_avg60'))}` },
+    { name: '磁碟讀寫', ...rate(v('disk_read_bps')),
+      hint: `寫 ${fmtBytes(v('disk_write_bps'))}/s・${fmtNum(v('disk_iops'), 0)} IOPS` },
+    { name: 'CPU／記憶體壓力（PSI，60 秒）', ...pct(v('psi_cpu_some_avg60')),
+      hint: `記憶體 some ${fmtPct(v('psi_memory_some_avg60'))}・full ${fmtPct(v('psi_memory_full_avg60'))}` },
+  ]
 
   return (
     <>
@@ -131,20 +135,9 @@ export default function OpsHostPage() {
         {q.data.truncated && <span>資料超過上限，只顯示最近的部分</span>}
       </p>
       <div className={`${c.tiles} ${styles.hostTiles}`}>
-        <Stat name="CPU 使用率" {...pct(v('cpu_pct'))} hint={`1 小時最高 ${fmtPct(peak(items, 'host', 'cpu_pct'))}・等待 I/O ${fmtPct(v('iowait_pct'))}`} />
-        <Stat name="記憶體使用率" {...pct(v('mem_used_pct'))} hint={`可用 ${fmtBytes(v('mem_avail_bytes'))}・Swap ${fmtBytes(v('swap_used_bytes'))}`} />
-        <Stat name="Load" value={fmtNum(v('load1'))} hint={`5 分 ${fmtNum(v('load5'))}・15 分 ${fmtNum(v('load15'))}`} />
-        <Stat
-          name="I/O 壓力（PSI some，60 秒）"
-          {...pct(v('psi_io_some_avg60'))}
-          hint={`full ${fmtPct(v('psi_io_full_avg60'))}・1 小時最高 ${fmtPct(peak(items, 'host', 'psi_io_some_avg60'))}`}
-        />
-        <Stat name="磁碟讀寫" {...rate(v('disk_read_bps'))} hint={`寫 ${fmtBytes(v('disk_write_bps'))}/s・${fmtNum(v('disk_iops'), 0)} IOPS`} />
-        <Stat
-          name="CPU／記憶體壓力（PSI，60 秒）"
-          {...pct(v('psi_cpu_some_avg60'))}
-          hint={`記憶體 some ${fmtPct(v('psi_memory_some_avg60'))}・full ${fmtPct(v('psi_memory_full_avg60'))}`}
-        />
+        {tiles.map(t => (
+          <StatTile key={t.name} name={t.name} label={t.name} value={t.value} unit={t.unit} sub={t.hint} subTitle={t.hint} />
+        ))}
       </div>
       {charts.length > 0 && (
         <div className={styles.charts}>

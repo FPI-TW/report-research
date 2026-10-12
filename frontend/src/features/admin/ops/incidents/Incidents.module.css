@@ -28,8 +28,9 @@
 
 /* ── 趨勢 ── */
 .trendBody { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
-.tile { background: var(--ac-sunk); }
-.tileValue { font-size: 17px; white-space: normal; }
+/* 卡片裡的數字磚：底色換成 sunk；值是「a／b」並排，字小一點、允許換行（block 才不會被磚原本 20px 的行高撐開）。 */
+.trendTiles > [role='group'] { background: var(--ac-sunk); }
+.tileValue { display: block; font-size: 17px; white-space: normal; }
 .subTitle { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; font-weight: 600; color: var(--ac-t3); }
 .subHint { font-weight: 400; font-size: 11.5px; color: var(--ac-t5); }
 .subTable { border: 1px solid var(--ac-l2); border-radius: 6px; }

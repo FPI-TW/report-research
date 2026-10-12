@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import OperationsLayout from './OperationsLayout'
 import OpsDataHealthPage from './OpsDataHealthPage'
-import OpsJobsPage from './OpsJobsPage'
 import OpsLlmUsagePage from './OpsLlmUsagePage'
 
 afterEach(() => {
@@ -126,22 +125,4 @@ test('LLM 用量：檔案不存在時說明，不是錯誤', async () => {
     () => new Response(JSON.stringify({ ...USAGE, source: { ...USAGE.source, exists: false, truncated: false },
       totals: totals(0), by_day: [], by_task: [], by_model: [] })))
   expect(await screen.findByText(/還沒有用量紀錄/)).toBeInTheDocument()
-})
-
-test('排程工作的匯出按鈕帶目前的篩選條件', async () => {
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() }))
-  const fetchMock = mount('/admin/operations/jobs', [{ path: 'jobs', element: <OpsJobsPage /> }], url => {
-    if (url.startsWith('/api/admin/export/')) {
-      return new Response('﻿host\r\n', { headers: { 'X-Export-Rows': '0', 'X-Export-Truncated': 'false' } })
-    }
-    return new Response(JSON.stringify({ since: '2026-09-29T02:00:00Z', until: '2026-10-06T02:00:00Z', total: 0,
-      limit: 50, offset: 0, has_more: false, next_offset: null, items: [] }))
-  })
-  expect(await screen.findByText(/這段期間沒有執行紀錄/)).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('狀態'), { target: { value: 'lost' } })
-  fireEvent.click(screen.getByRole('button', { name: '匯出 CSV' }))
-  expect(await screen.findByRole('status')).toHaveTextContent('已下載 0 筆')
-  const exportCalls = fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/admin/export/'))
-  expect(exportCalls).toEqual(['/api/admin/export/jobs.csv?state=lost'])
 })

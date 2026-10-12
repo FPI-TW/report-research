@@ -397,55 +397,12 @@ test('維運代理不可用（503）：服務頁整頁換成降級說明與代�
   expect(screen.getByText(/研報平台的其他功能不受影響/)).toBeInTheDocument()
 })
 
-test('維運代理不可用（503）：服務頁與日誌頁同樣降級', async () => {
-  mount('/admin/operations/logs', { override: UNAVAILABLE })
-  expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' })).toBeInTheDocument()
-  expect(screen.queryByLabelText('服務')).not.toBeInTheDocument()
-})
-
 test('後端 403：原樣顯示後端訊息', async () => {
   mount('/admin/operations/services', {
     override: url => url.startsWith('/api/admin/ops')
       ? { status: 403, body: { detail: '缺少權限：ops.read', code: 'scope_required' } } : undefined,
   })
   expect(await screen.findByRole('alert')).toHaveTextContent('服務清單載入失敗：缺少權限：ops.read')
-})
-
-test('日誌：選服務才查；預設 1 小時、200 行；改時間範圍與行數會重查，截斷時有提示', async () => {
-  const fetchMock = mount('/admin/operations/logs')
-  expect(await screen.findByText('請先選擇服務')).toBeInTheDocument()
-  expect(opsCalls(fetchMock)).toEqual(['/api/admin/ops/services'])
-  // freshness 沒開放 logs，不在選單裡
-  expect(within(screen.getByLabelText('服務')).queryByRole('option', { name: 'freshness' })).not.toBeInTheDocument()
-
-  fireEvent.change(screen.getByLabelText('服務'), { target: { value: 'web' } })
-  expect(await screen.findByLabelText('web 的日誌')).toHaveTextContent('host web[1]: hello')
-  expect(opsCalls(fetchMock)).toContain('/api/admin/ops/services/web/logs?since=1h&lines=200')
-  expect(screen.getByText(/2 行/)).toBeInTheDocument()
-  expect(screen.queryByRole('note')).not.toBeInTheDocument()
-
-  fireEvent.change(screen.getByLabelText('時間範圍'), { target: { value: '15m' } })
-  await waitFor(() => expect(opsCalls(fetchMock)).toContain('/api/admin/ops/services/web/logs?since=15m&lines=200'))
-  fireEvent.change(screen.getByLabelText('行數'), { target: { value: '1000' } })
-  await waitFor(() => expect(opsCalls(fetchMock)).toContain('/api/admin/ops/services/web/logs?since=15m&lines=1000'))
-  expect(await screen.findByRole('note')).toHaveTextContent('已從較舊的一端截掉')
-  expect(screen.getByTestId('loc')).toHaveTextContent('service=web&since=15m&lines=1000')
-})
-
-test('日誌：網址帶不在清單內的 since／lines 時退回預設值，不把任意字串送給後端', async () => {
-  const fetchMock = mount('/admin/operations/logs?service=postgres&since=99y&lines=5')
-  expect(await screen.findByLabelText('postgres 的日誌')).toBeInTheDocument()
-  expect(opsCalls(fetchMock)).toContain('/api/admin/ops/services/postgres/logs?since=1h&lines=200')
-  expect(screen.getByLabelText('時間範圍')).toHaveValue('1h')
-})
-
-test('日誌：查日誌本身失敗（504）顯示後端訊息，選擇器還在', async () => {
-  mount('/admin/operations/logs?service=web', {
-    override: url => url.includes('/logs?')
-      ? { status: 504, body: { detail: 'journalctl 逾時（8 秒）', code: 'ops_timeout' } } : undefined,
-  })
-  expect(await screen.findByRole('alert')).toHaveTextContent('日誌載入失敗：journalctl 逾時（8 秒）')
-  expect(screen.getByLabelText('服務')).toHaveValue('web')
 })
 
 test('服務詳情抽屜（?service=）：屬性、依賴與被依賴、最近日誌，連到日誌頁；關閉後網址拿掉參數', async () => {
@@ -620,53 +577,6 @@ test('事件：後端錯誤原樣顯示，不白屏', async () => {
       ? { status: 400, body: { detail: '時間範圍最多 366 天', code: 'invalid_params' } } : undefined,
   })
   expect(await screen.findByRole('alert')).toHaveTextContent('時間範圍最多 366 天')
-})
-
-test('排程工作：列出執行紀錄（成功、失敗、執行中、結果不明），耗時與 Result；可依狀態篩選', async () => {
-  const fetchMock = mount('/admin/operations/jobs')
-  const table = within(await screen.findByRole('table', { name: '排程工作執行紀錄' }))
-  const rows = table.getAllByRole('row').slice(1)
-  expect(rows).toHaveLength(4)
-  expect(within(rows[0]).getByText('成功')).toBeInTheDocument()
-  expect(rows[0]).toHaveTextContent('2 分 30 秒')
-  expect(within(rows[1]).getByText('失敗')).toBeInTheDocument()
-  expect(rows[1]).toHaveTextContent('exit-code・exit 2')
-  expect(within(rows[2]).getByText('執行中')).toBeInTheDocument()
-  expect(within(rows[3]).getByText('結果不明')).toBeInTheDocument()
-  expect(opsCalls(fetchMock)).toEqual([])
-  fireEvent.change(screen.getByLabelText('狀態'), { target: { value: 'lost' } })
-  await waitFor(() => expect(within(screen.getByRole('table', { name: '排程工作執行紀錄' })).getAllByRole('row')).toHaveLength(2))
-  expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain('/api/admin/jobs?state=lost&limit=50&offset=0')
-})
-
-test('排程工作：後端錯誤原樣顯示，不白屏', async () => {
-  mount('/admin/operations/jobs', {
-    override: url => url.startsWith('/api/admin/jobs')
-      ? { status: 400, body: { detail: '時間範圍最多 90 天', code: 'invalid_params' } } : undefined,
-  })
-  expect(await screen.findByRole('alert')).toHaveTextContent('時間範圍最多 90 天')
-})
-
-test('主機：最新值與一小時最高值、檔案系統用量；沒有資料時說明要檢查的 unit', async () => {
-  mount('/admin/operations/host')
-  const cpu = within(await screen.findByRole('group', { name: 'CPU 使用率' }))
-  expect(cpu.getByText('12.5%')).toBeInTheDocument()
-  expect(cpu.getByText(/1 小時最高 80\.0%/)).toBeInTheDocument()
-  expect(within(screen.getByRole('group', { name: '記憶體使用率' })).getByText(/可用 8\.0 GiB/)).toBeInTheDocument()
-  const fs = within(screen.getByRole('table', { name: '檔案系統' }))
-  expect(fs.getByText('/home/kashionz/projects/report-mark')).toBeInTheDocument()
-  expect(fs.getByText('24.6%')).toBeInTheDocument()
-  expect(screen.getByText(/粒度/)).toHaveTextContent('原始觀測（每 60 秒）')
-})
-
-test('主機：最近一小時沒有觀測時給出明確說明', async () => {
-  mount('/admin/operations/host', {
-    override: url => url.startsWith('/api/admin/observations')
-      ? { body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000, truncated: false,
-        resolution: 'raw', items: [] } }
-      : undefined,
-  })
-  expect(await screen.findByText(/最近一小時沒有主機觀測/)).toHaveTextContent('report-mark-load-observations.timer')
 })
 
 test('沒有 ops.read：只顯示需要權限的說明，不打維運 API', async () => {

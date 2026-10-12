@@ -3,15 +3,13 @@ import { Fragment, useState, type ReactNode } from 'react'
 import { adminApi, type DiagnosticsResponse } from '../../../lib/generated/adminApi'
 import { copyText } from '../../../lib/clipboard'
 import { fmtDateTime } from '../auditLabels'
+import { Button, Card as ConsoleCard, PageHeader, Status, toast, type LampTone } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
 import { OpsQueryError } from './OpsShared'
-import adminStyles from '../Admin.module.css'
-import opsStyles from './Ops.module.css'
 import styles from './Diagnostics.module.css'
 
 type Tone = 'ok' | 'warn' | 'fail' | 'idle'
-const TONE_CLASS: Record<Tone, string> = {
-  ok: opsStyles.sRunning, warn: opsStyles.sTransitioning, fail: opsStyles.sFailed, idle: opsStyles.sIdle,
-}
+const LAMP_TONE: Record<Tone, LampTone> = { ok: 'ok', warn: 'warn', fail: 'bad', idle: 'idle' }
 
 const SCHEMA_LABELS: Record<DiagnosticsResponse['schema_info']['status'], [string, Tone]> = {
   ok: ['一致', 'ok'], behind: ['DB 落後', 'fail'], ahead: ['DB 超前', 'fail'], unversioned: ['未接管', 'warn'],
@@ -34,7 +32,13 @@ const DAILY_REASON: Record<string, string> = {
 }
 
 function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`${opsStyles.pill} ${TONE_CLASS[tone]}`}>{children}</span>
+  // 外面包一層：Status 是 inline-flex，接在一行文字前面時基線會落在燈號上，整塊往下掉
+  return <span className={styles.pill}><Status tone={LAMP_TONE[tone]}>{children}</Status></span>
+}
+
+/** 等寬且可在任意字元斷行：commit、路徑、bundle 檔名。 */
+function Mono({ children }: { children: ReactNode }) {
+  return <span className={`${c.mono} ${styles.breakAll}`}>{children}</span>
 }
 
 function yesNo(v: boolean | null | undefined, yes = '是', no = '否'): string {
@@ -67,7 +71,7 @@ function shortSha(sha: string | null | undefined): string {
 /** 鍵值清單；值可以是任意節點。 */
 function KV({ rows, label }: { rows: [string, ReactNode][]; label: string }) {
   return (
-    <dl className={styles.kv} aria-label={label}>
+    <dl className={`${c.kv} ${styles.kv}`} aria-label={label}>
       {rows.map(([k, v]) => (
         <Fragment key={k}>
           <dt>{k}</dt>
@@ -80,19 +84,23 @@ function KV({ rows, label }: { rows: [string, ReactNode][]; label: string }) {
 
 function SectionError({ error }: { error: string | null | undefined }) {
   if (!error) return null
-  return <p className={styles.errNote} role="alert">這一段讀取失敗：{error}</p>
+  return <p className={c.error} role="alert">這一段讀取失敗：{error}</p>
 }
 
 function Card({ id, title, right, children }: { id: string; title: string; right?: ReactNode; children: ReactNode }) {
   return (
-    <section className={adminStyles.card} aria-labelledby={id}>
-      <div className={adminStyles.cardHead}>
-        <h2 id={id} className={adminStyles.ctitle}>{title}</h2>
-        {right}
-      </div>
-      {children}
-    </section>
+    <ConsoleCard title={title} labelledBy={id} right={right}>
+      <div className={styles.body}>{children}</div>
+    </ConsoleCard>
   )
+}
+
+function Sub({ children }: { children: ReactNode }) {
+  return <h3 className={styles.sub}>{children}</h3>
+}
+
+function Warn({ children }: { children: ReactNode }) {
+  return <p className={c.banner} data-tone="warn">{children}</p>
 }
 
 function useDiagnostics() {
@@ -103,31 +111,20 @@ function useDiagnostics() {
   })
 }
 
-/** 「複製診斷包」：整份回應（後端已去除祕密）排版成 JSON。區網 HTTP 沒有 navigator.clipboard，走 copyText。 */
-function CopyBundle({ data }: { data: DiagnosticsResponse }) {
-  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
-  const text = JSON.stringify(data, null, 2)
+/**
+ * 「複製診斷包」：整份回應（後端已去除祕密）排版成 JSON。區網 HTTP 沒有 navigator.clipboard，走 copyText。
+ * 結果用 toast 說；自動複製失敗時頁面上另外給一個可以手動複製的文字框（`failed`）。
+ */
+function useCopyBundle(data: DiagnosticsResponse | undefined) {
+  const [failed, setFailed] = useState(false)
+  const text = data ? JSON.stringify(data, null, 2) : ''
   const copy = () => {
-    copyText(text).then(() => setState('ok'), () => setState('fail'))
+    copyText(text).then(
+      () => { setFailed(false); toast('已複製（JSON，不含祕密）') },
+      () => { setFailed(true); toast('無法自動複製，請從下方手動複製', { tone: 'bad' }) },
+    )
   }
-  return (
-    <>
-      <button type="button" className={adminStyles.primary} onClick={copy}>複製診斷包</button>
-      <span aria-live="polite">
-        {state === 'ok' && <span className={styles.copyOk}>已複製（JSON，不含祕密）</span>}
-        {state === 'fail' && <span className={styles.copyFail}>無法自動複製，請從下方手動複製</span>}
-      </span>
-      {state === 'fail' && (
-        <textarea
-          className={styles.manual}
-          readOnly
-          value={text}
-          aria-label="診斷包 JSON"
-          onFocus={e => e.currentTarget.select()}
-        />
-      )}
-    </>
-  )
+  return { copy, failed, text }
 }
 
 function Summary({ d }: { d: DiagnosticsResponse }) {
@@ -151,10 +148,10 @@ function Summary({ d }: { d: DiagnosticsResponse }) {
       shortSha(git?.commit_at_start)],
   ]
   return (
-    <div className={styles.summary} role="list" aria-label="診斷摘要">
+    <div className={c.tiles} role="list" aria-label="診斷摘要">
       {items.map(([label, pill, detail]) => (
-        <div key={label} className={styles.summaryItem} role="listitem">
-          <span className={styles.summaryLabel}>{label}</span>
+        <div key={label} className={c.tile} role="listitem">
+          <span className={c.tileLabel}>{label}</span>
           <span>{pill}</span>
           {detail && <span className={styles.summaryDetail}>{detail}</span>}
         </div>
@@ -171,23 +168,23 @@ function VersionsCard({ d }: { d: DiagnosticsResponse }) {
     <Card id="diag-versions" title="版本">
       <SectionError error={v.error} />
       {git?.restart_pending && (
-        <p className={opsStyles.warnNote}>
+        <Warn>
           磁碟上的程式（{shortSha(git.commit_on_disk)}）與這個行程啟動時（{shortSha(git.commit_at_start)}）不同：
           程式已更新但 web 還沒重啟。
-        </p>
+        </Warn>
       )}
-      <h3 className={styles.sub}>程式</h3>
+      <Sub>程式</Sub>
       <KV label="程式版本" rows={git?.available ? [
-        ['啟動時 commit', <span className={styles.mono}>{git.commit_at_start ?? '—'}</span>],
+        ['啟動時 commit', <Mono>{git.commit_at_start ?? '—'}</Mono>],
         ['啟動時分支', git.branch_at_start ?? '（detached）'],
-        ['磁碟上 commit', <span className={styles.mono}>{git.commit_on_disk ?? '—'}</span>],
+        ['磁碟上 commit', <Mono>{git.commit_on_disk ?? '—'}</Mono>],
       ] : [['commit', `無法取得（${git?.reason ?? '未知'}）`]]} />
-      <h3 className={styles.sub}>前端</h3>
+      <Sub>前端</Sub>
       <KV label="前端 build" rows={fe?.available ? [
         ['build 時間', fmtDateTime(fe.built_at)],
-        ['入口 bundle', <span className={styles.mono}>{(fe.entry_assets ?? []).join('、') || '—'}</span>],
+        ['入口 bundle', <Mono>{(fe.entry_assets ?? []).join('、') || '—'}</Mono>],
       ] : [['build', '找不到 frontend/dist/index.html（要先 make build-web）']]} />
-      <h3 className={styles.sub}>執行環境與套件</h3>
+      <Sub>執行環境與套件</Sub>
       <KV label="套件版本" rows={[
         ['Python', v.python ?? '—'],
         ['平台', v.platform ?? '—'],
@@ -209,7 +206,7 @@ function SchemaCard({ d }: { d: DiagnosticsResponse }) {
         ['程式 head', s.code_heads.join('、') || '—'],
         ...(s.pending.length ? [['尚未套用', s.pending.join('、')] as [string, ReactNode]] : []),
       ]} />
-      <h3 className={styles.sub}>每日檢查（report-mark-schema-check）</h3>
+      <Sub>每日檢查（report-mark-schema-check）</Sub>
       {dc.available ? (
         <>
           <KV label="每日檢查" rows={[
@@ -220,39 +217,36 @@ function SchemaCard({ d }: { d: DiagnosticsResponse }) {
             ['問題', dc.problems?.length ? dc.problems.join('、') : '無'],
             ['說明', dc.message ?? '—'],
           ]} />
-          {dc.stale && <p className={opsStyles.warnNote}>狀態檔超過 36 小時沒更新：確認 timer 有在跑、或狀態檔寫得進去。</p>}
+          {dc.stale && <Warn>狀態檔超過 36 小時沒更新：確認 timer 有在跑、或狀態檔寫得進去。</Warn>}
         </>
       ) : (
-        <p className={adminStyles.idle}>{DAILY_REASON[dc.unavailable_reason ?? ''] ?? '無法讀取'}。</p>
+        <p className={c.muted}>{DAILY_REASON[dc.unavailable_reason ?? ''] ?? '無法讀取'}。</p>
       )}
     </Card>
   )
 }
 
 function ChecksCard({ d }: { d: DiagnosticsResponse }) {
-  const c = d.checks
-  const [storageLabel, storageTone] = STORAGE_LABELS[c.storage.state] ?? [c.storage.state, 'warn']
-  const [llmLabel, llmTone] = LLM_LABELS[c.llm.state] ?? [c.llm.state, 'warn']
+  const ck = d.checks
+  const [storageLabel, storageTone] = STORAGE_LABELS[ck.storage.state] ?? [ck.storage.state, 'warn']
+  const [llmLabel, llmTone] = LLM_LABELS[ck.llm.state] ?? [ck.llm.state, 'warn']
   return (
     <Card id="diag-checks" title="連通性">
-      <p className={opsStyles.meta}>
-        <span>R2 與 DeepSeek 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</span>
-      </p>
-      <div className={adminStyles.spacer} />
+      <p className={styles.meta}>R2 與 DeepSeek 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</p>
       <KV label="連通性" rows={[
-        ['資料庫', <><Pill tone={c.db.ok ? 'ok' : 'fail'}>{c.db.ok ? '正常' : '失敗'}</Pill>{' '}
-          {c.db.ok ? `SELECT 1 ${fmtMs(c.db.latency_ms)}；PostgreSQL ${c.db.server_version ?? '—'}` : c.db.error}</>],
+        ['資料庫', <><Pill tone={ck.db.ok ? 'ok' : 'fail'}>{ck.db.ok ? '正常' : '失敗'}</Pill>{' '}
+          {ck.db.ok ? `SELECT 1 ${fmtMs(ck.db.latency_ms)}；PostgreSQL ${ck.db.server_version ?? '—'}` : ck.db.error}</>],
         ['物件儲存', <><Pill tone={storageTone}>{storageLabel}</Pill>{' '}
-          {c.storage.last_probe_age_s != null ? `上次探測 ${fmtDuration(c.storage.last_probe_age_s)}前` : ''}
-          {c.storage.consecutive_failures ? `；連續失敗 ${c.storage.consecutive_failures} 次` : ''}
-          {c.storage.error ? `（${c.storage.error}）` : ''}</>],
+          {ck.storage.last_probe_age_s != null ? `上次探測 ${fmtDuration(ck.storage.last_probe_age_s)}前` : ''}
+          {ck.storage.consecutive_failures ? `；連續失敗 ${ck.storage.consecutive_failures} 次` : ''}
+          {ck.storage.error ? `（${ck.storage.error}）` : ''}</>],
         ['DeepSeek', <><Pill tone={llmTone}>{llmLabel}</Pill>{' '}
-          {c.llm.last_check_age_s != null ? `上次查詢 ${fmtDuration(c.llm.last_check_age_s)}前` : ''}
-          {c.llm.quota_latched ? '；本行程收過 402' : ''}
-          {!c.llm.ask_uses_http ? '；問答主答未走 DeepSeek' : ''}
-          {c.llm.error ? `（${c.llm.error}）` : ''}</>],
-        ['維運代理', <><Pill tone={c.ops_agent.ok ? 'ok' : 'warn'}>{c.ops_agent.ok ? '正常' : '連不上'}</Pill>{' '}
-          {c.ops_agent.ok ? `${fmtMs(c.ops_agent.latency_ms)}；${c.ops_agent.services ?? '—'} 個服務` : c.ops_agent.error}</>],
+          {ck.llm.last_check_age_s != null ? `上次查詢 ${fmtDuration(ck.llm.last_check_age_s)}前` : ''}
+          {ck.llm.quota_latched ? '；本行程收過 402' : ''}
+          {!ck.llm.ask_uses_http ? '；問答主答未走 DeepSeek' : ''}
+          {ck.llm.error ? `（${ck.llm.error}）` : ''}</>],
+        ['維運代理', <><Pill tone={ck.ops_agent.ok ? 'ok' : 'warn'}>{ck.ops_agent.ok ? '正常' : '連不上'}</Pill>{' '}
+          {ck.ops_agent.ok ? `${fmtMs(ck.ops_agent.latency_ms)}；${ck.ops_agent.services ?? '—'} 個服務` : ck.ops_agent.error}</>],
       ]} />
     </Card>
   )
@@ -272,23 +266,23 @@ function RuntimeCard({ d }: { d: DiagnosticsResponse }) {
         ['記憶體 RSS', `${fmtBytes(r.rss_bytes)}（峰值 ${fmtBytes(r.peak_rss_bytes)}）`],
         ['執行緒', r.threads ?? '—'],
         ['時區', r.timezone ? `${r.timezone.name} ${r.timezone.utc_offset}${r.timezone.tz_env ? `（TZ=${r.timezone.tz_env}）` : ''}` : '—'],
-        ['Python', <span className={styles.mono}>{r.python_executable ?? '—'}</span>],
+        ['Python', <Mono>{r.python_executable ?? '—'}</Mono>],
       ]} />
-      <h3 className={styles.sub}>模型</h3>
+      <Sub>模型</Sub>
       <SectionError error={m.error} />
       <KV label="模型" rows={[
         ['嵌入模型', `${m.embed_model ?? '—'}：${m.embed_loaded ? '已載入' : '尚未載入'}`],
         ['rerank', m.rerank_load_failed ? '載入失敗（已熔斷）' : m.rerank_loaded ? '已載入' : '尚未載入'],
         ['暖機', `${WARMUP_LABELS[m.warmup ?? ''] ?? '—'}${m.warmup_error ? `（${m.warmup_error}）` : ''}`],
       ]} />
-      <h3 className={styles.sub}>DB 連線池</h3>
+      <Sub>DB 連線池</Sub>
       <SectionError error={p.error} />
       <KV label="連線池" rows={[
         ['使用中', `${p.checked_out ?? '—'}／上限 ${p.size != null && p.max_overflow != null ? p.size + p.max_overflow : '—'}`],
         ['已開啟', `${p.open_connections ?? '—'}（常駐 ${p.size ?? '—'}）`],
       ]} />
-      <h3 className={styles.sub}>併發閘</h3>
-      {d.gates_error && <p className={styles.errNote} role="alert">讀取失敗：{d.gates_error}</p>}
+      <Sub>併發閘</Sub>
+      {d.gates_error && <p className={c.error} role="alert">讀取失敗：{d.gates_error}</p>}
       <KV label="併發閘" rows={d.gates.length ? d.gates.map((g): [string, ReactNode] => [
         g.name, `使用中 ${g.in_use ?? '—'}／${g.capacity}；排隊 ${g.waiting}（上限 ${g.max_queue || '不限'}）`,
       ]) : [['—', '沒有閘門']]} />
@@ -297,36 +291,36 @@ function RuntimeCard({ d }: { d: DiagnosticsResponse }) {
 }
 
 function ConfigCard({ d }: { d: DiagnosticsResponse }) {
-  const c = d.config
+  const cfg = d.config
   return (
     <Card id="diag-config" title="設定（白名單）">
-      <SectionError error={c.error} />
+      <SectionError error={cfg.error} />
       <KV label="設定" rows={[
-        ['資料庫', <span className={styles.mono}>{c.db_target ?? '—'}</span>],
-        ['物件儲存', c.object_storage_mode ?? '—'],
-        ['LLM 供應商', c.llm_provider ?? '—'],
-        ['抽取器', c.extractor ?? '—'],
-        ['日誌等級', c.log_level ?? '—'],
-        ['維運代理', <span className={styles.mono}>{`${c.ops_agent_environment || '（停用）'} ${c.ops_agent_socket ?? ''}`}</span>],
+        ['資料庫', <Mono>{cfg.db_target ?? '—'}</Mono>],
+        ['物件儲存', cfg.object_storage_mode ?? '—'],
+        ['LLM 供應商', cfg.llm_provider ?? '—'],
+        ['抽取器', cfg.extractor ?? '—'],
+        ['日誌等級', cfg.log_level ?? '—'],
+        ['維運代理', <Mono>{`${cfg.ops_agent_environment || '（停用）'} ${cfg.ops_agent_socket ?? ''}`}</Mono>],
       ]} />
-      <h3 className={styles.sub}>線上任務的模型</h3>
-      <KV label="模型" rows={Object.entries(c.models ?? {}).map(([task, model]): [string, ReactNode] => [task, String(model)])} />
-      {c.flags && (
+      <Sub>線上任務的模型</Sub>
+      <KV label="模型" rows={Object.entries(cfg.models ?? {}).map(([task, model]): [string, ReactNode] => [task, String(model)])} />
+      {cfg.flags && (
         <>
-          <h3 className={styles.sub}>功能旗標</h3>
-          <KV label="功能旗標" rows={Object.entries(c.flags).map(([k, v]): [string, ReactNode] => [k, yesNo(v, '開', '關')])} />
+          <Sub>功能旗標</Sub>
+          <KV label="功能旗標" rows={Object.entries(cfg.flags).map(([k, v]): [string, ReactNode] => [k, yesNo(v, '開', '關')])} />
         </>
       )}
-      {c.secrets_present && (
+      {cfg.secrets_present && (
         <>
-          <h3 className={styles.sub}>祕密（只顯示有沒有設）</h3>
-          <KV label="祕密" rows={Object.entries(c.secrets_present).map(([k, v]): [string, ReactNode] => [k, yesNo(v, '已設', '未設')])} />
+          <Sub>祕密（只顯示有沒有設）</Sub>
+          <KV label="祕密" rows={Object.entries(cfg.secrets_present).map(([k, v]): [string, ReactNode] => [k, yesNo(v, '已設', '未設')])} />
         </>
       )}
-      {c.limits && (
+      {cfg.limits && (
         <>
-          <h3 className={styles.sub}>上限與逾時</h3>
-          <KV label="上限" rows={Object.entries(c.limits).map(([k, v]): [string, ReactNode] => [k, String(v)])} />
+          <Sub>上限與逾時</Sub>
+          <KV label="上限" rows={Object.entries(cfg.limits).map(([k, v]): [string, ReactNode] => [k, String(v)])} />
         </>
       )}
     </Card>
@@ -339,28 +333,44 @@ function ConfigCard({ d }: { d: DiagnosticsResponse }) {
  */
 export default function OpsDiagnosticsPage() {
   const q = useDiagnostics()
-  if (q.isPending) return <p className={adminStyles.idle}>載入中…</p>
-  if (q.isError) return <OpsQueryError error={q.error} what="診斷" />
+  const bundle = useCopyBundle(q.data)
+  const header = (
+    <PageHeader
+      summary="這個 web 行程目前的版本、schema、執行環境、設定與連通性。"
+      help={(
+        <>
+          程式版本比對行程啟動時與磁碟上的 commit，兩者不同表示程式已更新、等著重新啟動；前端讀 frontend/dist 的建置時間；
+          schema 比對 DB 的 alembic 版本與程式的 head，並附每日檢查最後一次的結果。設定只列白名單裡的項目，祕密只顯示有沒有設。
+          R2 與 DeepSeek 只讀健康檢查上一次的結論，不會另外呼叫。「複製診斷包」複製整份 JSON（不含祕密），可以直接貼給維運。
+        </>
+      )}
+      actions={q.data && (
+        <>
+          <Button onClick={() => q.refetch()} disabled={q.isFetching}>
+            {q.isFetching ? '重新整理中…' : '重新整理'}
+          </Button>
+          <Button variant="primary" onClick={bundle.copy}>複製診斷包</Button>
+        </>
+      )}
+    />
+  )
+  if (q.isPending) return <>{header}<p className={c.empty}>載入中…</p></>
+  if (q.isError) return <>{header}<OpsQueryError error={q.error} what="診斷" /></>
   const d = q.data
   return (
     <>
-      <Card
-        id="diag-title"
-        title="診斷"
-        right={
-          <button type="button" className={adminStyles.action} onClick={() => q.refetch()} disabled={q.isFetching}>
-            {q.isFetching ? '重新整理中…' : '重新整理'}
-          </button>
-        }
-      >
-        <p className={opsStyles.meta}>
-          <span>產生時間 <b>{fmtDateTime(d.generated_at)}</b>（伺服器快取 {d.cache_ttl_s} 秒）</span>
-        </p>
-        <div className={adminStyles.spacer} />
-        <Summary d={d} />
-        <div className={adminStyles.spacer} />
-        <div className={styles.actions}><CopyBundle data={d} /></div>
-      </Card>
+      {header}
+      <p className={styles.meta}>產生時間 <b>{fmtDateTime(d.generated_at)}</b>（伺服器快取 {d.cache_ttl_s} 秒）</p>
+      <Summary d={d} />
+      {bundle.failed && (
+        <textarea
+          className={styles.manual}
+          readOnly
+          value={bundle.text}
+          aria-label="診斷包 JSON"
+          onFocus={e => e.currentTarget.select()}
+        />
+      )}
       <div className={styles.grid}>
         <ChecksCard d={d} />
         <SchemaCard d={d} />

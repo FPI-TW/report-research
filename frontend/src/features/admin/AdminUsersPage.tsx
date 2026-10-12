@@ -155,7 +155,7 @@ function AdminUsers() {
           <Button variant="primary" onClick={() => setCreating(true)}><Icon name="plus" size={14} />建立帳號</Button>
         </>
       } />
-      <div className={c.toolbar}>
+      <div className={`${c.toolbar} ${chosen.length > 0 ? styles.toolbarSticky : ''}`}>
         <SearchInput value={q} onChange={setQ} placeholder="篩選帳號" />
         <Segmented options={filterOptions} value={filter} label="帳號篩選"
           onChange={v => setFilterParam(v === 'all' ? null : v)} />

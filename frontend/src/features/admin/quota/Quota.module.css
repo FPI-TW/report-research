@@ -1,5 +1,7 @@
 /* 配額頁：表格格子內的「用量／上限」與標記、調整上限表單的列。色全部走 --ac-* token。 */
 .account { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+/* 帳號單行截斷、完整名稱放 title（和帳號管理頁同一個做法）。選擇器帶元素名：要蓋過共用 c.truncate 的 max-width: 100%。 */
+span.username { max-width: 240px; color: var(--ac-t1); }
 .usage { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .usage [data-tone='warn'], .stat[data-tone='warn'] { color: var(--ac-warnt); }
 .usage [data-tone='bad'] { color: var(--ac-badt); }

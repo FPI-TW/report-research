@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../components/console'
 import AdminUsersPage from './AdminUsersPage'
 import c from '../../components/console/Console.module.css'
+import styles from './users/Users.module.css'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -160,6 +161,18 @@ test('帳號表格列出角色、狀態與有效 session；自己那列的停用
   expect(hers.getAllByRole('menuitem').map(el => el.textContent)).toEqual([
     '設為管理員', '強制登出（1 個 session）', '停用', '刪除帳號',
   ])
+})
+
+test('長帳號單行截斷、完整名稱放 title；操作欄釘在右邊，表格橫向捲動時還看得到', async () => {
+  const long = 'institutional-sales.asia-pacific.derivative-desk@tingfong.com.tw'
+  mount({ users: [user('me', 'root', { role: 'admin' }), user('u2', long)] })
+  const name = await screen.findByText(long)
+  expect(name).toHaveAttribute('title', long)
+  expect(name).toHaveClass(c.truncate)
+  expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  for (const tr of screen.getAllByRole('row').slice(1)) {
+    expect(within(tr).getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+  }
 })
 
 test('清單載入失敗：顯示後端的 detail', async () => {
@@ -517,11 +530,14 @@ test('批次勾選：自己那列不可勾；全選只選別人，批次列依�
   expect(bar.getByRole('button', { name: '啟用（1）' })).toBeEnabled()
   expect(bar.getByRole('button', { name: '強制登出（1）' })).toBeEnabled()
   expect((await row('root')).getByRole('checkbox')).not.toBeChecked()
+  // 有勾選時整條工具列釘在頁面頂端：捲到下面的列也按得到批次按鈕
+  expect(screen.getByRole('toolbar', { name: '批次操作' }).parentElement).toHaveClass(styles.toolbarSticky)
   fireEvent.click((await row('carol')).getByRole('checkbox'))
   expect(bar.getByRole('button', { name: '啟用（0）' })).toBeDisabled()
   expect(bar.getByText('已選 2 個')).toBeInTheDocument()
   fireEvent.click(bar.getByRole('button', { name: '清除選取' }))
   expect(screen.queryByRole('toolbar', { name: '批次操作' })).not.toBeInTheDocument()
+  expect(screen.getByPlaceholderText('篩選帳號').closest(`.${c.toolbar}`)).not.toHaveClass(styles.toolbarSticky)
 })
 
 test('批次啟用不算排程刪除中的帳號；選取跨篩選保留', async () => {

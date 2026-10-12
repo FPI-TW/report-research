@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../components/console'
 import { AdminShell } from '../../components/shell/AdminShell'
 import type { AuditEntry } from '../../lib/adminSchemas'
+import c from '../../components/console/Console.module.css'
 import AdminApiClientsPage from './AdminApiClientsPage'
 import { actionLabel, auditSummary } from './auditLabels'
 
@@ -168,12 +169,18 @@ test('列表：名稱、金鑰前綴、狀態、端點、限流／額度、授�
   const b = await row('外部系統 B')
   // 停用是管理員設定的狀態、不是異常：中性的灰燈，不亮紅
   expect(b.getByText('停用')).toHaveAttribute('data-tone', 'idle')
-  expect(b.getByText('暫停使用')).toBeInTheDocument()
+  // 備註在清單裡最多兩行，完整內容放 title（抽屜裡也有）
+  expect(b.getByText('暫停使用')).toHaveAttribute('title', '暫停使用')
+  expect(b.getByText('暫停使用')).toHaveClass(c.clamp2)
   expect(b.getByText('（無）')).toBeInTheDocument()
   expect(b.getByText('券商、報告類型、商品類型不限')).toBeInTheDocument()
   expect(b.getByRole('button', { name: '啟用' })).toBeInTheDocument()
   expect(b.getByText('尚未使用')).toBeInTheDocument()
   expect(document.body.textContent).not.toContain('x'.repeat(43))
+  // 操作欄釘在右邊：表格橫向捲動時還看得到
+  expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass(c.stickyRight)
+  expect(a.getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
+  expect(b.getAllByRole('cell').at(-1)).toHaveClass(c.stickyRight)
 })
 
 test('列動作：啟用中主要是「輪替金鑰」，停用排在「更多」最後；停用中主要是「啟用」', async () => {
@@ -518,8 +525,12 @@ test('詳情抽屜：直接開帶 ?client= 的連結就是打開的；抽屜裡�
   fireEvent.click(form.getByRole('button', { name: '儲存' }))
   await waitFor(() => expect(sent(fetchMock)).toEqual([['/api/admin/api-clients/7', 'PATCH', { daily_quota: 50 }]]))
   await waitFor(() => expect(drawer.getByText('50／日')).toBeInTheDocument())
+  // 抽屜的「停用」只是開確認框：紅字不填色；實心紅留給確認框的最後一步
+  expect(drawer.getByRole('button', { name: '停用' })).toHaveClass(c.btnDangerText)
+  expect(drawer.getByRole('button', { name: '停用' })).not.toHaveClass(c.btnDanger)
   fireEvent.click(drawer.getByRole('button', { name: '停用' }))
   const confirm = await screen.findByRole('alertdialog', { name: '停用「外部系統 A」？' })
+  expect(within(confirm).getByRole('button', { name: '停用' })).toHaveClass(c.btnDanger)
   fireEvent.click(within(confirm).getByRole('button', { name: '停用' }))
   await waitFor(() => expect(drawer.getByRole('button', { name: '啟用' })).toBeInTheDocument())
   expect(screen.getByTestId('loc')).toHaveTextContent('/admin/api-clients?client=7')

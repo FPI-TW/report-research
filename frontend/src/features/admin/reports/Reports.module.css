@@ -2,13 +2,19 @@
 
 .search { display: flex; align-items: center; gap: 8px; }
 
+/* 工具列：有勾選時釘在頁面頂端（捲到下面的列也看得到「已選 N 篇」與批次按鈕）。
+   底色不透明、疊在表格與釘住的操作欄（z-index 1）上面；上下各留 8px 當遮罩，用負邊距抵掉、不改版面。 */
+.toolbarSticky { position: sticky; top: 0; z-index: 3; margin: -8px 0; padding: 8px 0; background: var(--ac-bg); }
+
 /* 批次列：有勾選才出現，靠右。 */
 .bulkCount { color: var(--ac-goldt); margin-right: 4px; }
 
 /* 清單 */
 .titleCell { min-width: 220px; max-width: 460px; overflow-wrap: anywhere; }
 .statusCell { max-width: 300px; }
-.reason { margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t4); overflow-wrap: anywhere; }
+/* 隱藏原因在清單裡只留一行（完整內容在 title 與抽屜），狀態欄才不會把標題欄擠到折三行。
+   選擇器帶元素名：要蓋過共用 c.truncate 的 max-width: 100%（表格自動版面下那個百分比不會收斂）。 */
+div.reason { max-width: 240px; margin-top: 3px; font-size: 11.5px; line-height: 1.5; color: var(--ac-t4); }
 
 /* 對話框與抽屜 */
 .targets { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ac-t2); overflow-wrap: anywhere; }

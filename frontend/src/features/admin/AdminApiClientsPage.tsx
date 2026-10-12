@@ -134,7 +134,7 @@ function ApiClients() {
               <thead>
                 <tr>
                   <th>名稱</th><th>金鑰前綴</th><th>狀態</th><th>端點</th><th>限流／額度</th><th>授權範圍</th>
-                  <th>最後使用</th><th className={c.tdActions}>操作</th>
+                  <th>最後使用</th><th className={`${c.tdActions} ${c.stickyRight}`}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -143,12 +143,12 @@ function ApiClients() {
                   return (
                     <tr key={client.id} className={`${c.rowClickable} ${opened?.id === client.id ? c.rowSelected : ''}`}
                       onClick={() => setOpenId(String(client.id))}>
-                      <td className={local.wrap}>
+                      <td className={`${local.wrap} ${local.nameCell}`}>
                         <button type="button" className={c.rowLink} aria-label={`${client.name}，查看詳情`}
                           onClick={e => { e.stopPropagation(); setOpenId(String(client.id)) }}>
                           <span className={local.name}>{client.name}</span>
                         </button>
-                        {client.note && <div className={c.sub}>{client.note}</div>}
+                        {client.note && <div className={`${c.sub} ${c.clamp2}`} title={client.note}>{client.note}</div>}
                       </td>
                       <td className={c.num}>{keyPrefixText(client)}</td>
                       {/* 停用是管理員設定的狀態，不是異常：用中性的灰燈（只有異常才亮）。 */}
@@ -165,7 +165,7 @@ function ApiClients() {
                       <td className={client.last_used_at ? c.num : c.muted}>
                         {client.last_used_at ? fmtDateTime(client.last_used_at) : '尚未使用'}
                       </td>
-                      <td className={c.tdActions}>
+                      <td className={`${c.tdActions} ${c.stickyRight}`}>
                         <RowActions primary={actions.primary} more={actions.more} label={`${client.name} 的更多操作`} />
                       </td>
                     </tr>

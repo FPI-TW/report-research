@@ -56,7 +56,7 @@ export function UsersTable({
               <SelectAllBox ids={selectable} selected={selected} label="全選" onChange={on => onToggleAll(selectable, on)} />
             </th>
             <th>帳號</th><th>角色</th><th>狀態</th><th>最後登入</th><th>最後活動</th>
-            <th className={c.tdRight}>session</th><th className={c.tdRight}>操作</th>
+            <th className={c.tdRight}>session</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -97,7 +97,7 @@ export function UsersTable({
                 </td>
                 <td>
                   <div className={styles.name}>
-                    <span className={styles.username}>{u.username}</span>
+                    <span className={`${c.truncate} ${styles.username}`} title={u.username}>{u.username}</span>
                     {isSelf && <Chip tone="gold" mono>你</Chip>}
                     {u.is_super && <Chip tone="gold" mono>super</Chip>}
                     {u.totp_enabled && <Chip tone="ok" mono title="已開啟兩步驟驗證">2FA</Chip>}
@@ -119,7 +119,7 @@ export function UsersTable({
                 <td className={`${c.num} ${c.t3}`}>{fmtDateTime(u.last_login_at)}</td>
                 <td className={`${c.num} ${c.muted}`}>{fmtDateTime(u.last_seen_at)}</td>
                 <td className={`${c.num} ${c.tdRight} ${sessions ? c.t3 : c.muted}`} title="有效 session 數">{sessions}</td>
-                <td className={c.tdActions}>
+                <td className={`${c.tdActions} ${c.stickyRight}`}>
                   <RowActions primary={primary} more={more} label={`${u.username} 的更多操作`} />
                 </td>
               </tr>

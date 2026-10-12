@@ -34,6 +34,7 @@ const OpsHostPage = lazy(routeLoaders.adminOpsHost)
 const OpsDataHealthPage = lazy(routeLoaders.adminOpsDataHealth)
 const OpsLlmUsagePage = lazy(routeLoaders.adminOpsLlmUsage)
 const OpsDependenciesPage = lazy(routeLoaders.adminOpsDependencies)
+const OpsRemoteHostsPage = lazy(routeLoaders.adminOpsRemoteHosts)
 const OpsDiagnosticsPage = lazy(routeLoaders.adminOpsDiagnostics)
 const OpsDatabasePage = lazy(routeLoaders.adminOpsDatabase)
 // Admin v2：分析、安全、配額、功能旗標（各頁自己包 RequireAdmin＋RequireScope；後端各 router 掛 require_admin＋scope）。
@@ -105,6 +106,7 @@ export const routes = [
               { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
               { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
               { path: 'dependencies', element: <Suspense><OpsDependenciesPage /></Suspense> },
+              { path: 'remote-hosts', element: <Suspense><OpsRemoteHostsPage /></Suspense> },
               { path: 'logs', element: <Suspense><OpsLogsPage /></Suspense> },
               { path: 'jobs', element: <Suspense><OpsJobsPage /></Suspense> },
               { path: 'incidents', element: <Suspense><OpsIncidentsPage /></Suspense> },

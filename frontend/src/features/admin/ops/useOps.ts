@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   adminApi, type DataHealthResponse, type IncidentDetail, type IncidentItem, type IncidentListResponse, type JobItem,
   type JobListResponse, type LlmUsageResponse, type ObservationListResponse, type OpsDependencyGraph,
-  type OpsLogsResponse,
+  type OpsLogsResponse, type OpsRemoteHostList,
   type OpsServiceDetail, type OpsServiceListResponse,
 } from '../../../lib/generated/adminApi'
 
@@ -24,6 +24,19 @@ export function useOpsDependencies() {
     queryKey: [...OPS_KEY, 'dependencies'],
     queryFn: () => adminApi.getOpsDependencies(),
     refetchInterval: 30_000,
+    retry: false,
+  })
+}
+
+/**
+ * 這台監看的來源主機（另一台主機發布到 R2 的信標；不經維運代理）。後端快取 60 秒，這裡每分鐘重抓。
+ * 沒設定要監看時 items 是空的。
+ */
+export function useOpsRemoteHosts() {
+  return useQuery<OpsRemoteHostList>({
+    queryKey: [...OPS_KEY, 'remote-hosts'],
+    queryFn: () => adminApi.listOpsRemoteHosts(),
+    refetchInterval: 60_000,
     retry: false,
   })
 }

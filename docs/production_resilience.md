@@ -1891,6 +1891,9 @@ sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不�
 2. **schema drift**：版本可對應時（一致或落後），以 DB 的 revision 在**同一台伺服器**建唯一的暫存庫
    `schema_ref_*`、套 baseline＋到該 revision 為止的 SQL、逐項比對系統目錄，比完一定刪掉並確認刪掉了
    ——與 `make schema-check` 同一段程式，保證不變（清理失敗＝整次作廢、印手動清理指令）。
+   extension 自己建的物件不比；目標多裝的維運用 extension（`scripts/schema_baseline.py` 的
+   `OPERATIONAL_EXTENSIONS`，目前只有 `pg_stat_statements`）只在輸出列為資訊、不算 drift，因為它由獨立的
+   維護步驟啟用、不在 migration 裡。其他 extension 多裝或缺少照樣算 drift。
 
 退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=3` 表達）：
 

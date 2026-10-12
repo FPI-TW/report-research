@@ -459,8 +459,8 @@ class WorklistSkipTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_signal_worklist_skips_blocked(self):
         reports = [
-            ("r1", "券商", None, "TW", "a.pdf", "內文", ["2330"], "hA"),
-            ("r2", "券商", None, "TW", "b.pdf", "內文", ["2330"], "hB"),
+            ("r1", "券商", None, "TW", "a.pdf", ["2330"], "hA"),
+            ("r2", "券商", None, "TW", "b.pdf", ["2330"], "hB"),
         ]
         failures = {"hB": lf.FailureRecord(lf.UNPARSEABLE, "m", 3)}
         with mock.patch.object(es, "SessionFactory", _Ctx), \
@@ -598,7 +598,8 @@ class MainWiringTests(unittest.IsolatedAsyncioTestCase):
         return opener, build, one
 
     async def test_takeaways_and_signals(self):
-        item = SimpleNamespace(file_hash="h1")
+        # full_text：訊號的 main 在套完 --limit 後才替沒有內文的項目撈內文，已有內文的不碰 DB。
+        item = SimpleNamespace(file_hash="h1", full_text="內文")
         cases = [
             # (recorder, retry_blocked, reextract, 期望 skip_model)
             (_Recorder(), False, False, "m"),

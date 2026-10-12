@@ -327,6 +327,12 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 3. 跑 `scripts/reconcile_object_storage.py --dry-run --kind all` 處理 missing／SHA／orphan，全零才切 `r2`。orphan 掃描只看 `originals/` 前綴；bucket 裡舊的 `generated/` 生成 PDF 不算 orphan，由人手動清。
 4. 切換後 `report-mark-r2-reconcile.timer` 每週一 07:00 對帳接告警鏈；`/healthz` 不探 R2，bucket／憑證層級的失效由健康探針經 `/healthz/storage` 偵測（`scripts/check_web_health.sh` 退出碼 6，約 5 分鐘內），個別物件缺漏仍靠對帳。
 
+對帳結果的判讀（`scripts/reconcile_object_storage.py`）：`unkeyed`、`key_mismatch`、`errors` 讓退出碼為 1 並告警，其餘只計數（管理後台「資料健康」列為 warn）。
+
+- **`unkeyed`**（研報列沒有 `source_object_key`）：以 `scripts/migrate_object_storage.py` 補傳。該腳本不讀 repo 根 `.env`，手動跑要自己帶 `OBJECT_STORAGE_MODE` 與 `R2_*`（與 sync 的環境檔相同的值），否則以 local 模式直接結束。本機檔的 SHA-256 與 `file_hash` 不同時它回報 `HASH_MISMATCH`、不上傳：鏡像目錄的檔案已被同檔名的新版取代，這一列的原檔無法從本機取得。
+- **`LOCAL_REPLACED`**（只印出、不計數）：券商以同檔名重發研報，新檔另成一篇研報（新 hash、自己的 key）。那個路徑上已不是這一列的內容，所以不拿它比對；R2 物件仍以 DB 的 `file_hash` 驗證。
+- **orphan**：指「這次連的 DB」沒有對應列。bucket 與另一個環境共用時（現況見 `docs/DEPLOYMENT_STATUS.md`），它可能是只有對方入庫的研報——兩邊各自同步，券商換版的時間差會讓兩邊入到不同版本。封存或刪除前要查過每一個寫這個 bucket 的 DB。
+
 瀏覽器端兩個前提：bucket 要設 CORS（只開 GET／HEAD），沒設就閱讀頁 PDF 檢視器整頁靜默失敗、伺服器零錯誤；presign 一律帶 `filename`（key 是 hash，跨來源 302 後 `<a download>` 失效）。`--limit` 在兩個工具中都會限制 orphan 判定（沒讀完全部 DB 列就不判 orphan）。
 
 ## 完整重跑指令

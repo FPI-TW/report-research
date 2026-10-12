@@ -31,6 +31,8 @@ NOT NULL、預設值、生成欄運算式、identity、collation）、約束、�
 型別、RLS policy。排除 `public.alembic_version` 與 extension 自己的物件。**不比**：擁有者與
 權限（備份一律 --no-owner）、註解、統計資訊。欄位的實體順序不同只列為資訊、不算 drift：
 既有庫歷年 `ADD COLUMN` 的順序必然與空庫不同，而查詢一律指名欄位，順序沒有語意。
+目標多裝了 `OPERATIONAL_EXTENSIONS` 裡的維運用 extension（目前只有 pg_stat_statements）也只列為
+資訊：它由獨立的維護步驟啟用、不在 migration 裡；其他 extension 多裝或缺少都算 drift。
 
 ── 受保護的庫要先備份 ─────────────────────────────────────────────────────
 受保護＝`app/services/schema_migrations.py` 的 DEFAULT_PROTECTED 加上
@@ -165,10 +167,11 @@ CATALOG_QUERIES: dict[str, str] = {
         "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
         f"WHERE {_USER_NS} AND {_not_ext_member('pg_proc', 'p.oid')}"
     ),
-    "view": "SELECT schemaname || '.' || viewname, definition FROM pg_views "
-            "WHERE schemaname !~ '^pg_' AND schemaname <> 'information_schema' "
-            "UNION ALL SELECT schemaname || '.' || matviewname, definition FROM pg_matviews "
-            "WHERE schemaname !~ '^pg_' AND schemaname <> 'information_schema'",
+    # 直接查 pg_class（不經 pg_views／pg_matviews）才拿得到 oid 來排除 extension 自己的視圖；
+    # 定義同樣出自 pg_get_viewdef，與那兩張系統視圖的 definition 欄逐字相同。
+    "view": "SELECT n.nspname || '.' || c.relname, pg_get_viewdef(c.oid) "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            f"WHERE {_USER_NS} AND c.relkind IN ('v','m') AND {_not_ext_member('pg_class', 'c.oid')}",
     "type": (
         "SELECT n.nspname || '.' || t.typname, t.typtype::text || ' ' || CASE t.typtype "
         "WHEN 'e' THEN (SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = t.oid) "
@@ -202,6 +205,11 @@ def _excluded(key: str) -> bool:
     return key == _EXCLUDED_PREFIX or key.startswith((_EXCLUDED_PREFIX + ".", _EXCLUDED_PREFIX + "_"))
 
 
+# 維運用 extension：由獨立的維護步驟啟用（要預載並重啟 PostgreSQL，RDS 上還要 master 帳號），刻意不寫進
+# migration，所以基準庫永遠沒有它。只放行「目標多裝」這一個方向，列為資訊；不在這份清單裡的 extension
+# 多裝照樣算 drift。它建的視圖與函式由各類查詢的 extension 成員排除條件濾掉，不靠這份清單。
+OPERATIONAL_EXTENSIONS = frozenset({"pg_stat_statements"})
+
 Catalog = dict[str, dict[str, str]]
 
 
@@ -219,6 +227,7 @@ class CategoryDiff:
 class DriftReport:
     categories: dict[str, CategoryDiff]
     column_order: list[str]
+    operational_extensions: list[str] = field(default_factory=list)  # 目標多裝的維運用 extension（資訊）
 
     @property
     def drift_count(self) -> int:
@@ -228,9 +237,13 @@ class DriftReport:
 def diff_catalogs(reference: Catalog, target: Catalog,
                   ref_order: dict[str, str] | None = None, tgt_order: dict[str, str] | None = None) -> DriftReport:
     cats: dict[str, CategoryDiff] = {}
+    operational = sorted(k for k in target.get("extension", {})
+                         if k in OPERATIONAL_EXTENSIONS and k not in reference.get("extension", {}))
     for cat in sorted(set(reference) | set(target)):
         ref = {k: v for k, v in reference.get(cat, {}).items() if not _excluded(k)}
         tgt = {k: v for k, v in target.get(cat, {}).items() if not _excluded(k)}
+        if cat == "extension":
+            tgt = {k: v for k, v in tgt.items() if k not in operational}
         d = CategoryDiff(
             missing=sorted(set(ref) - set(tgt)),
             extra=sorted(set(tgt) - set(ref)),
@@ -241,7 +254,7 @@ def diff_catalogs(reference: Catalog, target: Catalog,
     for table in sorted(set(ref_order or {}) & set(tgt_order or {})):
         if (ref_order or {})[table] != (tgt_order or {})[table]:
             order_notes.append(table)
-    return DriftReport(categories=cats, column_order=order_notes)
+    return DriftReport(categories=cats, column_order=order_notes, operational_extensions=operational)
 
 
 def format_report(report: DriftReport, *, identity: str, revision: str, reference_desc: str,
@@ -258,6 +271,9 @@ def format_report(report: DriftReport, *, identity: str, revision: str, referenc
     if report.column_order:
         lines.append(f"\n資訊（不算 drift）：{len(report.column_order)} 張表的欄位實體順序與空庫不同："
                      + "、".join(report.column_order))
+    if report.operational_extensions:
+        lines.append("\n資訊（不算 drift）：目標另裝了維運用 extension："
+                     + "、".join(report.operational_extensions))
     verdict = "零 drift" if report.drift_count == 0 else f"{report.drift_count} 項 drift，{drift_verdict}"
     lines.append(f"\n結論：{verdict}")
     return "\n".join(lines)

@@ -194,3 +194,19 @@ a.tile:hover, button.tile:hover { border-color: var(--ac-l5); color: inherit; }
 }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; font-size: 11.5px; color: var(--ac-t5); }
 .pagerBtns { display: flex; gap: 6px; }
+
+/* ── 批次結果、匯出訊息、降級說明（跨頁共用的小塊） ── */
+.notice {
+  padding: 10px 14px; border: 1px solid var(--ac-gline); border-radius: 8px; background: var(--ac-gsel);
+  font-size: 12.5px; line-height: 1.6; color: var(--ac-t2);
+}
+.noticeHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; color: var(--ac-t1); }
+.noticeList { margin: 8px 0 0; padding-left: 18px; color: var(--ac-t3); }
+.noticeList li { overflow-wrap: anywhere; }
+.inlineMsg { font-size: 12px; color: var(--ac-t4); }
+.inlineMsg[data-error] { color: var(--ac-badt); }
+.inlineRow { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.degraded { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.degraded p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ac-t4); }
+.degraded code, .help code, .banner code { font-family: var(--ac-mono); font-size: 0.95em; color: var(--ac-t2); }
+.degradedDetail { font-family: var(--ac-mono); font-size: 12px; color: var(--ac-t3); overflow-wrap: anywhere; }

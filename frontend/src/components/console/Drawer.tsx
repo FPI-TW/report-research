@@ -4,6 +4,7 @@ import { Icon } from '../primitives/Icon'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
+import { useRestoreFocus } from './useRestoreFocus'
 
 interface Props {
   open: boolean
@@ -22,13 +23,14 @@ interface Props {
 }
 
 /**
- * 右側抽屜：詳情用。portal 到 body，Esc 與點遮罩關閉，焦點鎖在抽屜內。
+ * 右側抽屜：詳情用。portal 到 body，Esc 與點遮罩關閉，焦點鎖在抽屜內，關閉後還給開啟前的元素（列內的入口按鈕）。
  * 開關狀態請放 URL query（`useQueryParam`），連結才能分享。內容用 `DrawerSection` 分段。
  * 上面疊著對話框時 Esc 先關對話框（對話框會攔下事件）。
  */
 export function Drawer({ open, onClose, title, monoTitle, status, subtitle, width, footer, children }: Props) {
   const ref = useRef<HTMLElement>(null)
   const titleId = useId()
+  useRestoreFocus(ref, open)
   useFocusTrap(ref, open)
 
   useEffect(() => {

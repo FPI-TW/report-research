@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Icon } from '../primitives/Icon'
+import { useRestoreFocus } from '../console/useRestoreFocus'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import { searchPages, type AdminPageEntry } from './adminNav'
 import styles from './AdminPalette.module.css'
@@ -14,7 +15,7 @@ interface Props {
 
 /**
  * ⌘K／Ctrl+K 的頁面搜尋。比對頁名與「領域 / 分組」；Enter 跳目前選到的那一筆（預設第一筆），
- * 上下鍵移動，Esc 或點遮罩關閉。開關的快捷鍵在 `AdminShell`。
+ * 上下鍵移動，Esc 或點遮罩關閉，關閉後焦點還給開啟前的元素。開關的快捷鍵在 `AdminShell`。
  */
 export function AdminPalette({ open, pages, onClose, onGo }: Props) {
   if (!open) return null
@@ -27,6 +28,7 @@ function PalettePanel({ pages, onClose, onGo }: Omit<Props, 'open'>) {
   const [index, setIndex] = useState(0)
   const panelRef = useRef<HTMLDivElement>(null)
   const listId = useId()
+  useRestoreFocus(panelRef, true)
   useFocusTrap(panelRef, true)
 
   useEffect(() => {

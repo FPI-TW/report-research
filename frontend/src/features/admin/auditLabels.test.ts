@@ -32,6 +32,26 @@ test('批次摘要：動作、變更與略過筆數；逐筆那一列註明來�
   }))).toBe('alice・登出 1 個 session・批次操作')
 })
 
+test('研報上傳的稽核：後端會寫的九種 action 都有中文，摘要講檔名、不顯示上傳代號', () => {
+  // 後端寫入點：app/services/upload_intake.py、upload_review.py（管理員的動作）與 upload_worker.py（worker，沒有操作者）。
+  const actions = [
+    'upload.create', 'upload.publish', 'upload.reject', 'upload.unreject', 'upload.retry',
+    'upload.blocked', 'upload.infected', 'upload.purge', 'upload.evidence_purged',
+  ]
+  for (const a of actions) expect(actionLabel(a), a).toMatch(/[\u4e00-\u9fff]/)
+  expect(new Set(actions.map(actionLabel)).size).toBe(actions.length)
+  // 與使用分析頁同一個說法
+  expect(actionLabel('upload.create')).toBe('上傳收檔')
+  expect(actionLabel('upload.publish')).toBe('上傳發布')
+  expect(actionLabel('upload.reject')).toBe('上傳退回')
+  const id = '0b8f6a52-3c1d-4e7a-9f20-5d6c7b8a9e01'
+  expect(auditSummary(entry({
+    action: 'upload.publish', target_type: 'upload', target_id: id,
+    detail: { upload_id: id, file_hash: 'abc', file_name: '20260918_台積電.pdf', self_published: false },
+  }))).toBe('20260918_台積電.pdf')
+  expect(auditSummary(entry({ action: 'upload.purge', target_type: 'upload', target_id: id, detail: {} }))).toBe('上傳 0b8f6a52')
+})
+
 test('Admin v2 預先放好的稽核標籤與登入事件標籤；未知值原樣顯示', () => {
   expect(actionLabel('session.admin_revoke')).toBe('撤銷 session')
   expect(actionLabel('flag.update')).toBe('變更功能旗標')

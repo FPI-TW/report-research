@@ -151,7 +151,8 @@ function ApiClients() {
                         {client.note && <div className={c.sub}>{client.note}</div>}
                       </td>
                       <td className={c.num}>{keyPrefixText(client)}</td>
-                      <td><Status tone={client.enabled ? 'ok' : 'bad'}>{client.enabled ? '啟用' : '停用'}</Status></td>
+                      {/* 停用是管理員設定的狀態，不是異常：用中性的灰燈（只有異常才亮）。 */}
+                      <td><Status tone={client.enabled ? 'ok' : 'idle'}>{client.enabled ? '啟用' : '停用'}</Status></td>
                       <td>{client.scopes.length ? client.scopes.join('、') : <span className={c.muted}>（無）</span>}</td>
                       <td>
                         <div className={c.num}>{client.rate_limit_per_min.toLocaleString()}／分</div>

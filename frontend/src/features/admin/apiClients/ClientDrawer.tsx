@@ -33,7 +33,7 @@ export function ClientDrawer({ client, busy, onClose, onAction }: {
   const e = client.entitlements
   return (
     <Drawer open onClose={onClose} title={client.name} width={520}
-      status={<Status tone={client.enabled ? 'ok' : 'bad'}>{client.enabled ? '啟用' : '停用'}</Status>}
+      status={<Status tone={client.enabled ? 'ok' : 'idle'}>{client.enabled ? '啟用' : '停用'}</Status>}
       subtitle={<span className={c.mono}>{keyPrefixText(client)}</span>}
       footer={<>
         <DrawerFootNote>建立與輪替金鑰需要重新驗證</DrawerFootNote>

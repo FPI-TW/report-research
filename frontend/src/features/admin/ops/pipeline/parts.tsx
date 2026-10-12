@@ -1,18 +1,14 @@
 import type { ReactNode } from 'react'
+import { Chip, type Tone as ChipTone } from '../../../../components/console'
 import styles from './Pipeline.module.css'
 
 export type Tone = 'ok' | 'run' | 'idle' | 'warn' | 'bad'
 
-const TONE_CLASS: Record<Tone, string> = {
-  ok: styles.toneOk,
-  run: styles.toneRun,
-  idle: styles.toneIdle,
-  warn: styles.toneWarn,
-  bad: styles.toneBad,
-}
+/** 管線的語氣 → 主控台晶片的色調：執行中用 info（和服務頁的「轉換中」同一個語彙）。 */
+const CHIP_TONE: Record<Tone, ChipTone> = { ok: 'ok', run: 'info', idle: 'idle', warn: 'warn', bad: 'bad' }
 
 export function TonePill({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`${styles.tone} ${TONE_CLASS[tone]}`}>{children}</span>
+  return <Chip tone={CHIP_TONE[tone]}>{children}</Chip>
 }
 
 /** 進度條：寬度與 aria-valuenow 夾在 0–100（後端偶有超界或 NaN 時不撐破版面）。 */

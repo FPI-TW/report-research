@@ -1,0 +1,52 @@
+/* 維運 → 資料健康、資料庫、LLM 用量各頁自己的微調。卡片、表格、按鈕、分段一律用 console 的類名，
+   這裡只有它沒有的排版；色全部走 --ac-*。 */
+
+.body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* 卡片標題列下方（或頁首下方）的一行中繼資料：時間、筆數、排程 */
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0; font-size: 12px; color: var(--ac-t4); }
+.meta b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t2); }
+.note { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ac-t5); }
+.note code, .meta code { font-family: var(--ac-mono); font-size: 0.95em; color: var(--ac-t3); }
+.idle { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ac-t5); }
+
+/* 數字磚：整塊是一個具名的 group（讀屏與測試都找得到）；要放得下一行補充時用 .wideTiles */
+.tileGroup { display: flex; min-width: 0; }
+.tileGroup > * { flex: 1; }
+.wideTiles { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+
+/* 沒有外框卡片的段落（LLM 用量的合計／批次／線上）：標題＋一行說明 */
+.section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.sectionHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.sectionTitle { margin: 0; font-size: 13px; font-weight: 600; color: var(--ac-t1); }
+
+/* 表格裡的長說明：限寬、允許斷行 */
+.cellText { min-width: 200px; max-width: 460px; overflow-wrap: anywhere; line-height: 1.6; }
+.queryText { min-width: 220px; max-width: 520px; overflow-wrap: anywhere; font-family: var(--ac-mono); font-size: 11.5px; line-height: 1.5; color: var(--ac-t3); }
+.tabs { padding: 0 8px; }
+
+/* 鍵值：鍵比 console 預設的 96px 寬（「舊檔無 SHA metadata」「不算劣化的變化」放得下），值不用等寬字 */
+dl.kvWide { grid-template-columns: 176px minmax(0, 1fr); }
+dl.kvText dd { font-family: inherit; line-height: 1.6; }
+
+/* 可收合的明細（問題樣本、流失／新進的研報） */
+.details summary { font-size: 12px; color: var(--ac-goldt); cursor: pointer; }
+.details[open] summary { margin-bottom: 8px; }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.list code { font-family: var(--ac-mono); font-size: 11.5px; color: var(--ac-t3); overflow-wrap: anywhere; }
+.listTitle { margin: 8px 0 4px; font-size: 11.5px; color: var(--ac-t5); }
+
+/* 趨勢卡的控制列與圖 */
+.controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.control { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ac-t5); min-width: 0; }
+.control select { max-width: 100%; }
+.chartBody { padding: 14px 16px 12px; }
+.failNum { color: var(--ac-badt); font-weight: 600; }
+
+@media (max-width: 560px) {
+  dl.kvWide { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+  dl.kvWide dd { margin-bottom: 6px; }
+}
+/* 表格下方的補充說明（console 的 cardFoot 沒有上框線） */
+.footNote { border-top: 1px solid var(--ac-l2); line-height: 1.6; }
+.footNote b { font-family: var(--ac-mono); font-weight: 500; color: var(--ac-t3); }

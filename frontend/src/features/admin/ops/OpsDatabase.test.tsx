@@ -79,31 +79,87 @@ function dbHandler(slow: unknown = SLOW_OFF) {
   }
 }
 
-test('資料庫：快照卡片；權限不足／逾時的段落只顯示說明，其餘照常', async () => {
+test('資料庫：快照數字磚；權限不足／逾時的段落只顯示說明，其餘照常', async () => {
   mount(<OpsDatabasePage />, dbHandler())
-  expect(await screen.findByRole('group', { name: '資料庫大小' })).toHaveTextContent('9.0 GiB')
-  expect(screen.getByRole('group', { name: '連線數' })).toHaveTextContent('12 / 97')
+  // 數字與單位分開排（「9.0」＋「GiB」、「12」＋「/ 97」）
+  expect(await screen.findByRole('group', { name: '資料庫大小' })).toHaveTextContent(/9\.0\s*GiB/)
+  expect(screen.getByRole('group', { name: '資料庫大小' })).toHaveTextContent('research・PostgreSQL 16.4')
+  expect(screen.getByRole('group', { name: '連線數' })).toHaveTextContent(/12\s*\/ 97/)
   expect(screen.getByRole('group', { name: '連線數' })).toHaveTextContent('上限 100（保留 3）')
-  const states = screen.getByText(/連到本庫/).closest('p')!
+  const states = screen.getByLabelText('連線狀態')
   expect(states).toHaveTextContent('執行中 3')
   expect(states).toHaveTextContent('交易中閒置 1')
   expect(states).toHaveTextContent('看不到狀態 2')
+  expect(states).toHaveTextContent('連到本庫 10')
   expect(screen.getByRole('group', { name: '快取命中率' })).toHaveTextContent('—')
+  expect(screen.getByRole('group', { name: '快取命中率' })).not.toHaveTextContent('%')
+  expect(screen.getByRole('group', { name: 'dead tuple 比例' })).toHaveTextContent(/10\.00\s*%/)
   expect(screen.getByText(/快取與交易統計：查詢逾時/)).toBeInTheDocument()
+  expect(screen.getByText(/每段查詢上限 5000 ms・每 60 秒更新/)).toBeInTheDocument()
   const tables = within(screen.getByRole('table', { name: '各表統計' }))
   expect(tables.getByText('report_chunk')).toBeInTheDocument()
   expect(tables.getByText('9.1%')).toBeInTheDocument()
+  expect(within(screen.getByRole('region', { name: '各表大小與膨脹估計' })).getByText('前 50 大（共 30 張）')).toBeInTheDocument()
   const idx = within(screen.getByRole('region', { name: '未使用的索引' }))
   expect(idx.getByText(/索引統計：權限不足/)).toBeInTheDocument()
   expect(screen.queryByRole('table', { name: '未使用的索引' })).not.toBeInTheDocument()
+})
+
+test('資料庫：頁首取導覽結構的頁名，長說明收在「說明」後面', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const r = dbHandler()(url)
+    return new Response(JSON.stringify(r.body), { status: r.status ?? 200 })
+  }))
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/admin/operations/database']}><OpsDatabasePage /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByRole('heading', { level: 1, name: '資料庫' })).toBeInTheDocument()
+  expect(screen.getByText('維運 / 資料')).toBeInTheDocument()
+  expect(screen.queryByText(/各段獨立降級/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '說明' }))
+  expect(screen.getByText(/各段獨立降級/)).toBeInTheDocument()
+})
+
+test('資料庫：未使用的索引列出大小與種類，說明主鍵／唯一索引不能刪；沒有時明說', async () => {
+  const withIdx = {
+    ...OVERVIEW,
+    unused_indexes: {
+      error: null, count: 2, total_bytes: 3 * 1024 ** 2,
+      items: [
+        { schema_name: 'research', table: 'qa_log', index: 'ix_qa_log_filters_gin', size_bytes: 2 * 1024 ** 2, is_unique: false, is_primary: false },
+        { schema_name: 'research', table: 'app_user', index: 'app_user_pkey', size_bytes: 1024 ** 2, is_unique: true, is_primary: true },
+      ],
+    },
+  }
+  mount(<OpsDatabasePage />, url => url === '/api/admin/db/overview' ? { body: withIdx } : dbHandler()(url))
+  const rows = within(await screen.findByRole('table', { name: '未使用的索引' })).getAllByRole('row').slice(1)
+  expect(rows[0]).toHaveTextContent('ix_qa_log_filters_gin')
+  expect(rows[0]).toHaveTextContent('research.qa_log')
+  expect(rows[0]).toHaveTextContent('2.0 MiB')
+  expect(rows[0]).toHaveTextContent('一般')
+  expect(rows[1]).toHaveTextContent('主鍵')
+  const idx = within(screen.getByRole('region', { name: '未使用的索引' }))
+  expect(idx.getByText(/唯一／主鍵索引負責約束，沒被掃過也不能刪/)).toHaveTextContent('共 2 個、3.0 MiB')
+})
+
+test('資料庫：統計起點以來每個索引都被用過 → 明說，不留空表', async () => {
+  const none = { ...OVERVIEW, unused_indexes: { error: null, count: 0, total_bytes: 0, items: [] } }
+  mount(<OpsDatabasePage />, url => url === '/api/admin/db/overview' ? { body: none } : dbHandler()(url))
+  expect(await screen.findByText('統計起點以來每個索引都被用過。')).toBeInTheDocument()
 })
 
 test('資料庫：慢查詢不可用時顯示原因與啟用步驟的出處，不顯示表格', async () => {
   mount(<OpsDatabasePage />, dbHandler(SLOW_OFF))
   const slow = within(await screen.findByRole('region', { name: '慢查詢（pg_stat_statements）' }))
   expect(await slow.findByText(/沒有預載它/)).toBeInTheDocument()
+  expect(slow.getByText('pg_stat_statements 已建立但沒有預載')).toBeInTheDocument()
   expect(slow.getByText(/網頁不會自動建立擴充/)).toBeInTheDocument()
   expect(slow.queryByRole('table')).not.toBeInTheDocument()
+  // 不能用的時候沒有東西可排序
+  expect(slow.queryByRole('group', { name: '排序' })).not.toBeInTheDocument()
 })
 
 test('資料庫：慢查詢可用時列出語句、權限不足的語句文字隱藏；換排序重新查詢', async () => {
@@ -114,7 +170,9 @@ test('資料庫：慢查詢可用時列出語句、權限不足的語句文字�
   expect(rows[0]).toHaveTextContent('64.0 秒')
   expect(rows[1]).toHaveTextContent('權限不足，已隱藏')
   expect(screen.getByText(/1 筆因權限不足隱藏查詢文字/)).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('排序'), { target: { value: 'mean' } })
+  const sort = within(screen.getByRole('group', { name: '排序' }))
+  expect(sort.getByRole('button', { name: '總執行時間' })).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(sort.getByRole('button', { name: '平均執行時間' }))
   await waitFor(() => expect(fetchMock.mock.calls.map(([u]) => String(u)))
     .toContain('/api/admin/db/slow-queries?sort=mean&limit=20'))
 })
@@ -126,7 +184,9 @@ test('資料庫：趨勢圖（null 斷開）、切換指標與區間；單一表
   expect(screen.getByText('粒度')).toHaveTextContent('逐時')
   const trendCalls = () => fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/admin/db/trends'))
   expect(trendCalls()[0]).toMatch(/^\/api\/admin\/db\/trends\?metric=db_size_bytes&since=/)
-  fireEvent.change(screen.getByLabelText('區間'), { target: { value: '30' } })
+  const range = within(screen.getByRole('group', { name: '區間' }))
+  expect(range.getByRole('button', { name: '7 天' })).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(range.getByRole('button', { name: '30 天' }))
   fireEvent.change(screen.getByLabelText('指標'), { target: { value: 'table_bytes' } })
   expect(await screen.findByText(/選一張表看它的大小變化/)).toBeInTheDocument()
   expect(trendCalls().some(u => u.includes('metric=table_bytes'))).toBe(false)
@@ -139,11 +199,22 @@ test('資料庫：趨勢圖（null 斷開）、切換指標與區間；單一表
   expect(days).toBeLessThan(30.1)
 })
 
+test('資料庫：趨勢沒有資料時說明快照 timer；每日粒度說明色帶', async () => {
+  mount(<OpsDatabasePage />, url => url.startsWith('/api/admin/db/trends')
+    ? { body: trend('db_size_bytes', [], 'day') } : dbHandler()(url))
+  expect(await screen.findByText(/report-mark-db-snapshot\.timer/)).toBeInTheDocument()
+  expect(screen.getByText('這段期間沒有資料。')).toBeInTheDocument()
+  expect(screen.getByText('每日平均，淡色帶為當日最低～最高')).toBeInTheDocument()
+})
+
 test('資料庫：快照 API 失敗時顯示錯誤，不白屏', async () => {
   mount(<OpsDatabasePage />, url => url === '/api/admin/db/overview'
     ? { status: 403, body: { detail: '缺少權限：ops.read', code: 'missing_scope' } }
     : dbHandler()(url))
   expect(await screen.findByText(/資料庫快照載入失敗：缺少權限：ops.read/)).toBeInTheDocument()
+  // 快照讀不到時，慢查詢與趨勢各自照常
+  expect(await screen.findByRole('region', { name: '趨勢' })).toBeInTheDocument()
+  expect(screen.getByRole('region', { name: '慢查詢（pg_stat_statements）' })).toBeInTheDocument()
 })
 
 const INCIDENT_LIST = {

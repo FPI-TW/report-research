@@ -92,8 +92,8 @@ export function useSecuritySessions(activeOnly: boolean, enabled: boolean) {
 }
 
 /**
- * 撤銷單一 session（後端要 accounts.manage＋已提升）。呼叫端以 `useElevationGate().guard` 包住 `mutateAsync`：
- * 收到 `elevation_required` 時彈出驗證框、驗證後自動重試。成功後重抓 session 清單、高風險時間線與操作紀錄
+ * 撤銷單一 session（後端要 accounts.manage＋已提升）。呼叫端以 `useElevate().elevated` 包住 `mutateAsync`：
+ * 先重新驗證身分才送出；收到 `elevation_required` 時再彈一次驗證框、驗證後自動重試。成功後重抓 session 清單、高風險時間線與操作紀錄
  * （撤銷與稽核 `session.admin_revoke` 同一筆交易）。
  */
 export function useRevokeSession() {

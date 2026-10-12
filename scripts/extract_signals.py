@@ -90,10 +90,15 @@ def build_subset_sql() -> str:
 
 
 def build_reports_sql() -> str:
-    """撈某 market 內涵蓋子集標的的研報（陣列重疊 && 走 idx_rr_stock_targets GIN）。"""
+    """撈某 market 內涵蓋子集標的的研報（陣列重疊 && 走 idx_rr_stock_targets GIN）。
+
+    **刻意不選 `full_text`**：這句每輪都對整個子集跑一次，只為了挑出還沒擷取的那幾份。帶著內文時
+    TW 一個 market 就回傳 5,300 多份、約 193 MB（2026-10-12 實測），主機一忙就撞 statement_timeout、
+    整段訊號擷取以 rc=1 收場。內文只對真的要送 LLM 的那幾份撈（`load_full_text`）。
+    """
     return (
         "SELECT r.id::text, r.source, r.report_date, r.market, "
-        "       r.file_name, r.full_text, r.stock_targets, r.file_hash "
+        "       r.file_name, r.stock_targets, r.file_hash "
         "FROM research.research_report r "
         "WHERE r.market = :market "
         "  AND r.stock_targets && CAST(:codes AS text[]) "
@@ -101,6 +106,19 @@ def build_reports_sql() -> str:
         "  AND r.full_text IS NOT NULL "
         "  AND r.report_date IS NOT NULL "
         "ORDER BY r.report_date DESC NULLS LAST, r.file_name"
+    )
+
+
+# 一次撈幾份內文：上限讓單句回傳量有界（每份全文多為數十 KB），不隨待擷取份數成長。
+FULL_TEXT_BATCH = 50
+
+
+def build_full_text_sql() -> str:
+    """撈待擷取研報的內文（見 `load_full_text`）。"""
+    return (
+        "SELECT r.id::text, r.full_text "
+        "FROM research.research_report r "
+        "WHERE r.id = ANY(CAST(:ids AS uuid[]))"
     )
 
 
@@ -206,7 +224,10 @@ _fail = 0
 
 
 class WorkItem:
-    """一份待擷取的研報 + 其 requested 標的清單。"""
+    """一份待擷取的研報 + 其 requested 標的清單。
+
+    `full_text` 在 `build_worklist` 產出時是 None，由 `load_full_text` 在套完 `--limit` 之後補上。
+    """
 
     __slots__ = ("report_id", "market", "broker", "report_date", "file_name",
                  "full_text", "requested_codes", "file_hash")
@@ -289,12 +310,12 @@ async def build_worklist(min_brokers, min_reports, top_n, reextract, skip_model=
             done_map = await _fetch_done_map(session, ids)
             failures = (
                 await llm_failures.fetch_failures(
-                    session, llm_failures.TASK_SIGNAL, [r[7] for r in reports if r[7]]
+                    session, llm_failures.TASK_SIGNAL, [r[-1] for r in reports if r[-1]]
                 )
                 if skip_model
                 else {}
             )
-            for rid, source, report_date, mkt, file_name, full_text, targets, fh in reports:
+            for rid, source, report_date, mkt, file_name, targets, fh in reports:
                 requested = sorted(set(targets or []) & codes)
                 if not requested:
                     continue
@@ -303,10 +324,32 @@ async def build_worklist(min_brokers, min_reports, top_n, reextract, skip_model=
                 if skip_model and llm_failures.should_skip(failures.get(fh), skip_model):
                     continue
                 worklist.append(
-                    WorkItem(rid, mkt, source, report_date, file_name, full_text, requested,
+                    WorkItem(rid, mkt, source, report_date, file_name, None, requested,
                              file_hash=fh)
                 )
     return subset, worklist
+
+
+async def load_full_text(worklist: list[WorkItem]) -> list[WorkItem]:
+    """替還沒有內文的項目補上 `full_text`，回傳拿得到內文的項目（順序不變）。
+
+    分批撈（`FULL_TEXT_BATCH`）。拿不到內文＝建清單之後研報被重新入庫換了 report_id 或被刪除，
+    這輪略過、下一輪以新的 report_id 重新排入；送空內文給 LLM 只會多一筆 rejected。
+    """
+    pending = [it for it in worklist if it.full_text is None]
+    if pending:
+        async with SessionFactory() as session:
+            for start in range(0, len(pending), FULL_TEXT_BATCH):
+                batch = pending[start:start + FULL_TEXT_BATCH]
+                rows = (
+                    await session.execute(
+                        text(build_full_text_sql()), {"ids": [it.report_id for it in batch]}
+                    )
+                ).all()
+                texts = {str(rid): full_text for rid, full_text in rows}
+                for it in batch:
+                    it.full_text = texts.get(it.report_id)
+    return [it for it in worklist if it.full_text]
 
 
 async def _upsert_rows(rows: list[SignalRow]) -> None:
@@ -413,9 +456,16 @@ async def main(args) -> None:
 
     if args.limit:
         worklist = worklist[: args.limit]
-    total = len(worklist)
-    if not total:
+    if not worklist:
         print("nothing to do（子集皆已擷取）", flush=True)
+        return
+    # 內文只撈套完 --limit 之後真的要送 LLM 的那幾份（理由見 build_reports_sql）。
+    planned = len(worklist)
+    worklist = await load_full_text(worklist)
+    total = len(worklist)
+    if total < planned:
+        print(f"略過 {planned - total} 份：撈不到內文（建清單之後被重新入庫或刪除；下一輪重新排入）", flush=True)
+    if not total:
         return
 
     sem = asyncio.Semaphore(args.workers)

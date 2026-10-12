@@ -1,0 +1,29 @@
+[Unit]
+Description=廷豐智能研報 主機信標發布（服務狀態與 sync 來源段結果 → R2 beacons/，給另一台主機的後台監看）
+# 這台是另一個部署（碰不到 NAS 的 EC2）的新檔來源：每輪 sync 把 NAS 的新檔推到 R2 inbox/。這台停機、sync 沒在跑、
+# NAS 掛不上、推送失敗時，另一端看到的只是「inbox 沒有新檔」。這支每 10 分鐘把本機的服務清單狀態（問維運代理）與
+# sync 來源段的結果（讀 data/ 的狀態檔）發布成一個小 JSON，另一端的 web 讀它並告警。
+# 內容與判讀見 app/services/host_beacon.py；腳本是 scripts/publish_host_beacon.py（零 LLM、不碰 DB、不載模型）。
+# 要發布的名稱是 /etc/default/report-mark-sync 的 HOST_BEACON_NAME；沒設就是 rc=0 什麼都不做。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：這支失敗（R2 寫不進去、設定不足）的後果就是信標變舊，另一端的探針會以 stale 告警——
+# 那才是有人在看的地方。report-mark-alert@ 沒有去重，這裡再掛一次就是 R2 抖動期間每 10 分鐘一則重複通知；
+# 而這台整個停掉時，這裡的 OnFailure 本來就一則也送不出來。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 共用環境檔：REPORT_MARK_ROOT、SYNC_PATH_EXTRA（找 uv）、R2 憑證、SYNC_SOURCE、SYNC_INBOX_PUSH、HOST_BEACON_NAME。
+# 讀的是 sync 那一份而不是 repo 根 .env：信標要回報的正是「sync 實際上是用什麼設定在跑」。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/publish_host_beacon.py'
+# 正常一輪＝問一次維運代理（上限 10 秒）＋一個 R2 PUT，數秒內結束。boto 的連線逾時 5 秒、重試 3 次，最壞約一分鐘。
+TimeoutStartSec=120
+Nice=10
+# 短命的 Python＋boto：不載檢索／嵌入模組，給一個保守上限防意外。
+MemoryMax=512M

@@ -244,8 +244,9 @@ errors.install(app)
 # 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
 # /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
 # 回應內容刻意極簡（見 routers/health.py）。
-# /healthz/storage、/healthz/llm、/healthz/security 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security"}
+# /healthz/storage、/healthz/llm、/healthz/security、/healthz/feed 在白名單裡但只回答本機直連（其餘 404），
+# 理由見 routers/health.py。
+_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
 # 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
 _EXTERNAL_PREFIX = "/external/"

@@ -8,6 +8,7 @@
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass
 
 from app.services.llm_models import (
@@ -183,6 +184,22 @@ def _ops_agent_environment() -> str:
 def _ops_agent_socket(environment: str) -> str:
     """有設 OPS_AGENT_SOCKET 就用它（本機冒煙的臨時 socket）；否則用該環境的固定路徑。"""
     return (os.getenv("OPS_AGENT_SOCKET") or "").strip() or _OPS_SOCKETS.get(environment, "")
+
+
+_BEACON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+
+
+def _beacon_name(name: str) -> str:
+    """主機信標的名稱（R2 key 的一段）。不合法＝空字串＝停用並警告：
+
+    拼錯不可變成寫到別的 key、或默默監看一個不存在的信標。
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw and not _BEACON_NAME.fullmatch(raw):
+        logging.getLogger(__name__).warning(
+            "%s=%r 不是合法名稱（小寫英數與 -，字母開頭，最長 40），視為未設定", name, raw)
+        return ""
+    return raw
 
 
 def _ratio(name: str, default: float) -> float:
@@ -458,6 +475,15 @@ class Settings:
     # 對外 API（GET /external/v1/reports/{report_id}/file-url）交出的 presign 有效期（秒，60..3600）；
     # 站內的原檔連結仍用 r2_presign_ttl_seconds。經 ObjectStorage.presign_get(ttl_seconds=...) 傳入。
     external_file_url_ttl_seconds: int = 600
+    # 主機信標（app/services/host_beacon.py）：一台主機把自己的服務與 sync 來源段狀態發布到共用的 R2，
+    # 另一台讀來監看。host_beacon_name＝本機以這個名稱發布（scripts/publish_host_beacon.py；空＝不發布）；
+    # host_beacon_watch＝web 要監看的信標名稱（/healthz/feed、/api/admin/ops/remote-hosts；空＝不監看）。
+    # 兩個門檻：信標多久沒更新算那台主機失聯（分鐘）、sync 的來源段多久沒有新結果算停擺
+    # （小時；sync 每 3 小時一輪，7＝漏掉至少一整輪）。
+    host_beacon_name: str = ""
+    host_beacon_watch: str = ""
+    host_beacon_stale_minutes: int = 45
+    host_beacon_feed_stale_hours: int = 7
 
 
 def _load() -> Settings:
@@ -672,6 +698,10 @@ def _load() -> Settings:
         security_elevate_failure_threshold=_int_at_least("SECURITY_ELEVATE_FAILURE_THRESHOLD", 3, 1),
         audit_verify_cache_seconds=_int_at_least("AUDIT_VERIFY_CACHE_SECONDS", 3600, 0),
         external_file_url_ttl_seconds=_external_file_url_ttl(),
+        host_beacon_name=_beacon_name("HOST_BEACON_NAME"),
+        host_beacon_watch=_beacon_name("HOST_BEACON_WATCH"),
+        host_beacon_stale_minutes=_int_at_least("HOST_BEACON_STALE_MINUTES", 45, 15),
+        host_beacon_feed_stale_hours=_int_at_least("HOST_BEACON_FEED_STALE_HOURS", 7, 4),
     )
 
 

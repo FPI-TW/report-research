@@ -1,0 +1,27 @@
+[Unit]
+Description=新檔來源探針（/healthz/feed：來源主機的信標——失聯、sync 停擺、NAS 掛載或 rsync 失敗、inbox 推送失敗）
+# 判斷在 web 行程（app/services/host_beacon.py，讀來源那台發布到 R2 的信標）；本探針只把 {"feed": state} 轉成退出碼，
+# 交給 report-mark-feed-incident.service（同一支 scripts/incident_handler.sh）。
+After=network-online.target report-mark-web.service
+Wants=network-online.target
+# **刻意不宣告 OnFailure**，理由與 report-mark-health.service 相同：探針每 2 分鐘一次，同一次事件會觸發
+# 約 30 次／小時；去重、提醒節奏、恢復判定屬於 P5（report-mark-feed-incident.service）。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 /root，不受 User= 影響。tests/test_deploy_units.py 靜態守這條。
+Environment=HOME=/home/kashionz
+# 只需要 curl／coreutils。**刻意不含 nvm 與 uv 的路徑**：探針不得相依 Python／.venv。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_feed_health.sh"'
+# 3＝判不出來（web 連不上、端點不存在、R2 讀不到）：不是故障，unit 不該停在 failed。
+# feed-incident 那組另以 INCIDENT_HOLD_EXIT_CODES=3 把它當 hold（不開也不關事件）。
+SuccessExitStatus=3
+# 最壞情況＝2 次 × 10 秒逾時 ＋ 1 次 × 10 秒等待 ＝ 30 秒。取 60 秒＝2 倍餘裕，且嚴格小於 timer 的 120 秒間隔。
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -412,7 +412,7 @@ class DependencyGraphTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(server.main(["--catalog", str(STAGING_TOML), "--check"]), 0)
         self.assertIn("environment=staging", out.getvalue())
-        self.assertIn("externals=5", out.getvalue())
+        self.assertIn("externals=6", out.getvalue())
         with tempfile.TemporaryDirectory() as tmp:
             toml = Path(tmp) / "c.toml"
             web_deps = 'depends_on = ["rds", "r2", "deepseek"]\ndescription = "Web'

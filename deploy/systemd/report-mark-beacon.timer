@@ -1,0 +1,13 @@
+[Unit]
+Description=每 10 分鐘發布主機信標（服務狀態與 sync 來源段結果 → R2）
+
+[Timer]
+# 排在 :05 起每 10 分鐘：sync 在每 3 小時的整點開工，掛載與 rsync 通常一兩分鐘內就有結論，:05 這一班就帶得到；
+# 也避開整點、:20、:40 的其他批次。另一端以「信標超過 45 分鐘沒更新」判這台失聯（HOST_BEACON_STALE_MINUTES），
+# 也就是連續漏掉四班——單次 R2 抖動或這台重開機不會誤報。
+OnCalendar=*-*-* *:05/10:00
+# **刻意不設 Persistent=true**：信標量的是「此刻」，錯過的那幾班沒有補發的價值；開機後最多 10 分鐘就有下一班。
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

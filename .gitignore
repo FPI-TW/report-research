@@ -40,6 +40,12 @@ data/.last_successful_sync
 # 同性質的純執行期狀態：遺失只會讓下一輪少補記一筆告警，不會壞資料。
 data/sync_round_state
 data/sync_delta_*.txt
+# 來源段結果（sync 殼每輪寫、scripts/publish_host_beacon.py 讀來發布主機信標）。純執行期狀態：
+# 遺失只會讓另一台的後台在下一輪 sync 之前判成 sync_stalled，不會壞資料。
+data/.sync_feed_state
+data/.sync_feed_state.tmp.*
+# inbox 推送失敗時保留的補傳 delta（scripts/sync_new_reports.sh）。補傳成功後由人刪除。
+data/inbox_delta_retained_*.txt
 # 下游整批中止（rc=2）時保留的本輪 hashes，以及手動重放 delta 時 --hashes-out 寫出的
 # 那份（scripts/sync_new_reports.sh）。重放補跑完由人刪除。
 data/sync_hashes_retained_*.txt
@@ -113,6 +119,7 @@ data/.incidents-edge/
 data/.incidents-container/
 data/.incidents-host/
 data/.incidents-security/
+data/.incidents-feed/
 # 容器／主機探針依 tier 去抖的連續失敗次數（scripts/_health_streak.sh）。遺失只會讓確認期重新起算。
 data/.health-streaks/
 # 結果檔（app/services/data_health.py 的 db_audit／r2_reconcile／retrieval_regression、security_ops 的 audit_anchor）：

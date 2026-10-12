@@ -2488,6 +2488,102 @@ sudo systemctl disable --now report-mark-analytics-rollup.timer
 保留。恢復時重新 `enable --now`，並手動跑一次 `scripts/analytics_rollup.py --backfill 90` 補回還在窗期內的缺口
 （已離開窗期、`qa_log` 仍在的日子也能以更大的 N 補，但被硬刪的問答補不回來）。
 
+## 來源主機信標（辦公室主機的 NAS → R2 inbox，由 EC2 監看）
+
+正式環境（EC2）碰不到 NAS，新研報全靠辦公室主機的 sync 每輪 rsync 之後推到 R2 的 `inbox/`。那台停機、WSL 被收掉、sync 的
+timer 停了、NAS 掛不上、推送失敗——EC2 看到的都只是「inbox 沒有新檔」：自己的 sync 每 3 小時照樣 rc=0、心跳照樣更新、
+後台全綠，與「這幾天沒有新稿」無從分辨；而辦公室主機整台停掉時，它自己的告警一則也送不出來。
+
+做法是來源那台主動發布、收檔那台判讀（`app/services/host_beacon.py`，不另開網路通道——兩台本來就共用同一個 bucket）：
+
+| 主機 | 元件 | 做什麼 |
+|---|---|---|
+| 辦公室主機（來源） | `scripts/sync_new_reports.sh` | 每輪把來源段的結論寫進 `data/.sync_feed_state`（`result`＝`ok`／`mount_failed`／`rsync_failed`，`push`＝`off`／`none`／`ok`／`failed`）。只記掛載、rsync、推送；匯入與下游的失敗由這台自己的心跳與 freshness 負責 |
+| 辦公室主機（來源） | `report-mark-beacon.timer`（每 10 分鐘） | `scripts/publish_host_beacon.py` 把上面那個檔、本輪狀態、心跳、還沒補傳的 `data/inbox_delta_retained_*.txt` 數量，加上維運代理回報的服務清單，覆寫到 R2 的 `beacons/<HOST_BEACON_NAME>.json` |
+| EC2（收檔） | web 的 `/healthz/feed` | 讀 `HOST_BEACON_WATCH` 指定的信標並判讀；信標的年齡以 R2 的 `LastModified` 計（不信任發布端的時鐘） |
+| EC2（收檔） | `report-mark-feed-health`／`report-mark-feed-incident` | 探針把 state 轉成退出碼，P5（`scripts/incident_handler.sh`，沒有改）做去重並送 Slack；提醒間隔 3 小時 |
+| EC2（收檔） | 管理後台「維運 → 來源主機」、依賴圖的 `office-feed` | 看是哪幾條成立、來源段最近一輪的結果與那台的服務清單（`GET /api/admin/ops/remote-hosts`） |
+
+### 狀態與處置
+
+| state | 意思 | 探針退出碼 → P5 | 先看哪裡 |
+|---|---|---|---|
+| `stale` | 信標超過 `HOST_BEACON_STALE_MINUTES`（45）分鐘沒更新：辦公室主機失聯 | 1 → CRITICAL | 那台是否開機、WSL 是否在跑（`wsl -l -v`）、`systemctl list-timers report-mark-beacon.timer`、`journalctl -u report-mark-beacon -n 20`（R2 寫不進去也是這個狀態） |
+| `missing` | bucket 裡沒有這個信標 | 1 → CRITICAL | 辦公室主機的 `HOST_BEACON_NAME` 與 EC2 的 `HOST_BEACON_WATCH` 是否同名；`report-mark-beacon.timer` 有沒有裝、有沒有跑過 |
+| `invalid` | 讀得到但看不懂（版本不符、格式壞掉） | 2 → CRITICAL | 兩台的程式版本是否差太多（信標格式 `v` 不同）；先升級收檔那台 |
+| `timer_inactive` | `report-mark-sync.timer` 不在 active | 2 → CRITICAL | 辦公室主機 `sudo systemctl enable --now report-mark-sync.timer` |
+| `sync_stalled` | 來源段超過 `HOST_BEACON_FEED_STALE_HOURS`（7）小時沒有新結果（sync 每 3 小時一輪） | 2 → CRITICAL | `data/sync_run_<日期>.log`：是不是 PID lock 一直被佔用（「已有 sync 在跑」）、unit 起不來、或 `systemctl is-system-running` 卡在 stopping |
+| `source_failed` | 最近一輪 NAS 掛載或 rsync 失敗 | 2 → CRITICAL | `data/sync_run_<日期>.log` 的「掛載失敗」或「rsync rc=」；NAS 是否在線、Windows 的網路磁碟憑證、`sudo -n /usr/local/sbin/mount-nas-research` |
+| `push_disabled` | 來源是 NAS 卻沒開 `SYNC_INBOX_PUSH` | 2 → CRITICAL | `/etc/default/report-mark-sync` 補回 `SYNC_INBOX_PUSH=1`（下一輪生效；這段期間落地的檔不會自己補推，見下） |
+| `push_failed` | 最近一輪推送失敗，或還有沒補傳的 delta | 2 → CRITICAL | 照 `data/sync_run_<日期>.log` 印出的指令補傳：`uv run python scripts/r2_inbox.py push --delta data/inbox_delta_retained_<時間>.txt`，**成功後刪掉那份 delta**（檔還在就會一直是 `push_failed`） |
+| `round_aborted` | 最近一輪被中止（SIGTERM、SIGKILL、斷電） | 2 → CRITICAL | rsync 可能已把部分新檔落到本地，而 `--size-only` 讓下一輪 delta 不再列出它們：照 `data/unit_failures.log` 的 `sync_round(aborted)` 那筆重放 delta（或 `--all-local`），再以同一份 delta 補推 inbox。下一輪正常跑完後這個狀態自己消失，但漏掉的檔不會自己回來 |
+| `unknown` | R2 讀不到或逾時、web 連不上、端點不存在 | 3 → hold（不開也不關） | R2 與 web 各有自己的事件（`report-mark-incident` 的 exit 6、1） |
+| `disabled` | web 沒設 `HOST_BEACON_WATCH` | 4 → WARNING | 補設定並重啟 web；這台不需要監看就移除這組 unit |
+
+多項同時成立時 state 是表中最前面那一個（`stale` 成立時不再往下判：信標裡都是舊聞）。P5 的通知只說「探針回報失敗（exit=1 或 2）」；
+是哪一條在探針 unit 的 journal（`journalctl -u report-mark-feed-health -n 5` 的 `reason=feed_<state>`）、web 日誌的「來源主機信標告警」
+一行，全部成立的項目與來源段的細節在「維運 → 來源主機」。恢復是自動的：條件消失後下一輪探針回 0，P5 送 RESOLVED。
+
+`push_disabled`、`push_failed`、`round_aborted` 期間落地在辦公室主機的檔不會自己補推到 inbox。補推以 delta 為單位：
+`uv run python scripts/r2_inbox.py push --delta <那一輪的 delta>`；沒有 delta 可用時，以檔名清單自己寫一份（每行一個相對於
+`研報自動匯入/` 的路徑）。EC2 下一輪 sync 會把 inbox 裡本地沒有的檔拉回去。
+
+**量不到的**：信標只證明「來源段有在跑、有結論」。NAS 上游（LINE bot 沒把檔放進 NAS）不在這裡，那是辦公室主機
+`linebot-health` 的事；EC2 自己拉取失敗（`r2_inbox(pull)`）是 EC2 的 `data/unit_failures.log` 與心跳。
+
+### 安裝（人工，需 sudo；先辦公室主機、後 EC2）
+
+順序有意義：信標要先存在，EC2 的探針第一輪才不會以 `missing` 開一個事件；sync 也要以新版的殼跑過一輪，`data/.sync_feed_state`
+才會有（否則信標發布後 7 小時會判成 `sync_stalled`）。
+
+```bash
+# ── 1) 辦公室主機（部署目錄 repo 根；程式已更新到含信標的版本）
+#    a. 在 /etc/default/report-mark-sync 加一行（名稱兩台要一致；小寫英數與 -）：
+#         HOST_BEACON_NAME=office
+#    b. 先試跑，確認內容合理（--dry-run 不寫 R2；手動跑不會載入環境檔，所以把要回報的設定帶在命令列）：
+HOST_BEACON_NAME=office SYNC_INBOX_PUSH=1 uv run python scripts/publish_host_beacon.py --dry-run
+#    c. 安裝並啟用
+sudo install -m 0644 deploy/systemd/report-mark-beacon.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-beacon.timer
+sudo systemctl start report-mark-beacon.service && journalctl -u report-mark-beacon -n 3 --no-pager   # 「已發布 beacons/office.json」
+#    d. ops catalog 多了 beacon 一項（唯讀）：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理。
+#    e. 等下一輪 sync（每 3 小時整點）跑過，或確認 data/.sync_feed_state 已存在。
+
+# ── 2) EC2（部署 checkout repo 根；web 已更新到含 /healthz/feed 的版本）
+#    a. repo 根 .env 加一行並重啟 web：
+#         HOST_BEACON_WATCH=office
+curl -s http://127.0.0.1:8097/healthz/feed          # {"feed":"ok"}；disabled＝.env 沒生效，404＝web 還是舊版
+#    b. 安裝探針與事件（代換使用者與路徑），兩組一起開
+sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark \
+    report-mark-feed-health.service report-mark-feed-health.timer \
+    report-mark-feed-incident.service report-mark-feed-incident.timer
+sudo systemctl enable --now report-mark-feed-health.timer report-mark-feed-incident.timer
+#    c. ops catalog 多了 feed-health、feed-incident 與外部依賴 office-feed：照「維運代理」的 EC2 一節重新安裝
+#       services.staging.toml、--check，再重啟 report-mark-ops-agent-staging.service。
+```
+
+驗收：EC2 上 `sudo systemctl start report-mark-feed-health.service` 後 `systemctl show report-mark-feed-health -p ExecMainStatus`
+為 0、`journalctl -u report-mark-feed-health -n 1` 有 `status=ok`；P5 實例跑過一輪後 `journalctl -u report-mark-feed-incident -n 2`
+是 `action=noop`；管理後台「維運 → 來源主機」看得到辦公室主機的服務清單與來源段結果，依賴圖上 `office-feed` 是正常。
+要演練告警：在辦公室主機 `sudo systemctl stop report-mark-beacon.timer`，45 分鐘後 EC2 應收到 `feed` 的 FIRING（`reason` 是
+`probe_exit_1`），重新 `start` 後下一班發布、下一輪探針就 RESOLVED。狀態目錄是 `data/.incidents-feed/`。
+
+前提同安全告警那組：EC2 的 P5 要已運作、`/etc/report-mark/alert.env` 有 webhook。EC2 沒有監控收集與事件投影，這組事件只送
+Slack、不進後台的「事件」分頁。
+
+### 停用
+
+```bash
+# EC2：先停事件再停探針（只留 P5 在跑會回報 MONITOR_BLIND）
+sudo systemctl disable --now report-mark-feed-incident.timer report-mark-feed-health.timer
+# 辦公室主機
+sudo systemctl disable --now report-mark-beacon.timer
+```
+
+只停辦公室主機那一支而 EC2 的探針還開著，45 分鐘後就是一則 `stale` 告警——那是設計，不是誤報。信標物件（`beacons/`）不必清，
+也不要對 `beacons/` 設 R2 生命週期規則（inbox 的規則只套 `inbox/`）。
+
 ## 功能開關與啟用矩陣（Admin v2）
 
 功能旗標（`app/services/feature_flags.py`、管理後台「功能旗標」頁、`/api/admin/flags*`）讓管理員在**環境變數允許的

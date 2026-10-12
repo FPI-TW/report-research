@@ -52,7 +52,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `data/metrics/` | 硬體用量取樣 JSONL | 否 |
 | `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |
-| `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state` | 執行期日誌、心跳、本輪狀態 | 否 |
+| `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state`、`data/.sync_feed_state` | 執行期日誌、心跳、本輪狀態、來源段結果（掛載／rsync／inbox 推送；主機信標讀它） | 否 |
 | `research.*`（Postgres ＋ pgvector；測試環境是容器 `report-mark-postgres`、host port 5436，正式環境是 RDS） | 由 Alembic migration 管理（`db/migrations/`），`db/schema.sql` 是凍結的 baseline | 是 |
 
 `data/` 在 `.gitignore` 是逐項忽略而非整目錄；新增執行期檔案要同步加一行，因為 repo 禁止 `git add -A`。
@@ -174,6 +174,7 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 1. 補記上一輪異常收場；系統關機中或 lock 被佔用退出 0；找不到 `uv` 退出 1。
 2. drvfs 唯讀掛載 NAS（`/usr/local/sbin/mount-nas-research`，sudoers 免密碼）；失敗退出 1。
 3. `rsync -rt --size-only` 到 `研報自動匯入/`，delta 寫 `data/sync_delta_<時間>.txt`。`SYNC_INBOX_PUSH=1` 時接著以 `scripts/r2_inbox.py push` 把本輪新檔連同相對路徑與 mtime 推到 R2 的 `inbox/`（best-effort，失敗不擋匯入）。推送失敗會保留 `data/inbox_delta_retained_<時間>.txt`，log 與告警紀錄提供 `push --delta` 補傳指令；補傳成功後刪掉該份 delta。
+   第 2、3 段的結論每輪寫進 `data/.sync_feed_state`（`result`＝`ok`／`mount_failed`／`rsync_failed`，`push`＝`off`／`none`／`ok`／`failed`；掛載或 rsync 失敗而中止的那一輪也寫，PID lock 早退不寫）。`report-mark-beacon.timer` 每 10 分鐘以 `scripts/publish_host_beacon.py` 把它連同服務狀態發布到 R2 的 `beacons/<HOST_BEACON_NAME>.json`，收檔那一端（EC2）的 `/healthz/feed` 讀來判斷「來源主機失聯／來源段壞了」並告警——那一端自己看不出 inbox 沒有新檔是因為沒有新稿還是來源斷了（`app/services/host_beacon.py`；處置見 `docs/production_resilience.md`「來源主機信標」）。
    碰不到 NAS 的部署（EC2，正式環境）設 `SYNC_SOURCE=r2-inbox`：第 2、3 段改成 `scripts/r2_inbox.py pull`，把本地鏡像沒有或大小不同的 inbox 物件拉回 `研報自動匯入/`（保留 mtime）並寫同格式的 delta，第 4 段起完全相同。部分失敗仍匯入已落地的檔，失敗檔下一輪重拉；拉取／推送有失敗時均記告警並抑制完整成功心跳。`originals/` 不能拿來代替 inbox：那裡只有 SHA256 與 sha256 metadata，沒有檔名與 mtime。
 4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest（單篇流程在 `scripts/_ingest_core.py` 的 `ingest_one`，sync 依它回的結果計數、寫失敗紀錄與跳過名單），每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。匯入 rc 不是 0 也不是 75 時 delta 保留在 `data/`，殼依時間序列出所有保留的 delta 與 `--delta … --hashes-out data/sync_hashes_retained_<時間>.txt` 重放指令（`--hashes-out` 讓每份重放的 hashes 各寫一份，不覆寫 `data/.sync_last_hashes`；只列殼產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`）。中途中止前已入庫的篇，importer 寫到 `<hashes_out>.partial`，殼改名保留成 `data/sync_hashes_retained_<時間>_partial.txt` 並印三段補跑指令（重放時它們會變 `skip_exists`，不會進重放的 hashes）。
 5. 以 `--hashes-file data/.sync_last_hashes` 依序跑摘要、標題、摘錄。**不可改成 `--since-days`**：它濾的是 `report_date`，會漏掉近九成。

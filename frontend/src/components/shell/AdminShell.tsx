@@ -5,6 +5,7 @@ import { Moon, Sun } from 'lucide-react'
 import { BrandLogo } from '../BrandLogo'
 import { Icon } from '../primitives/Icon'
 import { Lamp } from '../primitives/Lamp'
+import { Toaster } from '../console/Toaster'
 import { fmtDateTime } from '../../features/admin/auditLabels'
 import { worstLamp, type AdminSignals } from '../../features/admin/adminSignals'
 import { useAdminSignals } from '../../features/admin/useAdminSignals'
@@ -168,6 +169,7 @@ export function AdminShell() {
       </div>
 
       <AdminPalette open={paletteOpen && ready} pages={pages} onClose={closePalette} onGo={goFromPalette} />
+      <Toaster />
     </div>
   )
 }

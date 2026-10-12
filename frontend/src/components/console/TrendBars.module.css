@@ -1,0 +1,10 @@
+/* 趨勢長條圖。柱子預設 l4；最後一根可用金色；超過門檻用 warn。 */
+.wrap { margin: 0; min-width: 0; }
+.plot { position: relative; display: flex; align-items: flex-end; gap: 2px; }
+.slot { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
+.bar { width: 100%; min-height: 1px; border-radius: 2px 2px 0 0; background: var(--ac-l4); }
+.slot:hover .bar { background: var(--ac-l5); }
+.bar[data-tone='gold'], .slot:hover .bar[data-tone='gold'] { background: var(--ac-gold); }
+.bar[data-tone='warn'], .slot:hover .bar[data-tone='warn'] { background: var(--ac-warn); }
+.threshold { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--ac-l5); pointer-events: none; }
+.axis { display: flex; justify-content: space-between; margin-top: 6px; font-family: var(--ac-mono); font-size: 10.5px; color: var(--ac-t5); }

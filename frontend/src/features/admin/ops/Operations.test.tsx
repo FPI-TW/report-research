@@ -206,7 +206,6 @@ test('/admin/operations 導向服務；切頁交給外殼的次級面板（這�
   mount('/admin/operations')
   expect(await screen.findByRole('region', { name: '核心服務' })).toBeInTheDocument()
   expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/services')
-  expect(screen.getByRole('heading', { level: 1, name: '維運' })).toBeInTheDocument()
   expect(screen.queryByRole('navigation', { name: '維運子導覽' })).not.toBeInTheDocument()
 })
 

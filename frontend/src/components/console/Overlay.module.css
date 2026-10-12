@@ -1,0 +1,69 @@
+/* 主控台的浮層：對話框、抽屜、列動作選單、toast。一律 portal 到 body；主題屬性在 <html>，所以色照樣跟著走。
+   層級：選單 30 ＜ 抽屜 40 ＜ 對話框 50 ＜ 重新驗證 58 ＜ toast 70（設計稿的順序）。 */
+.scrim {
+  position: fixed; inset: 0; z-index: 50; background: var(--ac-scrim);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  font-family: var(--ac-sans); font-size: 13px;
+}
+.scrimTop { z-index: 58; }
+.dialog {
+  width: var(--dialog-w, 440px); max-width: 100%; max-height: 86vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 13px; padding: 20px 22px;
+  background: var(--ac-panel); border: 1px solid var(--ac-menubc); border-radius: 10px; box-shadow: var(--ac-pop);
+  color: var(--ac-t2);
+}
+.dialogHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dialogTitle { margin: 0; font-size: 15px; font-weight: 600; color: var(--ac-t1); }
+.dialogBody { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ac-t4); }
+.dialogActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.form { display: contents; }
+
+.drawerScrim { position: fixed; inset: 0; z-index: 40; background: var(--ac-scrim); opacity: 0.55; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 41; width: var(--drawer-w, 520px); max-width: 100vw;
+  display: flex; flex-direction: column;
+  background: var(--ac-panel); border-left: 1px solid var(--ac-l1); box-shadow: var(--ac-pop);
+  font-family: var(--ac-sans); font-size: 13px; color: var(--ac-t2);
+}
+.drawerHead { flex: none; padding: 16px 18px 14px; border-bottom: 1px solid var(--ac-l1); }
+.drawerTitleRow { display: flex; align-items: center; gap: 10px; }
+.drawerTitle { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 600; color: var(--ac-t1); overflow-wrap: anywhere; }
+.drawerTitleMono { font-family: var(--ac-mono); font-size: 16px; font-weight: 500; }
+.drawerSub { margin-top: 6px; font-size: 12px; color: var(--ac-t4); }
+.drawerBody { flex: 1; min-height: 0; overflow-y: auto; }
+.drawerSection { padding: 14px 18px; border-bottom: 1px solid var(--ac-l2); }
+.drawerSection:last-child { border-bottom: none; }
+.drawerSectionTitle { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--ac-t3); }
+.drawerFoot {
+  flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  padding: 12px 18px; border-top: 1px solid var(--ac-l1);
+}
+.drawerFootNote { flex: 1; min-width: 0; font-size: 11.5px; color: var(--ac-t5); }
+
+.rowActions { display: inline-flex; gap: 6px; }
+.moreBtn { padding: 0 6px 0 9px; gap: 3px; color: var(--ac-t3); }
+.moreBtn[aria-expanded='true'] { border-color: var(--ac-l5); background: var(--ac-btnh); }
+.menu {
+  position: fixed; z-index: 30; min-width: 196px; padding: 4px; text-align: left;
+  background: var(--ac-menu); border: 1px solid var(--ac-menubc); border-radius: 8px; box-shadow: var(--ac-pop);
+  font-family: var(--ac-sans);
+}
+.menuItem {
+  display: flex; align-items: center; width: 100%; height: 30px; padding: 0 10px; border: none; border-radius: 5px;
+  background: none; color: var(--ac-t2); font: inherit; font-size: 12.5px; text-align: left; white-space: nowrap; cursor: pointer;
+}
+.menuItem:hover:not(:disabled), .menuItem:focus-visible { background: var(--ac-menuh); outline: none; }
+.menuItem:disabled { opacity: 0.45; cursor: not-allowed; }
+.menuDanger { color: var(--ac-badt); }
+.menuSep { height: 1px; margin: 4px 2px; background: var(--ac-l4); }
+
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 70;
+  display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 10px 16px;
+  background: var(--ac-menu); border: 1px solid var(--ac-menubc); border-radius: 8px; box-shadow: var(--ac-pop);
+  font-family: var(--ac-sans); font-size: 12.5px; color: var(--ac-t1);
+}
+.toastIcon { flex: none; color: var(--ac-ok); }
+.toast[data-tone='bad'] .toastIcon { color: var(--ac-bad); }
+
+.codeInput { font-family: var(--ac-mono); font-size: 14px; letter-spacing: 0.12em; }

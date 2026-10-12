@@ -104,6 +104,47 @@ class ReconcileObjectStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rc, 0)
         self.assertIn(f"SIZE_MISMATCH {key} local=3 remote=10", output)
 
+    async def test_local_file_replaced_by_a_later_version_is_not_compared(self):
+        # 2026-10-12 的誤報：券商以同檔名重發研報，新檔另成一篇（新 hash、自己的 key），鏡像目錄那個路徑上
+        # 已經不是這一列的 bytes。舊版物件完好，不該被報成大小與 SHA 不符。
+        data = b"first issue"
+        digest = hashlib.sha256(data).hexdigest()
+        key = f"originals/{digest[:2]}/{digest}.pdf"
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"reissued")
+            local.flush()
+            reissued = hashlib.sha256(b"reissued").hexdigest()
+            storage = _Storage({key: {"ContentLength": len(data), "Metadata": {"sha256": digest}}},
+                               {key: digest}, {key})
+            rc, output = await _run_with(
+                [{"kind": "original", "id": "r1", "hash": digest, "name": "source.pdf",
+                  "path": local.name, "key": key}],
+                storage, "originals",
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn(f"LOCAL_REPLACED {key} local={reissued} db_id=r1", output)
+        self.assertNotIn("MISMATCH", output)
+        self.assertIn("size_mismatch=0 sha_mismatch=0", output)
+
+    async def test_replaced_local_file_does_not_hide_a_corrupt_remote_object(self):
+        # 不比本機檔不等於放過 R2：物件內容仍以 DB 的 file_hash 驗證。
+        digest = hashlib.sha256(b"first issue").hexdigest()
+        key = f"originals/{digest[:2]}/{digest}.pdf"
+        corrupt = hashlib.sha256(b"corrupt").hexdigest()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"reissued")
+            local.flush()
+            storage = _Storage({key: {"ContentLength": 7, "Metadata": {"sha256": corrupt}}},
+                               {key: corrupt}, {key})
+            rc, output = await _run_with(
+                [{"kind": "original", "id": "r1", "hash": digest, "name": "source.pdf",
+                  "path": local.name, "key": key}],
+                storage, "originals",
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn(f"SHA_MISMATCH {key} expected={digest} remote={corrupt}", output)
+        self.assertIn("sha_mismatch=1", output)
+
     async def test_reports_legacy_original_without_sha_metadata(self):
         digest = hashlib.sha256(b"original").hexdigest()
         key = f"originals/{digest[:2]}/{digest}.pdf"

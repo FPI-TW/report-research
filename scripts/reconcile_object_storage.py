@@ -9,7 +9,15 @@ Each run also writes a structured summary to ``data/health/r2_reconcile.json`` (
 only prints a warning and never changes the exit code.
 
 It never deletes remote objects.  "Orphan" means an object under the owned prefix has no
-corresponding DB key; investigate or archive it manually after a review.
+corresponding DB key *in the database this run is connected to*.  When the bucket is shared with
+another environment (see docs/DEPLOYMENT_STATUS.md) the object may belong to a report that only
+the other environment ingested, so check every database that writes to the bucket before
+archiving anything.
+
+The local mirror is mutable: a broker may reissue a report under the same file name, and the new
+bytes are ingested as a separate report with its own hash and key.  A local file whose SHA-256 is
+no longer the row's ``file_hash`` therefore says nothing about that row's object; it is printed
+as ``LOCAL_REPLACED`` (information only) and the object is still verified against ``file_hash``.
 """
 
 from __future__ import annotations
@@ -173,6 +181,12 @@ async def run(args: argparse.Namespace) -> int:
                 return
         stats["checked"] += 1
         local = _local_hash(row.get("path"))
+        if local and local[1] != row["hash"]:
+            # Same file name, different bytes: the path now holds a later version that is its own
+            # report.  Comparing it would report an intact object as SIZE/SHA_MISMATCH; the
+            # expected_sha check below still proves the object against the DB file_hash.
+            print(f"LOCAL_REPLACED {key} local={local[1]} db_id={row['id']}")
+            local = None
         remote_size = metadata.get("ContentLength")
         if local and remote_size is not None and int(remote_size) != local[0]:
             stats["size_mismatch"] += 1

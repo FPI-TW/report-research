@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueries, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { getJSON } from '../../lib/api'
 import {
   reviewQueueSchema, reviewStateSchema,
@@ -6,6 +6,8 @@ import {
 } from '../../lib/reviewSchemas'
 
 const PAGE_SIZE = 10
+const REVIEW_COUNT_KEY = ['review-queue-count']
+const REVIEW_KINDS: readonly ReviewKind[] = ['faithfulness', 'feedback', 'extraction']
 
 export interface UseReviewQueue {
   items: ReviewItem[]
@@ -53,6 +55,8 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
         pageParams: data.pageParams.slice(0, 1),
       }))
       await client.invalidateQueries(filter)
+      // 分頁籤與外殼導覽上的待處理數（useAdminSignals 同一組 key）：不等它，數字晚一點到不該卡住儲存。
+      void client.invalidateQueries({ queryKey: REVIEW_COUNT_KEY })
     },
   })
   const pages = query.data?.pages ?? []
@@ -69,4 +73,25 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
     save: async (id, update) => { await mutation.mutateAsync({ id, update }) },
     isSaving: mutation.isPending,
   }
+}
+
+/**
+ * 三個分頁各自的待處理數（分頁籤上的數字）。
+ *
+ * query key 與 queryFn 刻意和外殼的 `useAdminSignals` 一模一樣：兩邊共用同一份快取，外殼在的時候這裡
+ * 不會多打請求，儲存後 invalidate 一次兩邊的數字一起更新。輪詢交給外殼，這裡不設 `refetchInterval`。
+ * 取不到（或還沒回來）就是 undefined：分頁籤不顯示數字，不擋佇列。
+ */
+export function useReviewOpenCounts(): Record<ReviewKind, number | undefined> {
+  const results = useQueries({
+    queries: REVIEW_KINDS.map(kind => ({
+      queryKey: [...REVIEW_COUNT_KEY, kind],
+      queryFn: () => getJSON(`/api/review/queue?kind=${kind}&status=open&limit=1&offset=0`, reviewQueueSchema),
+      staleTime: 60_000,
+      retry: false,
+      select: (d: { total: number }) => d.total,
+    })),
+  })
+  const [faithfulness, feedback, extraction] = results.map(r => r.data)
+  return { faithfulness, feedback, extraction }
 }

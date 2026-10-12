@@ -5,12 +5,13 @@ import type { OpsDependencyEdge, OpsDependencyNode } from '../../../lib/generate
  * 越右邊越下游。這裡只決定同一欄內的上下順序（重心法，減少交叉）與座標，不重算依賴、不判斷健康。
  *
  * 沒有任何邊的節點（探針、取樣器……）不進圖，另外列出（`isolated`），免得一整欄孤點把圖撐高。
+ * 邊從下游（依賴別人的一方）的左緣畫到上游的右緣：箭頭指向被依賴的一方。
  */
 
 export const NODE_W = 168
-export const NODE_H = 44
+export const NODE_H = 28
 export const GAP_X = 72
-export const GAP_Y = 14
+export const GAP_Y = 8
 export const PAD = 12
 
 export type PlacedNode = { node: OpsDependencyNode; x: number; y: number }
@@ -76,13 +77,13 @@ export function layoutGraph(nodes: OpsDependencyNode[], edges: OpsDependencyEdge
     const from = placed.get(edge.dependency)
     const to = placed.get(edge.dependent)
     if (!from || !to) continue
-    // 上游（依賴）在左、下游在右：從上游的右緣畫到下游的左緣。
-    const x1 = from.x + NODE_W
-    const y1 = from.y + NODE_H / 2
-    const x2 = to.x
-    const y2 = to.y + NODE_H / 2
-    const dx = Math.max(24, (x2 - x1) / 2)
-    placedEdges.push({ edge, path: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}` })
+    // 上游（依賴）在左、下游在右：從下游的左緣畫到上游的右緣，箭頭落在被依賴的那一方。
+    const x1 = to.x
+    const y1 = to.y + NODE_H / 2
+    const x2 = from.x + NODE_W
+    const y2 = from.y + NODE_H / 2
+    const dx = Math.max(24, (x1 - x2) / 2)
+    placedEdges.push({ edge, path: `M ${x1} ${y1} C ${x1 - dx} ${y1}, ${x2 + dx} ${y2}, ${x2} ${y2}` })
   }
 
   const width = columns.length ? PAD * 2 + columns.length * NODE_W + (columns.length - 1) * GAP_X : 0

@@ -25,7 +25,6 @@ const AdminApiClientsPage = lazy(routeLoaders.adminApiClients)
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsPipelinePage = lazy(routeLoaders.adminOpsPipeline)
 const OpsServicesPage = lazy(routeLoaders.adminOpsServices)
-const OpsServiceDetailPage = lazy(routeLoaders.adminOpsService)
 const OpsLogsPage = lazy(routeLoaders.adminOpsLogs)
 const OpsJobsPage = lazy(routeLoaders.adminOpsJobs)
 const OpsIncidentsPage = lazy(routeLoaders.adminOpsIncidents)
@@ -123,7 +122,7 @@ export const routes = [
               { path: 'overview', element: <Navigate to="/admin" replace /> },
               { path: 'pipeline', element: <Suspense><OpsPipelinePage /></Suspense> },
               { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
-              { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
+              { path: 'services/:name', element: <DetailRedirect to="/admin/operations/services" param="name" query="service" /> },
               { path: 'dependencies', element: <Suspense><OpsDependenciesPage /></Suspense> },
               { path: 'logs', element: <Suspense><OpsLogsPage /></Suspense> },
               { path: 'jobs', element: <Suspense><OpsJobsPage /></Suspense> },

@@ -784,9 +784,13 @@ class FakeAccounts:
         }
         self._audit(actor_id, "data.export", kind, detail, "export")
 
-    async def list_audit(self, limit: int = 50, offset: int = 0):
+    async def list_audit(self, limit: int = 50, offset: int = 0, *, prefixes=None, exclude_prefixes=None):
         self._check()
-        return len(self.audit), self.audit[offset:offset + limit]
+        include = tuple(accounts._audit_prefixes(prefixes, "prefixes"))
+        exclude = tuple(accounts._audit_prefixes(exclude_prefixes, "exclude_prefixes"))
+        rows = [e for e in self.audit
+                if (not include or e.action.startswith(include)) and not (exclude and e.action.startswith(exclude))]
+        return len(rows), rows[offset:offset + limit]
 
 
 def default_accounts() -> FakeAccounts:

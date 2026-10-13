@@ -25,6 +25,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.services.accounts import (
+    AUDIT_PREFIX_MAX_CHARS,
+    AUDIT_PREFIX_MAX_COUNT,
+    AUDIT_PREFIX_PATTERN,
     BULK_MAX_USERS,
     AccountDeletedError,
     AccountError,
@@ -55,6 +58,18 @@ GrantableScope = Literal["qa_content.read", "ops.operate", "api_clients.manage"]
 
 _ACCOUNTS = Depends(authz.require_scope("accounts.manage"))
 _AUDIT = Depends(authz.require_scope("audit.read"))
+
+# 稽核清單的 action 前綴篩選（`prefix=user.&prefix=ops.`，可重複）。規則的唯一定義在 accounts.py；
+# 匯出（admin_exports.py 的 audit.csv）收同一組參數，畫面上的篩選與下載的內容才對得上。
+AuditPrefix = Annotated[
+    str, StringConstraints(min_length=1, max_length=AUDIT_PREFIX_MAX_CHARS, pattern=AUDIT_PREFIX_PATTERN),
+]
+AUDIT_PREFIX_QUERY = Query(
+    None, max_length=AUDIT_PREFIX_MAX_COUNT, description="只列 action 以其中任一個開頭的紀錄（可重複）",
+)
+AUDIT_EXCLUDE_PREFIX_QUERY = Query(
+    None, max_length=AUDIT_PREFIX_MAX_COUNT, description="不列 action 以其中任一個開頭的紀錄（可重複）",
+)
 
 
 class UserItem(BaseModel):
@@ -142,11 +157,16 @@ class AuditItem(BaseModel):
 
 
 class AuditResponse(BaseModel):
+    # 符合篩選條件的總筆數（沒帶篩選＝全部）。
     total: int
     limit: int
     offset: int
     has_more: bool
     next_offset: int | None
+    # 這次實際套用的 action 前綴篩選（去重後；沒帶就是空清單）。前端靠它分辨「後端真的篩了」與
+    # 「舊版後端不認得這個參數、回的是沒篩的一頁」。
+    prefix: list[str] = []
+    exclude_prefix: list[str] = []
     items: list[AuditItem]
 
 
@@ -221,6 +241,13 @@ def _deletion_item(d) -> DeletionItem:
         requested_by_username=d.requested_by_username, requested_at=_iso(d.requested_at),
         execute_after=_iso(d.execute_after), cancelled_at=_iso(d.cancelled_at), executed_at=_iso(d.executed_at),
         status=d.status,
+    )
+
+
+def _audit_item(e) -> AuditItem:
+    return AuditItem(
+        id=e.id, actor_user_id=e.actor_user_id, actor_username=e.actor_username, action=e.action,
+        target_type=e.target_type, target_id=e.target_id, detail=e.detail, created_at=_iso(e.created_at),
     )
 
 
@@ -377,18 +404,26 @@ async def verify_audit_chain():
 
 
 @router.get("/api/admin/audit", response_model=AuditResponse, dependencies=[_AUDIT])
-async def audit_log(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
-    total, entries = await deps.accounts.list_audit(limit=limit, offset=offset)
+async def audit_log(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    prefix: list[AuditPrefix] | None = AUDIT_PREFIX_QUERY,
+    exclude_prefix: list[AuditPrefix] | None = AUDIT_EXCLUDE_PREFIX_QUERY,
+):
+    """管理操作稽核（新→舊）。`prefix`／`exclude_prefix` 依 action 的前綴篩選，可重複、可並用（先收再排除）。
+
+    `total` 與分頁都是篩選後的；回應的 `prefix`／`exclude_prefix` 是實際套用的那一組（去重後）。
+    格式不合法或超過個數上限回 422。
+    """
+    include = list(dict.fromkeys(prefix or ()))
+    exclude = list(dict.fromkeys(exclude_prefix or ()))
+    total, entries = await deps.accounts.list_audit(limit=limit, offset=offset, prefixes=include,
+                                                    exclude_prefixes=exclude)
     next_offset = offset + len(entries)
     has_more = next_offset < total
     return AuditResponse(
         total=total, limit=limit, offset=offset, has_more=has_more,
         next_offset=next_offset if has_more else None,
-        items=[
-            AuditItem(
-                id=e.id, actor_user_id=e.actor_user_id, actor_username=e.actor_username, action=e.action,
-                target_type=e.target_type, target_id=e.target_id, detail=e.detail, created_at=_iso(e.created_at),
-            )
-            for e in entries
-        ],
+        prefix=include, exclude_prefix=exclude,
+        items=[_audit_item(e) for e in entries],
     )

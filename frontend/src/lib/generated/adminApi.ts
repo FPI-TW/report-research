@@ -348,6 +348,8 @@ export const AuditResponseSchema = z.object({
   offset: z.number().int(),
   has_more: z.boolean(),
   next_offset: z.number().int().nullable(),
+  prefix: z.array(z.string()).optional(),
+  exclude_prefix: z.array(z.string()).optional(),
   items: z.array(AuditItemSchema),
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
@@ -2010,10 +2012,11 @@ export const RetrievalRegressionResponseSchema = z.object({
 })
 export type RetrievalRegressionResponse = z.infer<typeof RetrievalRegressionResponseSchema>
 
-function qs(query: Record<string, string | number | boolean | null | undefined>): string {
+function qs(query: Record<string, string | number | boolean | string[] | null | undefined>): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null) params.set(key, String(value))
+    if (Array.isArray(value)) value.forEach(item => params.append(key, item))
+    else if (value !== undefined && value !== null) params.set(key, String(value))
   }
   const text = params.toString()
   return text ? `?${text}` : ''
@@ -2041,7 +2044,7 @@ export const adminApi = {
   /** POST /api/admin/api-clients/{client_id}/rotate — Rotate Api Client Key */
   rotateApiClientKey: (clientId: string) => requestJSON(`/api/admin/api-clients/${encodeURIComponent(clientId)}/rotate`, ApiClientWithKeySchema, jsonBody('POST')),
   /** GET /api/admin/audit — Audit Log */
-  auditLog: (query: { limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
+  auditLog: (query: { limit?: number; offset?: number; prefix?: string[] | null; exclude_prefix?: string[] | null } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/data-health — Get Data Health */
@@ -2176,7 +2179,7 @@ export const adminRawUploads = {
 /** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */
 export const adminCsvUrls = {
   /** GET /api/admin/export/audit.csv — Export Audit（下載網址） */
-  exportAudit: (query: { limit?: number } = {}) => `/api/admin/export/audit.csv${qs(query)}`,
+  exportAudit: (query: { prefix?: string[] | null; exclude_prefix?: string[] | null; limit?: number } = {}) => `/api/admin/export/audit.csv${qs(query)}`,
   /** GET /api/admin/export/incidents.csv — Export Incidents（下載網址） */
   exportIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/incidents.csv${qs(query)}`,
   /** GET /api/admin/export/jobs.csv — Export Jobs（下載網址） */

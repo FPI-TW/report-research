@@ -61,7 +61,11 @@ def camel(words: str) -> str:
 
 
 def ts_query_type(schema: dict) -> str:
-    """query 參數的 TS 型別（全部可省略；可為 null 的 schema 也接受 null，qs() 會略過）。"""
+    """query 參數的 TS 型別（全部可省略；可為 null 的 schema 也接受 null，qs() 會略過）。
+
+    可重複的參數（`?prefix=a&prefix=b`，OpenAPI 的 array）只支援字串元素，型別是 `string[]`；
+    qs() 逐個 append，空陣列等於沒帶。
+    """
     options = schema.get("anyOf", [schema])
     non_null = [o for o in options if o.get("type") != "null"]
     nullable = len(non_null) != len(options)
@@ -75,6 +79,8 @@ def ts_query_type(schema: dict) -> str:
             types.append("boolean")
         elif o.get("type") == "string":
             types.append("string")
+        elif o.get("type") == "array" and o.get("items", {}).get("type") == "string" and "enum" not in o["items"]:
+            types.append("string[]")
         else:
             raise Unsupported(f"不支援的 query 參數型別：{schema}")
     if nullable:
@@ -319,10 +325,11 @@ def generate(spec: dict) -> str:
         expr = object_body(schema) if schema.get("type") == "object" and schema.get("properties") else zod(schema)
         out.append(f"export const {ts_name(name)}Schema = {expr}\n"
                    f"export type {ts_name(name)} = z.infer<typeof {ts_name(name)}Schema>\n")
-    out.append("function qs(query: Record<string, string | number | boolean | null | undefined>): string {\n"
+    out.append("function qs(query: Record<string, string | number | boolean | string[] | null | undefined>): string {\n"
                "  const params = new URLSearchParams()\n"
                "  for (const [key, value] of Object.entries(query)) {\n"
-               "    if (value !== undefined && value !== null) params.set(key, String(value))\n"
+               "    if (Array.isArray(value)) value.forEach(item => params.append(key, item))\n"
+               "    else if (value !== undefined && value !== null) params.set(key, String(value))\n"
                "  }\n"
                "  const text = params.toString()\n"
                "  return text ? `?${text}` : ''\n"

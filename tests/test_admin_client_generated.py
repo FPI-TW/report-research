@@ -42,6 +42,20 @@ class GeneratedAdminClientTests(unittest.TestCase):
         with self.assertRaises(gen.Unsupported):
             gen.ts_query_type({"type": "object"})
 
+    def test_repeatable_query_params(self):
+        """可重複的字串參數（`?prefix=a&prefix=b`）型別是 `string[]`，qs() 逐個 append；其他元素型別不支援。"""
+        repeated = {"anyOf": [{"type": "array", "items": {"type": "string", "maxLength": 64}}, {"type": "null"}]}
+        self.assertEqual(gen.ts_query_type(repeated), "string[] | null")
+        for items in ({"type": "integer"}, {"type": "string", "enum": ["a"]}, {}):
+            with self.assertRaises(gen.Unsupported):
+                gen.ts_query_type({"type": "array", "items": items})
+        text = gen.OUTPUT.read_text(encoding="utf-8")
+        self.assertIn("if (Array.isArray(value)) value.forEach(item => params.append(key, item))", text)
+        self.assertIn("auditLog: (query: { limit?: number; offset?: number; prefix?: string[] | null; "
+                      "exclude_prefix?: string[] | null } = {})", text)
+        self.assertIn("exportAudit: (query: { prefix?: string[] | null; exclude_prefix?: string[] | null; "
+                      "limit?: number } = {})", text)
+
     def test_raw_body_endpoints_get_upload_descriptors_not_json_calls(self):
         """raw body（application/pdf）端點：不產生 jsonBody 呼叫函式，改產生網址、Content-Type 與回應 schema。"""
         text = gen.OUTPUT.read_text(encoding="utf-8")

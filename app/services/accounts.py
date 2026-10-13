@@ -1666,23 +1666,66 @@ async def audit_row_hashes(ids: Iterable[int]) -> dict[int, str]:
     return {int(r[0]): r[1] for r in rows}
 
 
-async def list_audit(limit: int = 50, offset: int = 0) -> tuple[int, list[AuditEntry]]:
+# 稽核清單的 action 前綴篩選（GET /api/admin/audit 與 audit.csv 的 `prefix`／`exclude_prefix`）。
+# 值一律走 bind 參數，格式仍嚴格限制：action 是 `<領域>.<動作>`（小寫、數字、底線），前綴只會是它的開頭一段。
+AUDIT_PREFIX_PATTERN = r"^[a-z][a-z0-9_]*(\.[a-z0-9_]*)?$"
+AUDIT_PREFIX_MAX_CHARS = 64
+AUDIT_PREFIX_MAX_COUNT = 16
+_AUDIT_PREFIX = re.compile(AUDIT_PREFIX_PATTERN)
+
+_AUDIT_COLS = (
+    "a.id, a.actor_user_id, u.username, a.action, a.target_type, a.target_id, a.detail, a.created_at "
+    "FROM research.admin_audit_log a LEFT JOIN research.app_user u ON u.id = a.actor_user_id"
+)
+# starts_with 而不是 LIKE：前綴裡的底線（`api_client.`）在 LIKE 是萬用字元，還得另外跳脫。
+_AUDIT_PREFIX_MATCH = (
+    "EXISTS (SELECT 1 FROM unnest(CAST(:{name} AS text[])) AS p(prefix) WHERE starts_with(a.action, p.prefix))"
+)
+
+
+def _audit_prefixes(values: Iterable[str] | None, what: str) -> list[str]:
+    """去重並驗證一組 action 前綴；格式或個數不對是呼叫端的錯（路由層已先以同一組規則回 422）。"""
+    out = list(dict.fromkeys(values or ()))
+    if len(out) > AUDIT_PREFIX_MAX_COUNT:
+        raise ValueError(f"{what} 最多 {AUDIT_PREFIX_MAX_COUNT} 個")
+    for v in out:
+        if not isinstance(v, str) or len(v) > AUDIT_PREFIX_MAX_CHARS or not _AUDIT_PREFIX.match(v):
+            raise ValueError(f"{what} 格式不合法：{v!r}")
+    return out
+
+
+def _audit_entry(r) -> AuditEntry:
+    return AuditEntry(
+        id=int(r[0]), actor_user_id=str(r[1]) if r[1] else None, actor_username=r[2],
+        action=r[3], target_type=r[4], target_id=r[5],
+        detail=r[6] if isinstance(r[6], dict) else {}, created_at=r[7],
+    )
+
+
+async def list_audit(limit: int = 50, offset: int = 0, *, prefixes: Iterable[str] | None = None,
+                     exclude_prefixes: Iterable[str] | None = None) -> tuple[int, list[AuditEntry]]:
+    """稽核清單（新→舊）。回 (符合條件的總筆數, 這一頁)。
+
+    `prefixes`：action 以其中任一個開頭才列；`exclude_prefixes`：action 以其中任一個開頭就不列。
+    兩者可並用（先收再排除）；都沒給＝全部。空清單與 None 同義。
+    """
+    include = _audit_prefixes(prefixes, "prefixes")
+    exclude = _audit_prefixes(exclude_prefixes, "exclude_prefixes")
+    conds: list[str] = []
+    params: dict = {}
+    if include:
+        conds.append(_AUDIT_PREFIX_MATCH.format(name="include"))
+        params["include"] = include
+    if exclude:
+        conds.append("NOT " + _AUDIT_PREFIX_MATCH.format(name="exclude"))
+        params["exclude"] = exclude
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
     async with SessionFactory() as session:
-        total = (await session.execute(text("SELECT count(*) FROM research.admin_audit_log"))).scalar_one()
+        total = (await session.execute(
+            text(f"SELECT count(*) FROM research.admin_audit_log a{where}"), params,
+        )).scalar_one()
         rows = (await session.execute(
-            text(
-                "SELECT a.id, a.actor_user_id, u.username, a.action, a.target_type, a.target_id, "
-                "a.detail, a.created_at FROM research.admin_audit_log a "
-                "LEFT JOIN research.app_user u ON u.id = a.actor_user_id "
-                "ORDER BY a.created_at DESC, a.id DESC LIMIT :limit OFFSET :offset"
-            ),
-            {"limit": limit, "offset": max(0, offset)},
+            text(f"SELECT {_AUDIT_COLS}{where} ORDER BY a.created_at DESC, a.id DESC LIMIT :limit OFFSET :offset"),
+            {**params, "limit": limit, "offset": max(0, offset)},
         )).all()
-    return int(total), [
-        AuditEntry(
-            id=int(r[0]), actor_user_id=str(r[1]) if r[1] else None, actor_username=r[2],
-            action=r[3], target_type=r[4], target_id=r[5],
-            detail=r[6] if isinstance(r[6], dict) else {}, created_at=r[7],
-        )
-        for r in rows
-    ]
+    return int(total), [_audit_entry(r) for r in rows]

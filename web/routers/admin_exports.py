@@ -2,7 +2,7 @@
 
 | 匯出 | scope | 來源（與清單頁同一支服務函式） |
 |---|---|---|
-| `audit.csv` | `audit.read` | `deps.accounts.list_audit`（新→舊） |
+| `audit.csv` | `audit.read` | `deps.accounts.list_audit`（新→舊；篩選同清單：`prefix`、`exclude_prefix`） |
 | `users.csv` | `accounts.manage` | `deps.accounts.list_users`（不含已刪除帳號） |
 | `reports.csv` | `reports.manage` | `deps.report_visibility.list_reports`（篩選同清單：`q`、`hidden`、`publication`） |
 | `incidents.csv` | `ops.read` | `deps.ops_monitoring.list_incidents`（窗期規則同 `/api/admin/incidents`） |
@@ -43,6 +43,7 @@ from app.services.ops_monitoring import (
 from web import authz, deps
 from web.csv_export import CsvResponse, csv_response
 from web.errors import AppError
+from web.routers.admin import AUDIT_EXCLUDE_PREFIX_QUERY, AUDIT_PREFIX_QUERY, AuditPrefix
 from web.routers.admin_monitoring import IncidentStatus, JobState, _incident, _job, _window
 
 logger = logging.getLogger(__name__)
@@ -97,13 +98,24 @@ async def _finish(actor: User, kind: str, filters: dict, columns, rows: list[dic
 
 
 @router.get("/api/admin/export/audit.csv", dependencies=[Depends(authz.require_scope("audit.read"))], **_CSV)
-async def export_audit(limit: int = _LIMIT, actor: User = Depends(authz.current_user)):
-    """管理操作稽核（新→舊）；`detail` 欄是 JSON 字串。匯出本身也會寫一筆 `data.export`。"""
-    total, entries = await deps.accounts.list_audit(limit=limit, offset=0)
+async def export_audit(
+    prefix: list[AuditPrefix] | None = AUDIT_PREFIX_QUERY,
+    exclude_prefix: list[AuditPrefix] | None = AUDIT_EXCLUDE_PREFIX_QUERY,
+    limit: int = _LIMIT,
+    actor: User = Depends(authz.current_user),
+):
+    """管理操作稽核（新→舊；action 前綴篩選同 `/api/admin/audit`）；`detail` 欄是 JSON 字串。
+
+    匯出本身也會寫一筆 `data.export`，篩選條件記在 detail（前綴以逗號相接）。
+    """
+    include = list(dict.fromkeys(prefix or ()))
+    exclude = list(dict.fromkeys(exclude_prefix or ()))
+    total, entries = await deps.accounts.list_audit(limit=limit, offset=0, prefixes=include, exclude_prefixes=exclude)
     rows = [{"id": e.id, "created_at": _iso(e.created_at), "actor_user_id": e.actor_user_id,
              "actor_username": e.actor_username, "action": e.action, "target_type": e.target_type,
              "target_id": e.target_id, "detail": e.detail} for e in entries]
-    return await _finish(actor, "audit", {"limit": limit}, AUDIT_COLUMNS, rows, truncated=total > len(rows))
+    filters = {"prefix": ",".join(include) or None, "exclude_prefix": ",".join(exclude) or None, "limit": limit}
+    return await _finish(actor, "audit", filters, AUDIT_COLUMNS, rows, truncated=total > len(rows))
 
 
 @router.get("/api/admin/export/users.csv", dependencies=[Depends(authz.require_scope("accounts.manage"))], **_CSV)

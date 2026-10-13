@@ -199,6 +199,49 @@ class AdminApiTests(unittest.TestCase):
         for qs in ({"limit": 0}, {"limit": 201}, {"offset": -1}):
             self.assertEqual(self.admin.get("/api/admin/audit", params=qs).status_code, 422, qs)
 
+    def test_audit_filters_by_action_prefix_and_pages_the_filtered_result(self):
+        """`prefix`／`exclude_prefix`：total、has_more、next_offset 都是篩選後的；回應帶回實際套用的那一組。"""
+        self.admin.patch(f"/api/admin/users/{self.alice}", json={"role": "admin"})   # user.set_role
+        self.admin.post(f"/api/admin/users/{self.alice}/logout")                     # user.force_logout
+        self.store._audit(self.root, "report.hide", "a" * 64, {}, "report")
+        self.store._audit(self.root, "ops.restart", "web", {}, "ops_service")
+        self.store._audit(self.root, "api_client.create", "c1", {}, "api_client")
+
+        def get(params):
+            r = self.admin.get("/api/admin/audit", params=params)
+            self.assertEqual(r.status_code, 200, r.text)
+            return r.json()
+
+        everything = get({})
+        self.assertEqual((everything["total"], everything["prefix"], everything["exclude_prefix"]), (5, [], []))
+        users = get({"prefix": "user.", "limit": 1})
+        self.assertEqual((users["total"], users["has_more"], users["next_offset"]), (2, True, 1))
+        self.assertEqual((users["prefix"], users["exclude_prefix"]), (["user."], []))
+        self.assertEqual([i["action"] for i in users["items"]], ["user.force_logout"])
+        page2 = get({"prefix": "user.", "limit": 1, "offset": 1})
+        self.assertEqual(([i["action"] for i in page2["items"]], page2["has_more"]), (["user.set_role"], False))
+        # 可重複：任一個前綴對到就列；重複的值只算一次。
+        several = get([("prefix", "report."), ("prefix", "ops."), ("prefix", "ops.")])
+        self.assertEqual(([i["action"] for i in several["items"]], several["prefix"]),
+                         (["ops.restart", "report.hide"], ["report.", "ops."]))
+        # 排除（「其餘」這一類）：前綴裡的底線是字面。
+        rest = get([("exclude_prefix", "user."), ("exclude_prefix", "report."), ("exclude_prefix", "ops.")])
+        self.assertEqual((rest["total"], [i["action"] for i in rest["items"]]), (1, ["api_client.create"]))
+        self.assertEqual(get({"prefix": "api_"})["total"], 1)
+        self.assertEqual(get({"prefix": "apixclient."})["total"], 0)
+        # 並用：先收再排除。
+        both = get({"prefix": "user.", "exclude_prefix": "user.force"})
+        self.assertEqual([i["action"] for i in both["items"]], ["user.set_role"])
+
+    def test_audit_prefix_is_strictly_validated(self):
+        too_many = [("prefix", f"p{i}.") for i in range(17)]
+        for qs in ({"prefix": ""}, {"prefix": "User."}, {"prefix": "user.%"}, {"prefix": "user.create.x"},
+                   {"prefix": ".user"}, {"prefix": "user'; DROP TABLE x;--"}, {"prefix": "u" * 65},
+                   {"exclude_prefix": "ops.*"}, too_many, [("exclude_prefix", v) for _k, v in too_many]):
+            r = self.admin.get("/api/admin/audit", params=qs)
+            self.assertEqual(r.status_code, 422, qs)
+        self.assertEqual(self.admin.get("/api/admin/audit", params=too_many[:16]).status_code, 200)
+
     def test_admin_actions_are_logged_without_password(self):
         with self.assertLogs("web.routers.admin", level="INFO") as cm:
             self.admin.post(f"/api/admin/users/{self.alice}/password", json={"password": "logged-password"})

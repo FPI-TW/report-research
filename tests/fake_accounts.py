@@ -792,6 +792,10 @@ class FakeAccounts:
                 if (not include or e.action.startswith(include)) and not (exclude and e.action.startswith(exclude))]
         return len(rows), rows[offset:offset + limit]
 
+    async def get_audit_entry(self, entry_id: int):
+        self._check()
+        return next((e for e in self.audit if e.id == int(entry_id)), None)
+
 
 def default_accounts() -> FakeAccounts:
     """conftest 預設裝上的那一份：tester／testpass 管理員（既有測試的登入帳密）。"""

@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.services.accounts import (
@@ -427,3 +427,13 @@ async def audit_log(
         prefix=include, exclude_prefix=exclude,
         items=[_audit_item(e) for e in entries],
     )
+
+
+# 一定要排在 /api/admin/audit/verify 之後：路徑比對照宣告順序，放前面會把 `verify` 當成 entry_id（422）。
+@router.get("/api/admin/audit/{entry_id}", response_model=AuditItem, dependencies=[_AUDIT])
+async def audit_entry(entry_id: int = Path(..., ge=1, le=2**63 - 1)):
+    """單筆稽核紀錄（欄位與 `/api/admin/audit` 的一列相同）；不存在 404 `not_found`。讀取不寫稽核。"""
+    entry = await deps.accounts.get_audit_entry(entry_id)
+    if entry is None:
+        raise AppError(404, "not_found", "找不到這筆操作紀錄")
+    return _audit_item(entry)

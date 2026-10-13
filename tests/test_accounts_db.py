@@ -754,6 +754,18 @@ async def scenario_audit_prefix_filter(api) -> None:
         raise AssertionError(f"應拒絕不合法的前綴：{bad!r}")
 
 
+async def scenario_get_audit_entry(api) -> None:
+    """單筆與清單的同一列逐欄相同（含 JOIN 出來的操作者名稱）；CLI 寫的列操作者是 None；不存在回 None。"""
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    await api.create_user(_name("Tgt"), PW, "user", actor_id=admin.id)
+    _total, entries = await api.list_audit(limit=2)
+    by_admin, by_cli = entries
+    assert (by_admin.actor_user_id, by_admin.actor_username, by_cli.actor_user_id) == (admin.id, admin.username, None)
+    for listed in (by_admin, by_cli):
+        assert await api.get_audit_entry(listed.id) == listed
+    assert await api.get_audit_entry(2**62) is None
+
+
 async def scenario_bulk_disable_enable_logout(api) -> None:
     boss = await api.create_user(_name("BBoss"), PW, "admin", actor_id=None, is_super=True)
     u1 = await api.create_user(_name("Bu1"), PW, "user", actor_id=None)
@@ -891,6 +903,7 @@ SCENARIOS = [
     scenario_ops_action_audit,
     scenario_export_audit,
     scenario_audit_prefix_filter,
+    scenario_get_audit_entry,
     scenario_bulk_disable_enable_logout,
     scenario_bulk_rules,
     scenario_bulk_rolls_back_on_unexpected_error,

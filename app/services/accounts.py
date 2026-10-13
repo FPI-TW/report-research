@@ -1729,3 +1729,12 @@ async def list_audit(limit: int = 50, offset: int = 0, *, prefixes: Iterable[str
             {**params, "limit": limit, "offset": max(0, offset)},
         )).all()
     return int(total), [_audit_entry(r) for r in rows]
+
+
+async def get_audit_entry(entry_id: int) -> AuditEntry | None:
+    """單筆稽核紀錄，欄位與 `list_audit` 的一列相同；不存在回 None。"""
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            text(f"SELECT {_AUDIT_COLS} WHERE a.id = :id"), {"id": int(entry_id)},
+        )).first()
+    return _audit_entry(row) if row is not None else None

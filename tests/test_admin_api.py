@@ -56,6 +56,7 @@ class AdminApiTests(unittest.TestCase):
             ("post", f"/api/admin/users/{self.root}/logout", None),
             ("get", "/api/admin/audit", None),
             ("get", "/api/admin/audit/verify", None),
+            ("get", "/api/admin/audit/1", None),
             ("post", "/api/admin/elevate", {"password": USER_PW}),
             ("put", f"/api/admin/users/{self.alice}/privileges", {"scopes": ["qa_content.read"]}),
             ("post", f"/api/admin/users/{self.root}/deletion", None),
@@ -232,6 +233,26 @@ class AdminApiTests(unittest.TestCase):
         # 並用：先收再排除。
         both = get({"prefix": "user.", "exclude_prefix": "user.force"})
         self.assertEqual([i["action"] for i in both["items"]], ["user.set_role"])
+
+    def test_audit_entry_returns_the_same_row_as_the_list(self):
+        self.admin.patch(f"/api/admin/users/{self.alice}", json={"role": "admin"})
+        self.store._audit(None, "user.create", "cli-made", {"via": "cli"})
+        listed = self.admin.get("/api/admin/audit").json()["items"]
+        self.assertEqual(len(listed), 2)
+        for row in listed:
+            r = self.admin.get(f"/api/admin/audit/{row['id']}")
+            self.assertEqual((r.status_code, r.json()), (200, row))
+        self.assertIsNone(listed[0]["actor_user_id"])  # CLI 寫的列照樣取得到
+        # 讀取不寫稽核。
+        self.assertEqual(len(self.store.audit), 2)
+
+    def test_audit_entry_not_found_and_id_validation(self):
+        r = self.admin.get("/api/admin/audit/999")
+        self.assertEqual((r.status_code, r.json()["code"]), (404, "not_found"))
+        for bad in ("0", "-1", "abc", "1.5", str(2**63)):
+            self.assertEqual(self.admin.get(f"/api/admin/audit/{bad}").status_code, 422, bad)
+        # 同前綴的固定路徑不被 {entry_id} 吃掉。
+        self.assertEqual(self.admin.get("/api/admin/audit/verify").status_code, 200)
 
     def test_audit_prefix_is_strictly_validated(self):
         too_many = [("prefix", f"p{i}.") for i in range(17)]

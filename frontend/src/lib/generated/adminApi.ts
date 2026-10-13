@@ -2047,6 +2047,8 @@ export const adminApi = {
   auditLog: (query: { limit?: number; offset?: number; prefix?: string[] | null; exclude_prefix?: string[] | null } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/audit/{entry_id} — Audit Entry */
+  auditEntry: (entryId: string) => requestJSON(`/api/admin/audit/${encodeURIComponent(entryId)}`, AuditItemSchema, { cache: 'no-store' }),
   /** GET /api/admin/data-health — Get Data Health */
   getDataHealth: () => requestJSON('/api/admin/data-health', DataHealthResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/db/overview — Get Db Overview */

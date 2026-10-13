@@ -63,6 +63,10 @@ export const auditPageSchema = z.object({
   offset: z.number(),
   has_more: z.boolean(),
   next_offset: z.number().nullable(),
+  // 後端這次實際套用的 action 前綴篩選（沒帶就是空陣列）。舊版後端沒有這兩鍵，也不認得 `prefix` 參數——
+  // 回的是沒篩過的一頁；操作紀錄頁靠「有沒有這個鍵」分辨，沒有就退回只篩目前這一頁。
+  prefix: z.array(z.string()).nullish(),
+  exclude_prefix: z.array(z.string()).nullish(),
   items: z.array(auditEntrySchema),
 })
 export type AuditPage = z.infer<typeof auditPageSchema>

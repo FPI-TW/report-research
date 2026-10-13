@@ -223,7 +223,7 @@ async def run(args: argparse.Namespace) -> int:
 
     # Inventory only the owned originals/ prefix.  It is deliberately reporting-only.
     # 生成 PDF 功能移除後 generated/ 前綴不再有 DB 對應列；bucket 裡若還有舊的生成 PDF，
-    # 由人依 docs/WORKFLOW.md 的說明手動清理，這裡不把它們算成 orphan。
+    # 由人手動清理，這裡不把它們算成 orphan。
     orphan_scan = "done"
     try:
         remote_keys: set[str] = set(await asyncio.to_thread(storage.list_keys, "originals/"))

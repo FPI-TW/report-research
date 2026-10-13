@@ -3,6 +3,7 @@ import type { JobItem } from '../../../../lib/generated/adminApi'
 import { Button, Drawer, DrawerFootNote, DrawerSection, Status } from '../../../../components/console'
 import c from '../../../../components/console/Console.module.css'
 import { fmtDuration } from '../opsLabels'
+import { OpsQueryError } from '../OpsShared'
 import { LOST_HINT, jobFailed, logWindowFor } from './jobs'
 import styles from './Exec.module.css'
 
@@ -23,21 +24,47 @@ function fmtDateTimeSec(iso: string | null | undefined): string {
     + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+/** 清單裡沒有那一筆、改用網址的 unit 與開始時間另外查時的狀態（查到了就直接給 `job`）。 */
+export type JobLookup = { status: 'pending' } | { status: 'error'; error: unknown } | { status: 'missing' }
+
 interface Props {
-  /** 清單裡找到的那一次執行；`null`＝網址帶了 id 但這一頁的清單裡沒有。 */
+  /** 要顯示的那一次執行（清單裡的，或另外查到的）；`null`＝沒有可顯示的，原因看 `lookup`。 */
   job: JobItem | null
+  /** 沒給＝沒有另外查（舊格式的連結只有 id，或 unit／開始時間的格式不對）。 */
+  lookup?: JobLookup
   /** 清單的查詢時間（回應的 `until`），用來換算這次執行距今多久。 */
   now: string
   onClose: () => void
 }
 
-/** 單次執行的詳情抽屜（`?job=<invocation_id>`）：這次執行的所有欄位，附「看日誌」連到日誌頁。 */
-export function JobDrawer({ job, now, onClose }: Props) {
+/**
+ * 單次執行的詳情抽屜（`?job=<invocation_id>&unit=…&at=…`）：這次執行的所有欄位，附「看日誌」連到日誌頁。
+ * 這一頁的清單裡沒有那一筆時，頁面會用 unit 與開始時間另外查；查詢中、查詢失敗、查不到各有說明。
+ */
+export function JobDrawer({ job, lookup, now, onClose }: Props) {
+  if (!job && lookup?.status === 'pending') {
+    return (
+      <Drawer open onClose={onClose} title="載入中…" width={520}>
+        <DrawerSection><p className={styles.note}>正在查這次執行。</p></DrawerSection>
+      </Drawer>
+    )
+  }
+  if (!job && lookup?.status === 'error') {
+    return (
+      <Drawer open onClose={onClose} title="這次執行載入失敗" width={520}>
+        <DrawerSection><OpsQueryError error={lookup.error} what="這次執行" /></DrawerSection>
+      </Drawer>
+    )
+  }
   if (!job) {
     return (
       <Drawer open onClose={onClose} title="找不到這次執行" width={520}>
         <DrawerSection>
-          <p className={styles.note}>這一頁的清單裡沒有這次執行：可能在別的狀態篩選或分頁，或已超出查詢範圍。</p>
+          <p className={styles.note}>
+            {lookup
+              ? '查不到這次執行：紀錄只保留 90 天，或連結裡的 unit、開始時間不對。'
+              : '這一頁的清單裡沒有這次執行：可能在別的狀態篩選或分頁，或已超出查詢範圍。'}
+          </p>
         </DrawerSection>
       </Drawer>
     )

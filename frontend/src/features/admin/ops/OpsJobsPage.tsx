@@ -1,14 +1,15 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { adminCsvUrls, type JobItem } from '../../../lib/generated/adminApi'
-import { Button, Card, PageHeader, Segmented, useQueryParam, type SegOption } from '../../../components/console'
+import { Button, Card, PageHeader, Segmented, type SegOption } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
 import { fmtDateTime } from '../auditLabels'
 import { ExportCsvButton } from '../ExportCsvButton'
-import { JobDrawer, JobStatus } from './exec/JobDrawer'
-import { jobFailed } from './exec/jobs'
+import { JobDrawer, JobStatus, type JobLookup } from './exec/JobDrawer'
+import { jobFailed, jobLocator } from './exec/jobs'
 import { OpsQueryError } from './OpsShared'
 import { fmtDuration } from './opsLabels'
-import { JOBS_PAGE_SIZE, useOpsJobs } from './useOps'
+import { JOBS_PAGE_SIZE, useOpsJobLookup, useOpsJobs } from './useOps'
 
 type JobState = JobItem['state']
 
@@ -18,6 +19,9 @@ const STATE_OPTIONS: readonly SegOption<JobState | ''>[] = [
   { value: 'finished', label: '已結束' },
   { value: 'lost', label: '結果不明' },
 ]
+
+/** 抽屜用到的網址參數：開哪一筆（job），以及分享連結定位用的 unit 與開始時間（at）。 */
+const JOB_PARAMS = ['job', 'unit', 'at'] as const
 
 function resultDetail(job: JobItem): string {
   if (job.state !== 'finished') return '—'
@@ -30,13 +34,36 @@ function resultDetail(job: JobItem): string {
 /**
  * 排程工作：有 timer 的 oneshot 每次執行（新→舊）。資料來自 DB 投影（收集器寫 spool、loader 每 5 分鐘匯入），
  * 不經維運代理，所以代理停掉時這頁照常；但最多晚一輪匯入。「跑過」比照 verify_oneshot_ran.sh。
- * 點列開詳情抽屜，開著哪一筆放在網址（`?job=<invocation_id>`）。
+ * 點列開詳情抽屜，開著哪一筆放在網址（`?job=<invocation_id>&unit=<unit>&at=<開始時間>`）：後兩個是給分享出去的
+ * 連結定位用的——對方的清單不含那一筆（別的篩選、別的頁、被新紀錄推走）時，用它們另外查出那一筆。
  */
 export default function OpsJobsPage() {
   const [state, setState] = useState<JobState | ''>('')
   const [offset, setOffset] = useState(0)
-  const [jobId, setJobId] = useQueryParam('job')
+  const [params, setParams] = useSearchParams()
+  const jobId = params.get('job')
   const q = useOpsJobs(state, offset)
+  // 打開多一筆瀏覽紀錄（按上一頁就關），關閉則取代目前這一筆；定位用的 unit、at 跟著 job 一起加、一起拿掉。
+  const openJob = (job: JobItem) => setParams(prev => {
+    const p = new URLSearchParams(prev)
+    p.set('job', job.invocation_id)
+    p.set('unit', job.unit)
+    p.set('at', job.started_at)
+    return p
+  })
+  const closeJob = () => setParams(prev => {
+    const p = new URLSearchParams(prev)
+    for (const key of JOB_PARAMS) p.delete(key)
+    return p
+  }, { replace: true })
+  const listed = jobId ? q.data?.items.find(j => j.invocation_id === jobId) ?? null : null
+  // 清單載入完、裡面沒有那一筆，而且網址的 unit／at 格式正確，才另外查；不影響清單自己的篩選與分頁。
+  const locator = jobId && q.isSuccess && !listed ? jobLocator(params.get('unit'), params.get('at')) : null
+  const found = useOpsJobLookup(jobId ?? '', locator)
+  const lookup: JobLookup | undefined = !locator ? undefined
+    : found.isPending ? { status: 'pending' }
+      : found.isError ? { status: 'error', error: found.error }
+        : found.data ? undefined : { status: 'missing' }
 
   return (
     <>
@@ -87,14 +114,14 @@ export default function OpsJobsPage() {
                         <tr
                           key={`${job.host}/${job.unit}/${job.invocation_id}`}
                           className={`${c.rowClickable} ${jobFailed(job) ? c.rowBad : ''}`}
-                          onClick={() => setJobId(job.invocation_id)}
+                          onClick={() => openJob(job)}
                         >
                           <td>
                             <button
                               type="button"
                               className={c.rowLink}
                               title="查看這次執行的詳情"
-                              onClick={e => { e.stopPropagation(); setJobId(job.invocation_id) }}
+                              onClick={e => { e.stopPropagation(); openJob(job) }}
                             >
                               <span className={c.mono}>{name}</span>
                             </button>
@@ -127,11 +154,7 @@ export default function OpsJobsPage() {
             )}
           </Card>
           {jobId && (
-            <JobDrawer
-              job={q.data.items.find(j => j.invocation_id === jobId) ?? null}
-              now={q.data.until}
-              onClose={() => setJobId(null)}
-            />
+            <JobDrawer job={listed ?? found.data ?? null} lookup={lookup} now={q.data.until} onClose={closeJob} />
           )}
         </>
       )}

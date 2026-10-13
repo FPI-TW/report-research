@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import c from '../../../components/console/Console.module.css'
 import type { ObservationListResponse } from '../../../lib/generated/adminApi'
 import { trendAxis, trendSeries, trendSlotSpan } from './exec/hostSeries'
-import { logWindowFor } from './exec/jobs'
+import { jobLocator, logWindowFor } from './exec/jobs'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
 import OpsHostPage from './OpsHostPage'
@@ -296,12 +296,14 @@ test('排程工作的匯出按鈕帶目前的篩選條件', async () => {
   expect(exportCalls).toEqual(['/api/admin/export/jobs.csv?state=lost'])
 })
 
-test('排程工作：點列開詳情抽屜並記在網址（?job=）；列出該次執行的欄位，附「看日誌」；關閉後拿掉參數', async () => {
-  mount('/admin/operations/jobs')
+test('排程工作：點列開詳情抽屜並記在網址（?job=，附定位用的 unit 與 at）；列出該次執行的欄位，附「看日誌」；關閉後拿掉參數', async () => {
+  const fetchMock = mount('/admin/operations/jobs')
   const table = within(await screen.findByRole('table', { name: '排程工作執行紀錄' }))
   fireEvent.click(table.getAllByRole('row')[2])
   const drawer = within(await screen.findByRole('dialog', { name: 'backup' }))
-  expect(loc()).toBe(`/admin/operations/jobs?job=${'b'.repeat(32)}`)
+  expect(loc()).toBe(`/admin/operations/jobs?job=${'b'.repeat(32)}&unit=report-mark-backup.service&at=2026-10-06T01%3A00%3A00Z`)
+  // 清單裡就有這一筆：不另外查
+  expect(lookupCalls(fetchMock)).toEqual([])
   expect(drawer.getByText('失敗')).toBeInTheDocument()
   const field = (label: string, name: string) => {
     const dt = within(drawer.getByLabelText(label)).getByText(name)
@@ -353,6 +355,123 @@ test('排程工作：網址的 job 不在這一頁的清單裡時說明，不白
   const drawer = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
   expect(drawer.getByText(/這一頁的清單裡沒有這次執行/)).toBeInTheDocument()
   expect(screen.getByRole('table', { name: '排程工作執行紀錄' })).toBeInTheDocument()
+})
+
+// 分享連結：清單不含那一筆時，用網址的 unit 與 at 另外查（清單端點帶 unit／since／until）。
+const SHARED = job({ service: 'archive', unit: 'report-mark-archive@nas.service', invocation_id: '9'.repeat(32),
+  started_at: '2026-09-20T03:00:00.123456+00:00', finished_at: '2026-09-20T03:00:40+00:00', duration_seconds: 39.9,
+  last_seen_at: '2026-09-20T03:01:00+00:00' })
+const sharedUrl = (over: Record<string, string> = {}) => {
+  const p = new URLSearchParams({ job: SHARED.invocation_id, unit: SHARED.unit, at: SHARED.started_at, ...over })
+  return `/admin/operations/jobs?${p}`
+}
+const isLookup = (url: string) => url.startsWith('/api/admin/jobs') && new URLSearchParams(url.split('?')[1] ?? '').has('unit')
+const lookupCalls = (fetchMock: ReturnType<typeof mount>) => calls(fetchMock).filter(isLookup)
+const LOOKUP: Override = url => (isLookup(url)
+  ? { body: jobsBody([job({ unit: SHARED.unit, invocation_id: '8'.repeat(32) }), SHARED]) } : undefined)
+
+test('排程工作：分享的連結在清單不含那一筆時，用 unit 與開始時間另外查出來；清單的查詢不受影響', async () => {
+  const fetchMock = mount(sharedUrl(), { override: LOOKUP })
+  const drawer = within(await screen.findByRole('dialog', { name: 'archive' }))
+  expect(within(drawer.getByLabelText('識別')).getByText('invocation ID').nextElementSibling).toHaveTextContent('9'.repeat(32))
+  expect(within(drawer.getByLabelText('識別')).getByText('unit').nextElementSibling)
+    .toHaveTextContent('report-mark-archive@nas.service')
+  expect(within(drawer.getByLabelText('執行')).getByText('耗時').nextElementSibling).toHaveTextContent('40 秒')
+  // 以開始時間為中心、前後各 5 分鐘的小時間窗
+  const window = new URLSearchParams({ unit: SHARED.unit, since: '2026-09-20T02:55:00.123Z', until: '2026-09-20T03:05:00.123Z', limit: '50' })
+  expect(lookupCalls(fetchMock)).toEqual([`/api/admin/jobs?${window}`])
+  // 清單照自己的篩選與分頁查，畫面上還是那四筆
+  expect(calls(fetchMock)).toContain('/api/admin/jobs?limit=50&offset=0')
+  expect(within(screen.getByRole('table', { name: '排程工作執行紀錄' })).getAllByRole('row')).toHaveLength(5)
+  // 這次執行距今超過 1 天：日誌頁看不到
+  expect(drawer.getByText('日誌頁最多回看 1 天，看不到這次執行')).toBeInTheDocument()
+  // 關抽屜：三個參數一起拿掉
+  fireEvent.click(drawer.getByRole('button', { name: '關閉' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(loc()).toBe('/admin/operations/jobs')
+})
+
+test('排程工作：分享連結的 unit 或 at 格式不對時不送請求，照舊格式的連結說明', async () => {
+  const bad: Record<string, string>[] = [
+    { unit: 'report-mark-sync' }, // 不是 .service
+    { unit: '../etc/passwd.service' },
+    { unit: 'a b.service' },
+    { unit: `${'a'.repeat(205)}.service` }, // 超過後端的長度上限
+    { at: 'yesterday' },
+    { at: '2026-09-20' },
+    { at: '2026-09-20T03:00:00' }, // 沒有時區
+    { at: '2026-13-45T99:00:00Z' }, // 長得像但不是時間
+  ]
+  for (const over of bad) {
+    const fetchMock = mount(sharedUrl(over), { override: LOOKUP })
+    const drawer = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
+    expect(drawer.getByText(/這一頁的清單裡沒有這次執行/)).toBeInTheDocument()
+    expect(lookupCalls(fetchMock)).toEqual([])
+    cleanup()
+  }
+})
+
+test('排程工作：分享連結少了 unit 或 at（舊格式只有 ?job=）一樣不另外查', async () => {
+  const fetchMock = mount(`/admin/operations/jobs?job=${SHARED.invocation_id}&unit=${SHARED.unit}`, { override: LOOKUP })
+  const drawer = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
+  expect(drawer.getByText(/這一頁的清單裡沒有這次執行/)).toBeInTheDocument()
+  expect(lookupCalls(fetchMock)).toEqual([])
+})
+
+test('排程工作：分享連結另外查也沒有那一筆時說明原因；查詢失敗顯示後端訊息', async () => {
+  mount(sharedUrl(), { override: url => (isLookup(url) ? { body: jobsBody([]) } : undefined) })
+  const missing = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
+  expect(missing.getByText(/查不到這次執行：紀錄只保留 90 天/)).toBeInTheDocument()
+  expect(screen.getByRole('table', { name: '排程工作執行紀錄' })).toBeInTheDocument()
+  cleanup()
+
+  mount(sharedUrl(), {
+    override: url => (isLookup(url) ? { status: 400, body: { detail: '時間範圍最多 90 天', code: 'invalid_params' } } : undefined),
+  })
+  const failed = within(await screen.findByRole('dialog', { name: '這次執行載入失敗' }))
+  expect(failed.getByRole('alert')).toHaveTextContent('這次執行載入失敗：時間範圍最多 90 天')
+  fireEvent.click(failed.getByRole('button', { name: '關閉' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(loc()).toBe('/admin/operations/jobs')
+})
+
+test('排程工作：開著抽屜時那一筆被換頁推出清單，用網址的 unit 與 at 接著顯示', async () => {
+  const older = job({ service: 'older', unit: 'report-mark-older.service', invocation_id: 'f'.repeat(32) })
+  const fetchMock = mount('/admin/operations/jobs', {
+    override: url => {
+      if (!url.startsWith('/api/admin/jobs')) return undefined
+      const p = new URLSearchParams(url.split('?')[1] ?? '')
+      if (p.has('unit')) return { body: jobsBody(JOBS.filter(j => j.unit === p.get('unit'))) }
+      return p.get('offset') === '50'
+        ? { body: jobsBody([older], { total: 51, offset: 50 }) }
+        : { body: jobsBody(JOBS, { total: 51, has_more: true, next_offset: 50 }) }
+    },
+  })
+  const table = within(await screen.findByRole('table', { name: '排程工作執行紀錄' }))
+  fireEvent.click(table.getByRole('button', { name: 'backup' }))
+  expect(await screen.findByRole('dialog', { name: 'backup' })).toBeInTheDocument()
+  expect(lookupCalls(fetchMock)).toEqual([])
+  // 抽屜是 modal，直接點被遮住的分頁按鈕（等同清單自己重抓後不再含這一筆）
+  fireEvent.click(screen.getByRole('button', { name: '較舊', hidden: true }))
+  await waitFor(() => expect(lookupCalls(fetchMock)).toHaveLength(1))
+  expect(new URLSearchParams(lookupCalls(fetchMock)[0].split('?')[1]).get('unit')).toBe('report-mark-backup.service')
+  const drawer = within(await screen.findByRole('dialog', { name: 'backup' }))
+  expect(within(drawer.getByLabelText('結果')).getByText('結束碼').nextElementSibling).toHaveTextContent('2')
+})
+
+test('jobLocator：unit 與 at 都合格才給查詢條件（開始時間前後各 5 分鐘）', () => {
+  expect(jobLocator('report-mark-sync.service', '2026-10-06T01:00:00Z'))
+    .toEqual({ unit: 'report-mark-sync.service', since: '2026-10-06T00:55:00.000Z', until: '2026-10-06T01:05:00.000Z' })
+  // 後端回的格式：微秒＋時區位移
+  expect(jobLocator('a@b.service', '2026-10-06T09:00:00.123456+08:00'))
+    .toEqual({ unit: 'a@b.service', since: '2026-10-06T00:55:00.123Z', until: '2026-10-06T01:05:00.123Z' })
+  expect(jobLocator(null, '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service', null)).toBeNull()
+  expect(jobLocator('.hidden.service', '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.timer', '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service\n', '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service', '2026-10-06 01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service', '1759712400')).toBeNull()
 })
 
 test('排程工作：分頁（較舊／較新）；換狀態篩選會回到第一頁', async () => {

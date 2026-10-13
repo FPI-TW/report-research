@@ -75,6 +75,25 @@ export function useOpsJobs(state: JobItem['state'] | '', offset: number) {
   })
 }
 
+/**
+ * 單次執行（分享連結用）：後端沒有取單筆的端點，改用清單端點查該 unit 在開始時間前後一小段的紀錄，再用
+ * invocation_id 找出那一筆；查得到資料但沒有這一筆時是 null。`locator` 是 null 時不查。
+ * 與清單的篩選、分頁無關（另一個 query key）。還在執行中的那一筆比照清單每 60 秒重抓，其餘不輪詢。
+ */
+export function useOpsJobLookup(invocationId: string, locator: { unit: string; since: string; until: string } | null) {
+  return useQuery<JobItem | null>({
+    queryKey: [...OPS_KEY, 'job', invocationId, locator?.unit, locator?.since, locator?.until],
+    queryFn: async () => {
+      if (!locator) return null
+      const res = await adminApi.listJobs({ ...locator, limit: JOBS_PAGE_SIZE })
+      return res.items.find(j => j.invocation_id === invocationId) ?? null
+    },
+    enabled: locator != null,
+    refetchInterval: query => (query.state.data?.state === 'running' ? 60_000 : false),
+    retry: false,
+  })
+}
+
 /** 主機觀測（scope=host，最近 1 小時，DB 投影）。一小時約 1200 筆，上限 5000 綽綽有餘。 */
 export function useHostObservations() {
   return useQuery<ObservationListResponse>({

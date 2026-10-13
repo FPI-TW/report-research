@@ -72,11 +72,11 @@ test('一般使用者：連管理導覽都不畫，只看到無權限頁，也�
   expect(fetchMock.mock.calls.map(c => c[0])).toEqual(['/api/me'])
 })
 
-test('維運領域：四個分組十一頁，麵包屑是「領域 / 分組 / 頁面」', async () => {
+test('維運領域：四個分組十二頁，麵包屑是「領域 / 分組 / 頁面」', async () => {
   mount('admin', '/admin/operations/logs', ['admin', 'ops.read'])
   await screen.findByText('其他管理頁')
   expect(panel().getAllByRole('link').map(a => a.textContent)).toEqual([
-    '服務', '依賴圖', '事件', '管線', '資料健康', '資料庫', '排程工作', '日誌', '主機', '診斷', 'LLM 用量',
+    '服務', '依賴圖', '來源主機', '事件', '管線', '資料健康', '資料庫', '排程工作', '日誌', '主機', '診斷', 'LLM 用量',
   ])
   expect(panel().getByRole('link', { name: '日誌' })).toHaveAttribute('aria-current', 'page')
   expect(rail().getByRole('link', { name: '維運' })).toHaveAttribute('aria-current', 'true')

@@ -1,6 +1,6 @@
 """LLM 用量記錄（`data/llm_usage.jsonl`）的位置與彙總，給管理後台的 `GET /api/admin/llm-usage`。
 
-寫入端是 `scripts/_claude_cli.record_usage`：**批次**每次 LLM 呼叫（DeepSeek HTTP 與 CLI）追加一行 JSON
+寫入端是 `scripts/_claude_cli.record_usage`：**批次**每次 LLM 呼叫（DeepSeek HTTP）追加一行 JSON
 （欄位見那支模組的 docstring）。線上問答（`app/services/llm.py` 的 `stream_completion`）不寫這份檔。費用真值看
 DeepSeek 餘額差分；這份是**歸因**依據（哪個任務、哪個模型花了多少 token）。
 
@@ -76,7 +76,7 @@ class Totals:
     prompt_miss_tokens: int = 0
     completion_tokens: int = 0
     reasoning_tokens: int = 0
-    calls_without_tokens: int = 0  # CLI 路徑、或失敗在第一個 chunk 之前：沒有用量可記
+    calls_without_tokens: int = 0  # 失敗在第一個 chunk 之前（或 CLI 時代的舊列）：沒有用量可記
     total_ms: int = 0
     cost: float | None = None
 

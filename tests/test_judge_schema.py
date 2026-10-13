@@ -26,32 +26,29 @@ class FaithfulnessModelDefaultTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {**clean, **env}, clear=True):
             return config._load()
 
-    def test_default_is_haiku_and_equals_the_legacy_judge(self):
-        """claude_cli 表（conftest 強制的測試值）：解耦前生產實際用的就是 haiku（沿用 intent 預設），
-        解耦不得改變它。生產預設 deepseek 下的值見下一條。"""
-        self.assertEqual(self._load({}).faithfulness_model, "claude-haiku-4-5")
-        self.assertEqual(self._load({}).faithfulness_model, js.LEGACY_JUDGE_MODEL)
-
-    def test_deepseek_provider_switches_judge_and_legacy_rows_become_other(self):
-        """PR-26/27：生產預設（deepseek）的 judge 是 deepseek-flash；缺 judge_model 的舊列（haiku）
-        從此不是現行 judge——監控卡、待複核、eval_faithfulness 都把它們歸「其他 judge」。"""
-        s = self._load({"LLM_PROVIDER": "deepseek"})
-        self.assertEqual(s.faithfulness_model, "deepseek-flash")
-        self.assertFalse(js.is_current_judge({"faithfulness_score": 0.5}, s.faithfulness_model))
-        self.assertTrue(js.is_current_judge({"judge_model": "deepseek-flash"}, s.faithfulness_model))
+    def test_default_is_flash_and_legacy_rows_become_other(self):
+        """PR-26/27：judge 是 deepseek-flash；缺 judge_model 的舊列（haiku）從此不是現行 judge——監控卡、
+        待複核、eval_faithfulness 都把它們歸「其他 judge」。PR-M 移除 Claude 預設表後，沒有任何 provider
+        設定能讓預設 judge 回到 haiku。"""
+        for env in ({}, {"LLM_PROVIDER": "claude_cli"}, {"LLM_PROVIDER": "claude_only"}):
+            with self.subTest(env=env):
+                s = self._load(env)
+                self.assertEqual(s.faithfulness_model, "deepseek-flash")
+                self.assertFalse(js.is_current_judge({"faithfulness_score": 0.5}, s.faithfulness_model))
+                self.assertTrue(js.is_current_judge({"judge_model": "deepseek-flash"}, s.faithfulness_model))
         self.assertEqual(js.LEGACY_JUDGE_MODEL, "claude-haiku-4-5", "舊列仍是 haiku 量的，常數不跟著改")
 
     def test_no_longer_follows_intent_model(self):
-        s = self._load({"ASK_INTENT_MODEL": "deepseek-flash"})
-        self.assertEqual(s.ask_intent_model, "deepseek-flash")
-        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+        s = self._load({"ASK_INTENT_MODEL": "deepseek-v4-pro"})
+        self.assertEqual(s.ask_intent_model, "deepseek-v4-pro")
+        self.assertEqual(s.faithfulness_model, "deepseek-flash")
 
     def test_empty_string_counts_as_unset(self):
-        self.assertEqual(self._load({"FAITHFULNESS_MODEL": ""}).faithfulness_model, "claude-haiku-4-5")
+        self.assertEqual(self._load({"FAITHFULNESS_MODEL": ""}).faithfulness_model, "deepseek-flash")
 
     def test_explicit_override_wins(self):
         self.assertEqual(
-            self._load({"FAITHFULNESS_MODEL": "claude-sonnet-5"}).faithfulness_model, "claude-sonnet-5"
+            self._load({"FAITHFULNESS_MODEL": "deepseek-v4-pro"}).faithfulness_model, "deepseek-v4-pro"
         )
 
 

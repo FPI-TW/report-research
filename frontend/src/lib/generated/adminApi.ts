@@ -996,6 +996,39 @@ export const OpsLogsResponseSchema = z.object({
 })
 export type OpsLogsResponse = z.infer<typeof OpsLogsResponseSchema>
 
+export const OpsRemoteServiceSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['systemd', 'container']),
+  tier: z.enum(['critical', 'important', 'supporting']),
+  description: z.string().optional(),
+  summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
+  health: z.enum(['ok', 'degraded', 'down', 'unknown']),
+  health_reason: z.string().optional(),
+  timer: z.string().nullable().optional(),
+  timer_active: z.boolean().nullable().optional(),
+  last_run_at: z.string().nullable().optional(),
+  next_run_at: z.string().nullable().optional(),
+  exit_status: z.number().int().nullable().optional(),
+})
+export type OpsRemoteService = z.infer<typeof OpsRemoteServiceSchema>
+
+export const OpsRemoteSyncSchema = z.object({
+  source: z.enum(['nas', 'r2-inbox']),
+  inbox_push: z.boolean(),
+  timer_active: z.boolean().nullable().optional(),
+  round_state: z.enum(['running', 'done', 'failed', 'signalled', 'aborted', 'unknown']),
+  round_started_at: z.string().nullable().optional(),
+  round_rc: z.number().int().nullable().optional(),
+  feed_round: z.string().nullable().optional(),
+  feed_at: z.string().nullable().optional(),
+  feed_result: z.enum(['ok', 'mount_failed', 'rsync_failed']).nullable().optional(),
+  new_files: z.number().int().nullable().optional(),
+  push: z.enum(['off', 'none', 'ok', 'failed']).nullable().optional(),
+  pending_replays: z.number().int().optional(),
+  last_success_at: z.string().nullable().optional(),
+})
+export type OpsRemoteSync = z.infer<typeof OpsRemoteSyncSchema>
+
 export const OpsSystemdStateSchema = z.object({
   load_state: z.string().nullable().optional(),
   active_state: z.string().nullable().optional(),
@@ -1737,6 +1770,28 @@ export const OpsDependencyGraphSchema = z.object({
 })
 export type OpsDependencyGraph = z.infer<typeof OpsDependencyGraphSchema>
 
+export const OpsRemoteHostSchema = z.object({
+  name: z.string(),
+  state: z.enum(['ok', 'disabled', 'unknown', 'missing', 'invalid', 'stale', 'timer_inactive', 'sync_stalled', 'source_failed', 'push_disabled', 'push_failed', 'round_aborted']),
+  reasons: z.array(z.enum(['missing', 'invalid', 'stale', 'timer_inactive', 'sync_stalled', 'source_failed', 'push_disabled', 'push_failed', 'round_aborted'])),
+  checked_at: z.string(),
+  published_at: z.string().nullable().optional(),
+  age_seconds: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+  stale_after_minutes: z.number().int(),
+  feed_stale_after_hours: z.number().int(),
+  host: z.string().nullable().optional(),
+  sync: OpsRemoteSyncSchema.nullable().optional(),
+  services: z.array(OpsRemoteServiceSchema).nullable().optional(),
+  services_error: z.string().nullable().optional(),
+})
+export type OpsRemoteHost = z.infer<typeof OpsRemoteHostSchema>
+
+export const OpsRemoteHostListSchema = z.object({
+  items: z.array(OpsRemoteHostSchema),
+})
+export type OpsRemoteHostList = z.infer<typeof OpsRemoteHostListSchema>
+
 export const OpsServiceDetailSchema = z.object({
   name: z.string(),
   kind: z.enum(['systemd', 'container']),
@@ -2027,6 +2082,8 @@ export const adminApi = {
   listObservations: (query: { scope?: 'host' | 'container' | 'service' | null; subject?: string | null; metric?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/observations${qs(query)}`, ObservationListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/dependencies — Get Ops Dependencies */
   getOpsDependencies: () => requestJSON('/api/admin/ops/dependencies', OpsDependencyGraphSchema, { cache: 'no-store' }),
+  /** GET /api/admin/ops/remote-hosts — List Ops Remote Hosts */
+  listOpsRemoteHosts: () => requestJSON('/api/admin/ops/remote-hosts', OpsRemoteHostListSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services — List Ops Services */
   listOpsServices: () => requestJSON('/api/admin/ops/services', OpsServiceListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services/{name} — Get Ops Service */

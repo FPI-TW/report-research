@@ -68,13 +68,13 @@ class AskRequest(BaseModel):
 _ASK_GATE = ConcurrencyGate(3, name="ask", max_queue=int(os.getenv("ASK_MAX_QUEUE", "20")))
 
 ASK_ERROR_DETAIL = "問答服務發生錯誤"
-# 依 LLMUnavailableError.kind 給使用者看的訊息（kind 只有 HTTP 路徑會填；CLI 只有認證失效填 auth，其餘落到預設）。
+# 依 LLMUnavailableError.kind 給使用者看的訊息（沒有對應的 kind 落到預設）。
 # 內容審查：同一題換個問法多半就過，要讓使用者知道「可以自己處理」，而不是以為站台壞了。
 # 帳號與設定層級：每一題都會失敗、使用者無能為力，直接說「暫時無法使用」，免得反覆重試；
 # 啟動自檢與 `qa_log.filters.llm_error` 會留下可查的紀錄。**不承諾「已通知管理者」**：quota／auth
 # 雖然會經 `/healthz/llm` → 探針退出碼 8 告警，但那要探針下一輪（約 2 分鐘）、而且只在 Slack 投遞正常
 # 時才成立；config 沒有依 kind 的告警。說了等於讓使用者以為有人在處理。
-# config 與帳號分開措辭：模型名打錯、`ASK_WEB_MODEL` 誤設成 DeepSeek 都會落到 config，那不是帳號問題。
+# config 與帳號分開措辭：模型名不在白名單、網搜總閘開著卻沒有後端都會落到 config，那不是帳號問題。
 _ACCOUNT_ERROR_DETAIL = "問答服務暫時無法使用（模型服務帳號異常），請稍後再試或聯絡管理者"
 _LLM_ERROR_DETAILS = {
     "content_filter": "此題觸發模型供應商的內容審查，可換個問法",

@@ -184,7 +184,7 @@ class TestSimplifiedTextConverted(unittest.TestCase):
 
 
 class TestWriteSiteWiring(unittest.TestCase):
-    """四個寫入點確實接上了——只測純函式，不碰 DB 也不 spawn claude。"""
+    """四個寫入點確實接上了——只測純函式，不碰 DB 也不呼叫 LLM。"""
 
     def test_title_parser_converts(self):
         from scripts.generate_titles import parse_title

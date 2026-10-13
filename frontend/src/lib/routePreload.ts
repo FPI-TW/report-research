@@ -7,6 +7,7 @@ export type RouteKey =
   | 'adminOps' | 'adminOpsPipeline' | 'adminOpsServices' | 'adminOpsLogs'
   | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost' | 'adminOpsDataHealth' | 'adminOpsLlmUsage'
   | 'adminOpsDependencies'
+  | 'adminOpsRemoteHosts'
   | 'adminOpsDiagnostics'
   | 'adminAnalytics' | 'adminSecurity' | 'adminQuota' | 'adminFlags' | 'adminOpsDatabase'
   | 'adminApiClients'
@@ -38,6 +39,7 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminOpsDataHealth: () => import('../features/admin/ops/OpsDataHealthPage'),
   adminOpsLlmUsage: () => import('../features/admin/ops/OpsLlmUsagePage'),
   adminOpsDependencies: () => import('../features/admin/ops/OpsDependenciesPage'),
+  adminOpsRemoteHosts: () => import('../features/admin/ops/OpsRemoteHostsPage'),
   adminOpsDiagnostics: () => import('../features/admin/ops/OpsDiagnosticsPage'),
   // Admin v2（Wave 0 佔位頁；各 lane 只改自己的頁面檔）
   adminAnalytics: () => import('../features/admin/analytics/AdminAnalyticsPage'),

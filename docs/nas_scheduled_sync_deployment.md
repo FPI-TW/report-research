@@ -25,7 +25,7 @@ sudoedit /etc/default/report-mark-sync
 - `REPORT_MARK_ROOT`：本機 repo 根目錄。
 - `SYNC_PATH_EXTRA`：讓 service 找得到 `uv` 的額外 bin 目錄。
 
-LLM 批次預設走 DeepSeek HTTP，金鑰另放 `/etc/default/report-mark-llm`（0640 root:kashionz，
+LLM 批次走 DeepSeek HTTP，金鑰另放 `/etc/default/report-mark-llm`（0640 root:kashionz，
 只有 sync 與上傳 worker 的 unit 載入），安裝與輪替見 `docs/production_resilience.md`「DeepSeek 金鑰落點與輪替」。
 
 ## 實測 drvfs 掛載（關鍵：確認免密碼讀得到）

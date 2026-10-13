@@ -236,6 +236,88 @@ class InboxFailureTests(unittest.TestCase):
         self.assertTrue(self.h.heartbeat.exists())
 
 
+class FeedStateTests(unittest.TestCase):
+    """來源段結果（`data/.sync_feed_state`）：主機信標靠它判斷 NAS 掛載、rsync 與 inbox 推送
+    （app/services/host_beacon.py）。
+
+    殼寫、Python 讀，所以每一條都把殼寫出的檔交給 `host_beacon.collect_sync` 讀回來——兩端的鍵名與詞彙在這裡對帳。
+    """
+
+    def setUp(self):
+        self.h = _SyncHarness()
+        self.addCleanup(self.h.close)
+
+    def _feed(self, **env):
+        from app.services import host_beacon
+        return host_beacon.collect_sync(self.h.root / "data", env)["feed"]
+
+    def test_pushed_round(self):
+        env = {"SYNC_SOURCE": "nas", "SYNC_INBOX_PUSH": "1"}
+        p = self.h.run(**env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        feed = self._feed(**env)
+        self.assertEqual((feed["result"], feed["push"], feed["new_files"]), ("ok", "ok", 1))
+        self.assertRegex(feed["round"], r"^[0-9]{8}_[0-9]{6}$")
+        self.assertLess(abs(feed["epoch"] - time.time()), 120)
+        raw = (self.h.root / "data" / ".sync_feed_state").read_text(encoding="utf-8")
+        self.assertEqual([ln.split("=", 1)[0] for ln in raw.splitlines()],
+                         ["round", "epoch", "result", "new_files", "push"])
+        self.assertEqual(list((self.h.root / "data").glob(".sync_feed_state.tmp.*")), [])
+
+    def test_push_failure_is_recorded_and_import_continues(self):
+        self.h.set_rc(r2_inbox=1)
+        env = {"SYNC_SOURCE": "nas", "SYNC_INBOX_PUSH": "1"}
+        p = self.h.run(**env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        feed = self._feed(**env)
+        self.assertEqual((feed["result"], feed["push"]), ("ok", "failed"))
+
+    def test_push_switch_off(self):
+        """沒開 SYNC_INBOX_PUSH：本機照常入庫，但什麼都不會推給另一台——要看得出來，不能長得像「沒有新檔」。"""
+        env = {"SYNC_SOURCE": "nas", "SYNC_INBOX_PUSH": "0"}
+        p = self.h.run(**env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(self._feed(**env)["push"], "off")
+
+    def test_no_new_files(self):
+        self.h.delta = []
+        self.h.new_hashes = []
+        self.h._write_fakes()
+        env = {"SYNC_SOURCE": "nas", "SYNC_INBOX_PUSH": "1"}
+        p = self.h.run(**env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        feed = self._feed(**env)
+        self.assertEqual((feed["result"], feed["push"], feed["new_files"]), ("ok", "none", 0))
+
+    def test_rsync_failure(self):
+        self.h.rsync_rc = 23
+        self.h._write_fakes()
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="1")
+        self.assertNotEqual(p.returncode, 0)
+        feed = self._feed()
+        self.assertEqual((feed["result"], feed["push"]), ("rsync_failed", "none"))
+
+    def test_mount_failure(self):
+        self.h._fake("mountpoint", "exit 1\n")
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="1")
+        self.assertNotEqual(p.returncode, 0)
+        feed = self._feed()
+        self.assertEqual((feed["result"], feed["push"], feed["new_files"]), ("mount_failed", "none", 0))
+
+    def test_inbox_source_writes_nothing(self):
+        """從 R2 inbox 拉的那一端沒有來源段可言。"""
+        p = self.h.run(SYNC_SOURCE="r2-inbox", SYNC_INBOX_PUSH="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertFalse((self.h.root / "data" / ".sync_feed_state").exists())
+
+    def test_skipped_round_does_not_refresh(self):
+        """PID lock 早退（rc=0）不寫：結果檔的 epoch 變舊，正是「sync 沒有在跑」的證據。"""
+        (self.h.root / "data" / ".sync_new_reports.lock").write_text(str(os.getpid()), encoding="utf-8")
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="1")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertFalse((self.h.root / "data" / ".sync_feed_state").exists())
+
+
 class HeartbeatWriteTests(unittest.TestCase):
     """哪些路徑該更新心跳、哪些絕對不能。"""
 

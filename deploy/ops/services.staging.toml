@@ -15,6 +15,9 @@
 #   host-health……）裝到 EC2 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
 # - Admin v2 的 unit（db-snapshot、analytics-rollup、security-health、security-incident、security-retention）於 2026-10-08
 #   安裝到 EC2：項目與 prod catalog 相同，依賴把 postgres 換成 rds；給 run 的兩項同步列在 polkit 的 report-mark-ops-staging。
+# - 新檔來源的監看（feed-health、feed-incident 與外部依賴 office-feed）：EC2 的新研報全靠辦公室主機推到 R2 inbox，
+#   這一組讓那台失聯或來源段壞掉時這裡看得到。**這兩個 unit 要跟這份 catalog 一起裝**（步驟見
+#   docs/production_resilience.md「來源主機信標」）；只換 catalog 不裝 unit，依賴圖上會多兩個 not_found。
 #
 # 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 EC2 也有、而且沒有副作用疑慮的
 # freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔），以及 Admin v2 的 db-snapshot、analytics-rollup（純 SQL、零 LLM、
@@ -76,7 +79,7 @@ unit = "report-mark-sync.service"
 timer = "report-mark-sync.timer"
 tier = "important"
 actions = ["status", "logs"]
-depends_on = ["rds", "r2", "deepseek"]
+depends_on = ["rds", "r2", "deepseek", "office-feed"]
 description = "R2 inbox 增量同步匯入（每 3 小時；唯讀）"
 
 [[services]]
@@ -116,6 +119,28 @@ tier = "important"
 actions = ["status", "logs"]
 depends_on = ["slack"]
 description = "對外邊緣事件偵測與通知（每 2 分鐘）"
+
+# 新檔來源（辦公室主機的 NAS → R2 inbox）：那台每 10 分鐘把服務狀態與 sync 來源段結果發布成信標，web 的
+# /healthz/feed 讀它（.env 的 HOST_BEACON_WATCH），這組探針與事件把「來源主機失聯／來源段壞了」接上 Slack。
+# 唯讀，不給 run（探針與 P5 狀態機每 2 分鐘就跑）。細節看「維運 → 來源主機」分頁。
+[[services]]
+name = "feed-health"
+kind = "systemd"
+unit = "report-mark-feed-health.service"
+timer = "report-mark-feed-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "新檔來源探針（/healthz/feed，每 2 分鐘）"
+
+[[services]]
+name = "feed-incident"
+kind = "systemd"
+unit = "report-mark-feed-incident.service"
+timer = "report-mark-feed-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["slack"]
+description = "新檔來源事件偵測與通知（每 2 分鐘；提醒間隔 3 小時）"
 
 # ── supporting ───────────────────────────────────────────────────────────
 
@@ -244,6 +269,17 @@ description = "DeepSeek API（與辦公室主機共用金鑰；/healthz/llm）"
 name = "slack"
 tier = "important"
 description = "Slack 告警 webhook（/etc/report-mark/alert.env；未監控）"
+
+# scripts/check_feed_health.sh 的退出碼：1＝來源主機失聯（信標過期或不存在）、2＝有在回報但來源段壞了
+# （sync 停擺、NAS 掛載或 rsync 失敗、推送失敗……）；3（判不出來）與 4（沒設定）不在對照表＝unknown。
+# 依賴 r2：信標本身就放在 R2，R2 壞了這一項判不出來，依賴圖上會標成受 r2 影響。
+[[externals]]
+name = "office-feed"
+tier = "important"
+depends_on = ["r2"]
+probe = "feed-health"
+down_exit_codes = [1, 2]
+description = "新檔來源：辦公室主機的 NAS → R2 inbox（主機信標；/healthz/feed）"
 
 [[externals]]
 name = "public-edge"

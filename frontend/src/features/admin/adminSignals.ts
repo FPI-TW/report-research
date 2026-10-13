@@ -1,10 +1,12 @@
 import type { AdminPageKey } from '../../components/shell/adminNav'
 import type {
-  DataHealthResponse, IncidentListResponse, OpsDependencyGraph, OpsServiceListResponse, SecurityAlertsResponse,
+  DataHealthResponse, IncidentListResponse, OpsDependencyGraph, OpsRemoteHostList, OpsServiceListResponse,
+  SecurityAlertsResponse,
 } from '../../lib/generated/adminApi'
 import type { Progress } from '../../lib/progressSchema'
 import { componentLabel, fmtDuration, needsAttention } from './ops/opsLabels'
 import { attentionLevel, pipelineAttention } from './ops/pipeline/attention'
+import { REMOTE_STATE_LABELS } from './ops/remoteHostLabels'
 import { STATE_LABELS } from './security/securityLabels'
 
 /**
@@ -14,6 +16,8 @@ import { STATE_LABELS } from './security/securityLabels'
  *             維運代理連不上 → warn（狀態不明不等於正常）。排程服務兩次執行之間的「閒置」是正常。
  *   依賴圖    外部依賴（R2、DeepSeek、NAS…）的健康判讀由後端算好：down → bad、degraded → warn。
  *             沒有探針的外部依賴是 unknown（未監控），不亮。內部服務壞掉算在「服務」，這裡不重複計。
+ *   來源主機  把新研報推上來的那台主機：後端判讀出原因（失聯、同步停擺、推送失敗…）→ bad。
+ *             沒設定要監看、或判斷不出來（R2 讀不到）不亮——後者由物件儲存那一組告警。
  *   管線      `pipeline/attention.ts`：近 24 小時有排程失敗 → bad；忠實度查核 fail-open → warn。
  *   事件      有進行中的事件 → warn，數字是進行中的筆數。
  *   主機      有進行中的主機資源事件（元件 host）→ warn。主機頁本身沒有門檻，事件偵測才有。
@@ -40,6 +44,7 @@ export interface SignalInputs {
   services?: OpsServiceListResponse
   agentUnavailable?: boolean
   dependencies?: OpsDependencyGraph
+  remoteHosts?: OpsRemoteHostList
   progress?: Progress
   firingIncidents?: IncidentListResponse
   dataHealth?: DataHealthResponse
@@ -81,6 +86,15 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
         reason: `${degraded.length} 個外部依賴降級`,
         detail: degraded.map(n => (n.health_reason ? `${n.name}（${n.health_reason}）` : n.name)).join('、'),
       }
+    }
+  }
+
+  const troubled = (input.remoteHosts?.items ?? []).filter(h => h.reasons.length > 0)
+  if (troubled.length > 0) {
+    out.remoteHosts = {
+      lamp: 'bad',
+      reason: `來源主機異常：${troubled.map(h => h.name).join('、')}`,
+      detail: troubled.flatMap(h => h.reasons.map(r => REMOTE_STATE_LABELS[r])).join('、'),
     }
   }
 

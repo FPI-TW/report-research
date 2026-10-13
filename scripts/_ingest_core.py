@@ -36,7 +36,7 @@ TAGS_DIR = ROOT / "data" / "tags"
 # 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
 # （app/services/llm_models.py；預設 deepseek 下是 deepseek-flash）。
 TAG_MODEL = resolve_model(TASK_TAG)
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）；與 tag_all_cli 同值。
+# 輸出上限（第二版計畫 §8）；與 tag_all_cli 同值。
 TAG_MAX_TOKENS = 1024
 
 # `Outcome.kind` 的詞彙。除了最後兩個，都與 sync 的計數器鍵（`.sync_last_stats`）逐字相同，
@@ -77,7 +77,7 @@ class Outcome:
       入庫例外是 `repr(e)`，抽字自己接住的損毀檔是 `ExtractResult.error`，標註失敗是 `_tag_via_cli`
       回的錯誤字串（可能是 None）。
     - `failure_kind`：標註失敗時 `scripts._claude_cli.failure_kind` 的分類（跳過名單的 reason）；
-      CLI 失敗、成功、非標註失敗都是 None。
+      不屬內容型的失敗、成功、非標註失敗都是 None。
     - `stopped_at`：本次寫進 `research.extraction_log` 的 `stopped_at`；沒寫為 None。
     - `cache_written`：只有 `ingested` 才有，抽取快取是否寫成（fail-open，False 不影響已入庫）。
     """
@@ -131,7 +131,7 @@ def _tag_via_cli(
     *,
     file_hash: str | None = None,
 ):
-    """標註單篇（`run_claude` 依白名單分派 CLI 或 DeepSeek）→ (tag, error)。tag 為 None 時 error
+    """標註單篇（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）→ (tag, error)。tag 為 None 時 error
     說得出為什麼。
 
     **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
@@ -152,7 +152,7 @@ def _tag_via_cli(
         meta={"task": TASK_TAG, "file_hash": file_hash, "report_id": None},
     )
     if not res.text:
-        return None, res.error or "CLI 無回應"
+        return None, res.error or "LLM 無回應"
     tag = parse_tags(res.text)
     return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
 
@@ -345,7 +345,7 @@ async def ingest_one(
             await session.commit()
             stopped_at = "not_research"
         stage = {"skip_untagged": "tag", "skip_blocked": "tag_blocked", "skip_truncated": "tag_truncated"}.get(reason)
-        # DeepSeek 的內容型失敗（審查、截斷、空回應、400）的跳過名單分類；CLI 失敗為 None。
+        # DeepSeek 的內容型失敗（審查、截斷、空回應、400）的跳過名單分類；其餘失敗為 None。
         fail_reason = failure_kind(CliResult(None, tag_error)) if tag is None else None
         return Outcome(
             reason, path, file_hash=res.file_hash, stage=stage, reason=tag_error if stage else None,

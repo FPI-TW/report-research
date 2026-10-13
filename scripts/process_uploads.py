@@ -24,7 +24,7 @@ ops 另有「立即執行」）。殼取整輪鎖 `data/.upload_worker.lock`、�
   1  這支自己壞了（例外、SQL 錯誤、隔離區權限）→ OnFailure 告警
   2  這輪不跑、下一輪自然會好：DB 連不上（由 web 探針經 P5 告警）→ unit 列為成功
   3  LLM 設定或帳號錯誤、不會自己好：缺金鑰、環境檔讀不到（不存在／權限）、`LLM_PROVIDER` 拼錯、未知模型、
-     重複的鍵（`require_llm_key` 拒跑），以及途中的 401／402／400 升級／CLI 跑不起來 → OnFailure 告警。
+     重複的鍵（`require_llm_key` 拒跑），以及途中的 401／402／400 升級 → OnFailure 告警。
      只有真的有上傳在等（有 `clean`）時才會走到這一步，所以沒有上傳時不會每 5 分鐘告警一次。
   75 claude 鎖被其他批次佔用（下一輪再試）→ unit 列為成功
 
@@ -374,7 +374,7 @@ async def ingest_main(ctx: Ctx, *, limit: int, hashes: list[str]) -> int:
         try:
             st = await ingest_round(ctx, limit=limit, hashes=hashes)
         except CliNotFoundError as exc:
-            # 環境層級（401／402、設定、400 升級、CLI 跑不起來）：每一篇都會踩到、不會自己好。這一筆已退回 clean。
+            # 環境層級（401／402、設定、400 升級）：每一篇都會踩到、不會自己好。這一筆已退回 clean。
             uw.journal_error(f"LLM 帳號或設定錯誤，入庫中止：{exc}")
             return RC_LLM_CONFIG
     _say(f"入庫：認領 {st.claimed}、草稿 {st.drafts}、失敗 {st.failed} {st.by_kind or ''}、"

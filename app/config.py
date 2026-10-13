@@ -8,6 +8,7 @@
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass
 
 from app.services.llm_models import (
@@ -19,7 +20,6 @@ from app.services.llm_models import (
     TASK_FAITHFULNESS,
     TASK_QA_PLANNER,
     default_model,
-    is_http_model,
     provider,
     resolve_model,
 )
@@ -186,6 +186,22 @@ def _ops_agent_socket(environment: str) -> str:
     return (os.getenv("OPS_AGENT_SOCKET") or "").strip() or _OPS_SOCKETS.get(environment, "")
 
 
+_BEACON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+
+
+def _beacon_name(name: str) -> str:
+    """主機信標的名稱（R2 key 的一段）。不合法＝空字串＝停用並警告：
+
+    拼錯不可變成寫到別的 key、或默默監看一個不存在的信標。
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw and not _BEACON_NAME.fullmatch(raw):
+        logging.getLogger(__name__).warning(
+            "%s=%r 不是合法名稱（小寫英數與 -，字母開頭，最長 40），視為未設定", name, raw)
+        return ""
+    return raw
+
+
 def _ratio(name: str, default: float) -> float:
     """(0, 1] 之間的比例；空值、非數字、nan 或超出範圍退回預設並警告（門檻打錯不可變成永遠不告警）。"""
     raw = (os.getenv(name) or "").strip()
@@ -216,22 +232,19 @@ def _int_at_least(name: str, default: int, minimum: int) -> int:
     return value
 
 
-# 問答抽查逾時的預設值依 judge 走哪條路而定（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
+# 問答抽查逾時的預設值（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
 ASK_FAITHFULNESS_TIMEOUT_HTTP = 90.0
-ASK_FAITHFULNESS_TIMEOUT_CLI = 240.0
 
 
-def _ask_faithfulness_timeout(judge_model: str) -> float:
-    """`ASK_FAITHFULNESS_TIMEOUT` 有設就用它；沒設時 DeepSeek judge 90、Claude CLI judge 240。
+def _ask_faithfulness_timeout() -> float:
+    """`ASK_FAITHFULNESS_TIMEOUT` 有設就用它；沒設時 90（DeepSeek judge）。空字串視同未設。
 
-    預設值不能不分 provider：若有人把 `FAITHFULNESS_MODEL` 設回 claude-*（或 `LLM_PROVIDER=claude_cli`），
-    固定 90 秒會讓 CLI 的 grounding（單次實測 48–142 秒）大半記成 degraded(timeout)，而且沒有任何訊號
-    說是逾時值跟錯了 judge。空字串視同未設。
+    PR-M 前預設值依 judge 走哪條路而分（Claude CLI judge 240）；CLI 移除後 judge 只剩 DeepSeek。
     """
     raw = (os.getenv("ASK_FAITHFULNESS_TIMEOUT") or "").strip()
     if raw:
         return float(raw)
-    return ASK_FAITHFULNESS_TIMEOUT_HTTP if is_http_model(judge_model) else ASK_FAITHFULNESS_TIMEOUT_CLI
+    return ASK_FAITHFULNESS_TIMEOUT_HTTP
 
 
 # 管理員 TOTP 強制（使用者定案 10）只認這幾個「明確關閉」的寫法；其餘一律視為開啟。
@@ -278,7 +291,9 @@ class Settings:
     ask_min_reports: int
     ask_stale_age_days: int
     ask_max_stale_reports: int
-    # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）
+    # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）。
+    # 預設關（PR-M）：網搜沒有後端（claude CLI 已移除、DeepSeek 網搜延後到 P9），開著只會讓時效題
+    # 退回婉拒、開了網搜的主答以設定錯誤失敗（啟動自檢記 ERROR）。P9 接上 Tavily 時改回開。
     ask_enable_web: bool
     # 開啟網搜那一輪的主 LLM 逾時。經 /api/ask（_with_heartbeat 驅動）時語意是「第一個輸出
     # （文字或網搜標記）」的期限、不是總時限（理由見 answer.py 的 ASK_WEB_TIMEOUT 註解）：
@@ -360,7 +375,7 @@ class Settings:
     # DeepSeek 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
     # 只是最後一道上限：首字前有首字期限，吐字後正常靠 max_tokens 與 read 逾時收尾；伺服器
     # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
-    # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。CLI 路徑不受影響。
+    # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。
     llm_http_total_timeout: float = 600.0
     # DeepSeek 餘額告警（web/routers/health.py 的 /healthz/llm；只有 web 讀，設在 repo 根 .env）。
     # 只看 `LLM_BUDGET_CURRENCY` 那一筆（D-O：帳戶以人民幣儲值）；低於門檻回 503 → 探針退出碼 7（用罄等停擺是 8）。
@@ -460,6 +475,15 @@ class Settings:
     # 對外 API（GET /external/v1/reports/{report_id}/file-url）交出的 presign 有效期（秒，60..3600）；
     # 站內的原檔連結仍用 r2_presign_ttl_seconds。經 ObjectStorage.presign_get(ttl_seconds=...) 傳入。
     external_file_url_ttl_seconds: int = 600
+    # 主機信標（app/services/host_beacon.py）：一台主機把自己的服務與 sync 來源段狀態發布到共用的 R2，
+    # 另一台讀來監看。host_beacon_name＝本機以這個名稱發布（scripts/publish_host_beacon.py；空＝不發布）；
+    # host_beacon_watch＝web 要監看的信標名稱（/healthz/feed、/api/admin/ops/remote-hosts；空＝不監看）。
+    # 兩個門檻：信標多久沒更新算那台主機失聯（分鐘）、sync 的來源段多久沒有新結果算停擺
+    # （小時；sync 每 3 小時一輪，7＝漏掉至少一整輪）。
+    host_beacon_name: str = ""
+    host_beacon_watch: str = ""
+    host_beacon_stale_minutes: int = 45
+    host_beacon_feed_stale_hours: int = 7
 
 
 def _load() -> Settings:
@@ -480,13 +504,13 @@ def _load() -> Settings:
         ask_min_reports=int(os.getenv("ASK_MIN_REPORTS", "3")),
         ask_stale_age_days=int(os.getenv("ASK_STALE_AGE_DAYS", "180")),
         ask_max_stale_reports=int(os.getenv("ASK_MAX_STALE_REPORTS", "4")),
-        ask_enable_web=_flag("ASK_ENABLE_WEB", "1"),
+        ask_enable_web=_flag("ASK_ENABLE_WEB", "0"),
         ask_web_timeout=float(os.getenv("ASK_WEB_TIMEOUT", "240")),
-        # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查 LLM_PROVIDER 的
-        # 預設表；空字串視同未設（tests/conftest.py 把全部旋鈕強制成 ""）。
+        # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查預設表；
+        # 空字串視同未設（tests/conftest.py 把全部旋鈕強制成 ""）。
         # 改寫前 ASK_CONDENSE_MODEL／QA_PLANNER_MODEL 未設時會跟著 ASK_INTENT_MODEL 走；
-        # 現在各自查表（claude_cli 表三者同為 claude-haiku-4-5、deepseek 表三者同為 deepseek-flash，
-        # 生產環境檔沒有設這三個鍵）。理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
+        # 現在各自查表（三者同為 deepseek-flash，生產環境檔沒有設這三個鍵）。
+        # 理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
         ask_intent_model=resolve_model(TASK_ASK_INTENT),
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
         ask_condense_model=resolve_model(TASK_ASK_CONDENSE),
@@ -533,8 +557,8 @@ def _load() -> Settings:
         # 生產忠實度 judge。**刻意不再沿用 ASK_INTENT_MODEL**（DeepSeek 遷移 PR-07）：
         # 先前未設時跟著 intent 走，而生產環境檔沒有覆寫——只要哪天把路由模型換掉，
         # judge 就在同一刻被靜默換掉，監控卡上的分數從此是另一把尺量的，卻沒有任何
-        # 記號。空字串視同未設。DeepSeek 預設表裡這列自 PR-26/27 起是 deepseek-flash（新量尺
-        # 系譜，claude_cli 表仍是 claude-haiku-4-5）。換 judge 時連帶看 app/services/judge_schema.py：
+        # 記號。空字串視同未設。預設表裡這列自 PR-26/27 起是 deepseek-flash（新量尺系譜）。
+        # 換 judge 時連帶看 app/services/judge_schema.py：
         # 讀分數的三處只計現行 judge，舊尺的列歸「其他 judge」。
         faithfulness_model=resolve_model(TASK_FAITHFULNESS),
         # 沒有現行呼叫端：問答抽查用下面那顆 ask_faithfulness_timeout，
@@ -543,21 +567,19 @@ def _load() -> Settings:
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
         # 問答抽查的逾時（每次 judge 呼叫＝一個階段的一次 `llm_http.complete_json`，涵蓋其內
         # 最多 2 個請求與退避的總期限），與 `faithfulness_timeout` 分開。
-        # 預設值依 judge 走哪條路而定（`_ask_faithfulness_timeout`，以 `is_http_model(faithfulness_model)`
-        # 判斷）：DeepSeek 90、Claude CLI 240；顯式設了 ASK_FAITHFULNESS_TIMEOUT 就照設的值。
+        # 預設 90（`_ask_faithfulness_timeout`）；顯式設了 ASK_FAITHFULNESS_TIMEOUT 就照設的值。
         # DeepSeek 的 90 是 PR-26/27 重訂的（第二版計畫 §6.4：max(ceil(3×p99), 60)，沒有 judge 的 p99
         # 就用探測資料保守估）：
         #   - 9/24 探測 deepseek-flash、thinking 關：問答（輸入同為 ≤20k 字脈絡、輸出 ~1k token，
         #     與 grounding 的 payload 同量級）p50 5.6／p95 7.0 秒；judge 非串流、輸出更短。
         #   - 沒有 p99：保守取 p99≈2×p95＝14 秒；一次呼叫最多 2 個請求（截斷重試的輸出上限加倍），
         #     單次上限≈2×14＝28 秒；×3＝84 → 取整 90，且 > FAITHFULNESS_TIMEOUT（60）。
-        # CLI 的 240 沿用 CLI 時代（ground 單次實測 48–142 秒）。
         # 上線後以日誌 `llm_call task=faithfulness` 的 `total_ms` 重量（每次 judge 呼叫一行，正是這個
         # 期限涵蓋的範圍；那一行的 total_ms 是最後一個請求的耗時，`attempts=1` 時即整次呼叫，
         # `attempts=2` 的行要另外看），照同一條公式重訂。**不要拿 `evaluation.elapsed_ms`**：它是
         # 整次抽查（拆解＋grounding 兩次 judge 呼叫、加上兩者之間的處理），約是單次的兩倍，會把期限估大。
         # 抽查是背景任務、不佔 `/api/ask` 名額，逾時只會記 degraded(timeout)，不是低分。
-        ask_faithfulness_timeout=_ask_faithfulness_timeout(resolve_model(TASK_FAITHFULNESS)),
+        ask_faithfulness_timeout=_ask_faithfulness_timeout(),
         # 抽查改成背景任務後就不再受 `/api/ask` 的併發閘保護：每次抽查要跑兩個 judge 階段
         # （CLI 時代每次 spawn 一個 `claude` 跑 48–142 秒；DeepSeek 下最多 6 個請求），抽樣率預設
         # 1.0，連續問答時背景任務數會無上界地累積。這裡給它自己的上限——超過就**跳過該次抽查**而不是排隊：抽查本來就是
@@ -676,6 +698,10 @@ def _load() -> Settings:
         security_elevate_failure_threshold=_int_at_least("SECURITY_ELEVATE_FAILURE_THRESHOLD", 3, 1),
         audit_verify_cache_seconds=_int_at_least("AUDIT_VERIFY_CACHE_SECONDS", 3600, 0),
         external_file_url_ttl_seconds=_external_file_url_ttl(),
+        host_beacon_name=_beacon_name("HOST_BEACON_NAME"),
+        host_beacon_watch=_beacon_name("HOST_BEACON_WATCH"),
+        host_beacon_stale_minutes=_int_at_least("HOST_BEACON_STALE_MINUTES", 45, 15),
+        host_beacon_feed_stale_hours=_int_at_least("HOST_BEACON_FEED_STALE_HOURS", 7, 4),
     )
 
 

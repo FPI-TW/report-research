@@ -5,11 +5,12 @@
 釘住的契約：
 1. **重試只有一層、最壞次數寫得出來**：一個階段（一次 call_validated）在 HTTP 路徑最多
    `judge_schema.HTTP_STAGE_MAX_REQUESTS`（3）個請求——adapter 的截斷／空回應／暫時性重試、schema 重試、
-   `judge_json` 的重試三者不相乘。
+   `judge_json` 的重試三者不相乘（`judge_json` 自 PR-M 起不再有自己的重試）。
 2. 各階段 `max_tokens`：拆解 8192、grounding 2048、CP 2048、反推問題 1024（第二版計畫 §6.5）。
 3. 失敗分類：生產記 `degraded_reason`（審查→content_risk、401／402→account），離線帳號錯誤拋
    `JudgeAccountError` 讓 run_ragas 整批中止（rc=2、不寫結果檔）。
-4. CLI 路徑不受影響（原本的測試照舊在 tests/test_faithfulness.py、tests/test_eval_judge.py）。
+4. PR-M：judge 只剩 DeepSeek。model 不在白名單（含 claude-*）時不送出——生產記 degraded(account)、離線拋
+   `JudgeAccountError`（整批中止）。
 """
 from __future__ import annotations
 
@@ -116,8 +117,8 @@ class StageBudgetTests(unittest.IsolatedAsyncioTestCase):
             await js.call_validated(judge, "s", "u", js.parse_statements)
         self.assertEqual(len(calls), 1)
 
-    async def test_cli_path_keeps_its_schema_retry(self):
-        """不記帳的 judge（CLI）照舊重試 1 次。"""
+    async def test_unaccounted_judge_keeps_its_schema_retry(self):
+        """不記帳的 judge（注入的假 judge；PR-M 前還有 CLI judge）照舊重試 1 次。"""
         calls = []
 
         async def judge(system, user):
@@ -259,30 +260,42 @@ class ProductionJudgeTests(_Http):
         for kind in kinds:
             self.assertIn(F._HTTP_DEGRADED.get(kind, F.DEGRADED_UNAVAILABLE), F.DEGRADED_REASONS, kind)
 
-    async def test_cli_model_still_uses_stream_completion(self):
-        """claude_cli 路徑維持呼叫模組層 stream_completion（patch 點不變），不碰 HTTP。"""
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
-                         max_tokens=None, task=None):
-            yield '{"statements": []}'
-
+    async def test_non_whitelisted_model_is_account_and_sends_nothing(self):
+        """PR-M：judge model 不在白名單（含 claude-*）→ 不送出、degraded(account)；不再走 CLI 串流。"""
         self.install(lambda s, n, b: completion({"statements": []}))
-        with mock.patch.object(F, "stream_completion", stream):
-            r = await F.check_faithfulness("x", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
-        self.assertEqual(self.requests, [])
-        self.assertIsNone(r.judge_requests)
-        self.assertIsNone(r.to_evaluation()["judge_fingerprint"])
+        for model in ("claude-haiku-4-5", "haiku", ""):
+            with self.subTest(model=model):
+                with self.assertLogs("app.services.faithfulness", "ERROR"):
+                    r = await F.check_faithfulness("營收 100 億", ["ctx"], model=model, timeout=1.0)
+                self.assertTrue(r.degraded)
+                self.assertEqual(r.degraded_reason, F.DEGRADED_ACCOUNT)
+                self.assertEqual(self.requests, [])
+        self.assertFalse(hasattr(F, "stream_completion"), "生產 judge 不得再 import 串流呼叫層")
 
 
 # ── 3. 離線評測（judge_json / run_ragas）──────────────────────────────────────
 class EvalJudgeTests(_Http):
-    async def test_http_path_ignores_judge_json_retries(self):
+    async def test_judge_json_does_not_retry_on_top_of_the_adapter(self):
         self.install(lambda s, n, b: httpx.Response(503))
         from app.services.llm import LLMUnavailableError
 
         with self.assertRaises(LLMUnavailableError) as cm:
-            await EJ.judge_json("x", system="s", model=MODEL, retries=5, timeout=5)
+            await EJ.judge_json("x", system="s", model=MODEL, timeout=5)
         self.assertEqual(cm.exception.kind, lh.OVERLOADED)
         self.assertEqual(len(self.requests), lh.JSON_MAX_ATTEMPTS, "judge_json 的重試不得疊在 adapter 上")
+        import inspect
+
+        self.assertNotIn("retries", inspect.signature(EJ.judge_json).parameters)
+
+    async def test_non_whitelisted_model_raises_account_error_and_sends_nothing(self):
+        """PR-M：離線 judge 設成 claude-* 之類 → `JudgeAccountError`（run_ragas 整批 rc=2），不送出。"""
+        self.install(lambda s, n, b: completion({"a": 1}))
+        for model in ("claude-haiku-4-5", "sonnet", ""):
+            with self.subTest(model=model):
+                with self.assertRaises(EJ.JudgeAccountError) as cm:
+                    await EJ.judge_json("x", system="s", model=model, timeout=5)
+                self.assertIn("白名單", str(cm.exception))
+        self.assertEqual(self.requests, [])
 
     async def test_account_error_raises_judge_account_error(self):
         self.install(lambda s, n, b: httpx.Response(402, json={"error": {"message": "Insufficient Balance"}}))

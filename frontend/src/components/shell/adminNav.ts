@@ -11,7 +11,7 @@ export type AdminPageKey =
   | 'home'
   | 'reviews' | 'reports' | 'uploads'
   | 'users' | 'quota' | 'apiClients'
-  | 'services' | 'dependencies' | 'incidents'
+  | 'services' | 'dependencies' | 'remoteHosts' | 'incidents'
   | 'pipeline' | 'dataHealth' | 'database'
   | 'jobs' | 'logs' | 'host' | 'diagnostics'
   | 'llmUsage'
@@ -49,7 +49,8 @@ export const ADMIN_IA: readonly AdminDomain[] = [
   ] },
   { key: 'ops', label: '維運', icon: 'activity', groups: [
     { label: '健康', pages: [
-      ops('services', '服務', 'services'), ops('dependencies', '依賴圖', 'dependencies'), ops('incidents', '事件', 'incidents'),
+      ops('services', '服務', 'services'), ops('dependencies', '依賴圖', 'dependencies'),
+      ops('remoteHosts', '來源主機', 'remote-hosts'), ops('incidents', '事件', 'incidents'),
     ] },
     { label: '資料', pages: [
       ops('pipeline', '管線', 'pipeline'), ops('dataHealth', '資料健康', 'data-health'), ops('database', '資料庫', 'database'),

@@ -32,12 +32,12 @@ UNIT_FAILURES="data/unit_failures.log"
 # 分工——那個記「最近一次完整成功」，這個記「這一輪的收場」。
 ROUND_STATE="data/sync_round_state"
 
-# scripts/_claude_lock.py 的 EXIT_LOCK_BUSY（sysexits.h EX_TEMPFAIL）。三個階段都會
-# spawn claude CLI，撞到手動批次時會以這個碼結束——刻意與「這支自己壞了」分開，
+# scripts/_claude_lock.py 的 EXIT_LOCK_BUSY（sysexits.h EX_TEMPFAIL）。會呼叫 LLM 的階段都取
+# 批次鎖，撞到手動批次時會以這個碼結束——刻意與「這支自己壞了」分開，
 # 因為處置完全不同（前者下一輪自然重試，後者要人去看）。
 LOCK_BUSY_RC=75
 
-# 帳號／環境型中止（批次以 SystemExit(2) 收場，例如 claude CLI 不在 PATH）。與 rc=1 分開：
+# 帳號／環境型中止（批次以 SystemExit(2) 收場，例如 DeepSeek 401／402、缺金鑰、白名單外的模型名、斷路器）。與 rc=1 分開：
 # 這類中止是**整批一篇都沒做**，而且不寫 data/sync_failures.log、也不進
 # research.llm_task_failure，所以 failures_to_delta.py 撈不到、下一輪也不會自己補。
 # 處置見 docs/production_resilience.md「整批中止後的重放」。
@@ -68,7 +68,7 @@ failure_header() {
 # 下游段的異常計數。掛在 record_unit_failure 內是刻意的：每一個下游失敗分支都已經
 # 呼叫它，所以這裡一處就涵蓋全部六段**以及未來新增的段**——不必記得在新段裡多寫一行，
 # 而「忘記多寫一行」正是這類計數器最典型的失效方式。
-# **rc=75（claude CLI 被佔用）不算異常**：它是 EX_TEMPFAIL，本 repo 刻意用它與
+# **rc=75（批次鎖被佔用）不算異常**：它是 EX_TEMPFAIL，本 repo 刻意用它與
 # 「批次自己壞了」分流；把它算成異常會讓每次批次撞鎖都抑制心跳。
 #
 # 保留 hashes 也掛在這裡，理由相同：任一下游段以 rc=2 中止都要保留，新段自動涵蓋。
@@ -85,7 +85,7 @@ record_unit_failure() {
   {
     failure_header "$stage" "$rc"
     if [ "$rc" -eq "$LOCK_BUSY_RC" ]; then
-      echo "（rc=${LOCK_BUSY_RC}＝claude CLI 被另一支批次佔用，見 scripts/_claude_lock.py；"
+      echo "（rc=${LOCK_BUSY_RC}＝LLM 批次鎖被另一支批次佔用，見 scripts/_claude_lock.py；"
       echo "  不是這支批次壞掉。持有者資訊印在下方 log 尾巴裡。）"
     fi
     echo "--- ${LOG} (last 20) ---"
@@ -343,6 +343,33 @@ write_heartbeat() {
   log "心跳已更新：$HEARTBEAT"
 }
 
+# ── 來源段結果（機器可讀）──────────────────────────────────────────────────
+# 存在理由：這台是另一個部署（碰不到 NAS 的 EC2）的新檔來源。NAS 掛不上、rsync 失敗、inbox 推送失敗，
+# 那一端看到的都只是「inbox 沒有新檔」，與「這幾天沒有新稿」無從分辨。scripts/publish_host_beacon.py 每
+# 10 分鐘把這個檔連同服務狀態發布到 R2，另一端的後台照它告警（app/services/host_beacon.py）。
+#
+# **只記來源段**（掛載、rsync、推送），不記匯入與下游：那些失敗不影響推給另一端的檔，由本機的心跳與
+# freshness 負責。每一輪只要走到來源段的結論就寫一次（含失敗的收場）——所以這個檔的 epoch 太舊，
+# 本身就是「sync 沒有在跑」的證據（PID lock 早退、timer 停了都不會寫）。
+#
+#   result：ok｜mount_failed｜rsync_failed
+#   push  ：off（沒開 SYNC_INBOX_PUSH）｜none（開了但本輪沒有新檔，或還沒走到推送）｜ok｜failed
+#
+# 與心跳相同：原子寫入、失敗不擋 sync。鍵集合固定，讀取端逐鍵解析（不 source、不 eval）。
+FEED_STATE="data/.sync_feed_state"
+write_feed_state() {
+  local result="$1" new="${2:-0}" push="${3:-none}" tmp="${FEED_STATE}.tmp.$$"
+  case "$new" in ''|*[!0-9]*) new=0 ;; esac
+  {
+    echo "round=${ROUND_TS}"
+    echo "epoch=$(date +%s)"
+    echo "result=${result}"
+    echo "new_files=${new}"
+    echo "push=${push}"
+  } > "$tmp" 2>/dev/null || { log "來源段結果暫存寫入失敗（不擋 sync）"; rm -f "$tmp" 2>/dev/null; return 0; }
+  mv -f "$tmp" "$FEED_STATE" 2>/dev/null || { log "來源段結果 rename 失敗（不擋 sync）"; rm -f "$tmp" 2>/dev/null; return 0; }
+}
+
 mkdir -p data
 
 # 系統正在關機就別開工。**這不是本輪狀態機制的替代品，是它的補集**：這條只擋得住
@@ -437,6 +464,7 @@ else
     sudo -n /usr/local/sbin/mount-nas-research >>"$LOG" 2>&1 || true
   fi
   if ! mountpoint -q "$MOUNT"; then
+    write_feed_state mount_failed 0 none
     log "掛載失敗或不可用 → 結束（不跑 rsync、不動 DB）"; exit 1
   fi
 
@@ -451,15 +479,19 @@ else
   rsync -rt --size-only --no-motd --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG" || RC=$?
   NEW=$(grep -cvE '/$' "$DELTA" 2>/dev/null || echo 0)
   log "rsync rc=$RC，本次新傳檔列≈${NEW}"
-  if [ "$RC" -ne 0 ]; then log "rsync 失敗 → 結束"; exit 1; fi
+  if [ "$RC" -ne 0 ]; then write_feed_state rsync_failed "$NEW" none; log "rsync 失敗 → 結束"; exit 1; fi
 
   # 2b) 把這一輪的新檔推到 R2 inbox，給沒有 NAS 的部署拉（SYNC_INBOX_PUSH=1 才做）。
   #     best-effort：推失敗不擋本機匯入；漏推的檔要手動以該輪 delta 重推（r2_inbox.py push）。
+  FEED_PUSH=off
+  if [ "${SYNC_INBOX_PUSH:-0}" = 1 ]; then FEED_PUSH=none; fi
   if [ "${SYNC_INBOX_PUSH:-0}" = 1 ] && [ "$NEW" -gt 0 ]; then
     PUSH_RC=0
+    FEED_PUSH=ok
     "$UV" run python scripts/r2_inbox.py push --delta "$DELTA" >>"$LOG" 2>&1 || PUSH_RC=$?
     log "R2 inbox 推送 rc=$PUSH_RC（best-effort）"
     if [ "$PUSH_RC" -ne 0 ]; then
+      FEED_PUSH=failed
       INBOX_REPLAY="data/inbox_delta_retained_${ROUND_TS}.txt"
       cp -- "$DELTA" "$INBOX_REPLAY"
       log "R2 inbox 推送失敗，補傳 delta 保留在 ${INBOX_REPLAY}："
@@ -468,6 +500,7 @@ else
       record_unit_failure "r2_inbox(push)" "$PUSH_RC"
     fi
   fi
+  write_feed_state ok "$NEW" "$FEED_PUSH"
 fi
 
 # 3) 增量匯入（nice/ionice 降優先序，勿搶線上服務）
@@ -488,7 +521,7 @@ if [ "$IMPORT_RC" -ne 0 ]; then
     # 復原提示不可省：rsync 已把新檔落到本地，下一輪 rsync 不會再把它們列進 delta
     # （--size-only 判定為已同步），所以「等下一輪自然補上」是錯的直覺——delta 只有
     # 這一次。等手動批次結束後要用 --all-local 對 DB 補漏。
-    log "匯入未執行：claude CLI 被另一支批次佔用（rc=$LOCK_BUSY_RC）"
+    log "匯入未執行：批次鎖被另一支批次佔用（rc=$LOCK_BUSY_RC）"
     log "  → 本輪新檔已在本地但未入庫；等該批次結束後跑："
     log "     $UV run python scripts/sync_new_reports.py --all-local"
     log "  補完後刪掉本輪 delta（rm -f ${DELTA}），否則之後整批中止時它會被列進待重放清單"
@@ -574,10 +607,10 @@ if [ -s "$HASHES" ]; then
   fi
 
   # 5) 閱讀頁重點摘錄（best-effort，同樣只針對本輪新研報）
-  #    **必須序列跑在摘要之後**：兩者都 spawn claude CLI，併發會互搶，擷取會被
-  #    大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。這條順序現在
-  #    另有 scripts/_claude_lock.py 的跨進程 flock 兜底——但鎖只保證「不會同時
-  #    跑」，撞上就是有一邊不跑；要兩段都完成，順序仍然得靠這裡寫對。
+  #    **必須序列跑在摘要之後**：兩者都呼叫 LLM、都取 scripts/_claude_lock.py 的跨進程
+  #    flock（CLI 時代併發會搶同一支 CLI、擷取被大量誤標 rejected；現在併發的代價是重複
+  #    付費）。鎖只保證「不會同時跑」，撞上就是有一邊不跑；要兩段都完成，順序仍然得靠
+  #    這裡寫對。
   #
   #    **一定要用 --hashes-file，不可用 --since-days 1**：後者濾的是 report_date
   #    而非入庫時間，而 NAS 匯入的研報日期常比入庫日早——實測近 10 天入庫的 90 篇
@@ -601,8 +634,8 @@ fi
 #    5047 份）。綁本輪新檔的話，沒有新研報進來的日子它就完全不動——而雷達正是這樣
 #    從 2026-07-16 起靜止了兩週。
 #
-#    **`--limit` 不可省，這是本段最重要的一行**：訊號擷取每份每 worker 約 100-135s，
-#    5047 份不設上限就是連續佔住 claude CLI 鎖八十小時以上，期間每一輪 sync 的匯入都會
+#    **`--limit` 不可省，這是本段最重要的一行**：訊號擷取每份每 worker 約 100-135s（CLI 時代
+#    實測），5047 份不設上限就是連續佔住批次鎖八十小時以上，期間每一輪 sync 的匯入都會
 #    撞鎖以 rc=75 收場——而匯入撞鎖的代價不是「下輪再來」：rsync 已把檔案落到本地，
 #    `--size-only` 讓下一輪 delta 不再列出它們，那批研報就要靠 `--all-local` 手動補。
 #    也就是說，讓這段跑太久會反過來把主資料流弄停。
@@ -657,13 +690,13 @@ fi
 #    但近一年只差 1 篇。也就是說缺的全是一年以上的舊檔，它們永遠不會出現在任何一輪的
 #    --hashes-file 裡，不另外排就是永遠不補，讀者在舊研報上看到的永遠是券商流水號檔名。
 #
-#    **同樣以 --limit 限量，理由與 6) 一字不差**：不設上限＝連續佔住 claude 鎖，把主
+#    **同樣以 --limit 限量，理由與 6) 一字不差**：不設上限＝連續佔住批次鎖，把主
 #    資料流弄停。generate_titles.py 的順序是 `report_date DESC NULLS LAST, file_name`，
 #    故限量取的一定是最新的那批缺值。標題只餵 3000 字（訊號餵 16000），每份遠比訊號快，
 #    60 份/輪 ≈ 每日 480 份；訊號積壓清完後這段就是視窗裡唯一的長工，屆時可再往上調。
 #
 #    排在最後：訊號的時效性較高、簡報有「當日」期限，而這段是沒有期限的長工。
-#    三者搶同一支 claude CLI，先跑的那個吃掉的是後面那個的預算。
+#    三者輪流用同一把批次鎖與同一個 3 小時視窗，先跑的那個吃掉的是後面那個的預算。
 #
 #    **排除本輪 4b 已打過的新研報**（--exclude-hashes-file）：積壓段依 report_date DESC 取，
 #    本輪新研報恰好排最前面；4b 失敗的那篇會被這段再打一次，失敗在跳過名單

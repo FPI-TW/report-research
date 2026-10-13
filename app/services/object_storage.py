@@ -12,6 +12,7 @@ import hmac
 import mimetypes
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Iterator
@@ -325,6 +326,37 @@ class ObjectStorage:
         if content_type:
             extra["ContentType"] = content_type
         self._call("upload_file", Filename=str(p), Bucket=self.settings.r2_bucket, Key=key, ExtraArgs=extra)
+
+    def put_status_object(self, key: str, data: bytes) -> None:
+        """Overwritable small JSON for status prefixes (``beacons/``) only; each publish replaces the last."""
+        self._call("put_object", Bucket=self.settings.r2_bucket, Key=key, Body=data, ContentType="application/json")
+
+    def get_status_object(self, key: str, *, max_bytes: int) -> tuple[bytes, datetime]:
+        """``(body, LastModified)`` of a small status object.
+
+        ``LastModified`` is stamped by R2, so the reader can age the object without trusting the
+        publisher's clock.  Anything larger than ``max_bytes`` is refused before the body is read.
+        """
+        response = self._call("get_object", Bucket=self.settings.r2_bucket, Key=key)
+        body = response["Body"]
+        try:
+            modified = response.get("LastModified")
+            if not isinstance(modified, datetime) or modified.tzinfo is None:
+                raise ObjectStorageError("R2 status object has no usable LastModified")
+            if int(response.get("ContentLength") or 0) > max_bytes:
+                raise ObjectStorageError(f"R2 status object exceeds {max_bytes} bytes")
+            data = body.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise ObjectStorageError(f"R2 status object exceeds {max_bytes} bytes")
+            return data, modified
+        except ObjectStorageError:
+            raise
+        except Exception as exc:
+            raise ObjectStorageError(f"R2 read failed: {exc}") from exc
+        finally:
+            close = getattr(body, "close", None)
+            if close:
+                close()
 
     def download_to(self, key: str, target: str | Path) -> None:
         self._call("download_file", Bucket=self.settings.r2_bucket, Key=key, Filename=str(target))

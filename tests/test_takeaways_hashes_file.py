@@ -99,7 +99,7 @@ class SyncScriptWiringTests(unittest.TestCase):
         self.assertIn("--hashes-file", self.src[i:i + 300])
 
     def test_takeaways_runs_after_summaries(self):
-        """兩者都 spawn claude CLI，併發會互搶（CLAUDE.md：擷取會被大量誤標 rejected）。"""
+        """兩者都呼叫 LLM，併發會重複付費、摘錄互相覆寫（scripts/_claude_lock.py 的理由）。"""
         self.assertLess(
             self.src.index("generate_summaries.py"),
             self.src.index("extract_takeaways.py"),

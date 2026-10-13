@@ -362,70 +362,68 @@ class CheckFaithfulnessTests(unittest.IsolatedAsyncioTestCase):
 
 class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
     """預設 judge 的失敗原因要落到 evaluation.degraded_reason：「服務掛了」與「回了看不懂
-    的東西」一個是可用性問題、一個是量尺問題，監控與校準都要分得開。"""
+    的東西」一個是可用性問題、一個是量尺問題，監控與校準都要分得開。
 
-    async def _check(self, stream):
+    PR-M 起預設 judge 只走 DeepSeek（`llm_http.complete_json`），這裡以假 `complete_json` 回各種 kind；
+    端到端（MockTransport）的版本在 tests/test_judge_http.py。PR-M 前這組測的是 CLI judge（drain 串流、
+    逾時截斷記 truncated），詞彙沿用。"""
+
+    async def _check(self, kind, *, data=None, model="deepseek-flash"):
         from unittest import mock
 
-        with mock.patch.object(F, "stream_completion", stream):
-            return await F.check_faithfulness("營收年增 30%", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
+        from app.services import llm_http
 
-    async def test_unavailable(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
-                         max_tokens=None, task=None):
-            raise F.LLMUnavailableError("529")
-            yield  # pragma: no cover
+        async def fake_complete_json(model, prompt, **kw):
+            return llm_http.JsonResult(data=data, kind=kind, detail="x", attempts=1)
 
-        r = await self._check(stream)
-        self.assertTrue(r.degraded)
-        self.assertEqual(r.degraded_reason, F.DEGRADED_UNAVAILABLE)
-        ev = r.to_evaluation()
-        self.assertEqual(ev["degraded_reason"], "unavailable")
-        self.assertEqual(ev["judge_model"], "claude-haiku-4-5")
+        with mock.patch.object(F.llm_http, "complete_json", fake_complete_json):
+            return await F.check_faithfulness("營收年增 30%", ["ctx"], model=model, timeout=1.0)
 
-    async def test_parse(self):
-        """回應完整（沒撞到逾時）卻不是 JSON：量尺問題。"""
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
-                         max_tokens=None, task=None):
-            yield "我無法判斷這些主張。"
-            meta["truncated"] = False
+    async def test_http_kinds(self):
+        from app.services import llm_http
 
-        r = await self._check(stream)
-        self.assertEqual(r.degraded_reason, F.DEGRADED_PARSE)
+        cases = {
+            llm_http.OVERLOADED: F.DEGRADED_UNAVAILABLE,
+            llm_http.NETWORK: F.DEGRADED_UNAVAILABLE,
+            llm_http.TIMEOUT: F.DEGRADED_TIMEOUT,
+            llm_http.TRUNCATED: F.DEGRADED_TRUNCATED,
+            llm_http.EMPTY: F.DEGRADED_EMPTY,
+            llm_http.INVALID_JSON: F.DEGRADED_PARSE,
+            llm_http.CONTENT_FILTER: F.DEGRADED_CONTENT_RISK,
+            llm_http.QUOTA: F.DEGRADED_ACCOUNT,
+            llm_http.AUTH: F.DEGRADED_ACCOUNT,
+            llm_http.CONFIG: F.DEGRADED_ACCOUNT,
+        }
+        for kind, want in cases.items():
+            with self.subTest(kind=kind):
+                r = await self._check(kind)
+                self.assertTrue(r.degraded)
+                self.assertEqual(r.degraded_reason, want)
+                ev = r.to_evaluation()
+                self.assertEqual(ev["degraded_reason"], want)
+                self.assertEqual(ev["judge_model"], "deepseek-flash")
 
-    async def test_truncated_by_timeout_is_not_parse(self):
-        """吐到一半被逾時截斷：JSON 不完整是逾時的結果，不是 judge 回了看不懂的東西。"""
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
-                         max_tokens=None, task=None):
-            yield '{"statements": ["截斷'
-            meta["truncated"] = True
+    async def test_non_whitelisted_model_is_account_without_calling(self):
+        """PR-M：claude-* 不再走 CLI——不呼叫 complete_json、記 account（與 404 模型不存在同一類）。"""
+        from unittest import mock
 
-        r = await self._check(stream)
-        self.assertEqual(r.degraded_reason, F.DEGRADED_TRUNCATED)
-        self.assertEqual(r.to_evaluation()["degraded_reason"], "truncated")
+        called = []
 
-    async def test_timeout_without_output(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
-                         max_tokens=None, task=None):
-            raise F.LLMUnavailableError("claude 無有效回應", reason="timeout")
-            yield  # pragma: no cover
+        async def fake_complete_json(*a, **kw):
+            called.append(1)
 
-        r = await self._check(stream)
-        self.assertEqual(r.degraded_reason, F.DEGRADED_TIMEOUT)
+        with mock.patch.object(F.llm_http, "complete_json", fake_complete_json), \
+                self.assertLogs("app.services.faithfulness", "ERROR"):
+            r = await F.check_faithfulness("營收年增 30%", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
+        self.assertEqual(called, [])
+        self.assertEqual(r.degraded_reason, F.DEGRADED_ACCOUNT)
+        self.assertEqual(r.to_evaluation()["judge_model"], "claude-haiku-4-5")
 
     def test_vocabulary_is_closed(self):
         self.assertEqual(
             F.DEGRADED_REASONS,
             {"unavailable", "timeout", "truncated", "empty", "parse", "schema", "content_risk", "account", "error"},
         )
-
-    async def test_empty(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
-                         max_tokens=None, task=None):
-            yield "   "
-
-        r = await self._check(stream)
-        self.assertEqual(r.degraded_reason, F.DEGRADED_EMPTY)
 
 
 class ResolveEvidenceTextsTests(unittest.IsolatedAsyncioTestCase):

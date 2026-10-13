@@ -4,6 +4,7 @@ import { RequireAdmin } from '../../../components/shell/RequireAdmin'
 import { RequireScope } from '../RequireScope'
 
 // 管線讀 /api/progress（web 行程直接讀 DB 與 log，不經代理）；排程工作、事件與主機讀 DB 投影（/api/admin/jobs、incidents、observations）；服務、依賴圖與日誌經維運代理；
+// 來源主機讀 /api/admin/ops/remote-hosts（另一台主機發布到 R2 的信標，不經代理）；
 // 資料健康與 LLM 用量讀 /api/admin/data-health、/api/admin/llm-usage（唯讀）；診斷讀 /api/admin/diagnostics；資料庫讀 /api/admin/db/*（系統目錄快照、慢查詢、趨勢）。
 
 /**

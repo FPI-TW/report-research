@@ -78,6 +78,14 @@ describe('導覽燈號', () => {
     expect(deriveSignals({ dependencies: graph(node('backup', 'systemd', 'down')) }).dependencies).toBeUndefined()
   })
 
+  it('來源主機：後端判讀出原因 → bad；沒設定、正常、判斷不出來都不亮', () => {
+    const host = (name: string, state: string, reasons: string[]) => ({ name, state, reasons }) as never
+    expect(deriveSignals({ remoteHosts: { items: [host('office', 'push_failed', ['push_failed', 'round_aborted'])] } }).remoteHosts)
+      .toMatchObject({ lamp: 'bad', reason: '來源主機異常：office', detail: '推送失敗、上一輪被中止' })
+    expect(deriveSignals({ remoteHosts: { items: [host('office', 'ok', []), host('lab', 'unknown', [])] } }).remoteHosts).toBeUndefined()
+    expect(deriveSignals({ remoteHosts: { items: [] } }).remoteHosts).toBeUndefined()
+  })
+
   it('管線沿用 attention.ts：近 24 小時有排程失敗 → bad；只有 fail-open → warn', () => {
     const base = progressFixture()
     const failed = progressFixture({ unit_failures: { ...base.unit_failures!, count_24h: 2 } })

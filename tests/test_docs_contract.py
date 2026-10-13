@@ -67,7 +67,7 @@ _PATHY_EXTS = (
 )
 _TOP_DIRS = (
     "app/", "web/", "scripts/", "tests/", "db/", "eval/", "deploy/",
-    "frontend/", "docs/", "workflows/", ".github/",
+    "frontend/", "docs/", ".github/",
 )
 
 # 任何文件都可以合法提到、但樹裡不會有的路徑：建置產物與執行期產物。

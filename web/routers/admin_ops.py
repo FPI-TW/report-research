@@ -17,6 +17,11 @@ web 不碰 systemctl／journalctl／docker，只經 `web/ops_client.py` 問維�
 依賴圖（`GET /api/admin/ops/dependencies`，`ops.read`）：問代理一次 `list`，依賴關係來自 catalog 的
 `depends_on` 與 `externals`（唯一真相來源，web 不另寫一份），判讀與「上游壞掉 → 受影響的下游」在
 `app/services/ops_topology.py`。
+
+來源主機（`GET /api/admin/ops/remote-hosts`，`ops.read`）：這台 web 監看的主機信標（`HOST_BEACON_WATCH`）——
+另一台主機每 10 分鐘發布到 R2 的服務狀態與 sync 來源段結果（NAS 掛載、rsync、inbox 推送）。**不經維運代理**
+（代理只管本機）：資料來自 R2，判讀在 `app/services/host_beacon.py`，與 `/healthz/feed` 共用同一份 60 秒快取。
+沒設定要監看時 `items` 是空的；R2 讀不到是那一筆 `state=unknown`＋`error`，不是 5xx。唯讀，沒有任何操作。
 """
 
 from __future__ import annotations
@@ -27,10 +32,12 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, ValidationError
 
+from app.config import get_settings
 from app.services import ops_topology
 from app.services.accounts import User
 from web import authz, deps, ops_client
 from web.errors import AppError
+from web.routers import health as health_routes
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +229,68 @@ class OpsDependencyGraph(BaseModel):
     affected: list[str]
 
 
+# ── 來源主機（主機信標）──────────────────────────────────────────────────
+
+# 與 app/services/host_beacon.py 的 STATES／ALERT_STATES 等詞彙逐字一致（tests/test_host_beacon.py 釘住）。
+RemoteState = Literal["ok", "disabled", "unknown", "missing", "invalid", "stale", "timer_inactive", "sync_stalled",
+                      "source_failed", "push_disabled", "push_failed", "round_aborted"]
+RemoteAlert = Literal["missing", "invalid", "stale", "timer_inactive", "sync_stalled", "source_failed",
+                      "push_disabled", "push_failed", "round_aborted"]
+
+
+class OpsRemoteService(BaseModel):
+    name: str
+    kind: Kind
+    tier: Tier
+    description: str = ""
+    summary: Summary
+    health: Health
+    health_reason: str = ""
+    timer: str | None = None
+    timer_active: bool | None = None
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    exit_status: int | None = None
+
+
+class OpsRemoteSync(BaseModel):
+    """來源段（NAS → rsync → R2 inbox 推送）最近一輪的結果。時間已換算到這台主機的時間軸。"""
+
+    source: Literal["nas", "r2-inbox"]
+    inbox_push: bool
+    timer_active: bool | None = None
+    round_state: Literal["running", "done", "failed", "signalled", "aborted", "unknown"]
+    round_started_at: str | None = None
+    round_rc: int | None = None
+    feed_round: str | None = None
+    feed_at: str | None = None
+    feed_result: Literal["ok", "mount_failed", "rsync_failed"] | None = None
+    new_files: int | None = None
+    push: Literal["off", "none", "ok", "failed"] | None = None
+    pending_replays: int = 0
+    last_success_at: str | None = None
+
+
+class OpsRemoteHost(BaseModel):
+    name: str
+    state: RemoteState
+    reasons: list[RemoteAlert]
+    checked_at: str
+    published_at: str | None = None
+    age_seconds: int | None = None
+    error: str | None = None
+    stale_after_minutes: int
+    feed_stale_after_hours: int
+    host: str | None = None
+    sync: OpsRemoteSync | None = None
+    services: list[OpsRemoteService] | None = None
+    services_error: str | None = None
+
+
+class OpsRemoteHostList(BaseModel):
+    items: list[OpsRemoteHost]
+
+
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上（夾在中間會讓端點回 422）──────────
 
 _ERRORS = {
@@ -337,3 +406,14 @@ async def get_ops_dependencies():
     """服務依賴圖：節點（服務＋外部依賴）、邊與「上游壞掉 → 受影響的下游」。依賴關係只來自 Service Catalog。"""
     source = await _ask(_TopologySource, "list")
     return ops_topology.build_topology(source.model_dump())
+
+
+@router.get("/api/admin/ops/remote-hosts", response_model=OpsRemoteHostList, dependencies=[_OPS_READ])
+async def list_ops_remote_hosts():
+    """這台 web 監看的來源主機：信標的判讀、來源段最近一輪的結果與那台的服務清單。沒設定要監看時是空清單。"""
+    reading = await health_routes.feed_reading()
+    if reading.state == "disabled":
+        return OpsRemoteHostList(items=[])
+    settings = get_settings()
+    return {"items": [reading.detail(stale_minutes=settings.host_beacon_stale_minutes,
+                                     feed_stale_hours=settings.host_beacon_feed_stale_hours)]}

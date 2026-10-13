@@ -37,10 +37,6 @@ Environment=HOME=/home/kashionz
 # 它不得相依 Python／.venv——2026-08-18 的根因正是 venv 損毀，若探針跟著壞掉，
 # 它就會和被監控的服務一起死。
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# Claude CLI 已放棄（2026-09-24 決策），探針的 claude 依賴檢查（退出碼 5）停用：空值＝不讀 web unit 的
-# PATH drop-in。不停用的話 claude 一旦從 PATH 消失，探針就永遠回 5、蓋掉 DeepSeek 帳號告警，而訊息
-# 「問答路徑會 FileNotFoundError」也不實（問答已不 spawn claude）。PR-M 時連同探針整段 rc 5 一起刪除。
-Environment=HEALTH_DEP_DROPIN=
 EnvironmentFile=-/etc/default/report-mark-sync
 # 顯式 `bash <script>` 而非直接 exec：不依賴 repo 內的執行位元。2026-08-18 的遷移
 # 才剛因為 /mnt/c（drvfs 一律回報 777）從未記錄過 exec bit 而踩過這個坑。

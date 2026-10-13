@@ -8,7 +8,6 @@ import asyncio
 import importlib.util
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,6 +17,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services import llm_http as lh  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 
 # 以檔案路徑載入 scripts/extract_takeaways.py（scripts 非套件）。
@@ -32,8 +32,7 @@ et = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = et
 _spec.loader.exec_module(et)
 
-# CLI 呼叫的實作住在共用模組（scripts/_claude_cli.py），所以失敗模式測試要 patch
-# 那裡的 subprocess，不是 et 的——et 已經不再直接 import subprocess。
+# LLM 呼叫的實作住在共用模組（scripts/_claude_cli.py）；失敗模式的逐種測試在 tests/test_claude_cli.py。
 from scripts import _claude_cli as cc  # noqa: E402
 
 # ── 測試語料 ──
@@ -421,7 +420,7 @@ class AnchorIntegrationTests(unittest.TestCase):
         self.assertEqual(rows[0].extraction_version, et.EXTRACTION_VERSION)
 
     def test_build_rows_returns_empty_when_parse_failed(self):
-        parsed = et.ParsedTakeaways(ok=False, error="CLI 無回應或逾時")
+        parsed = et.ParsedTakeaways(ok=False, error="回應不是合法 JSON")
         self.assertEqual(et.build_rows("r1", CANONICAL, SHA, parsed), [])
 
 
@@ -472,14 +471,12 @@ class CliArgsTests(unittest.TestCase):
     # argv 組裝（旗標、NUL 剝除）已移到 scripts/_claude_cli.py，
     # 對應斷言在 tests/test_claude_cli.py；這裡只留屬於本腳本的選擇。
     def test_default_model_is_anchoring_approved(self):
-        """模組常數（conftest 的 claude_cli 下）與每張預設表的摘錄模型都必須是量過錨定率的模型，
-        不可為空、不可意外變成未量過的模型（理由見 ANCHOR_APPROVED_TAKEAWAY_MODELS 的註解）。"""
+        """模組常數與預設表的摘錄模型都必須是量過錨定率的模型，不可為空、不可意外變成未量過的模型
+        （理由見 ANCHOR_APPROVED_TAKEAWAY_MODELS 的註解）。"""
         from app.services import llm_models as lm
 
         self.assertIn(et.TAKEAWAY_MODEL_DEFAULT, ANCHOR_APPROVED_TAKEAWAY_MODELS)
-        for prov in lm.PROVIDERS:
-            with self.subTest(provider=prov):
-                self.assertIn(lm.default_model(lm.TASK_TAKEAWAY, prov), ANCHOR_APPROVED_TAKEAWAY_MODELS)
+        self.assertIn(lm.default_model(lm.TASK_TAKEAWAY), ANCHOR_APPROVED_TAKEAWAY_MODELS)
 
     def test_production_default_takeaway_model_is_flash(self):
         """生產預設（LLM_PROVIDER 未設＝deepseek）下的摘錄模型：D6 依探測與 D-A 定為 flash。"""
@@ -507,68 +504,27 @@ class PromptTests(unittest.TestCase):
 
 
 class CliFailureTests(unittest.TestCase):
-    """CLI 失敗原因必須可區分。
+    """失敗原因必須可區分、環境層級的失敗要中止整批。
 
     曾經是 `except Exception: return None` —— 於是「claude 不在 PATH」（systemd 下
     實際發生過）、逾時、OOM 全被寫成同一句「CLI 無回應或逾時」，整批 549 篇全滅
     卻還是正常結束、exit 0，只留下一行 ok=0 rejected=549，看不出該修 PATH 還是該
-    調 timeout。
+    調 timeout。實作在共用的 `scripts/_claude_cli.run_claude`（逐種失敗的區分在 tests/test_claude_cli.py
+    的 `FailureReasonsTests`）；這裡只釘住本腳本接上的是它、而且整批中止型失敗不會被吞掉。PR-M 前這組測的是
+    CLI 子行程的各種失敗（ENOENT、逾時、非零退出），隨 CLI 一起改寫。
     """
 
-    def _raises(self, exc):
-        return mock.patch.object(cc.subprocess, "run", side_effect=exc)
+    def test_call_cli_delegates_to_the_shared_layer(self):
+        res = cc.CliResult(None, "API[timeout] x")
+        with mock.patch.object(et, "run_claude", return_value=res) as run:
+            self.assertIs(et.call_cli("prompt", "deepseek-flash", file_hash="h1", report_id="r1"), res)
+        self.assertEqual(run.call_args.args[:2], ("prompt", "deepseek-flash"))
 
-    def test_success_returns_stdout_and_no_error(self):
-        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
-        with mock.patch.object(cc.subprocess, "run", return_value=done):
-            res = et.call_cli("prompt", "model")
-        self.assertEqual(res.text, "OUT")
-        self.assertIsNone(res.error)
-
-    def test_missing_cli_raises_instead_of_returning_none(self):
-        # 環境層級失敗：每篇都會踩到，必須往上拋以中止整批，
-        # 而不是靜靜地把每一篇都記成 rejected
-        with self._raises(FileNotFoundError(2, "No such file or directory", "claude")):
+    def test_non_whitelisted_model_raises_batch_abort(self):
+        with mock.patch("subprocess.run", side_effect=AssertionError("不得 spawn")):
             with self.assertRaises(et.CliNotFoundError) as ctx:
-                et.call_cli("prompt", "model")
-        msg = str(ctx.exception)
-        self.assertIn("claude", msg)
-        self.assertIn("PATH", msg)  # 訊息要直接指出真因
-
-    def test_timeout_is_reported_as_timeout(self):
-        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
-            res = et.call_cli("prompt", "model", timeout=180)
-        self.assertIsNone(res.text)
-        self.assertIn("逾時", res.error)
-        self.assertIn("180", res.error)
-
-    def test_nonzero_exit_reports_code_and_stderr(self):
-        fail = subprocess.CompletedProcess(
-            args=[], returncode=3, stdout="", stderr="usage: unknown flag\n"
-        )
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            res = et.call_cli("prompt", "model")
-        self.assertIsNone(res.text)
-        self.assertIn("3", res.error)
-        self.assertIn("unknown flag", res.error)
-
-    def test_other_exception_is_reported_with_its_type(self):
-        with self._raises(OSError("Cannot allocate memory")):
-            res = et.call_cli("prompt", "model")
-        self.assertIsNone(res.text)
-        self.assertIn("OSError", res.error)
-        self.assertNotIn("逾時", res.error)  # 不得與逾時混為一談
-
-    def test_failure_reasons_are_mutually_distinguishable(self):
-        """三種失敗不可再塌縮成同一句話（這正是原缺陷的本體）。"""
-        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
-            timeout_err = et.call_cli("p", "m").error
-        with self._raises(OSError("boom")):
-            other_err = et.call_cli("p", "m").error
-        fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="e")
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            exit_err = et.call_cli("p", "m").error
-        self.assertEqual(len({timeout_err, other_err, exit_err}), 3)
+                et.call_cli("prompt", "claude-sonnet-5")
+        self.assertIn("白名單", str(ctx.exception))
 
 
 class CliAbortTests(unittest.IsolatedAsyncioTestCase):
@@ -592,7 +548,7 @@ class CliAbortTests(unittest.IsolatedAsyncioTestCase):
             log = Path(tmp) / "takeaway_failures.log"
             with mock.patch.object(et, "FAIL_LOG", log), \
                  mock.patch.object(et, "call_cli",
-                                   return_value=et.CliResult(None, "CLI 逾時（180s 內未回應）")):
+                                   return_value=et.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))):
                 await et.extract_one(asyncio.Semaphore(1), self._item(), 24000, "m", 1)
             written = log.read_text(encoding="utf-8")
         self.assertIn("rep-1", written)
@@ -601,7 +557,7 @@ class CliAbortTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
-    """raw_payload.model 記**實際產出**的模型（遷移 PR-15）：HTTP 取回應的 model 欄，CLI 退回請求的。"""
+    """raw_payload.model 記**實際產出**的模型（遷移 PR-15）：取回應的 model 欄，取不到時退回請求的。"""
 
     def test_build_rows_records_model_and_keeps_quote(self):
         rows = et.build_rows("r1", CANONICAL, SHA, _parsed({"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM}),
@@ -634,11 +590,11 @@ class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._run([ok]), "deepseek-flash-0925")
 
     async def test_falls_back_to_requested_model(self):
-        ok = et.CliResult('{"takeaways": []}', None)  # CLI 路徑沒有回應的 model 欄
+        ok = et.CliResult('{"takeaways": []}', None)  # 回應沒有 model 欄
         self.assertEqual(await self._run([ok]), "deepseek-flash")
 
     async def test_no_response_no_model(self):
-        err = et.CliResult(None, "CLI 逾時（180s 內未回應）")
+        err = et.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
         self.assertIsNone(await self._run([err, err, err]))
 
 

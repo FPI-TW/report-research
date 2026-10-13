@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -144,6 +145,73 @@ class ObjectKeyTests(unittest.TestCase):
         self.assertEqual(captured["ExtraArgs"]["Metadata"], {"mtime": "1700000000"})
         self.assertEqual(captured["ExtraArgs"]["ContentType"], "application/pdf")
         self.assertNotIn("IfNoneMatch", captured["ExtraArgs"])
+
+    def _status_storage(self, client):
+        storage = storage_module.ObjectStorage()
+        storage.mode = "r2"
+        storage._client = client
+        storage.settings = SimpleNamespace(r2_bucket="bucket")
+        return storage
+
+    def test_status_object_put_is_overwritable_json(self):
+        """beacons/ 的狀態物件每次覆寫：不帶 IfNoneMatch（originals/ 才是 create-only）。"""
+        captured = {}
+
+        class _Client:
+            def put_object(self, **kwargs):
+                captured.update(kwargs)
+
+        self._status_storage(_Client()).put_status_object("beacons/office.json", b"{}")
+        self.assertEqual(captured, {"Bucket": "bucket", "Key": "beacons/office.json", "Body": b"{}",
+                                    "ContentType": "application/json"})
+
+    def test_status_object_get_returns_body_and_server_timestamp(self):
+        """年齡要用 R2 蓋的 LastModified 算（不信任發布端的時鐘），所以讀取端一併回傳。"""
+        modified = datetime(2026, 10, 12, 8, 0, tzinfo=timezone.utc)
+        closed = []
+
+        class _Body:
+            def __init__(self, data):
+                self.data = data
+
+            def read(self, n=-1):
+                return self.data[:n] if n >= 0 else self.data
+
+            def close(self):
+                closed.append(True)
+
+        def client(response):
+            class _Client:
+                def get_object(self, **_kwargs):
+                    return response
+            return _Client()
+
+        ok = {"Body": _Body(b'{"v":1}'), "LastModified": modified, "ContentLength": 7}
+        self.assertEqual(self._status_storage(client(ok)).get_status_object("beacons/office.json", max_bytes=64),
+                         (b'{"v":1}', modified))
+        self.assertEqual(closed, [True])
+
+        refused = (
+            {"Body": _Body(b"x" * 100), "LastModified": modified, "ContentLength": 100},   # 宣告的長度超過上限
+            {"Body": _Body(b"x" * 100), "LastModified": modified, "ContentLength": 3},     # 宣告說謊，本體超過上限
+            {"Body": _Body(b"{}"), "ContentLength": 2},                                    # 沒有 LastModified
+            {"Body": _Body(b"{}"), "LastModified": modified.replace(tzinfo=None), "ContentLength": 2},
+        )
+        for response in refused:
+            with self.subTest(response={k: v for k, v in response.items() if k != "Body"}):
+                with self.assertRaises(storage_module.ObjectStorageError):
+                    self._status_storage(client(response)).get_status_object("beacons/office.json", max_bytes=64)
+
+    def test_status_object_missing_is_object_not_found(self):
+        class _ClientError(Exception):
+            response = {"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
+
+        class _Client:
+            def get_object(self, **_kwargs):
+                raise _ClientError()
+
+        with self.assertRaises(storage_module.ObjectNotFound):
+            self._status_storage(_Client()).get_status_object("beacons/office.json", max_bytes=64)
 
     def test_no_such_key_is_confirmed_missing(self):
         class _ClientError(Exception):

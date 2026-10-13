@@ -44,7 +44,7 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 
 同樣的理由另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡：問答與批次的 LLM 段全靠 DeepSeek，
 402／401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`，**不回任何金額**（金額只進
-日誌）。狀態、門檻、快取、402 閂鎖與審查 M15 的 `_unused` 規則都在 `app/services/llm_health.py`；
+日誌）。狀態、門檻、快取、402 閂鎖與主答設定錯誤（`misconfigured`）的判定都在 `app/services/llm_health.py`；
 消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
 
 ## `/healthz/security`：安全事件的狀態型告警（Admin v2）
@@ -59,6 +59,18 @@ state：`ok`（200）、`unknown`（判不出來，200）、`audit_chain_broken`
 （逾時＝unknown）。每次重算前順手把到期的限流彙總落庫（探針每 2 分鐘打一次，等於彙總的定期 flush）。
 消費端是 `scripts/check_security_health.sh`（接 P5 instance `report-mark-security-incident`）：只送狀態型告警
 （開場／升級／恢復），不為每筆登入事件發 webhook（使用者定案 9）。
+
+## `/healthz/feed`：新檔來源主機的信標（另一台主機的 NAS → R2 inbox 這一段）
+
+同樣另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡。回應只有 `{"feed": state}`。這台主機的新研報若來自
+另一台主機推到 R2 `inbox/` 的檔（EC2 的 `SYNC_SOURCE=r2-inbox`），來源那台停機、sync 沒在跑、NAS 掛不上或推送失敗時，
+這裡看到的只是「inbox 沒有新檔」——自己的 sync 與 `/healthz` 照樣綠。來源那台每 10 分鐘把服務狀態與來源段結果
+發布成信標（`beacons/<名稱>.json`），這支端點讀 `HOST_BEACON_WATCH` 指定的那一個並判讀；詞彙、規則與「不信任
+發布端時鐘」的做法都在 `app/services/host_beacon.py`。state：`ok`、`disabled`（沒設定要監看）、`unknown`（R2 讀不到或
+逾時——那是 `/healthz/storage` 的事，這裡不重複告警）回 200；`host_beacon.ALERT_STATES` 回 503。讀取跑在執行緒裡，
+最多等 `_FEED_WAIT` 秒；結論快取 `_FEED_TTL` 秒（每次重算是一個 R2 GET）。細節（哪幾條成立、那台的服務清單）在
+`GET /api/admin/ops/remote-hosts`（登入＋`ops.read`），與這裡共用同一份快取（`feed_reading`）。
+消費端是 `scripts/check_feed_health.sh`（接 P5 instance `report-mark-feed-incident`）。
 
 ## `/api/status`：給一般使用者的粗粒度系統狀態（需登入）
 
@@ -86,7 +98,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.services import llm_health, security_ops
+from app.services import host_beacon, llm_health, security_ops
 from app.services.object_storage import get_object_storage
 from web import deps, dev_mode, ops_client
 from web.ttl_cache import TTLCache
@@ -129,6 +141,10 @@ _CRITICAL_BAD = frozenset({"failed", "not_found", "idle"})
 _SECURITY_TTL = 30.0
 _SECURITY_WAIT = 8.0
 _SECURITY_CACHE = TTLCache(ttl=_SECURITY_TTL, max_entries=1, name="healthz_security")
+# /healthz/feed：結論快取（key 固定）與 R2 讀取的時限（探針的 curl 逾時是 10 秒）。
+_FEED_TTL = 60.0
+_FEED_WAIT = 8.0
+_FEED_CACHE = TTLCache(ttl=_FEED_TTL, max_entries=1, name="healthz_feed")
 _storage: _StorageState = _STORAGE_INITIAL
 _storage_task: asyncio.Task | None = None
 
@@ -210,6 +226,44 @@ async def _security_state() -> str:
         state = security_ops.STATE_UNKNOWN
     _SECURITY_CACHE.put("state", state)
     return state
+
+
+async def feed_reading() -> host_beacon.Reading:
+    """監看中的主機信標的判讀（`_FEED_TTL` 秒快取）；`/healthz/feed` 與 `/api/admin/ops/remote-hosts` 共用。
+
+    永不拋例外：沒設定是 disabled，逾時或任何失敗都是 unknown。讀取跑在執行緒裡、取消不了（boto 的連線逾時是
+    5 秒、還會重試）；等不到就回 unknown 並照樣快取，下一次重試最快在 `_FEED_TTL` 秒後——不會每個請求堆一條執行緒。
+    """
+    cached = _FEED_CACHE.get("reading")
+    if cached is not None:
+        return cached
+    settings = get_settings()
+    name = settings.host_beacon_watch
+    if not name:
+        return host_beacon.Reading(name="", state=host_beacon.STATE_DISABLED)
+    try:
+        reading = await asyncio.wait_for(
+            asyncio.to_thread(
+                host_beacon.read, get_object_storage(), name,
+                stale_minutes=settings.host_beacon_stale_minutes,
+                feed_stale_hours=settings.host_beacon_feed_stale_hours,
+            ),
+            timeout=_FEED_WAIT,
+        )
+    except asyncio.CancelledError:
+        raise
+    except asyncio.TimeoutError:
+        reading = host_beacon.Reading(name=name, state=host_beacon.STATE_UNKNOWN, error="R2 讀取逾時")
+    except Exception:
+        logger.warning("healthz 主機信標判讀失敗（視為 unknown）", exc_info=True)
+        reading = host_beacon.Reading(name=name, state=host_beacon.STATE_UNKNOWN, error="判讀失敗，見 web 日誌")
+    if reading.state in host_beacon.ALERT_STATES:
+        logger.warning("來源主機信標告警 name=%s state=%s reasons=%s age=%ss", name, reading.state,
+                       ",".join(reading.reasons), reading.age_seconds)
+    elif reading.error:
+        logger.info("來源主機信標判不出來 name=%s：%s", name, reading.error)
+    _FEED_CACHE.put("reading", reading)
+    return reading
 
 
 async def _refresh_storage() -> None:
@@ -296,7 +350,7 @@ async def healthz_llm(request: Request) -> JSONResponse:
     """DeepSeek 帳號可用性。**只回答本機直連的請求**，其餘一律 404。
 
     回 `{"llm": state}`（詞彙見 `app/services/llm_health.py`）；low／exhausted／auth_failed／unreachable／
-    indeterminate 在問答主答走 DeepSeek 時回 503，否則加 `_unused` 回 200。由 `scripts/check_web_health.sh`
+    indeterminate／misconfigured（問答主答解析到白名單外名稱）回 503。由 `scripts/check_web_health.sh`
     消費（low 為退出碼 7，其餘 503 為 8）。
     """
     if not dev_mode.is_direct_loopback(request):
@@ -319,6 +373,19 @@ async def healthz_security(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     state = await _security_state()
     return JSONResponse({"security": state}, status_code=503 if state in security_ops.ALERT_STATES else 200)
+
+
+@router.get("/healthz/feed")
+async def healthz_feed(request: Request) -> JSONResponse:
+    """新檔來源主機的信標狀態。**只回答本機直連的請求**，其餘一律 404。
+
+    回 `{"feed": state}`；告警狀態（`host_beacon.ALERT_STATES`）回 503，ok／disabled／unknown 回 200。
+    由 `scripts/check_feed_health.sh` 消費（missing／stale 為退出碼 1、其餘告警為 2、判不出來為 3、disabled 為 4）。
+    """
+    if not dev_mode.is_direct_loopback(request):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    reading = await feed_reading()
+    return JSONResponse({"feed": reading.state}, status_code=503 if reading.state in host_beacon.ALERT_STATES else 200)
 
 
 @router.get("/api/status")

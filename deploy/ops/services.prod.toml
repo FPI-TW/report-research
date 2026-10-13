@@ -104,6 +104,19 @@ group = "backup"
 depends_on = ["postgres", "nas"]
 description = "不可重建表備份 → NAS（03:30）"
 
+# 這台是正式環境（EC2）的新檔來源：sync 每輪把 NAS 的新檔推到 R2 inbox/。這支把本機的服務狀態與 sync 來源段的結果
+# 發布到 R2，EC2 的後台讀它並告警（app/services/host_beacon.py）。唯讀：timer 每 10 分鐘就跑，不需要「立即執行」。
+# 它停了這台不會有任何症狀——是 EC2 那邊的 feed-health 會以「來源主機失聯」告警。
+[[services]]
+name = "beacon"
+kind = "systemd"
+unit = "report-mark-beacon.service"
+timer = "report-mark-beacon.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["r2"]
+description = "主機信標發布（每 10 分鐘；服務狀態與 sync 來源段結果 → R2，給正式環境的後台監看）"
+
 [[services]]
 name = "health"
 kind = "systemd"

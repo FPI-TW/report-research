@@ -16,7 +16,7 @@ const REVIEW_KINDS: readonly ReviewKind[] = ['faithfulness', 'feedback', 'extrac
 /** 一個來源的狀態：off＝沒有 scope 或還沒啟用，不會送請求。 */
 export type SourceState = 'off' | 'pending' | 'ready' | 'error'
 export type SignalSource =
-  | 'services' | 'dependencies' | 'pipeline' | 'incidents' | 'dataHealth' | 'security' | 'reviews' | 'uploads'
+  | 'services' | 'dependencies' | 'remoteHosts' | 'pipeline' | 'incidents' | 'dataHealth' | 'security' | 'reviews' | 'uploads'
 
 export interface UseAdminSignals {
   signals: AdminSignals
@@ -33,7 +33,7 @@ export interface UseAdminSignals {
  * 每個來源只在有對應 scope 時才查——沒有 scope 的請求只會換來 403，不該送出去。`enabled` 是總開關：
  * 還不確定是不是管理員、或被 TOTP 強制擋著時，一個請求都不送。
  *
- * 一律每分鐘輪詢一次（依賴圖兩分鐘、資料健康五分鐘），分頁在背景時不輪詢（TanStack Query 預設）。服務清單、
+ * 一律每分鐘輪詢一次（依賴圖與來源主機兩分鐘、資料健康五分鐘），分頁在背景時不輪詢（TanStack Query 預設）。服務清單、
  * 管線、告警與所在頁面共用 query key：同一份快取，頁面自己較密的輪詢照舊。
  * 讀取失敗不重試、也不亮燈；頁面本身會顯示錯誤。
  */
@@ -51,6 +51,12 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
   const dependencies = useQuery({
     queryKey: [...OPS_KEY, 'dependencies'],
     queryFn: () => adminApi.getOpsDependencies(),
+    enabled: ops, refetchInterval: 2 * MINUTE, retry: false,
+  })
+  // 來源主機的信標（後端讀 R2，不經代理）。沒設定要監看的主機時回空清單。
+  const remoteHosts = useQuery({
+    queryKey: [...OPS_KEY, 'remote-hosts'],
+    queryFn: () => adminApi.listOpsRemoteHosts(),
     enabled: ops, refetchInterval: 2 * MINUTE, retry: false,
   })
   const progress = useQuery<Progress>({
@@ -89,13 +95,14 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
     services: services.data,
     agentUnavailable,
     dependencies: dependencies.data,
+    remoteHosts: remoteHosts.data,
     progress: progress.data,
     firingIncidents: incidents.data,
     dataHealth: dataHealth.data,
     securityAlerts: alerts.data,
     reviewOpen: { faithfulness: rvFaith, feedback: rvFeedback, extraction: rvExtraction },
     draftUploads: drafts.data,
-  }), [services.data, agentUnavailable, dependencies.data, progress.data, incidents.data, dataHealth.data, alerts.data,
+  }), [services.data, agentUnavailable, dependencies.data, remoteHosts.data, progress.data, incidents.data, dataHealth.data, alerts.data,
     rvFaith, rvFeedback, rvExtraction, drafts.data])
 
   const state = (on: boolean, q: { isSuccess: boolean; isError: boolean }): SourceState =>
@@ -103,6 +110,7 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
   const sources: Record<SignalSource, SourceState> = {
     services: state(ops, services),
     dependencies: state(ops, dependencies),
+    remoteHosts: state(ops, remoteHosts),
     pipeline: state(ops, progress),
     incidents: state(ops, incidents),
     dataHealth: state(ops, dataHealth),

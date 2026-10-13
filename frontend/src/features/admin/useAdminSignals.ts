@@ -1,9 +1,11 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { getJSON } from '../../lib/api'
 import { adminApi, type OpsServiceListResponse } from '../../lib/generated/adminApi'
 import { progressSchema, type Progress } from '../../lib/progressSchema'
 import type { ReviewKind } from '../../lib/reviewSchemas'
+import type { AdminCapability } from '../../components/shell/adminNav'
+import { missingCapabilities, readStoredMissing, storeMissing } from './adminCapabilities'
 import { deriveSignals, type AdminSignals } from './adminSignals'
 import { isAgentUnavailable } from './ops/opsLabels'
 import { OPS_KEY } from './ops/useOps'
@@ -25,6 +27,8 @@ export interface UseAdminSignals {
   /** 次級面板底部的環境卡：環境・主機・檢查時間（服務清單帶回來的；沒有 ops.read 或代理不通時是 null）。 */
   env: Pick<OpsServiceListResponse, 'environment' | 'host' | 'checked_at'> | null
   services: OpsServiceListResponse | undefined
+  /** 這台主機確定沒有的元件（見 `adminCapabilities.ts`）；導覽與總覽用它拿掉沒有資料來源的頁面。 */
+  missing: readonly AdminCapability[]
 }
 
 /**
@@ -64,10 +68,22 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
     queryFn: () => getJSON('/api/progress', progressSchema, { cache: 'no-store' }),
     enabled: ops, refetchInterval: MINUTE, retry: false,
   })
+  // 這台有沒有裝監控匯入器。服務清單回來之前先用上一次的判斷，免得導覽先閃一下再收。
+  const [storedMissing] = useState(readStoredMissing)
+  const known = missingCapabilities(services.data)
+  const knownKey = known ? known.join(',') : null
+  const missing = useMemo<readonly AdminCapability[]>(
+    () => (knownKey === null ? storedMissing : (knownKey ? knownKey.split(',') as AdminCapability[] : [])),
+    [knownKey, storedMissing],
+  )
+  useEffect(() => { if (knownKey !== null) storeMissing(knownKey ? knownKey.split(',') as AdminCapability[] : []) }, [knownKey])
+  const monitoring = ops && !missing.includes('monitoring')
+
+  // 事件是監控匯入器寫進 DB 的投影；沒裝匯入器的主機查了也永遠是空的，不查、也不在總覽畫「0 進行中」。
   const incidents = useQuery({
     queryKey: [...OPS_KEY, 'incidents', 'firing', '', 0],
     queryFn: () => adminApi.listIncidents({ status: 'firing', limit: 50, offset: 0 }),
-    enabled: ops, refetchInterval: MINUTE, retry: false,
+    enabled: monitoring, refetchInterval: MINUTE, retry: false,
   })
   const dataHealth = useQuery({
     queryKey: [...OPS_KEY, 'data-health'],
@@ -112,7 +128,7 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
     dependencies: state(ops, dependencies),
     remoteHosts: state(ops, remoteHosts),
     pipeline: state(ops, progress),
-    incidents: state(ops, incidents),
+    incidents: state(monitoring, incidents),
     dataHealth: state(ops, dataHealth),
     security: state(has('audit.read'), alerts),
     reviews: state(reviewOn, {
@@ -126,5 +142,5 @@ export function useAdminSignals(opts: { enabled: boolean; scopes: readonly strin
     () => (s ? { environment: s.environment, host: s.host, checked_at: s.checked_at } : null),
     [s],
   )
-  return { signals, sources, env, services: s }
+  return { signals, sources, env, services: s, missing }
 }

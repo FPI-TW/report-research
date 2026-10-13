@@ -20,7 +20,7 @@ const SERVICES = {
   environment: 'production', host: 'office-host', checked_at: '2026-10-06T02:00:00Z',
   items: [
     svc('web', 'critical', 'running'), svc('postgres', 'critical', 'running'), svc('nginx', 'critical', 'idle'),
-    svc('sync', 'important', 'idle'), svc('backup', 'important', 'failed'), svc('freshness', 'supporting', 'idle'),
+    svc('sync', 'important', 'idle'), svc('backup', 'important', 'failed'), svc('load-observations', 'supporting', 'idle'),
   ],
 }
 const section = { status: 'ok', available: true, stale: false, skipped: [], findings: [] }
@@ -260,6 +260,20 @@ test('全部正常：沒有異常', async () => {
   expect(await screen.findByText('沒有失敗的服務')).toBeInTheDocument()
   expect(tile(/服務/)).toHaveTextContent('1／1')
   expect(screen.getByText('沒有異常')).toBeInTheDocument()
+})
+
+test('這台沒有監控匯入器（服務清單裡沒有 load-observations）：不畫事件磚、不列主機與事件，也不查事件', async () => {
+  const fetchMock = mount(ALL, url => url === '/api/admin/ops/services'
+    ? { body: { ...SERVICES, items: SERVICES.items.filter(s => s.name !== 'load-observations') } } : undefined)
+  expect(await screen.findByText('近 24 小時沒有排程失敗')).toBeInTheDocument()
+  await waitFor(() => expect(within(screen.getByRole('region', { name: '狀態' })).queryByRole('link', { name: /事件/ })).not.toBeInTheDocument())
+  expect(tile(/服務/)).toBeInTheDocument()
+  expect(tile(/資料健康/)).toBeInTheDocument()
+  expect(within(screen.getByRole('region', { name: '異常與注意' })).queryByText(/事件進行中/)).not.toBeInTheDocument()
+  expect(window.localStorage.getItem('tf.admin.missing')).toBe('["monitoring"]')
+  fetchMock.mockClear()
+  // 知道沒裝之後就不再查事件（它是匯入器寫進 DB 的投影）
+  expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/admin/incidents'))).toBe(false)
 })
 
 test('維運代理不可用：服務磚寫「讀不到」，不講正常；其他磚照常', async () => {

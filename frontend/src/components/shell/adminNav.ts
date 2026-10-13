@@ -5,7 +5,8 @@ import type { IconName } from '../primitives/Icon'
  *
  * 外殼的圖示軌、次級面板、麵包屑與 ⌘K 頁面搜尋都從這一份算出來；路由本身在 `App.tsx`。
  * `scope` 有值的頁面只對擁有該 scope 的管理員顯示（顯示層；擋人的是後端 `require_scope`）。
- * 一個領域底下的頁面全部看不到時，整個領域不顯示。
+ * `requires` 有值的頁面，資料要靠主機上另外安裝的元件；這台主機確定沒裝時不列（判斷在
+ * `features/admin/adminCapabilities.ts`）。一個領域底下的頁面全部看不到時，整個領域不顯示。
  */
 export type AdminPageKey =
   | 'home'
@@ -21,13 +22,21 @@ export type AdminPageKey =
 
 export type AdminDomainKey = 'home' | 'content' | 'access' | 'ops' | 'sec' | 'insight' | 'settings'
 
-export interface AdminPage { key: AdminPageKey; label: string; to: string; scope?: string }
+/**
+ * 頁面的資料來源要靠主機上另外安裝的元件。
+ *
+ *   monitoring  監控匯入器（`report-mark-load-observations`）：把收集器的觀測、批次執行紀錄與事件匯進 DB。
+ *               主機、排程工作、事件三頁只讀這份 DB 投影，沒裝的主機上它們永遠是空的。
+ */
+export type AdminCapability = 'monitoring'
+
+export interface AdminPage { key: AdminPageKey; label: string; to: string; scope?: string; requires?: AdminCapability }
 export interface AdminGroup { label?: string; pages: readonly AdminPage[] }
 export interface AdminDomain { key: AdminDomainKey; label: string; icon: IconName; groups: readonly AdminGroup[] }
 
 const OPS = '/admin/operations'
-const ops = (key: AdminPageKey, label: string, path: string): AdminPage =>
-  ({ key, label, to: `${OPS}/${path}`, scope: 'ops.read' })
+const ops = (key: AdminPageKey, label: string, path: string, requires?: AdminCapability): AdminPage =>
+  ({ key, label, to: `${OPS}/${path}`, scope: 'ops.read', requires })
 
 export const ADMIN_IA: readonly AdminDomain[] = [
   { key: 'home', label: '總覽', icon: 'compass', groups: [
@@ -50,13 +59,13 @@ export const ADMIN_IA: readonly AdminDomain[] = [
   { key: 'ops', label: '維運', icon: 'activity', groups: [
     { label: '健康', pages: [
       ops('services', '服務', 'services'), ops('dependencies', '依賴圖', 'dependencies'),
-      ops('remoteHosts', '來源主機', 'remote-hosts'), ops('incidents', '事件', 'incidents'),
+      ops('remoteHosts', '來源主機', 'remote-hosts'), ops('incidents', '事件', 'incidents', 'monitoring'),
     ] },
     { label: '資料', pages: [
       ops('pipeline', '管線', 'pipeline'), ops('dataHealth', '資料健康', 'data-health'), ops('database', '資料庫', 'database'),
     ] },
     { label: '執行', pages: [
-      ops('jobs', '排程工作', 'jobs'), ops('logs', '日誌', 'logs'), ops('host', '主機', 'host'), ops('diagnostics', '診斷', 'diagnostics'),
+      ops('jobs', '排程工作', 'jobs', 'monitoring'), ops('logs', '日誌', 'logs'), ops('host', '主機', 'host', 'monitoring'), ops('diagnostics', '診斷', 'diagnostics'),
     ] },
     { label: '用量', pages: [ops('llmUsage', 'LLM 用量', 'llm-usage')] },
   ] },
@@ -74,13 +83,19 @@ export const ADMIN_IA: readonly AdminDomain[] = [
   ] },
 ]
 
-/** 依 scope 濾掉看不到的頁面；空的分組與空的領域一併拿掉。 */
-export function visibleDomains(scopes: readonly string[]): AdminDomain[] {
+/**
+ * 依 scope 濾掉看不到的頁面，再拿掉這台主機確定沒有資料來源的頁面（`missing`）；空的分組與空的領域一併拿掉。
+ * `missing` 只放「確定沒裝」的：還不知道（服務清單沒回來、維運代理不通）時不要放，寧可多列也不要把有資料的頁藏起來。
+ */
+export function visibleDomains(scopes: readonly string[], missing: readonly AdminCapability[] = []): AdminDomain[] {
   return ADMIN_IA
     .map(d => ({
       ...d,
       groups: d.groups
-        .map(g => ({ ...g, pages: g.pages.filter(p => !p.scope || scopes.includes(p.scope)) }))
+        .map(g => ({
+          ...g,
+          pages: g.pages.filter(p => (!p.scope || scopes.includes(p.scope)) && !(p.requires && missing.includes(p.requires))),
+        }))
         .filter(g => g.pages.length > 0),
     }))
     .filter(d => d.groups.length > 0)

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Progress } from '../../../../lib/progressSchema'
 import OperationsLayout from '../OperationsLayout'
+import { OPS_KEY } from '../useOps'
 import OpsPipelinePage from './OpsPipelinePage'
 import { progressFixture } from './pipelineTestKit'
 
@@ -12,7 +13,7 @@ afterEach(() => vi.unstubAllGlobals())
 type Body = Progress | { status: number }
 
 /** replies 依序回給每一次 /api/progress；用完後重複最後一個。 */
-function mount(replies: Body[], opts: { scopes?: string[] } = {}) {
+function mount(replies: Body[], opts: { scopes?: string[]; services?: string[] } = {}) {
   const scopes = opts.scopes ?? ['admin', 'ops.read']
   let n = 0
   const fetchMock = vi.fn(async (url: string) => {
@@ -30,6 +31,11 @@ function mount(replies: Body[], opts: { scopes?: string[] } = {}) {
   })
   vi.stubGlobal('fetch', fetchMock)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // 外殼抓回來的服務清單（這裡沒有掛外殼，直接放進快取）；頁面只訂閱、不自己抓
+  if (opts.services) {
+    qc.setQueryData([...OPS_KEY, 'services'], { environment: 'staging', host: 'ec2', checked_at: '2026-10-07T04:00:00Z',
+      items: opts.services.map(name => ({ name })) })
+  }
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/admin/operations/pipeline']}>
@@ -117,6 +123,20 @@ test('排程同步：狀態與原始行；沒有 log＝尚無同步紀錄；舊�
   expect(sch.getByText('同步已完成')).toBeInTheDocument()
   expect(sch.getByText('[2026-10-07 12:41:17] === sync done ===')).toBeInTheDocument()
   expect(sch.getByRole('link', { name: '看排程工作' })).toHaveAttribute('href', '/admin/operations/jobs')
+})
+
+test('這台沒有監控匯入器：不放「看排程工作」（那一頁沒有資料來源）；有裝或還不知道就照放，頁面自己不問維運代理', async () => {
+  const fetchMock = mount([progressFixture()], { services: ['web', 'sync'] })
+  const sch = within(await screen.findByRole('region', { name: '排程與執行' }))
+  expect(sch.getByText('同步已完成')).toBeInTheDocument()
+  expect(sch.queryByRole('link', { name: '看排程工作' })).not.toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([u]) => u === '/api/admin/ops/services')).toBe(false)
+})
+
+test('這台有監控匯入器：照放「看排程工作」', async () => {
+  mount([progressFixture()], { services: ['web', 'sync', 'load-observations'] })
+  const sch = within(await screen.findByRole('region', { name: '排程與執行' }))
+  expect(sch.getByRole('link', { name: '看排程工作' })).toBeInTheDocument()
 })
 
 test.each([

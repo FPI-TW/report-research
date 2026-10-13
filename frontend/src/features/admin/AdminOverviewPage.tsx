@@ -43,12 +43,12 @@ function Overview() {
   const me = useMe()
   const scopes = me.data?.scopes ?? []
   const has = (scope: string) => scopes.includes(scope)
-  const { signals, sources, services } = useAdminSignals({ enabled: true, scopes })
+  const { signals, sources, services, missing } = useAdminSignals({ enabled: true, scopes })
   const deps = useOverviewDependencies(has('ops.read'))
   const { updatedAt, refresh } = useOverviewRefresh()
   const [refreshing, setRefreshing] = useState(false)
 
-  const visible = flattenPages(visibleDomains(scopes))
+  const visible = flattenPages(visibleDomains(scopes, missing))
   const tiles = buildTiles(signals, sources, services)
   if (has('ops.read')) tiles.push(externalTile(deps))
   // 主機的燈號就是「進行中的事件裡有主機資源那一筆」（adminSignals.ts）：事件那一列已經列出來時，

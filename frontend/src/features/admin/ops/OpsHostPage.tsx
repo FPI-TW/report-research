@@ -5,6 +5,7 @@ import {
   Card, Chip, PageHeader, Segmented, StatTile, TrendBars, type SegOption, type TrendBar,
 } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
+import { useMonitoringMissing } from '../adminCapabilities'
 import { fmtDateTime } from '../auditLabels'
 import { peak, trendAxis, trendSeries, trendSlotSpan } from './exec/hostSeries'
 import { OpsQueryError } from './OpsShared'
@@ -149,6 +150,8 @@ export default function OpsHostPage() {
     setParams(p, { replace: true })
   }
   const q = useHostObservations()
+  // 沒裝監控匯入器的主機（導覽已經不列這一頁，但舊書籤還是進得來）：說「沒有安裝」，不叫人去檢查沒有的東西。
+  const notInstalled = useMonitoringMissing()
   // 檔案系統有哪些，看最近一小時的觀測；key 是字串，每分鐘重抓回同一批掛載點時下面的序列不會換一份。
   const fsKey = (q.data?.items ?? []).filter(it => it.subject.startsWith('fs:')).map(it => it.subject)
     .filter((s, i, all) => all.indexOf(s) === i).join('\n')
@@ -231,10 +234,16 @@ export default function OpsHostPage() {
           </div>
         </>
       ) : (
-        <p className={c.empty}>
-          最近一小時沒有主機觀測。確認主機上的收集器（report-mark-metrics）與匯入器
-          （report-mark-load-observations.timer）都在跑；資料每 5 分鐘匯入一次。
-        </p>
+        notInstalled ? (
+          <p className={c.empty}>
+            這台主機沒有安裝監控匯入器（report-mark-load-observations），所以沒有主機觀測。
+          </p>
+        ) : (
+          <p className={c.empty}>
+            最近一小時沒有主機觀測。確認主機上的收集器（report-mark-metrics）與匯入器
+            （report-mark-load-observations.timer）都在跑；資料每 5 分鐘匯入一次。
+          </p>
+        )
       )}
       {charts.length > 0 && (
         <div className={styles.charts}>

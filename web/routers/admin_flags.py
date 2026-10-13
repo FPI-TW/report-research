@@ -9,7 +9,7 @@
 - 未登記的 key：`PUT`／`DELETE` 回 404 `flag_not_found`；DB 裡多出來的列只在清單的 `ignored_keys` 列出，不生效。
 - 匯出／匯入（定案 16，測試環境 → 正式環境的設定搬移）：匯出檔的使用者以帳號名稱表示；匯入預設 `dry_run=true`
   只回差異，套用時任何一個錯誤（未知 key、找不到的帳號、不合法的作用域）就整份不寫、回 422 `flag_import_invalid`。
-  只做 API，不自動同步（步驟見 `docs/production_resilience.md`「功能開關與 staging 啟用矩陣」）。
+  只做 API，不自動同步（步驟見 `docs/production_resilience.md`「功能開關與啟用矩陣」）。
 
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """

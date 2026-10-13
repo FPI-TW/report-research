@@ -1,8 +1,8 @@
 # 對外存取：Cloudflare Tunnel + nginx
 
-> 本文是辦公室主機（開發與測試環境，`research.kashionzarchive.com`）的對外入口。正式環境 EC2（`research.tingfong.com`）不走 Tunnel，而是 Cloudflare 橘雲 A record 直連，見 README「非辦公室主機」一節。
+> 本文是測試環境（辦公室主機，`research.kashionzarchive.com`）的對外入口。正式環境（EC2，`research.tingfong.com`）不走 Tunnel，而是 Cloudflare 橘雲 A record 直連 EC2 上 apt 安裝的 nginx，見 `deploy/aws/README.md`「對外入口」與 README「非辦公室主機」一節。
 
-讓辦公室外的同事從外網連入廷豐研報檢索網頁。登入由 App 內建登入頁處理（個別帳號），邊緣 nginx 只做反向代理與限流。
+讓辦公室外的同事從外網連入廷豐研報。登入由 App 內建登入頁處理（個別帳號），邊緣 nginx 只做反向代理與限流。
 
 ## 架構
 
@@ -13,16 +13,20 @@
         nginx（安全標頭 + 限流）
             │  proxy_pass host.docker.internal:8097
             ▼
-        uvicorn web.server:app（既有，:8097）
+        uvicorn web.server:app（report-mark-web.service，:8097）
 ```
 
-對外唯一路徑是 Cloudflare → 隧道 → nginx → uvicorn（App 登入把關）。origin 不對公網開任何埠；外網路徑與既有 LAN portproxy/防火牆互不影響，也不受 WSL 重開機換 IP 影響。
+對外唯一路徑是 Cloudflare → 隧道 → nginx → uvicorn（App 登入把關）。nginx 與 cloudflared 是 `deploy/docker-compose.yml` 的兩個容器（`deploy-nginx-1`、`deploy-cloudflared-1`），nginx 不對 host 發佈任何埠；origin 不對公網開任何埠，也不受 WSL 重開機換 IP 影響。
 
-## 前置需求
+`deploy/nginx.conf` 裡除了 `location /` 之外有三條刻意的例外，改之前先讀各自的註解：
 
-- 已有網域掛在 Cloudflare（nameserver 指向 Cloudflare）。
-- 本機可用 Docker Desktop（`docker` 與 `docker compose`）。
-- 既有檢索服務可啟動（`make serve`，監聽 :8097）。
+| 路徑 | 差異 |
+|---|---|
+| `= /linebot/callback` | 轉給 Windows 側 `:8000` 的 LINE bot（`docs/LINEBOT_ALWAYS_ON.md`），不注入 `X-Edge-Secret` |
+| `= /api/admin/uploads` | `client_max_body_size 30m`、讀寫逾時 120 秒；其他路徑維持 1m |
+| `^~ /external/` | 唯一透傳 `Authorization` 的前綴（對外 API 的 Bearer 認證） |
+
+限流是每 IP 10r/s、burst 20；`/app/assets/` 的雜湊命名資產不計入（SPA 冷載一次要抓數十個資產，被限流時 nginx 回的 503 是 HTML，瀏覽器的症狀是 `.css` 報 MIME type 錯誤）。
 
 ## 一次性設定
 
@@ -45,44 +49,40 @@
 # 編輯 deploy/.env，把 TUNNEL_TOKEN= 後面貼上剛才複製的 token
 ```
 
-### 3) 設定 App 登入帳號
+### 3) App 登入的前提
 
-登入由 App 處理。每個人有自己的帳號（`research.app_user`），session 簽章金鑰來自環境變數（複製 repo 根 `.env.example` 為 `.env`）：
+登入由 App 處理：每個人有自己的帳號（`research.app_user`），其他人的帳號由管理員在管理後台建立。環境檔、`REPORT_MARK_SESSION_SECRET` 與第一位管理員的建立步驟見 `AGENTS.md`「指令」；`REPORT_MARK_SESSION_SECRET` 沒固定的話每次重啟全員登出。
 
-```bash
-[ -e .env ] || cp .env.example .env   # 只在新 checkout 建立，不覆蓋既有 .env
-# 編輯 .env：
-#   REPORT_MARK_SESSION_SECRET  固定長隨機字串(未設則重啟登出所有人)
-#   產生 secret：python -c "import secrets; print(secrets.token_hex(32))"
-make schema                                              # 建帳號相關的表
-uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（密碼互動輸入）
-```
+安全限制：**非本機 localhost 的明文 HTTP 不會建立登入 session**；同事一律走 `https://research.<你的網域>` 這條入口。
 
-> 其他人的帳號由管理員在網頁「管理 → 帳號」建立。還沒有任何啟用中的管理員時 App 照樣啟動，但啟動日誌會記 ERROR 提醒跑上面那一步。
-> 安全限制：**非本機 localhost 的明文 HTTP 不會建立登入 session**；同事請走 `https://research.<你的網域>` 這條受保護入口。
+### 3b) 信任反向代理來源 IP
 
-### 3b) 信任反向代理來源 IP（外網必做）
+App 以「連線來源是否為可信代理」決定要不要採信 nginx 帶來的 `X-Forwarded-Proto: https`。經 Cloudflare 進來的路徑是 `nginx → host.docker.internal:8097 → uvicorn`，**uvicorn 看到的來源 IP 是 Docker Desktop → WSL host 的閘道**（通常 `172.x.x.1`），不在預設信任的 loopback（`127.0.0.1/32,::1/128`）內。沒有設定時，外網（即使走 HTTPS）登入會被擋並顯示「此登入只接受 HTTPS 或本機 localhost，請改走受保護入口」。
 
-App 以「連線來源 IP 是否為信任代理」決定要不要採信 nginx 帶來的 `X-Forwarded-Proto: https`。經 Cloudflare 進來的請求路徑是 `nginx → host.docker.internal:8097 → uvicorn`，**uvicorn 看到的來源 IP 是 Docker Desktop → WSL host 的閘道**（通常 `172.x.x.1`），**不在預設信任的 loopback 內**。若不設定，外網（即使走 HTTPS）登入會被擋並顯示「**此登入只接受 HTTPS 或本機 localhost，請改走受保護入口**」。
+這個閘道 IP **會隨 WSL／Windows 重開機變動**，所以建議直接做 3c 的共享祕密；要用 CIDR 時：
 
 ```bash
-# 1) 先啟動 serve，從 uvicorn access log 找出 nginx 進來的來源 IP
-make serve                       # log 在 data/serve_edge.log，找形如 "172.x.x.1:port - GET /login" 的來源
-# 2) 在 repo 根 .env 設定（把 172.20.48.1 換成你實際看到的閘道 IP）
+# 1) 從外網試登入一次，web 的日誌會印出實際對端
+sudo journalctl -u report-mark-web.service | grep 登入遭拒 | tail -n 3    # 找 peer=<IP>
+# 2) 在 repo 根 .env 設定（把 172.20.48.1 換成上面看到的 peer）
 #    REPORT_MARK_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,172.20.48.1/32
-# 3) 重啟 serve 生效（auth 在啟動時讀此設定，不重啟不生效）
+# 3) 重啟生效（auth 在啟動時讀此設定）
+sudo systemctl restart report-mark-web.service
 ```
 
-> ⚠️ 此閘道 IP 可能隨 WSL／Windows 重開機變動；重開機後若外網又出現該訊息，重查 IP 更新此設定再重啟 serve。
-> 驗證：從 nginx 容器走真實代理路徑打一次假帳密 —
-> `docker compose -f deploy/docker-compose.yml exec nginx wget -S --post-data='username=x&password=y' -O /dev/null http://127.0.0.1/login`
-> 導向 `/login?error=1` ＝信任已通（僅帳密錯）；`/login?error=insecure` ＝仍未信任，回頭檢查上面的 CIDR。
+驗證：從 nginx 容器走真實代理路徑打一次假帳密——
+
+```bash
+docker compose -f deploy/docker-compose.yml exec nginx wget -S --post-data='username=x&password=y' -O /dev/null http://127.0.0.1/login
+```
+
+導向 `/login?error=1` ＝信任已通（只是帳密錯）；`/login?error=insecure` ＝仍未信任。
 
 ### 3c) 邊緣共享祕密（建議做，做了就不再受 IP 漂移影響）
 
-上一節那個閘道 IP **會隨 WSL／Windows 重開機變動**，而它一變，外網就是全體登入被擋。共享祕密把「是不是我家的反向代理」從「來源 IP 對不對」換成「有沒有帶對 header」，重開機不影響。
+共享祕密把「是不是我家的反向代理」從「來源 IP 對不對」換成「有沒有帶對 header」，重開機不影響。
 
-- 邊緣：`deploy/nginx.conf` 內已有 `proxy_set_header X-Edge-Secret "${EDGE_SECRET}";`，值來自 `deploy/.env` 的 `EDGE_SECRET`（該檔是 **envsubst 模板**，由 compose 掛到 `/etc/nginx/templates/`，容器啟動時渲染）。
+- 邊緣：`deploy/nginx.conf` 內有 `proxy_set_header X-Edge-Secret "${EDGE_SECRET}";`，值來自 `deploy/.env` 的 `EDGE_SECRET`（該檔是 **envsubst 模板**，由 compose 掛到 `/etc/nginx/templates/`，容器啟動時渲染）。
 - App：`web/auth.py` 讀 repo 根 `.env` 的 `REPORT_MARK_EDGE_SECRET`，以常數時間比對。
 
 ```bash
@@ -96,7 +96,7 @@ make edge-reload                                  # nginx（模板只在容器�
 sudo systemctl restart report-mark-web.service    # App（auth 在啟動時讀設定）
 ```
 
-> **兩者是 OR，不是取代**：祕密 header 相符 **或** 來源 IP 落在 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 內，都算可信代理。這是刻意的——改 nginx 與改 App 之間必然有時間差，只認其一的話那段窗口會把所有外網使用者擋在門外。等祕密穩定運作之後，CIDR 那行留著也無妨（它本來就只信任私網位址）。
+> **兩者是 OR，不是取代**：祕密 header 相符 **或** 來源 IP 落在 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 內，都算可信代理。這是刻意的——改 nginx 與改 App 之間必然有時間差，只認其一的話那段窗口會把所有外網使用者擋在門外。
 >
 > 祕密外流的後果是「可被當成可信代理」：能自稱 HTTPS、能指定 `X-Real-IP`（污染限流 key）。它**不等於**登入憑證，但仍請當機密看待（`deploy/.env` 與 repo 根 `.env` 皆已 gitignore），要輪替就兩邊同時換。
 
@@ -104,7 +104,7 @@ sudo systemctl restart report-mark-web.service    # App（auth 在啟動時讀�
 
 Cloudflare Access（Zero Trust 的身分驗證層）不在本 repo 內，是儀表板設定。若要開，**務必為 `/healthz` 建一條 Bypass policy**（Application 的 path 設 `/healthz`，Action 選 Bypass / Service Auth）。
 
-理由：`/healthz` 存在的**全部**目的是讓外部監控分辨「站台正常」與「DB 掛了」（健康 200、DB 不可用 503）。Access 會把未帶身分的請求攔成 302 導向登入頁——那時外部探測拿到的是 302，與「DB 掛了」「路由不存在」「App 沒起來」完全無從分辨，等於把這支端點的唯一價值抵銷掉。詳見 `docs/production_resilience.md`。
+理由：`/healthz` 存在的**全部**目的是讓外部監控分辨「站台正常」與「DB 掛了」（健康 200、DB 不可用 503）。Access 會把未帶身分的請求攔成 302 導向登入頁——那時外部探測拿到的是 302，與「DB 掛了」「路由不存在」「App 沒起來」無從分辨，邊緣探針也會因此告警。
 
 ### 4) 啟動邊緣
 
@@ -113,14 +113,11 @@ make up-edge              # 啟動 nginx + cloudflared
 make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel connection" 即成功）
 ```
 
-> 提醒：請確保 web 服務（部署主機上是 `report-mark-web.service`）在執行、本機 `/healthz` 回 200，否則 nginx 會回 502。
+web 服務（`report-mark-web.service`）要在執行、本機 `/healthz` 回 200，否則 nginx 會回 502。
 
 ### 5) 外網實測
 
-從**非辦公室網路**（例如手機關 Wi-Fi 用行動網路）開 `https://research.<你的網域>`：
-
-- 應看到廷豐研報的登入頁；
-- 輸入正確帳密後導向首頁,可正常檢索研報。
+從**非辦公室網路**（例如手機關 Wi-Fi 用行動網路）開 `https://research.<你的網域>`：應看到登入頁，輸入正確帳密後導向首頁、可正常檢索研報。
 
 ## 日常維運
 
@@ -129,14 +126,17 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 啟動邊緣 | `make up-edge` |
 | 關閉邊緣 | `make down-edge` |
 | 看日誌 | `make edge-logs` |
-| 換登入帳密 | 編輯 `.env` 的帳密 → `sudo systemctl restart report-mark-web.service` |
-| 重啟 nginx | `make edge-reload` |
+| 重新套用 nginx 設定（重建容器） | `make edge-reload` |
 
-重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**；但單檔 bind mount 掛載失敗時 nginx 不會被拉起（見疑難排解第一列），由下方的邊緣探針告警。web 服務在部署主機上由 systemd 的 `report-mark-web.service` 常駐、開機自動啟動；要重啟用 `sudo systemctl restart report-mark-web.service`，健康與否打本機 `/healthz` 判定（不看 `systemctl is-active`）。`make serve` 只用於開發機手動啟動。
+改了 `deploy/nginx.conf` 或 `deploy/.env` 一律 `make edge-reload`：模板只在容器啟動時渲染，`nginx -s reload` 不會重新代換，`docker compose restart` 也不套用 compose 的 `environment:` 變更。
+
+重開機後：邊緣的兩個容器為 `restart: unless-stopped`，Docker 會自動拉起；但單檔 bind mount 掛載失敗時 nginx 不會被拉起（見疑難排解第一列），由下方的邊緣探針告警。web 由 systemd 的 `report-mark-web.service` 常駐、開機自動啟動；要重啟用 `sudo systemctl restart report-mark-web.service`，健康與否打本機 `/healthz` 判定（不看 `systemctl is-active`）。`make serve` 只用於開發時手動啟動。
 
 ## 監控
 
 `report-mark-edge-health.timer` 每 2 分鐘從本機打**對外網址**的 `/healthz`（`scripts/check_edge_health.sh`），`report-mark-edge-incident.timer` 以元件 `edge` 開事件、走與 web 相同的告警鏈。本機的 `report-mark-health` 只看得到 `:8097`，nginx 或隧道壞了它照樣是綠的——2026-09-24 nginx 容器停了約 36 小時沒有任何告警，就是這個盲區。
+
+這組探針兩個環境都有裝。正式環境（EC2）的邊緣是 Cloudflare 橘雲 → EIP:443 → apt 的 nginx，探針與退出碼相同，但處置不同：502／504 先看 `systemctl status nginx`、來源站憑證與 Security Group 的 Cloudflare prefix list（`deploy/aws/README.md`），下表的容器與隧道指令只適用辦公室主機。
 
 | 探針退出碼 | 意思 | 事件 |
 |---|---|---|
@@ -158,36 +158,36 @@ Slack 上只有通用訊息（`探針回報失敗（exit=1 result=exit-code）` 
 | `edge` 事件 FIRING 期間 journal 出現 `origin_http_NNN` | 探針 exit 3＝本機 origin 也壞了，edge 這組 hold、由 `web` 事件負責；先處理 web（`/healthz`、`sudo systemctl restart report-mark-web.service`） |
 | `edge_monitor` | 邊緣探針 timer 被停／不存在／觀測過期——**監控自己瞎了**，不是站台的問題。`systemctl status report-mark-edge-health.timer` |
 
-對外網址寫在 `/etc/default/report-mark-sync` 的 `EDGE_HEALTH_URL`，網域不進 repo。啟用 Cloudflare Access 時 `/healthz` 要有 Bypass（見 3d），否則探針會拿到 302 而告警。
+對外網址寫在 `/etc/default/report-mark-sync` 的 `EDGE_HEALTH_URL`，網域不進 repo。
 
 ## 安全備註
 
-- 登入為**個別帳號**(Argon2id 雜湊),App 以 hmac 簽章 session cookie 維持登入(7 天滑動到期、**30 天絕對上限**),cookie 只帶 session id,每個請求都查 DB 確認 session 未撤銷、帳號仍啟用;並對登入失敗做每 IP 限流。
-- 建議 Cloudflare 端開「Always Use HTTPS」、TLS 模式至少 Full。
-- `deploy/.env`（隧道 token）與 repo 根 `.env`（session 金鑰等）皆已 gitignore，切勿提交。
+- 登入為**個別帳號**（Argon2id 雜湊），App 以 hmac 簽章 session cookie 維持登入（7 天滑動到期、**30 天絕對上限**），cookie 只帶 session id，每個請求都查 DB 確認 session 未撤銷、帳號仍啟用；並對登入失敗做每 IP 限流。
+- Cloudflare 端開「Always Use HTTPS」、TLS 模式至少 Full。
+- `deploy/.env`（隧道 token、邊緣祕密）與 repo 根 `.env`（session 金鑰等）皆已 gitignore，切勿提交。
 
 ### 撤銷 session
 
-session 存在 DB（`research.user_session`），逐一撤銷在管理頁做、立即生效、不必重啟；全員登出才動環境變數。
+session 存在 DB（`research.user_session`），逐一撤銷在管理後台做、立即生效、不必重啟；全員登出才動環境變數。
 
 | 想做的事 | 做法 | 影響 |
 |---|---|---|
-| 踢掉某一個人（例如懷疑他的 cookie 外流） | 管理頁「強制登出」 | 他的所有 session 失效，可重新登入 |
-| 某人離職或暫停使用 | 管理頁「停用」 | 下一個請求就進不來；session 一併撤銷，重新啟用也不會復活 |
-| 某人忘記密碼或密碼外流 | 管理頁「重設密碼」 | 新密碼生效、他的所有 session 失效 |
+| 踢掉某一個人（例如懷疑他的 cookie 外流） | 管理後台「強制登出」 | 他的所有 session 失效，可重新登入 |
+| 某人離職或暫停使用 | 管理後台「停用」 | 下一個請求就進不來；session 一併撤銷，重新啟用也不會復活 |
+| 某人忘記密碼或密碼外流 | 管理後台「重設密碼」 | 新密碼生效、他的所有 session 失效 |
 | 管理員全進不去 | `uv run python scripts/create_admin.py --username <名稱> --reset-password` | 重設密碼並重新啟用 |
 | 踢掉所有人 | `REPORT_MARK_SESSION_EPOCH` 填一個新值（慣例填日期）並重啟 | 全員登出 |
 | 什麼都不做 | — | 任一 session 最長活 30 天（`web/auth.py` 的 `MAX_ABSOLUTE_TTL`）；滑動續期只推遲到期時間，不會延長這條上限 |
 
 ### 登入稽核
 
-登入的結果都會寫進 journald：成功 `INFO`（記帳號名稱與角色），失敗／停用帳號／限流鎖定／非 HTTPS 遭拒 `WARNING`，帳號服務不可用 `ERROR`。**一律不記密碼（連長度都不記）**；失敗時帳號只記「是否存在」（那個欄位常被誤填成密碼）。管理操作（建帳、改角色、停用、重設密碼、強制登出、處理待複核）另寫進 `research.admin_audit_log`，管理頁可查。
+登入的結果都會寫進 journald：成功 `INFO`（記帳號名稱與角色），失敗／停用帳號／限流鎖定／非 HTTPS 遭拒 `WARNING`，帳號服務不可用 `ERROR`。**一律不記密碼（連長度都不記）**；失敗時帳號只記「是否存在」（那個欄位常被誤填成密碼）。每種結果另寫一列登入事件 `research.auth_event`（不含帳號名稱；管理後台的安全頁與安全告警讀它，見 `docs/production_resilience.md`「安全維運」）；管理操作（建帳、改角色、停用、重設密碼、強制登出、處理待複核）寫進 `research.admin_audit_log`，管理後台可查。
 
 ```bash
 sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|登入遭"
 ```
 
-> ⚠️ 把 `LOG_LEVEL` 調成 `WARNING` 只會留下攻擊面那一半（失敗／鎖定／遭拒），失去「誰在何時登入」。要完整稽核就別調高。
+把 `LOG_LEVEL` 調成 `WARNING` 只會留下攻擊面那一半（失敗／鎖定／遭拒），失去 journal 裡「誰在何時登入」的那一半。
 
 ## 疑難排解
 
@@ -195,16 +195,16 @@ sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|
 |------|----------------|
 | 外網 502，`docker ps -a` 看到 `deploy-nginx-1` 為 `Exited (127)`、日誌是 `error mounting ... not a directory` | Docker Desktop 重啟後單檔 bind mount（`nginx.conf` → 模板）掛不上，`restart: unless-stopped` 不會重試這種失敗。主機上的 `deploy/nginx.conf` 其實完好，`make edge-reload` 重建容器即可 |
 | 外網開站一直 502 | web 服務沒在跑或不健康（本機 `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8097/healthz` 不是 200）→ `sudo systemctl restart report-mark-web.service`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在）。**uvicorn 明明活著就先看 nginx 有沒有起來**：`docker compose -f deploy/docker-compose.yml logs --tail=60 nginx` |
-| nginx 重啟後 `[emerg] unknown "edge_secret" variable` | envsubst 沒代換掉 `${EDGE_SECRET}`（nginx 查變數會轉小寫，故訊息是 `edge_secret`）——容器環境裡沒有那個變數。成因是 `docker compose restart` **不套用 compose 的 `environment:` 變更**，而長跑的容器建立於該變數加入之前。處置：`make edge-reload`（已改為重建容器）。**這類雷是延遲引爆的**：模板改了但沒重啟，容器內跑的仍是舊渲染結果，要到下一次重啟才炸 |
-| 外網頁面資產隨機 503／`.css` 報「MIME type ('text/html')」 | nginx `limit_req` 超限（預設就是回 503，錯誤頁是 HTML）。SPA 冷載要抓數十個資產，硬重載時全部同時發出。`/app/assets/` 已於 2026-07-31 排除在限流之外（`nginx.conf` 的 `map $uri $rl_key`）；若再出現請看 burst 是否又被調小。**被擋掉的請求不會進 uvicorn 日誌**，從 app 側查會完全看不到 |
+| web 反覆重啟、journal 是 `address already in use`（errno 98，`:8097`），但 WSL 內 `ss -ltn` 看不到任何 listener | WSL mirrored networking 下，`ss` 與 `/proc/net/tcp` 只看得到 Linux 側；Windows 側的持有者對它們完全隱形。在 Windows 以 `netstat -ano \| findstr 8097` 找持有者、`netsh interface portproxy show all` 找指向舊 NAT IP 的殘留規則（由 `iphlpsvc` 持有，web 停夠久它就補上），以系統管理員 `netsh interface portproxy delete v4tov4 listenport=8097 listenaddress=0.0.0.0` 刪掉。埠有沒有被佔，以實際 `bind()` 為準 |
+| nginx 重啟後 `[emerg] unknown "edge_secret" variable` | envsubst 沒代換掉 `${EDGE_SECRET}`（nginx 查變數會轉小寫，故訊息是 `edge_secret`）——容器環境裡沒有那個變數。成因是 `docker compose restart` **不套用 compose 的 `environment:` 變更**，而長跑的容器建立於該變數加入之前。處置：`make edge-reload`（重建容器）。**這類雷是延遲引爆的**：模板改了但沒重啟，容器內跑的仍是舊渲染結果，要到下一次重啟才炸 |
+| 外網頁面資產隨機 503／`.css` 報「MIME type ('text/html')」 | nginx `limit_req` 超限（預設就是回 503，錯誤頁是 HTML）。`/app/assets/` 已排除在限流之外（`nginx.conf` 的 `map $uri $rl_key`）；若再出現請看 burst 是否被調小。**被擋掉的請求不會進 uvicorn 日誌**，從 app 側查會完全看不到 |
 | 內網直接打 `http://<LAN-IP>:8097` 一直回登入頁 | 這是刻意的：非 localhost 的明文 HTTP 不接受登入 session → 請改走 Cloudflare HTTPS 網址；只有本機開發可用 `http://localhost:8097` |
-| 外網（HTTPS）登入顯示「只接受 HTTPS 或本機 localhost」 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` 未含 nginx 進來的來源 IP（Docker→WSL 閘道，~`172.x.x.1`）→ App 不採信 `X-Forwarded-Proto: https`。**先看日誌**：`journalctl -u report-mark-web.service \| grep 登入遭拒` 會直接印出 `peer=<實際對端>`，把它加進 CIDR（見 3b）或改用共享祕密（見 3c，一勞永逸）後重啟 |
-| 設了 `EDGE_SECRET` 仍被當成不可信 | 兩邊值不一致，或 nginx 沒重新渲染模板（`nginx -s reload` 不會重新代換，要 `make edge-reload` 重啟容器）。驗證：`docker compose -f deploy/docker-compose.yml exec nginx cat /etc/nginx/conf.d/default.conf \| grep X-Edge-Secret` 應看到**實際祕密值**而非字面的 `${EDGE_SECRET}` |
-| 所有人突然被登出 | 預期行為：改了 `REPORT_MARK_SESSION_SECRET` / `REPORT_MARK_SESSION_EPOCH`，或該 session 已達 30 天絕對上限，或剛從共用帳密切換到個別帳號（舊 cookie 明確拒收）。重新登入即可 |
-| 某一個人被登出或登入顯示「此帳號已停用」 | 管理員對他做了強制登出、重設密碼或停用；查管理頁的操作紀錄 |
+| 外網（HTTPS）登入顯示「只接受 HTTPS 或本機 localhost」 | App 沒把 nginx 當成可信代理：共享祕密兩邊不一致，或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 未含 nginx 進來的來源 IP（Docker→WSL 閘道，~`172.x.x.1`，重開機會變）。**先看日誌**：`journalctl -u report-mark-web.service \| grep 登入遭拒` 會直接印出 `peer=<實際對端>`，把它加進 CIDR（見 3b）或改用共享祕密（見 3c）後重啟 |
+| 設了 `EDGE_SECRET` 仍被當成不可信 | 兩邊值不一致，或 nginx 沒重新渲染模板（`nginx -s reload` 不會重新代換，要 `make edge-reload` 重建容器）。驗證：`docker compose -f deploy/docker-compose.yml exec nginx cat /etc/nginx/conf.d/default.conf \| grep X-Edge-Secret` 應看到**實際祕密值**而非字面的 `${EDGE_SECRET}` |
+| 所有人突然被登出 | 預期行為：改了 `REPORT_MARK_SESSION_SECRET` / `REPORT_MARK_SESSION_EPOCH`，或該 session 已達 30 天絕對上限。重新登入即可 |
+| 某一個人被登出或登入顯示「此帳號已停用」 | 管理員對他做了強制登出、重設密碼或停用；查管理後台的操作紀錄 |
 | 登入顯示「登入服務暫時無法使用」、或頁面回 503 | 帳號服務（DB）不可用：`curl -s http://localhost:8097/healthz` 應回 503，先處理 DB |
-| 一直回登入頁、輸入正確仍進不去 | session cookie 沒被接受(瀏覽器擋第三方/封鎖 cookie),或 `REPORT_MARK_SESSION_SECRET` 每次重啟都變(請在 `.env` 固定一組) |
-| 沒有人登得進去、啟動日誌有「沒有任何啟用中的管理員」 | 還沒建第一位管理員 → `uv run python scripts/create_admin.py --username <名稱>`（舊共用帳密可用 `--from-env` 轉入） |
-| 改了程式卻沒生效（看到新 UI 卻無登入頁 / 登出按 404）| `make serve` 無 `--reload`：靜態 HTML 即時生效，但路由/中介層在**啟動時**載入；舊 uvicorn 程序還在跑 → `pkill -f "uvicorn web.server"` 後重啟 `make serve` |
+| 一直回登入頁、輸入正確仍進不去 | session cookie 沒被接受（瀏覽器擋第三方/封鎖 cookie），或 `REPORT_MARK_SESSION_SECRET` 每次重啟都變（請在 `.env` 固定一組） |
+| 沒有人登得進去、啟動日誌有「沒有任何啟用中的管理員」 | 還沒建第一位管理員 → `uv run python scripts/create_admin.py --username <名稱>` |
 | `make edge-logs` 看不到 tunnel 連線 | token 錯/沒填 → 檢查 `deploy/.env`；Cloudflare 儀表板確認隧道狀態為 HEALTHY |
 | 外網打不開但 LAN 正常 | Cloudflare Public Hostname 的 Service 是否設成 `http://nginx:80`；DNS 記錄是否由隧道自動建立 |

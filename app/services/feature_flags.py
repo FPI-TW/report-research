@@ -40,7 +40,7 @@
 `admin_view`。每個實際變更都在**同一筆交易**寫稽核 `flag.update`（detail：key、前後值、作用域摘要、
 經由 api 或 import；使用者以帳號名稱表示；註記只記「有沒有改」不記全文，比照 AGENTS 的管理端點規則）。
 registry 的鍵與預設值改了要同步前端（`frontend/src/lib/useFeatures.ts` 讀的鍵）與 `docs/production_resilience.md`
-「功能開關與 staging 啟用矩陣」。
+「功能開關與啟用矩陣」。
 """
 
 from __future__ import annotations

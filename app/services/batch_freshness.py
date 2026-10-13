@@ -69,7 +69,7 @@ DEFAULT_THRESHOLDS: dict[str, int] = {
     # 摘要與摘錄都掛在每 3 小時的同步鏈上，正常一天內就會動。3 天容得下週末。
     "summary": 3,
     "takeaway": 3,
-    # 0＝不告警。理由見模組 docstring：這張表沒有排程產生者。
+    # 0＝不告警。理由見 `scripts/check_batch_freshness.py` 的 docstring：停更在原理上無法與正常區分。
     "signal": 0,
 }
 

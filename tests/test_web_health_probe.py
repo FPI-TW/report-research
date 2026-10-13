@@ -343,7 +343,7 @@ class RetiredDependencyCheckTests(unittest.TestCase):
         self.assertIsNone(re.search(r"\bexit\s+5\b|=5\s", live), "退出碼 5 已退役，不得重用")
 
     def test_web_dropin_is_gone(self):
-        """repo 內的 PATH drop-in 隨 CLI 移除；部署步驟見 docs/production_resilience.md「PR-M 部署步驟」。"""
+        """repo 內的 PATH drop-in 隨 CLI 移除，不得回來。"""
         self.assertFalse((SYSTEMD_DIR / "report-mark-web.service.d").exists())
 
 

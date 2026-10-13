@@ -32,10 +32,15 @@ function Where() {
 }
 
 /** 小型假後端：清單隨隱藏／恢復變動；回傳 fetch mock。 */
-function mount(opts: { scopes?: string[]; reports?: Report[]; override?: Override; path?: string } = {}) {
+function mount(opts: {
+  scopes?: string[]; reports?: Report[]; override?: Override; path?: string
+  /** 清單任何一頁都不會列出、只有單筆端點取得到的研報（模擬「在別的頁次或別的篩選裡」）。 */
+  elsewhere?: Report[]
+} = {}) {
   let reports = opts.reports ?? [report(H1, { title: '台積電深度報告' }), report(H2, {
     hidden: true, hidden_reason: '重複上傳', visibility_updated_by: 'root', visibility_updated_at: '2026-10-05T01:00:00Z',
   })]
+  let elsewhere = opts.elsewhere ?? []
   const scopes = opts.scopes ?? ['admin', 'reports.manage']
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     const o = opts.override?.(path, init)
@@ -53,9 +58,15 @@ function mount(opts: { scopes?: string[]; reports?: Report[]; override?: Overrid
         if (q) items = items.filter(r => (r.title ?? r.file_name).includes(q))
         return { body: { total: items.length, limit: 50, offset: 0, has_more: false, next_offset: null, items } }
       }
+      const one = path.match(/^\/api\/admin\/reports\/([0-9a-f]{64})$/)
+      if (one && method === 'GET') {
+        const found = [...reports, ...elsewhere].find(r => r.file_hash === one[1])
+        return found ? { body: found } : { status: 404, body: { detail: '找不到這份研報', code: 'not_found' } }
+      }
       const m = path.match(/^\/api\/admin\/reports\/([0-9a-f]+)\/visibility$/)
       if (m && method === 'PUT') {
         const body = JSON.parse(init!.body as string)
+        elsewhere = elsewhere.map(r => r.file_hash === m[1] ? { ...r, hidden: body.hidden } : r)
         reports = reports.map(r => r.file_hash === m[1]
           ? { ...r, hidden: body.hidden, hidden_reason: body.hidden ? body.reason : null,
               visibility_updated_by: 'root', visibility_updated_at: '2026-10-06T01:00:00Z' }
@@ -169,17 +180,88 @@ test('列的鍵盤入口是標題按鈕；已隱藏的抽屜顯示原因，不�
   expect(drawer.getByRole('button', { name: '恢復' })).toBeInTheDocument()
 })
 
-test('網址帶 ?report= 直接開抽屜；這一頁沒有那一篇時說明找不到', async () => {
-  mount({ path: `/admin/reports?report=${H2}` })
+/** 打過的單筆請求（`GET /api/admin/reports/<hash>`）。 */
+const singleCalls = (fetchMock: ReturnType<typeof mount>) => fetchMock.mock.calls
+  .filter(([p, init]) => /^\/api\/admin\/reports\/[^/?]+$/.test(String(p)) && (init?.method ?? 'GET') === 'GET')
+  .map(([p]) => String(p))
+
+test('網址帶 ?report= 直接開抽屜；那一篇在這一頁時不另外打單筆端點', async () => {
+  const fetchMock = mount({ path: `/admin/reports?report=${H2}` })
   expect(await screen.findByRole('dialog', { name: 'bbbb.pdf' })).toBeInTheDocument()
+  expect(singleCalls(fetchMock)).toEqual([])
 })
 
-test('網址帶的 file_hash 不在這一頁：說明找不到並列出 hash', async () => {
+test('網址帶的 file_hash 不在這一頁：用單筆端點取來，抽屜照樣開得出來（含隱藏的）', async () => {
+  const H3 = 'c'.repeat(64)
+  const fetchMock = mount({
+    path: `/admin/reports?report=${H3}`,
+    elsewhere: [report(H3, { title: '別頁的研報', hidden: true, hidden_reason: '版權疑慮', visibility_updated_by: 'root',
+      visibility_updated_at: '2026-10-05T01:00:00Z' })],
+  })
+  const drawer = within(await screen.findByRole('dialog', { name: '別頁的研報' }))
+  expect(drawer.getByText('已隱藏')).toBeInTheDocument()
+  expect(drawer.getByText('版權疑慮')).toBeInTheDocument()
+  expect(drawer.getByText(H3)).toBeInTheDocument()
+  expect(drawer.getByRole('button', { name: '恢復' })).toBeInTheDocument()
+  expect(singleCalls(fetchMock)).toEqual([`/api/admin/reports/${H3}`])
+  // 清單沒有它，表格照舊兩列。
+  expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(3)
+})
+
+test('單筆取來的研報可以直接在抽屜處理：恢復送那一篇的 hash，完成後抽屜關閉', async () => {
+  const H3 = 'c'.repeat(64)
+  const fetchMock = mount({
+    path: `/admin/reports?report=${H3}`,
+    elsewhere: [report(H3, { title: '別頁的研報', hidden: true, hidden_reason: '版權疑慮' })],
+  })
+  fireEvent.click(within(await screen.findByRole('dialog', { name: '別頁的研報' })).getByRole('button', { name: '恢復' }))
+  fireEvent.click(within(await screen.findByRole('alertdialog', { name: '恢復「別頁的研報」？' })).getByRole('button', { name: '恢復' }))
+  await toastText('已恢復「別頁的研報」')
+  expect(String(puts(fetchMock)[0][0])).toBe(`/api/admin/reports/${H3}/visibility`)
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(screen.getByTestId('where')).toHaveTextContent(/^\/admin\/reports$/)
+})
+
+test('網址帶的 file_hash 不存在（404）：說找不到並列出 hash，不再說「不在目前這一頁」', async () => {
   const missing = 'e'.repeat(64)
-  mount({ path: `/admin/reports?report=${missing}` })
+  const fetchMock = mount({ path: `/admin/reports?report=${missing}` })
   const drawer = within(await screen.findByRole('dialog', { name: '找不到這份研報' }))
-  expect(drawer.getByText(/不在目前這一頁的清單裡/)).toBeInTheDocument()
+  expect(drawer.getByRole('status')).toHaveTextContent('沒有這個 file_hash 的研報')
+  expect(drawer.queryByText(/不在目前這一頁/)).not.toBeInTheDocument()
   expect(drawer.getByText(missing)).toBeInTheDocument()
+  expect(singleCalls(fetchMock)).toEqual([`/api/admin/reports/${missing}`])
+  fireEvent.click(drawer.getByRole('button', { name: '關閉' }))
+  await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/admin\/reports$/))
+})
+
+test('網址帶的 file_hash 格式不對：當成找不到，不拿去打 API', async () => {
+  const fetchMock = mount({ path: '/admin/reports?report=not-a-hash' })
+  const drawer = within(await screen.findByRole('dialog', { name: '找不到這份研報' }))
+  expect(drawer.getByText('not-a-hash')).toBeInTheDocument()
+  expect(singleCalls(fetchMock)).toEqual([])
+})
+
+test('單筆載入失敗（不是 404）：說出原因，不說成找不到', async () => {
+  const H3 = 'c'.repeat(64)
+  mount({
+    path: `/admin/reports?report=${H3}`,
+    override: path => path === `/api/admin/reports/${H3}`
+      ? { status: 503, body: { detail: '資料庫暫時無法使用', code: 'unavailable' } } : undefined,
+  })
+  const drawer = within(await screen.findByRole('dialog', { name: '無法載入這份研報' }))
+  expect(drawer.getByRole('alert')).toHaveTextContent('載入失敗：資料庫暫時無法使用')
+  expect(drawer.getByText(H3)).toBeInTheDocument()
+})
+
+test('舊版後端沒有單筆端點（路由層 404）：抽屜說找不到，清單照常，不白屏', async () => {
+  const H3 = 'c'.repeat(64)
+  mount({
+    path: `/admin/reports?report=${H3}`,
+    override: path => path === `/api/admin/reports/${H3}`
+      ? { status: 404, body: { detail: 'Not Found', code: 'not_found' } } : undefined,
+  })
+  expect(await screen.findByRole('dialog', { name: '找不到這份研報' })).toBeInTheDocument()
+  expect(await row('台積電深度報告')).toBeTruthy()
 })
 
 test('列內的勾選框與按鈕不會開抽屜', async () => {

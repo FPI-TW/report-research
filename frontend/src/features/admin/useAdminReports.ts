@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { adminApi, type AdminReportListResponse } from '../../lib/generated/adminApi'
+import { adminApi, type AdminReportItem, type AdminReportListResponse } from '../../lib/generated/adminApi'
 import { AUDIT_KEY } from './useAdmin'
 
 export const REPORTS_KEY = ['admin', 'reports'] as const
@@ -28,6 +28,23 @@ export function useAdminReports(params: { q: string; status: StatusFilter; offse
       offset: params.offset,
     }),
     placeholderData: keepPreviousData,
+    retry: false,
+  })
+}
+
+const FILE_HASH = /^[0-9a-f]{64}$/
+
+/**
+ * 單筆研報（`GET /api/admin/reports/{file_hash}`）：`?report=` 指的那一篇不在目前這一頁的清單時用
+ * （清單的 `q` 不比對 hash）。與清單一樣含隱藏的與草稿；不存在是 404（`ApiError.status`）。
+ * 格式不對的 hash 不送出（後端只會回 422）。掛在 `REPORTS_KEY` 底下：隱藏、恢復之後一起重抓。
+ */
+export function useAdminReport(fileHash: string | null, enabled: boolean) {
+  const valid = fileHash != null && FILE_HASH.test(fileHash)
+  return useQuery<AdminReportItem>({
+    queryKey: [...REPORTS_KEY, 'one', fileHash],
+    queryFn: () => adminApi.getReport(fileHash as string),
+    enabled: enabled && valid,
     retry: false,
   })
 }

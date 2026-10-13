@@ -6,6 +6,7 @@ import {
 } from '../../components/console'
 import c from '../../components/console/Console.module.css'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
+import { ApiError } from '../../lib/api'
 import { displayTitle } from '../../lib/displayTitle'
 import { adminCsvUrls, type AdminReportItem } from '../../lib/generated/adminApi'
 import { BulkResultPanel, SelectAllBox } from './BulkParts'
@@ -13,12 +14,12 @@ import { ExportCsvButton } from './ExportCsvButton'
 import { fmtDateTime } from './auditLabels'
 import { RequireScope } from './RequireScope'
 import { BulkHideDialog, HideDialog } from './reports/ReportDialogs'
-import { ReportDrawer } from './reports/ReportDrawer'
+import { ReportDrawer, type ReportMissing } from './reports/ReportDrawer'
 import { DRAFT_REVIEW_PATH, STATUS_LABEL, STATUS_TONE, messageOf, short, statusOf } from './reports/reportStatus'
 import s from './reports/Reports.module.css'
 import {
-  REPORTS_PAGE_SIZE, statusQuery, useAdminReports, useBulkReportVisibility, useReportCounts, useReportVisibility,
-  type StatusFilter,
+  REPORTS_PAGE_SIZE, statusQuery, useAdminReport, useAdminReports, useBulkReportVisibility, useReportCounts,
+  useReportVisibility, type StatusFilter,
 } from './useAdminReports'
 import { namesPreview, useSelection, type BulkOutcome } from './useSelection'
 
@@ -56,6 +57,15 @@ function AdminReports() {
   const toHide = chosen.filter(r => !r.hidden)
   const toRestore = chosen.filter(r => r.hidden)
   const filtered = q !== '' || status !== 'all'
+  // 抽屜要開的那一篇：這一頁有就用清單的；沒有（連結開在別的篩選或頁次）就向後端取那一篇。
+  const onPage = items.find(r => r.file_hash === openHash)
+  const single = useAdminReport(openHash, !reports.isPending && !onPage)
+  const openReport = onPage ?? single.data
+  const missing: ReportMissing = reports.isPending || (single.isPending && single.fetchStatus !== 'idle')
+    ? { kind: 'loading' }
+    : single.isError && !(single.error instanceof ApiError && single.error.status === 404)
+      ? { kind: 'error', message: messageOf(single.error) }
+      : { kind: 'not_found' }
 
   const search = (e: FormEvent) => { e.preventDefault(); setQ(draft); setOffset(0); sel.clear() }
   const goTo = (next: number) => { setOffset(next); sel.clear() }
@@ -202,8 +212,8 @@ function AdminReports() {
       </Card>
       <ReportDrawer
         fileHash={openHash}
-        report={items.find(r => r.file_hash === openHash)}
-        loading={reports.isPending}
+        report={openReport}
+        missing={missing}
         busy={visibility.isPending}
         onClose={() => setOpenHash(null)}
         onHide={setHideFor}

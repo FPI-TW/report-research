@@ -8,7 +8,8 @@
    的研報。不另寫第二份條件：哪天可見性多了一種狀態，只改這裡。`tests/test_visibility_guard.py`
    以 AST 掃描那些模組，查 `research.research_report`／`research.report_chunk` 的函式或常數
    沒有呼叫這兩個函式（也不在豁免清單）就紅。
-2. **管理端的查詢與寫入**（`list_reports`／`set_visibility`／`bulk_set_visibility`）。`/api/admin/reports*` 呼叫。
+2. **管理端的查詢與寫入**（`list_reports`／`get_report`／`set_visibility`／`bulk_set_visibility`）。
+   `/api/admin/reports*` 呼叫。
 
 可見＝這份研報**沒有** visibility 列，或那一列 `hidden = false AND publication = 'published'`。
 
@@ -54,7 +55,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # 不該靠「呼叫端應該不會亂傳」。
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _COLUMN_EXPR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
-_FILE_HASH = re.compile(r"^[0-9a-f]{64}$")
+FILE_HASH_PATTERN = r"^[0-9a-f]{64}$"
+_FILE_HASH = re.compile(FILE_HASH_PATTERN)
 
 REASON_MAX_CHARS = 500
 # 一次批次隱藏／恢復的上限。與 GET /api/admin/reports 的 limit 上限（200）相同：管理頁「全選本頁」在
@@ -168,6 +170,14 @@ _ADMIN_FROM = (
 )
 
 
+def _admin_row(r) -> AdminReportRow:
+    return AdminReportRow(
+        report_id=r[0], file_hash=r[1], file_name=r[2], title=r[3], source=r[4], market=r[5],
+        report_date=r[6], created_at=r[7], hidden=bool(r[8]), reason=r[9], updated_by=r[10],
+        updated_at=r[11], publication=r[12],
+    )
+
+
 async def list_reports(
     session: AsyncSession,
     *,
@@ -209,14 +219,22 @@ async def list_reports(
             {**params, "limit": limit, "offset": offset},
         )
     ).all()
-    return int(total), [
-        AdminReportRow(
-            report_id=r[0], file_hash=r[1], file_name=r[2], title=r[3], source=r[4], market=r[5],
-            report_date=r[6], created_at=r[7], hidden=bool(r[8]), reason=r[9], updated_by=r[10],
-            updated_at=r[11], publication=r[12],
+    return int(total), [_admin_row(r) for r in rows]
+
+
+async def get_report(session: AsyncSession, file_hash: str) -> Optional[AdminReportRow]:
+    """管理頁的單筆研報（`?report=<file_hash>` 的分享連結用），欄位與 `list_reports` 的一列相同。
+
+    與清單一樣**不過濾可見性**（隱藏的、草稿都回）、不套 is_research。格式不對或不存在回 None。
+    """
+    if not valid_file_hash(file_hash):
+        return None
+    row = (
+        await session.execute(
+            text(f"SELECT {_ADMIN_COLS} {_ADMIN_FROM} WHERE r.file_hash = :file_hash"), {"file_hash": file_hash},
         )
-        for r in rows
-    ]
+    ).first()
+    return _admin_row(row) if row is not None else None
 
 
 def _check_reason(hidden: bool, reason: Optional[str]) -> Optional[str]:

@@ -708,6 +708,64 @@ async def scenario_export_audit(api) -> None:
 # ───── 批次（bulk_user_action）─────
 
 
+async def scenario_audit_prefix_filter(api) -> None:
+    """`list_audit` 的 action 前綴篩選：total 是篩選後的筆數，分頁照舊；前綴裡的底線是字面不是萬用字元。
+
+    不假設庫是空的：只比對這個情境自己寫的那幾列（target_id 帶隨機尾碼）。
+    """
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    target = await api.create_user(_name("Tgt"), PW, "user", actor_id=admin.id)
+    await api.update_user(target.id, enabled=False, actor_id=admin.id)
+    await api.record_ops_action(actor_id=admin.id, action="restart", service=_name("svc"), environment="test",
+                                result="queued")
+    await api.record_export(actor_id=admin.id, kind="users", filters={}, row_count=0, truncated=False)
+
+    def mine(entries):
+        return [e.action for e in entries if e.actor_user_id == admin.id]
+
+    total_all, everything = await api.list_audit(limit=200)
+    assert mine(everything) == ["data.export", "ops.restart", "user.disable", "user.create"], mine(everything)
+
+    total_user, users = await api.list_audit(limit=200, prefixes=["user."])
+    assert mine(users) == ["user.disable", "user.create"] and all(e.action.startswith("user.") for e in users)
+    total_two, two = await api.list_audit(limit=200, prefixes=["ops.", "data."])
+    assert mine(two) == ["data.export", "ops.restart"]
+    total_rest, rest = await api.list_audit(limit=200, exclude_prefixes=["user.", "ops."])
+    assert mine(rest) == ["data.export"] and not any(e.action.startswith(("user.", "ops.")) for e in rest)
+    # 並用：先收再排除；互補的兩組加起來就是全部。
+    _t, both = await api.list_audit(limit=200, prefixes=["user."], exclude_prefixes=["user.dis"])
+    assert mine(both) == ["user.create"]
+    assert total_user + (await api.list_audit(limit=1, exclude_prefixes=["user."]))[0] == total_all
+    assert total_rest + total_user + (await api.list_audit(limit=1, prefixes=["ops."]))[0] == total_all
+    assert total_two >= 2
+    # total 是篩選後的筆數，不是全表；分頁在篩選後的結果上走。
+    page_total, page = await api.list_audit(limit=1, offset=1, prefixes=["user."])
+    assert page_total == total_user and [e.id for e in page] == [users[1].id]
+    # 底線是字面：`user_` 不會對到 `user.`（LIKE 會把 `_` 當萬用字元）。
+    assert mine((await api.list_audit(limit=200, prefixes=["user_"]))[1]) == []
+    # 空清單與 None 同義；重複的前綴只算一次。
+    assert (await api.list_audit(limit=1, prefixes=[], exclude_prefixes=[]))[0] == total_all
+    assert (await api.list_audit(limit=1, prefixes=["user.", "user."]))[0] == total_user
+    for bad in (["User."], ["user.%"], ["a.b.c"], [""], ["x" * 65], ["user."] * 2 + [f"p{i}." for i in range(16)]):
+        try:
+            await api.list_audit(prefixes=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"應拒絕不合法的前綴：{bad!r}")
+
+
+async def scenario_get_audit_entry(api) -> None:
+    """單筆與清單的同一列逐欄相同（含 JOIN 出來的操作者名稱）；CLI 寫的列操作者是 None；不存在回 None。"""
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    await api.create_user(_name("Tgt"), PW, "user", actor_id=admin.id)
+    _total, entries = await api.list_audit(limit=2)
+    by_admin, by_cli = entries
+    assert (by_admin.actor_user_id, by_admin.actor_username, by_cli.actor_user_id) == (admin.id, admin.username, None)
+    for listed in (by_admin, by_cli):
+        assert await api.get_audit_entry(listed.id) == listed
+    assert await api.get_audit_entry(2**62) is None
+
+
 async def scenario_bulk_disable_enable_logout(api) -> None:
     boss = await api.create_user(_name("BBoss"), PW, "admin", actor_id=None, is_super=True)
     u1 = await api.create_user(_name("Bu1"), PW, "user", actor_id=None)
@@ -844,6 +902,8 @@ SCENARIOS = [
     scenario_deletion_replay,
     scenario_ops_action_audit,
     scenario_export_audit,
+    scenario_audit_prefix_filter,
+    scenario_get_audit_entry,
     scenario_bulk_disable_enable_logout,
     scenario_bulk_rules,
     scenario_bulk_rolls_back_on_unexpected_error,

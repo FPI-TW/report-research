@@ -23,6 +23,10 @@ HMAC 的短代號（`web.auth.pseudonym`），同一人同一代號、看不出�
 時期）為 None。佇列給的是「哪幾筆要看」，不是「誰問了什麼」。也不回 `conversation_id`：
 對話串只有擁有者打得開，管理面不提供瀏覽某人整串歷史的入口。
 
+取單筆（`GET /api/review/{kind}/{subject_id}`）給分享連結用：那一筆不在對方已載入的清單時，畫面靠它
+把詳情補出來。它回的就是佇列的一列（同一段 SELECT、同一個轉換函式），條件也照佇列（等同
+`status=all`、預設窗期），所以問答同樣不帶原文；不在佇列的 id 一律 404。
+
 需要看原文時走 `POST /api/review/qa/{qa_id}/access`（另要 `qa_content.read`，只授予品質審核／
 指定 QA）：一次只回**這一筆**的 question 與 answer，而且只限**目前在佇列裡**的項目——低忠實度
 （與佇列同一套條件：現行 judge、門檻、佇列預設窗期）或倒讚；其餘 qa_id 一律 404，不洩漏存在與否，
@@ -63,6 +67,7 @@ from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
 from app.services.store import review_reasons
 from web import auth, authz, deps, stats_snapshot
+from web.errors import AppError
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +89,11 @@ _SCORE = (
     "THEN (evaluation->>'faithfulness_score')::float END"
 )
 _QA_VALID = "active AND stopped IS NOT TRUE AND created_at > now() - make_interval(days => :days)"
-# 兩種問答 kind 的入列條件。佇列（_fetch）與逐筆讀取（read_qa_content）共用同一段字串，
+# 兩種問答 kind 的入列條件。佇列（_fetch）、取單筆（_fetch_one）與逐筆讀取（read_qa_content）共用同一段字串，
 # 「能讀的」才會恰好等於「佇列裡看得到的」。faithfulness 另需綁 :fmin 與 :judge_model。
 _FAITHFULNESS_COND = f"({_SCORE}) < :fmin AND {CURRENT_JUDGE_SQL}"
 _FEEDBACK_COND = "feedback = 'dislike'"
-# 佇列的預設窗期，也是逐筆讀取的窗期（監控卡同值）。逐筆讀取刻意不收 days：讓呼叫端放寬到
+# 佇列的預設窗期，也是取單筆與逐筆讀取的窗期（監控卡同值）。這兩支刻意不收 days：讓呼叫端放寬到
 # 一年，等於把可讀範圍放寬到一年。
 _DEFAULT_DAYS = 30
 # 該列 evaluation 的 judge；沒有 evaluation 就是 NULL（JUDGE_MODEL_SQL 本身會把 NULL 補成舊預設）。
@@ -231,32 +236,23 @@ def _extraction_item(row) -> ReviewItem:
     )
 
 
-async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, status: str = "open"):
-    """回 (total, items)。每個 kind 兩條查詢：count 與當頁。"""
-    page = {"limit": limit, "offset": offset}
-    state_filter = "" if status == "all" else " AND COALESCE(rv.status, 'open') = :review_status"
-    state_params = {} if status == "all" else {"review_status": status}
-    state_cols = f"rv.status, rv.note, rv.verification, rv.updated_at, {_REVIEWER}"
-    if kind == "extraction":
-        total = (await session.execute(
-            text("SELECT count(*) FROM research.research_report rr "
-                 "LEFT JOIN research.review_state rv ON rv.kind = 'extraction' AND rv.subject_id = rr.id "
-                 f"WHERE rr.needs_review{state_filter}"), state_params,
-        )).scalar_one()
-        rows = (await session.execute(
-            text(
-                "SELECT rr.id, rr.file_hash, rr.file_name, rr.title, rr.source, rr.report_date, "
-                f"rr.quality_score, rr.quality_flags, rr.pages_failed, {state_cols} "
-                "FROM research.research_report rr "
-                "LEFT JOIN research.review_state rv ON rv.kind = 'extraction' AND rv.subject_id = rr.id "
-                f"WHERE rr.needs_review{state_filter} "
-                # 分數低的在前（NULL＝算不出分數，排最後）；id 當決勝鍵讓翻頁穩定。
-                "ORDER BY rr.quality_score ASC NULLS LAST, rr.id LIMIT :limit OFFSET :offset"
-            ),
-            {**page, **state_params},
-        )).all()
-        return int(total), [_extraction_item(tuple(r)) for r in rows]
+# 佇列的一列要選哪些欄位、從哪裡選。清單（_fetch）與取單筆（_fetch_one）共用這幾段字串：
+# 單筆回的欄位才會恰好等於佇列的一列——特別是問答，兩邊都**刻意不選 question／answer**。
+_STATE_COLS = f"rv.status, rv.note, rv.verification, rv.updated_at, {_REVIEWER}"
+_EXTRACTION_SELECT = (
+    "SELECT rr.id, rr.file_hash, rr.file_name, rr.title, rr.source, rr.report_date, "
+    f"rr.quality_score, rr.quality_flags, rr.pages_failed, {_STATE_COLS} "
+)
+_EXTRACTION_FROM = (
+    "FROM research.research_report rr "
+    "LEFT JOIN research.review_state rv ON rv.kind = 'extraction' AND rv.subject_id = rr.id "
+    "WHERE rr.needs_review"
+)
+_QA_SELECT = f"SELECT id, created_at, ({_SCORE}), feedback, ({_ROW_JUDGE}), {_STATE_COLS}, qa_log.user_id "
 
+
+def _qa_from(kind: str, days: int) -> tuple[str, str, dict]:
+    """問答佇列的 (FROM…WHERE, ORDER BY, 參數)。`kind` 只會是 faithfulness／feedback（路由的 Literal）。"""
     if kind == "faithfulness":
         where = f"{_QA_VALID} AND {_FAITHFULNESS_COND}"
         order = f"({_SCORE}) ASC, created_at DESC, id"
@@ -266,21 +262,51 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, stat
         order = "created_at DESC, id"
         params = {"days": days}
     join = f"LEFT JOIN research.review_state rv ON rv.kind = '{kind}' AND rv.subject_id = qa_log.id"
+    return f"FROM research.qa_log {join} WHERE {where}", order, params
+
+
+async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, status: str = "open"):
+    """回 (total, items)。每個 kind 兩條查詢：count 與當頁。"""
+    page = {"limit": limit, "offset": offset}
+    state_filter = "" if status == "all" else " AND COALESCE(rv.status, 'open') = :review_status"
+    state_params = {} if status == "all" else {"review_status": status}
+    if kind == "extraction":
+        total = (await session.execute(
+            text(f"SELECT count(*) {_EXTRACTION_FROM}{state_filter}"), state_params,
+        )).scalar_one()
+        rows = (await session.execute(
+            text(
+                f"{_EXTRACTION_SELECT}{_EXTRACTION_FROM}{state_filter} "
+                # 分數低的在前（NULL＝算不出分數，排最後）；id 當決勝鍵讓翻頁穩定。
+                "ORDER BY rr.quality_score ASC NULLS LAST, rr.id LIMIT :limit OFFSET :offset"
+            ),
+            {**page, **state_params},
+        )).all()
+        return int(total), [_extraction_item(tuple(r)) for r in rows]
+
+    source, order, params = _qa_from(kind, days)
     total = (await session.execute(
-        text(f"SELECT count(*) FROM research.qa_log {join} WHERE {where}{state_filter}"),
-        {**params, **state_params},
+        text(f"SELECT count(*) {source}{state_filter}"), {**params, **state_params},
     )).scalar_one()
     rows = (await session.execute(
-        text(
-            # 刻意不選 question／answer：佇列只回中繼資料。
-            f"SELECT id, created_at, ({_SCORE}), feedback, "
-            f"({_ROW_JUDGE}), {state_cols}, qa_log.user_id "
-            f"FROM research.qa_log {join} WHERE {where}{state_filter} "
-            f"ORDER BY {order} LIMIT :limit OFFSET :offset"
-        ),
+        text(f"{_QA_SELECT}{source}{state_filter} ORDER BY {order} LIMIT :limit OFFSET :offset"),
         {**params, **page, **state_params},
     )).all()
     return int(total), [_qa_item(tuple(r)) for r in rows]
+
+
+async def _fetch_one(session, kind: str, subject_id: UUID) -> ReviewItem | None:
+    """佇列裡的單筆：與 `_fetch(status="all", days=_DEFAULT_DAYS)` 同一組條件，外加 id 相符。不在佇列回 None。"""
+    if kind == "extraction":
+        row = (await session.execute(
+            text(f"{_EXTRACTION_SELECT}{_EXTRACTION_FROM} AND rr.id = :id"), {"id": subject_id},
+        )).first()
+        return _extraction_item(tuple(row)) if row is not None else None
+    source, _order, params = _qa_from(kind, _DEFAULT_DAYS)
+    row = (await session.execute(
+        text(f"{_QA_SELECT}{source} AND qa_log.id = :id"), {**params, "id": subject_id},
+    )).first()
+    return _qa_item(tuple(row)) if row is not None else None
 
 
 # 逐筆讀取：id 相符、而且此刻落在任一種問答佇列裡。兩個旗標說明是因為哪一種（NULL 分數→不是低分）。
@@ -341,6 +367,31 @@ async def judge_scale():
         judge_since=qa.get("judge_since"),
         other_judge_checked=int(qa.get("other_judge_checked") or 0),
     )
+
+
+@router.get("/api/review/{kind}/{subject_id}", response_model=ReviewItem)
+async def review_item(kind: ReviewKind, subject_id: UUID):
+    """待複核佇列裡的單筆（`?review=<id>` 的分享連結用）；回的欄位與 `/api/review/queue` 的一列完全相同。
+
+    問答類與佇列一樣**去內容化**：不回提問原文、回答、提問者帳號與對話串，只有中繼資料與代號。
+    要看原文仍只能走 `POST /api/review/qa/{qa_id}/access`（另要 `qa_content.read`、逐筆寫稽核）。
+
+    「在佇列裡」照佇列的規則判，等同 `status=all`、預設窗期：
+
+    - `faithfulness`／`feedback`：`active`、未中止、近 30 天內（窗期固定，不收 `days`——與逐筆讀取同一個
+      理由：讓呼叫端放寬窗期，等於把拿 id 就查得到中繼資料的範圍放寬），而且此刻仍符合該 kind 的條件
+      （現行 judge 的低分／倒讚）。
+    - `extraction`：研報目前標著 `needs_review`（現況，沒有窗期）。
+    - 已處理、已略過的照樣回（不看處理狀態）：連結分享出去之後有人處理了，仍然打得開。
+
+    其餘一律 404 `not_found`、訊息相同：不存在、超過窗期、分數已不低、不是倒讚、屬於另一個 kind、
+    研報已解除標記。不區分原因，免得拿 id 掃出某一筆問答存不存在。讀取不寫稽核。
+    """
+    async with deps.SessionFactory() as session:
+        item = await _fetch_one(session, kind, subject_id)
+    if item is None:
+        raise AppError(404, "not_found", "待複核項目不存在")
+    return item
 
 
 @router.put("/api/review/{kind}/{subject_id}", response_model=ReviewStateResponse)

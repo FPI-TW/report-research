@@ -1,6 +1,5 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { requestJSON } from '../../lib/api'
-import { auditPageSchema, type AuditPage, type Role } from '../../lib/adminSchemas'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { Role } from '../../lib/adminSchemas'
 import { adminApi, type BulkUsersRequest, type UserItem } from '../../lib/generated/adminApi'
 
 export type AdminUser = UserItem
@@ -16,18 +15,6 @@ export function useAdminUsers() {
   return useQuery<AdminUser[]>({
     queryKey: USERS_KEY,
     queryFn: async () => (await adminApi.listUsers()).items,
-    retry: false,
-  })
-}
-
-/** 管理操作稽核，一頁 AUDIT_PAGE_SIZE 筆；翻頁時保留上一頁，避免表格閃空。 */
-export function useAdminAudit(offset: number) {
-  return useQuery<AuditPage>({
-    queryKey: [...AUDIT_KEY, offset],
-    queryFn: () => requestJSON(
-      `/api/admin/audit?limit=${AUDIT_PAGE_SIZE}&offset=${offset}`, auditPageSchema, { cache: 'no-store' },
-    ),
-    placeholderData: keepPreviousData,
     retry: false,
   })
 }

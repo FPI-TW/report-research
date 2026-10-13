@@ -32,6 +32,12 @@ _ADMIN_PREFIXES = ("/api/admin/", "/api/review/")
 # 不在上面前綴底下、但同樣只給管理員的舊路徑（issue #348：/api/progress 原本只受登入保護，
 # 結構檢查只看前綴，於是漏查）。逐條寫明，改名或刪除時 test_explicit_admin_paths_still_exist 會紅。
 _ADMIN_PATHS = frozenset({"/api/progress"})
+# 取單筆的 GET → 它的清單端點（分享連結用；scope 必須相同）。
+_SINGLE_LOOKUPS = {
+    "/api/admin/audit/{entry_id}": "/api/admin/audit",
+    "/api/admin/reports/{file_hash}": "/api/admin/reports",
+    "/api/review/{kind}/{subject_id}": "/api/review/queue",
+}
 
 
 def _iter_api_routes(routes):
@@ -118,6 +124,14 @@ class AdminRouteStructureTests(unittest.TestCase):
         scopes = set().union(*(getattr(c, "__scope__", frozenset()) for c in _dependency_calls(route.dependant)))
         self.assertLessEqual({"qa_content.read", "review.manage"}, scopes)
         self.assertNotIn("qa_content.read", accounts.ADMIN_DEFAULT_SCOPES)
+
+    def test_single_lookups_declare_exactly_the_scopes_of_their_list(self):
+        """取單筆的 GET 與它的清單端點要同一組 scope：連結能開的範圍不該比清單寬，也不該更嚴。"""
+        get = {r.path: r for r in self._guarded() if "GET" in r.methods}
+        for single, listing in _SINGLE_LOOKUPS.items():
+            with self.subTest(single):
+                self.assertEqual(self._scopes(get[single]), self._scopes(get[listing]))
+                self.assertNotIn(authz.require_elevated, set(_dependency_calls(get[single].dependant)))
 
     def test_security_routes_scopes_and_session_revoke_elevation(self):
         """安全頁：整組 audit.read；session 清單另要 accounts.manage，撤銷單一 session 再要已提升。"""

@@ -7,12 +7,16 @@ import { fmtDateTime } from '../auditLabels'
 import { DRAFT_REVIEW_PATH, STATUS_LABEL, STATUS_TONE, statusOf } from './reportStatus'
 import s from './Reports.module.css'
 
+/** 抽屜拿不到那一篇時的狀態：還在找、確定沒有，或取不到（說出原因）。 */
+export type ReportMissing = { kind: 'loading' } | { kind: 'not_found' } | { kind: 'error'; message: string }
+
 interface Props {
   /** URL 上的 `?report=`；null＝關著。 */
   fileHash: string | null
-  /** 目前這一頁清單裡對得上的那一筆；清單還在載入或這一頁沒有它時是 undefined。 */
+  /** 那一篇：目前這一頁清單裡的，或用單筆端點取來的；還沒拿到是 undefined。 */
   report: AdminReportItem | undefined
-  loading: boolean
+  /** `report` 是 undefined 時為什麼沒有。 */
+  missing: ReportMissing
   busy: boolean
   onClose: () => void
   onHide: (r: AdminReportItem) => void
@@ -21,19 +25,25 @@ interface Props {
 
 const dash = (v: string | null | undefined) => (v == null || v === '' ? '—' : v)
 
+const MISSING_TITLE: Record<ReportMissing['kind'], string> = {
+  loading: '載入中…', not_found: '找不到這份研報', error: '無法載入這份研報',
+}
+
 /**
- * 研報詳情抽屜。後端沒有「依 file_hash 取一篇」的管理端點，內容取自目前這一頁的清單；
- * 連結開在別的篩選或頁次時對不上，只能請人用關鍵字找。
+ * 研報詳情抽屜。內容優先取目前這一頁的清單；連結開在別的篩選或頁次、清單裡沒有那一篇時，
+ * 由頁面用單筆端點取來（`useAdminReport`）。
  */
-export function ReportDrawer({ fileHash, report, loading, busy, onClose, onHide, onRestore }: Props) {
+export function ReportDrawer({ fileHash, report, missing, busy, onClose, onHide, onRestore }: Props) {
   if (!fileHash) return null
   if (!report) {
     return (
-      <Drawer open onClose={onClose} title={loading ? '載入中…' : '找不到這份研報'} width={520}>
+      <Drawer open onClose={onClose} title={MISSING_TITLE[missing.kind]} width={520}>
         <DrawerSection>
-          {loading
-            ? <p className={s.note}>載入中…</p>
-            : <p className={s.note} role="status">這份研報不在目前這一頁的清單裡。調整篩選，或用標題、檔名、券商搜尋後再開啟。</p>}
+          {missing.kind === 'loading' && <p className={s.note}>載入中…</p>}
+          {missing.kind === 'not_found' && (
+            <p className={s.note} role="status">沒有這個 file_hash 的研報。確認連結是否完整，或用標題、檔名、券商搜尋。</p>
+          )}
+          {missing.kind === 'error' && <p className={c.error} role="alert">載入失敗：{missing.message}</p>}
           <dl className={c.kv}><dt>file_hash</dt><dd className={s.hash}>{fileHash}</dd></dl>
         </DrawerSection>
       </Drawer>

@@ -163,6 +163,30 @@ class ExportShapeTests(_Base):
         self.assertEqual(entry.detail, {"kind": "audit", "format": "csv", "filters": {"limit": 5},
                                         "row_count": len(rows) - 1, "truncated": False})
 
+    def test_audit_export_follows_the_action_prefix_filter(self):
+        """匯出收與 `/api/admin/audit` 同一組前綴參數：畫面上篩了什麼，下載的就是什麼；條件記進稽核。"""
+        client = self.login()
+        self.store._audit(self.root_id, "report.hide", "a" * 64, {}, "report")
+        self.store._audit(self.root_id, "ops.restart", "web", {}, "ops_service")
+        self.store._audit(self.root_id, "user.disable", "u1", {})
+        r = client.get("/api/admin/export/audit.csv", params=[("prefix", "report."), ("prefix", "ops.")])
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([row[4] for row in _rows(r)[1:]], ["ops.restart", "report.hide"])
+        self.assertEqual(self.exports()[0].detail["filters"],
+                         {"prefix": "report.,ops.", "limit": admin_exports.EXPORT_MAX_ROWS})
+        r = client.get("/api/admin/export/audit.csv",
+                       params=[("exclude_prefix", "report."), ("exclude_prefix", "ops."), ("exclude_prefix", "data.")])
+        self.assertEqual([row[4] for row in _rows(r)[1:]], ["user.disable"])
+        self.assertEqual(self.exports()[0].detail["filters"],
+                         {"exclude_prefix": "report.,ops.,data.", "limit": admin_exports.EXPORT_MAX_ROWS})
+        # 截斷看的是篩選後的筆數。
+        r = client.get("/api/admin/export/audit.csv", params={"prefix": "user.", "limit": 1})
+        self.assertNotIn("x-export-truncated", {k for k, v in r.headers.items() if v == "true"})
+        before = len(self.exports())
+        for bad in ({"prefix": "User."}, {"exclude_prefix": "a.b.c"}, [("prefix", f"p{i}.") for i in range(17)]):
+            self.assertEqual(client.get("/api/admin/export/audit.csv", params=bad).status_code, 422, bad)
+        self.assertEqual(len(self.exports()), before)  # 參數沒過的請求不寫稽核、不扣配額
+
     def test_every_export_writes_exactly_one_audit_row_without_content(self):
         client = self.login()
         self.mon.incidents = [{"incident_id": "office-host:web:1", "host": "office-host", "component": "web",

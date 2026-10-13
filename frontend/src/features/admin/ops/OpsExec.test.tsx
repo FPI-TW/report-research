@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import c from '../../../components/console/Console.module.css'
 import type { ObservationListResponse } from '../../../lib/generated/adminApi'
-import { trendSeries } from './exec/hostSeries'
-import { logWindowFor } from './exec/jobs'
+import { trendAxis, trendSeries, trendSlotSpan } from './exec/hostSeries'
+import { jobLocator, logWindowFor } from './exec/jobs'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
 import OpsHostPage from './OpsHostPage'
@@ -296,12 +296,14 @@ test('排程工作的匯出按鈕帶目前的篩選條件', async () => {
   expect(exportCalls).toEqual(['/api/admin/export/jobs.csv?state=lost'])
 })
 
-test('排程工作：點列開詳情抽屜並記在網址（?job=）；列出該次執行的欄位，附「看日誌」；關閉後拿掉參數', async () => {
-  mount('/admin/operations/jobs')
+test('排程工作：點列開詳情抽屜並記在網址（?job=，附定位用的 unit 與 at）；列出該次執行的欄位，附「看日誌」；關閉後拿掉參數', async () => {
+  const fetchMock = mount('/admin/operations/jobs')
   const table = within(await screen.findByRole('table', { name: '排程工作執行紀錄' }))
   fireEvent.click(table.getAllByRole('row')[2])
   const drawer = within(await screen.findByRole('dialog', { name: 'backup' }))
-  expect(loc()).toBe(`/admin/operations/jobs?job=${'b'.repeat(32)}`)
+  expect(loc()).toBe(`/admin/operations/jobs?job=${'b'.repeat(32)}&unit=report-mark-backup.service&at=2026-10-06T01%3A00%3A00Z`)
+  // 清單裡就有這一筆：不另外查
+  expect(lookupCalls(fetchMock)).toEqual([])
   expect(drawer.getByText('失敗')).toBeInTheDocument()
   const field = (label: string, name: string) => {
     const dt = within(drawer.getByLabelText(label)).getByText(name)
@@ -353,6 +355,123 @@ test('排程工作：網址的 job 不在這一頁的清單裡時說明，不白
   const drawer = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
   expect(drawer.getByText(/這一頁的清單裡沒有這次執行/)).toBeInTheDocument()
   expect(screen.getByRole('table', { name: '排程工作執行紀錄' })).toBeInTheDocument()
+})
+
+// 分享連結：清單不含那一筆時，用網址的 unit 與 at 另外查（清單端點帶 unit／since／until）。
+const SHARED = job({ service: 'archive', unit: 'report-mark-archive@nas.service', invocation_id: '9'.repeat(32),
+  started_at: '2026-09-20T03:00:00.123456+00:00', finished_at: '2026-09-20T03:00:40+00:00', duration_seconds: 39.9,
+  last_seen_at: '2026-09-20T03:01:00+00:00' })
+const sharedUrl = (over: Record<string, string> = {}) => {
+  const p = new URLSearchParams({ job: SHARED.invocation_id, unit: SHARED.unit, at: SHARED.started_at, ...over })
+  return `/admin/operations/jobs?${p}`
+}
+const isLookup = (url: string) => url.startsWith('/api/admin/jobs') && new URLSearchParams(url.split('?')[1] ?? '').has('unit')
+const lookupCalls = (fetchMock: ReturnType<typeof mount>) => calls(fetchMock).filter(isLookup)
+const LOOKUP: Override = url => (isLookup(url)
+  ? { body: jobsBody([job({ unit: SHARED.unit, invocation_id: '8'.repeat(32) }), SHARED]) } : undefined)
+
+test('排程工作：分享的連結在清單不含那一筆時，用 unit 與開始時間另外查出來；清單的查詢不受影響', async () => {
+  const fetchMock = mount(sharedUrl(), { override: LOOKUP })
+  const drawer = within(await screen.findByRole('dialog', { name: 'archive' }))
+  expect(within(drawer.getByLabelText('識別')).getByText('invocation ID').nextElementSibling).toHaveTextContent('9'.repeat(32))
+  expect(within(drawer.getByLabelText('識別')).getByText('unit').nextElementSibling)
+    .toHaveTextContent('report-mark-archive@nas.service')
+  expect(within(drawer.getByLabelText('執行')).getByText('耗時').nextElementSibling).toHaveTextContent('40 秒')
+  // 以開始時間為中心、前後各 5 分鐘的小時間窗
+  const window = new URLSearchParams({ unit: SHARED.unit, since: '2026-09-20T02:55:00.123Z', until: '2026-09-20T03:05:00.123Z', limit: '50' })
+  expect(lookupCalls(fetchMock)).toEqual([`/api/admin/jobs?${window}`])
+  // 清單照自己的篩選與分頁查，畫面上還是那四筆
+  expect(calls(fetchMock)).toContain('/api/admin/jobs?limit=50&offset=0')
+  expect(within(screen.getByRole('table', { name: '排程工作執行紀錄' })).getAllByRole('row')).toHaveLength(5)
+  // 這次執行距今超過 1 天：日誌頁看不到
+  expect(drawer.getByText('日誌頁最多回看 1 天，看不到這次執行')).toBeInTheDocument()
+  // 關抽屜：三個參數一起拿掉
+  fireEvent.click(drawer.getByRole('button', { name: '關閉' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(loc()).toBe('/admin/operations/jobs')
+})
+
+test('排程工作：分享連結的 unit 或 at 格式不對時不送請求，照舊格式的連結說明', async () => {
+  const bad: Record<string, string>[] = [
+    { unit: 'report-mark-sync' }, // 不是 .service
+    { unit: '../etc/passwd.service' },
+    { unit: 'a b.service' },
+    { unit: `${'a'.repeat(205)}.service` }, // 超過後端的長度上限
+    { at: 'yesterday' },
+    { at: '2026-09-20' },
+    { at: '2026-09-20T03:00:00' }, // 沒有時區
+    { at: '2026-13-45T99:00:00Z' }, // 長得像但不是時間
+  ]
+  for (const over of bad) {
+    const fetchMock = mount(sharedUrl(over), { override: LOOKUP })
+    const drawer = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
+    expect(drawer.getByText(/這一頁的清單裡沒有這次執行/)).toBeInTheDocument()
+    expect(lookupCalls(fetchMock)).toEqual([])
+    cleanup()
+  }
+})
+
+test('排程工作：分享連結少了 unit 或 at（舊格式只有 ?job=）一樣不另外查', async () => {
+  const fetchMock = mount(`/admin/operations/jobs?job=${SHARED.invocation_id}&unit=${SHARED.unit}`, { override: LOOKUP })
+  const drawer = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
+  expect(drawer.getByText(/這一頁的清單裡沒有這次執行/)).toBeInTheDocument()
+  expect(lookupCalls(fetchMock)).toEqual([])
+})
+
+test('排程工作：分享連結另外查也沒有那一筆時說明原因；查詢失敗顯示後端訊息', async () => {
+  mount(sharedUrl(), { override: url => (isLookup(url) ? { body: jobsBody([]) } : undefined) })
+  const missing = within(await screen.findByRole('dialog', { name: '找不到這次執行' }))
+  expect(missing.getByText(/查不到這次執行：紀錄只保留 90 天/)).toBeInTheDocument()
+  expect(screen.getByRole('table', { name: '排程工作執行紀錄' })).toBeInTheDocument()
+  cleanup()
+
+  mount(sharedUrl(), {
+    override: url => (isLookup(url) ? { status: 400, body: { detail: '時間範圍最多 90 天', code: 'invalid_params' } } : undefined),
+  })
+  const failed = within(await screen.findByRole('dialog', { name: '這次執行載入失敗' }))
+  expect(failed.getByRole('alert')).toHaveTextContent('這次執行載入失敗：時間範圍最多 90 天')
+  fireEvent.click(failed.getByRole('button', { name: '關閉' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(loc()).toBe('/admin/operations/jobs')
+})
+
+test('排程工作：開著抽屜時那一筆被換頁推出清單，用網址的 unit 與 at 接著顯示', async () => {
+  const older = job({ service: 'older', unit: 'report-mark-older.service', invocation_id: 'f'.repeat(32) })
+  const fetchMock = mount('/admin/operations/jobs', {
+    override: url => {
+      if (!url.startsWith('/api/admin/jobs')) return undefined
+      const p = new URLSearchParams(url.split('?')[1] ?? '')
+      if (p.has('unit')) return { body: jobsBody(JOBS.filter(j => j.unit === p.get('unit'))) }
+      return p.get('offset') === '50'
+        ? { body: jobsBody([older], { total: 51, offset: 50 }) }
+        : { body: jobsBody(JOBS, { total: 51, has_more: true, next_offset: 50 }) }
+    },
+  })
+  const table = within(await screen.findByRole('table', { name: '排程工作執行紀錄' }))
+  fireEvent.click(table.getByRole('button', { name: 'backup' }))
+  expect(await screen.findByRole('dialog', { name: 'backup' })).toBeInTheDocument()
+  expect(lookupCalls(fetchMock)).toEqual([])
+  // 抽屜是 modal，直接點被遮住的分頁按鈕（等同清單自己重抓後不再含這一筆）
+  fireEvent.click(screen.getByRole('button', { name: '較舊', hidden: true }))
+  await waitFor(() => expect(lookupCalls(fetchMock)).toHaveLength(1))
+  expect(new URLSearchParams(lookupCalls(fetchMock)[0].split('?')[1]).get('unit')).toBe('report-mark-backup.service')
+  const drawer = within(await screen.findByRole('dialog', { name: 'backup' }))
+  expect(within(drawer.getByLabelText('結果')).getByText('結束碼').nextElementSibling).toHaveTextContent('2')
+})
+
+test('jobLocator：unit 與 at 都合格才給查詢條件（開始時間前後各 5 分鐘）', () => {
+  expect(jobLocator('report-mark-sync.service', '2026-10-06T01:00:00Z'))
+    .toEqual({ unit: 'report-mark-sync.service', since: '2026-10-06T00:55:00.000Z', until: '2026-10-06T01:05:00.000Z' })
+  // 後端回的格式：微秒＋時區位移
+  expect(jobLocator('a@b.service', '2026-10-06T09:00:00.123456+08:00'))
+    .toEqual({ unit: 'a@b.service', since: '2026-10-06T00:55:00.123Z', until: '2026-10-06T01:05:00.123Z' })
+  expect(jobLocator(null, '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service', null)).toBeNull()
+  expect(jobLocator('.hidden.service', '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.timer', '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service\n', '2026-10-06T01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service', '2026-10-06 01:00:00Z')).toBeNull()
+  expect(jobLocator('report-mark-sync.service', '1759712400')).toBeNull()
 })
 
 test('排程工作：分頁（較舊／較新）；換狀態篩選會回到第一頁', async () => {
@@ -446,6 +565,169 @@ test('主機：後端錯誤原樣顯示，不白屏', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('主機觀測載入失敗：時間範圍最多 90 天')
 })
 
+// 趨勢圖的長範圍：一條序列一個請求。假後端照請求的 since 回一份只含該序列的資料（粒度依區間長短）。
+const HOUR = 3_600_000
+const trendParams = (url: string) => new URLSearchParams(url.split('?')[1] ?? '')
+const isTrend = (url: string) => url.startsWith('/api/admin/observations') && trendParams(url).has('metric')
+const trendCalls = (fetchMock: ReturnType<typeof mount>) => calls(fetchMock).filter(isTrend)
+/** 這個請求的 since 距今多久（毫秒）。 */
+const sinceAge = (url: string) => Date.now() - new Date(trendParams(url).get('since') ?? '').getTime()
+const TREND_VALUES: Record<string, number> = { cpu_pct: 91, mem_used_pct: 66.6, load1: 5.5, psi_io_some_avg60: 7.7, used_pct: 31.4 }
+
+function trendReply(url: string, over: Record<string, unknown> = {}): Reply {
+  const p = trendParams(url)
+  const since = new Date(p.get('since') ?? '').getTime()
+  const until = Date.now()
+  const metric = p.get('metric') ?? ''
+  const at = (ms: number) => new Date(ms).toISOString()
+  const item = (ms: number, value: number) => obs(metric, value, { observed_at: at(ms), subject: p.get('subject') })
+  return { body: obsBody([item(until - 60_000, 1), item(since + HOUR, TREND_VALUES[metric] ?? 1)], {
+    since: at(since), until: at(until), resolution: until - since > 24 * HOUR ? '5m' : 'raw', ...over }) }
+}
+const TRENDS: Override = url => (isTrend(url) ? trendReply(url) : undefined)
+/** 趨勢圖的卡片：標題是 h2，往上找到整張卡。 */
+const chartCard = (title: string) => within(screen.getByRole('heading', { level: 2, name: title }).closest('section')!)
+
+test('主機：預設 1 小時，趨勢圖直接用數字磚那一份觀測，不另外查', async () => {
+  const fetchMock = mount('/admin/operations/host')
+  expect(await screen.findByRole('img', { name: 'CPU 使用率趨勢：2 個資料點' })).toBeInTheDocument()
+  expect(seg('時間範圍').getAllByRole('button').map(b => b.textContent)).toEqual(['1 小時', '24 小時', '7 天'])
+  expect(seg('時間範圍').getByRole('button', { name: '1 小時' })).toHaveAttribute('aria-pressed', 'true')
+  expect(calls(fetchMock).filter(u => u.startsWith('/api/admin/observations')))
+    .toEqual(['/api/admin/observations?scope=host&limit=5000'])
+  expect(chartCard('CPU 使用率').getByText('最近 1 小時・每根 1 分鐘')).toBeInTheDocument()
+  expect(chartCard('CPU 使用率').getByText('80.0%')).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: '檔案系統使用率' })).not.toBeInTheDocument()
+})
+
+test('主機：切到 24 小時記在網址，四張圖各查一次（逐指標）；數字磚仍是最近一小時', async () => {
+  const fetchMock = mount('/admin/operations/host', { override: TRENDS })
+  await screen.findByRole('group', { name: 'CPU 使用率' })
+  pick('時間範圍', '24 小時')
+  expect(loc()).toBe('/admin/operations/host?range=24h')
+  const cpu = await screen.findByRole('img', { name: 'CPU 使用率趨勢：2 個資料點' })
+  await waitFor(() => expect(trendCalls(fetchMock)).toHaveLength(4))
+  const sent = trendCalls(fetchMock).map(trendParams)
+  expect(sent.map(p => p.get('metric')).sort()).toEqual(['cpu_pct', 'load1', 'mem_used_pct', 'psi_io_some_avg60'])
+  for (const p of sent) {
+    expect(p.get('scope')).toBe('host')
+    expect(p.get('subject')).toBe('host')
+    expect(p.get('limit')).toBe('5000')
+  }
+  // since 往邊界內縮 5 分鐘，後端才會回逐筆的原始觀測
+  for (const url of trendCalls(fetchMock)) {
+    expect(Math.abs(sinceAge(url) - (24 * HOUR - 5 * 60_000))).toBeLessThan(60_000)
+  }
+  // 圖是 24 小時的資料（最高 91%），數字磚的「1 小時最高」不受影響
+  const card = chartCard('CPU 使用率')
+  expect(card.getByText('最近 24 小時・每根 12 分鐘')).toBeInTheDocument()
+  expect(card.getByText('91.0%')).toBeInTheDocument()
+  expect(cpu.querySelectorAll('[title]')).toHaveLength(120)
+  expect(within(screen.getByRole('group', { name: 'CPU 使用率' })).getByText(/1 小時最高 80\.0%/)).toBeInTheDocument()
+  expect(screen.getByRole('group', { name: 'CPU 使用率' })).toHaveTextContent('12.5%')
+  expect(screen.getByText(/粒度/)).toHaveTextContent('原始觀測（每 60 秒）')
+  // 24 小時的刻度只寫「時:分」
+  expect(cpu.closest('figure')!.lastElementChild!.textContent).toMatch(/^(\d\d:\d\d){3}$/)
+  expect(screen.queryByRole('heading', { name: '檔案系統使用率' })).not.toBeInTheDocument()
+  expect(document.querySelector('[title^="門檻"]')).toBeNull()
+})
+
+test('主機：7 天多一張檔案系統使用率（每個掛載點各查一次），粒度照後端回的，刻度帶日期', async () => {
+  const fetchMock = mount('/admin/operations/host?range=7d', { override: TRENDS })
+  const fsPlot = await screen.findByRole('img', { name: '/home/kashionz/projects/report-mark 使用率趨勢：2 個資料點' })
+  await waitFor(() => expect(trendCalls(fetchMock)).toHaveLength(5))
+  expect(seg('時間範圍').getByRole('button', { name: '7 天' })).toHaveAttribute('aria-pressed', 'true')
+  const fsCall = trendCalls(fetchMock).map(trendParams).filter(p => p.get('metric') === 'used_pct')
+  expect(fsCall.map(p => p.get('subject'))).toEqual(['fs:/home/kashionz/projects/report-mark'])
+  for (const url of trendCalls(fetchMock)) {
+    expect(Math.abs(sinceAge(url) - (7 * 24 * HOUR - 5 * 60_000))).toBeLessThan(60_000)
+  }
+  const fsCard = chartCard('檔案系統使用率')
+  expect(fsCard.getByText('最近 7 天・每根 84 分鐘')).toBeInTheDocument()
+  expect(fsCard.getByText('/home/kashionz/projects/report-mark')).toBeInTheDocument()
+  expect(fsCard.getByText('31.4%')).toBeInTheDocument()
+  expect(fsPlot.closest('figure')!.lastElementChild!.textContent).toMatch(/^(\d\d\/\d\d \d\d:\d\d){3}$/)
+  expect(screen.getByText(/粒度/)).toHaveTextContent('5 分鐘聚合')
+  expect(chartCard('CPU 使用率').getByText('最近 7 天・每根 84 分鐘')).toBeInTheDocument()
+  // 檔案系統的表格（最新值）照舊
+  expect(within(screen.getByRole('table', { name: '檔案系統' })).getByText('24.6%')).toBeInTheDocument()
+})
+
+test('主機：某條序列的查詢被截斷時，那張圖講明較早的部分沒有畫出來', async () => {
+  mount('/admin/operations/host?range=24h', {
+    override: url => (isTrend(url) ? trendReply(url, { truncated: trendParams(url).get('metric') === 'load1' }) : undefined),
+  })
+  await screen.findByRole('img', { name: 'CPU 使用率趨勢：2 個資料點' })
+  expect(await chartCard('Load（1 分鐘）').findByText('資料超過上限，較早的部分沒有畫出來')).toBeInTheDocument()
+  expect(chartCard('CPU 使用率').queryByText(/資料超過上限/)).not.toBeInTheDocument()
+  expect(screen.queryByText('資料超過上限，只顯示最近的部分')).not.toBeInTheDocument()
+})
+
+test('主機：某條序列載入失敗只影響那張圖；這段期間沒有觀測的序列不畫', async () => {
+  mount('/admin/operations/host?range=24h', {
+    override: url => {
+      if (!isTrend(url)) return undefined
+      const metric = trendParams(url).get('metric')
+      if (metric === 'mem_used_pct') return { status: 500, body: { detail: '資料庫忙碌', code: 'internal' } }
+      if (metric === 'load1') return { body: obsBody([], { since: '2026-10-05T02:05:00Z' }) }
+      return trendReply(url)
+    },
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent('記憶體使用率趨勢載入失敗：資料庫忙碌')
+  expect(await screen.findByRole('img', { name: 'CPU 使用率趨勢：2 個資料點' })).toBeInTheDocument()
+  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Load（1 分鐘）' })).not.toBeInTheDocument())
+  expect(screen.getByRole('group', { name: '記憶體使用率' })).toHaveTextContent('58.4%')
+})
+
+test('主機：網址的 range 不在選項內時退回 1 小時，不另外查；切回 1 小時把參數拿掉', async () => {
+  const fetchMock = mount('/admin/operations/host?range=99y', { override: TRENDS })
+  await screen.findByRole('group', { name: 'CPU 使用率' })
+  expect(seg('時間範圍').getByRole('button', { name: '1 小時' })).toHaveAttribute('aria-pressed', 'true')
+  expect(trendCalls(fetchMock)).toEqual([])
+  pick('時間範圍', '7 天')
+  expect(loc()).toBe('/admin/operations/host?range=7d')
+  await waitFor(() => expect(trendCalls(fetchMock)).toHaveLength(5))
+  pick('時間範圍', '1 小時')
+  expect(loc()).toBe('/admin/operations/host')
+  expect(await screen.findByRole('img', { name: 'CPU 使用率趨勢：2 個資料點' })).toBeInTheDocument()
+  expect(chartCard('CPU 使用率').getByText('80.0%')).toBeInTheDocument()
+})
+
+test('主機：長範圍的趨勢 5 分鐘內不重抓——來回切範圍不會再送一次', async () => {
+  const fetchMock = mount('/admin/operations/host?range=24h', { override: TRENDS })
+  await waitFor(() => expect(trendCalls(fetchMock)).toHaveLength(4))
+  pick('時間範圍', '7 天')
+  await waitFor(() => expect(trendCalls(fetchMock)).toHaveLength(9))
+  pick('時間範圍', '24 小時')
+  expect(await chartCard('CPU 使用率').findByText('最近 24 小時・每根 12 分鐘')).toBeInTheDocument()
+  pick('時間範圍', '7 天')
+  expect(await chartCard('CPU 使用率').findByText('最近 7 天・每根 84 分鐘')).toBeInTheDocument()
+  expect(trendCalls(fetchMock)).toHaveLength(9)
+})
+
+test('主機：最近一小時沒有觀測、但選了較長的範圍時，說明之外仍畫出那段期間的趨勢', async () => {
+  const fetchMock = mount('/admin/operations/host?range=24h', {
+    override: url => {
+      if (isTrend(url)) return trendReply(url)
+      return url.startsWith('/api/admin/observations') ? { body: obsBody([]) } : undefined
+    },
+  })
+  expect(await screen.findByText(/最近一小時沒有主機觀測/)).toBeInTheDocument()
+  expect(await screen.findByRole('img', { name: 'CPU 使用率趨勢：2 個資料點' })).toBeInTheDocument()
+  expect(trendCalls(fetchMock)).toHaveLength(4)
+  expect(screen.queryByRole('group', { name: 'CPU 使用率' })).not.toBeInTheDocument()
+})
+
+test('主機：數字磚那一份失敗時不再送趨勢的請求', async () => {
+  const fetchMock = mount('/admin/operations/host?range=7d', {
+    override: url => url.startsWith('/api/admin/observations')
+      ? { status: 400, body: { detail: '時間範圍最多 90 天', code: 'invalid_params' } } : undefined,
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent('主機觀測載入失敗：時間範圍最多 90 天')
+  expect(seg('時間範圍').getByRole('button', { name: '7 天' })).toHaveAttribute('aria-pressed', 'true')
+  expect(trendCalls(fetchMock)).toEqual([])
+})
+
 test('trendSeries：依粒度切格、一格取最高值（聚合看 value_max），沒有觀測的格子是 null', () => {
   const data = obsBody([
     obs('cpu_pct', 10, { observed_at: '2026-10-06T01:00:10Z' }),
@@ -462,6 +744,33 @@ test('trendSeries：依粒度切格、一格取最高值（聚合看 value_max�
   expect(bars.filter(b => b.value != null)).toHaveLength(2)
   expect(trendSeries({ ...data, resolution: '5m' }, 'host', 'cpu_pct')).toHaveLength(12)
   expect(trendSeries({ ...data, until: data.since }, 'host', 'cpu_pct')).toEqual([])
+})
+
+test('trendSeries／trendAxis：跨好幾天的範圍刻度帶日期；聚合的第一個桶起點早於 since 也算進第一格', () => {
+  const week = obsBody([
+    obs('cpu_pct', 40, { observed_at: '2026-09-29T02:00:00Z', value_max: 70 }), // 桶 02:00–02:05：起點早於 since，但涵蓋到它
+    obs('cpu_pct', 99, { observed_at: '2026-09-29T01:55:00Z', value_max: 99 }), // 桶 01:55–02:00：整個在區間外
+    obs('cpu_pct', 20, { observed_at: '2026-10-06T01:55:00Z', value_max: 35 }),
+  ], { since: '2026-09-29T02:02:00Z', until: '2026-10-06T02:00:00Z', resolution: '5m' }) as unknown as ObservationListResponse
+  const bars = trendSeries(week, 'host', 'cpu_pct')
+  expect(bars).toHaveLength(120)
+  expect(bars[0].value).toBe(70)
+  expect(bars[119].value).toBe(35)
+  expect(bars.filter(b => b.value != null)).toHaveLength(2)
+  expect(bars[0].label).toMatch(/^\d\d\/\d\d \d\d:\d\d$/)
+  expect(trendAxis(week)).toHaveLength(3)
+  for (const t of trendAxis(week)) expect(t).toMatch(/^\d\d\/\d\d \d\d:\d\d$/)
+  expect(trendSlotSpan(week)).toBe('84 分鐘')
+
+  const day = { ...week, since: '2026-10-05T02:00:00Z', resolution: 'raw' } as ObservationListResponse
+  for (const t of trendAxis(day)) expect(t).toMatch(/^\d\d:\d\d$/)
+  expect(trendSeries(day, 'host', 'cpu_pct')[0].label).toMatch(/^\d\d:\d\d$/)
+  expect(trendSlotSpan(day)).toBe('12 分鐘')
+  // 一格超過一個半小時就改用小時表示
+  expect(trendSlotSpan({ ...week, since: '2026-09-06T02:00:00Z', resolution: '1h' })).toBe('6 小時')
+  expect(trendSlotSpan({ ...week, since: '2026-09-24T02:00:00Z', resolution: '1h' })).toBe('2.4 小時')
+  expect(trendSlotSpan({ ...week, until: week.since })).toBeNull()
+  expect(trendAxis({ ...week, until: week.since })).toEqual([])
 })
 
 test('沒有 ops.read：只顯示需要權限的說明，不打這幾頁的 API', async () => {

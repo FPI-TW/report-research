@@ -1,9 +1,10 @@
 import { Link } from 'react-router'
+import { Card } from '../../../../components/console'
+import c from '../../../../components/console/Console.module.css'
 import type { Coverage, Progress, Summary } from '../../../../lib/progressSchema'
 import { Bar } from './parts'
 import { DERIVED_LABEL } from './pipelineMeta'
 import { fmtInt } from './rate'
-import adminStyles from '../../Admin.module.css'
 import styles from './Pipeline.module.css'
 
 /**
@@ -13,51 +14,51 @@ import styles from './Pipeline.module.css'
  * 摘錄與訊號刻意只跑子集（近 30 天），全表覆蓋率不是訊號，`latest` 有沒有前進才是：
  * 批次停跑的症狀只是閱讀頁少一個區塊，沒有人會回報。
  */
-function CoverageRow({ name, scope, c }: { name: string; scope: string; c: Summary | Coverage | undefined }) {
-  if (!c) {
+function CoverageRow({ name, scope, cov }: { name: string; scope: string; cov: Summary | Coverage | undefined }) {
+  if (!cov) {
     return (
       <tr>
-        <td>{name} <span className={adminStyles.muted}>{scope}</span></td>
-        <td colSpan={3} className={adminStyles.muted}>此版後端未提供統計</td>
+        <td>{name} <span className={c.muted}>{scope}</span></td>
+        <td colSpan={3} className={c.muted}>此版後端未提供統計</td>
       </tr>
     )
   }
-  const latest = 'latest' in c ? c.latest : null
+  const latest = 'latest' in cov ? cov.latest : null
   return (
     <tr>
-      <td>{name} <span className={adminStyles.muted}>{scope}</span></td>
-      <td className={styles.barCell}><Bar pct={c.pct} label={`${name}覆蓋`} /></td>
-      <td className={`${adminStyles.num} ${styles.right}`}>
-        {c.pct.toFixed(1)}%
-        <div className={adminStyles.muted}>{fmtInt(c.done)}/{fmtInt(c.total)}</div>
+      <td>{name} <span className={c.muted}>{scope}</span></td>
+      <td className={styles.barCell}><Bar pct={cov.pct} label={`${name}覆蓋`} /></td>
+      <td className={`${c.num} ${c.tdRight}`}>
+        {cov.pct.toFixed(1)}%
+        <div className={c.sub}>{fmtInt(cov.done)}/{fmtInt(cov.total)}</div>
       </td>
-      <td className={adminStyles.num}>{latest ?? <span className={adminStyles.muted}>—</span>}</td>
+      <td className={c.num}>{latest ?? <span className={c.muted}>—</span>}</td>
     </tr>
   )
 }
 
 export function CoverageCard({ progress: p }: { progress: Progress }) {
   return (
-    <section className={adminStyles.card} aria-labelledby="pipeline-coverage-title">
-      <div className={adminStyles.cardHead}>
-        <h2 id="pipeline-coverage-title" className={adminStyles.ctitle}>產出覆蓋</h2>
-        <Link className={adminStyles.action} to="../data-health" relative="path">看批次新鮮度</Link>
-      </div>
-      <div className={adminStyles.tableWrap}>
-        <table className={adminStyles.table} aria-label="產出覆蓋">
+    <Card
+      title="產出覆蓋"
+      labelledBy="pipeline-coverage-title"
+      right={<Link className={`${c.btn} ${c.btnSm}`} to="../data-health" relative="path">看批次新鮮度</Link>}
+    >
+      <div className={c.tableWrap}>
+        <table className={c.table} aria-label="產出覆蓋">
           <thead>
-            <tr><th>項目</th><th>覆蓋</th><th className={styles.right}>比例</th><th>最後產出</th></tr>
+            <tr><th>項目</th><th>覆蓋</th><th className={c.tdRight}>比例</th><th>最後產出</th></tr>
           </thead>
           <tbody>
-            <CoverageRow name="報告摘要" scope="全庫" c={p.summary} />
-            <CoverageRow name={DERIVED_LABEL.takeaways} scope="近 30 天" c={p.takeaway} />
-            <CoverageRow name={DERIVED_LABEL.signals} scope="近 30 天" c={p.signal} />
+            <CoverageRow name="報告摘要" scope="全庫" cov={p.summary} />
+            <CoverageRow name={DERIVED_LABEL.takeaways} scope="近 30 天" cov={p.takeaway} />
+            <CoverageRow name={DERIVED_LABEL.signals} scope="近 30 天" cov={p.signal} />
           </tbody>
         </table>
       </div>
-      <p className={adminStyles.hint}>
-        摘錄與訊號刻意只跑子集，比例低不代表壞了；要看的是「最後產出」有沒有前進。是否過期由「資料健康」的批次新鮮度判斷。
-      </p>
-    </section>
+      <div className={`${c.cardFoot} ${styles.footNote}`}>
+        <span>摘錄與訊號刻意只跑子集，比例低不代表壞了；要看的是「最後產出」有沒有前進。是否過期由「資料健康」的批次新鮮度判斷。</span>
+      </div>
+    </Card>
   )
 }

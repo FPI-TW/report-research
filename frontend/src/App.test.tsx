@@ -44,12 +44,22 @@ function stubAs(role: 'admin' | 'user') {
   return fetchMock
 }
 
-test('/admin 導向帳號管理（管理員）', async () => {
+test('/admin 是管理後台的總覽（管理員），不再導向帳號管理', async () => {
   stubAs('admin')
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(routes, { initialEntries: ['/admin'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
-  expect(await screen.findByRole('heading', { level: 2, name: '帳號清單' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { level: 1, name: '總覽' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(router.state.location.pathname).toBe('/admin')
+}, 15000)
+
+test('/admin/users 照舊是帳號管理', async () => {
+  stubAs('admin')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/users'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: '帳號管理' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(await screen.findByRole('region', { name: '帳號清單' })).toBeInTheDocument()
   expect(router.state.location.pathname).toBe('/admin/users')
 }, 15000)
 
@@ -62,7 +72,7 @@ test('一般使用者直接開 /admin/reviews：無權限頁，不打待複核�
   expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/review') || String(u).startsWith('/api/admin'))).toBe(false)
 }, 15000)
 
-test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理不可用時顯示降級說明）', async () => {
+test('/admin/operations 導向服務頁（有 ops.read 的管理員；代理不可用時顯示降級說明）', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.includes('/api/me')) {
       return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
@@ -76,7 +86,24 @@ test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理�
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' }, { timeout: 15000 })).toBeInTheDocument()
-  expect(router.state.location.pathname).toBe('/admin/operations/overview')
+  expect(router.state.location.pathname).toBe('/admin/operations/services')
+}, 15000)
+
+test.each([
+  ['/admin/operations/overview', '/admin'],
+  ['/admin/ops', '/admin/operations/services'],
+  ['/admin/ops/logs?service=web', '/admin/operations/logs?service=web'],
+])('舊路由與短別名都能用：%s → %s', async (from, to) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/api/me')) {
+      return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ detail: '維運代理不可用', code: 'ops_agent_unavailable' }), { status: 503 })
+  }))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: [from] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  await waitFor(() => expect(router.state.location.pathname + router.state.location.search).toBe(to), { timeout: 15000 })
 }, 15000)
 
 test.each([
@@ -128,7 +155,7 @@ test('維運 → 資料庫分頁', async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/database'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
-  expect(await screen.findByRole('heading', { level: 2, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { level: 1, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
 }, 15000)
 
 test('舊書籤 /monitor 導回檢索頁（導入監控已搬進管理後台）', async () => {
@@ -140,7 +167,7 @@ test('舊書籤 /monitor 導回檢索頁（導入監控已搬進管理後台）'
   expect(router.state.location.pathname).toBe('/search')
 }, 15000)
 
-test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常（只讀 /api/progress）', async () => {
+test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常（頁面本身只讀 /api/progress）', async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.includes('/api/me')) {
       return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
@@ -159,5 +186,37 @@ test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常�
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/pipeline'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByText('管線正常', {}, { timeout: 15000 })).toBeInTheDocument()
-  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/admin/ops'))).toBe(false)
+  // /api/admin/ops 底下的請求只有外殼導覽燈號要的服務清單、依賴圖與來源主機；管線頁自己不碰代理，代理回 503 也不影響它。
+  const SHELL_SIGNALS = ['/api/admin/ops/services', '/api/admin/ops/dependencies', '/api/admin/ops/remote-hosts']
+  const agentCalls = fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/admin/ops'))
+  expect(agentCalls.every(u => SHELL_SIGNALS.includes(u))).toBe(true)
+}, 15000)
+
+test('管理後台裡的 404：主控台的頁面骨架，「找不到這個頁面」＋回總覽的連結', async () => {
+  stubAs('admin')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/不存在'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: '找不到這個頁面' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: '回總覽' })).toHaveAttribute('href', '/admin')
+  // 外殼照常：導覽還在，可以直接切去別頁
+  expect(screen.getByRole('navigation', { name: '管理領域' })).toBeInTheDocument()
+}, 15000)
+
+test('一般使用者開管理後台裡不存在的網址：仍是無權限頁，不是 404', async () => {
+  stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/不存在'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { name: '需要管理員權限' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.queryByText('找不到這個頁面')).not.toBeInTheDocument()
+}, 15000)
+
+test('研報平台的 404 維持原樣', async () => {
+  stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/不存在'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByText('找不到頁面', {}, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: '找不到這個頁面' })).not.toBeInTheDocument()
 }, 15000)

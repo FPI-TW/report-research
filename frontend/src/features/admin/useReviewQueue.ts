@@ -1,11 +1,13 @@
-import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query'
-import { getJSON } from '../../lib/api'
+import { useInfiniteQuery, useMutation, useQueries, useQueryClient, type InfiniteData } from '@tanstack/react-query'
+import { getJSON, requestJSON } from '../../lib/api'
 import {
   reviewQueueSchema, reviewStateSchema,
   type ReviewItem, type ReviewKind, type ReviewQueue, type ReviewStatus, type ReviewVerification,
 } from '../../lib/reviewSchemas'
 
 const PAGE_SIZE = 10
+const REVIEW_COUNT_KEY = ['review-queue-count']
+const REVIEW_KINDS: readonly ReviewKind[] = ['faithfulness', 'feedback', 'extraction']
 
 export interface UseReviewQueue {
   items: ReviewItem[]
@@ -13,6 +15,8 @@ export interface UseReviewQueue {
   minScore: number | null
   isLoading: boolean
   isError: boolean
+  /** 載入失敗的原因（`ApiError` 的 message 是後端 detail）；沒有失敗是 null。 */
+  error: unknown
   hasMore: boolean
   isFetchingMore: boolean
   loadMore: () => void
@@ -32,8 +36,9 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
   const query = useInfiniteQuery({
     queryKey: ['review-queue', kind, status],
     initialPageParam: 0,
+    // requestJSON：載入失敗時把後端的 detail 放進錯誤訊息，清單才說得出原因（getJSON 只有「HTTP 503」）。
     queryFn: ({ pageParam }) =>
-      getJSON(`/api/review/queue?kind=${kind}&status=${status}&limit=${PAGE_SIZE}&offset=${pageParam}`, reviewQueueSchema),
+      requestJSON(`/api/review/queue?kind=${kind}&status=${status}&limit=${PAGE_SIZE}&offset=${pageParam}`, reviewQueueSchema),
     getNextPageParam: last => last.next_offset ?? undefined,
     staleTime: 60_000,
     retry: false,
@@ -53,6 +58,8 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
         pageParams: data.pageParams.slice(0, 1),
       }))
       await client.invalidateQueries(filter)
+      // 分頁籤與外殼導覽上的待處理數（useAdminSignals 同一組 key）：不等它，數字晚一點到不該卡住儲存。
+      void client.invalidateQueries({ queryKey: REVIEW_COUNT_KEY })
     },
   })
   const pages = query.data?.pages ?? []
@@ -62,6 +69,7 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
     minScore: pages[0]?.min_score ?? null,
     isLoading: query.isLoading,
     isError: query.isError,
+    error: query.error,
     hasMore: Boolean(query.hasNextPage),
     isFetchingMore: query.isFetchingNextPage,
     loadMore: () => { void query.fetchNextPage() },
@@ -69,4 +77,28 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
     save: async (id, update) => { await mutation.mutateAsync({ id, update }) },
     isSaving: mutation.isPending,
   }
+}
+
+/**
+ * 一個分頁的待處理數（`limit=1` 只取 total）。外殼的 `useAdminSignals` 與這一頁的分頁籤用同一份定義，
+ * key 與 queryFn 才不會各寫各的、靜默分家——兩邊共用同一份快取，儲存後 invalidate 一次一起更新。
+ */
+export function reviewCountQuery(kind: ReviewKind) {
+  return {
+    queryKey: [...REVIEW_COUNT_KEY, kind] as const,
+    queryFn: () => getJSON(`/api/review/queue?kind=${kind}&status=open&limit=1&offset=0`, reviewQueueSchema),
+    staleTime: 60_000,
+    retry: false as const,
+    select: (d: { total: number }) => d.total,
+  }
+}
+
+/**
+ * 三個分頁各自的待處理數。輪詢交給外殼，這裡不設 `refetchInterval`。
+ * 取不到（或還沒回來）就是 undefined：分頁籤不顯示數字，不擋佇列。
+ */
+export function useReviewOpenCounts(): Record<ReviewKind, number | undefined> {
+  const results = useQueries({ queries: REVIEW_KINDS.map(kind => reviewCountQuery(kind)) })
+  const [faithfulness, feedback, extraction] = results.map(r => r.data)
+  return { faithfulness, feedback, extraction }
 }

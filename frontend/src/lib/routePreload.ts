@@ -2,9 +2,9 @@ import type { ComponentType } from 'react'
 
 export type RouteKey =
   | 'search' | 'ask' | 'radar' | 'brief' | 'help' | 'report'
-  | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
-  | 'adminUploads' | 'adminUpload'
-  | 'adminOps' | 'adminOpsOverview' | 'adminOpsPipeline' | 'adminOpsServices' | 'adminOpsService' | 'adminOpsLogs'
+  | 'adminShell' | 'adminOverview' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
+  | 'adminUploads'
+  | 'adminOps' | 'adminOpsPipeline' | 'adminOpsServices' | 'adminOpsLogs'
   | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost' | 'adminOpsDataHealth' | 'adminOpsLlmUsage'
   | 'adminOpsDependencies'
   | 'adminOpsRemoteHosts'
@@ -23,17 +23,15 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   // 管理頁：只有管理員會進來，刻意不放進 App 的閒置預載清單。
   // 外殼也 lazy：一般使用者的瀏覽器連管理後台的版面程式碼都不會下載。
   adminShell: () => import('../components/shell/AdminShell').then(m => ({ default: m.AdminShell })),
+  adminOverview: () => import('../features/admin/AdminOverviewPage'),
   adminUsers: () => import('../features/admin/AdminUsersPage'),
   adminReviews: () => import('../features/admin/AdminReviewsPage'),
   adminAudit: () => import('../features/admin/AdminAuditPage'),
   adminReports: () => import('../features/admin/AdminReportsPage'),
   adminUploads: () => import('../features/admin/AdminUploadsPage'),
-  adminUpload: () => import('../features/admin/AdminUploadDetailPage'),
   adminOps: () => import('../features/admin/ops/OperationsLayout'),
-  adminOpsOverview: () => import('../features/admin/ops/OpsOverviewPage'),
   adminOpsPipeline: () => import('../features/admin/ops/pipeline/OpsPipelinePage'),
   adminOpsServices: () => import('../features/admin/ops/OpsServicesPage'),
-  adminOpsService: () => import('../features/admin/ops/OpsServiceDetailPage'),
   adminOpsLogs: () => import('../features/admin/ops/OpsLogsPage'),
   adminOpsJobs: () => import('../features/admin/ops/OpsJobsPage'),
   adminOpsIncidents: () => import('../features/admin/ops/OpsIncidentsPage'),

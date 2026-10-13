@@ -175,6 +175,203 @@
   }
 }
 
+/* ── 管理後台主控台（/admin/*）：亮色與深色兩組 ──
+   名稱與設計交接的主題表一對一（bg → --ac-bg、t1 → --ac-t1），查設計稿的鍵就找得到這裡。
+   `data-theme` 只在管理後台掛著的時候由 `lib/adminTheme.ts` 寫到 <html>（彈窗 portal 到 body，
+   寫在外殼節點上會漏掉它們）；研報平台沒有這個屬性，維持原本的亮色。
+   亮色同時是 `:root` 的預設值：主控台的元件就算畫在沒有 data-theme 的地方也有值可用。
+   文字階只有 t1–t5 可以當文字色；t6 是分隔符號與停用態的裝飾色，對比不到 4.5:1。 */
+:root, :root[data-theme='light'] {
+  --ac-bg: #f3f4f5;
+  --ac-rail: #e7e8ea;
+  --ac-railon: #ffffff;
+  --ac-nav: #f8f8f9;
+  --ac-navon: #e7e9ec;
+  --ac-navh: #eff0f2;
+  --ac-panel: #ffffff;
+  --ac-hover: #f6f7f8;
+  --ac-sunk: #f0f1f3;
+  --ac-sunk2: #f6f7f8;
+  --ac-l1: #e1e3e6;
+  --ac-l2: #eceef0;
+  --ac-l3: #d9dce0;
+  --ac-l4: #d0d4d9;
+  --ac-l5: #a9afb7;
+  --ac-btn: #ffffff;
+  --ac-btnh: #f4f5f6;
+  --ac-segon: #ffffff;
+  --ac-segsh: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --ac-menu: #ffffff;
+  --ac-menubc: #d9dce0;
+  --ac-menuh: #f1f2f4;
+  --ac-t1: #121417;
+  --ac-t2: #1d2024;
+  --ac-t3: #33373c;
+  --ac-t4: #4b5057;
+  --ac-t5: #5f646b;
+  --ac-t6: #b4b8be;
+  --ac-gold: #ae7415;
+  --ac-goldt: #8a5a0f;
+  --ac-ongold: #ffffff;
+  /* 實心按鈕的底與字（主要＝金、確認框的最後一步＝紅）。--ac-gold／--ac-bad 是燈號、指示條與邊框的色，
+     配白字不到 4.5:1，所以按鈕另外給一組；hover 的 brightness(1.06) 之後仍 ≥ 4.5（components/console/consoleCss.test.ts 守）。 */
+  --ac-goldbtn: #946110;
+  --ac-badbtn: #c0392e;
+  --ac-onbad: #ffffff;
+  --ac-gsel: #fbf6ea;
+  --ac-gline: #e6d3a3;
+  --ac-scrim: rgba(20, 22, 26, 0.28);
+  --ac-pop: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.14);
+  /* 燈號：實色（圓點）／t 文字／g 光暈／p 淡底 */
+  --ac-ok: #1f9d5c;
+  --ac-warn: #d9861c;
+  --ac-bad: #d6453a;
+  --ac-info: #2f6fd6;
+  --ac-idle: #a4a9b0;
+  --ac-idleok: #8ccfaa;
+  --ac-okt: #16784a;
+  --ac-warnt: #93560a;
+  --ac-badt: #b3342a;
+  --ac-infot: #2459b3;
+  --ac-okg: rgba(31, 157, 92, 0.22);
+  --ac-warng: rgba(217, 134, 28, 0.22);
+  --ac-badg: rgba(214, 69, 58, 0.28);
+  --ac-infog: rgba(47, 111, 214, 0.22);
+  --ac-okp: #e9f6ef;
+  --ac-warnp: #fcf1e1;
+  --ac-badp: #fcebe9;
+  --ac-infop: #e9f0fc;
+  --ac-idlep: #eef0f2;
+  --ac-badrow: #fff6f5;
+  --ac-badbc: #f1c9c4;
+  --ac-okbc: #c7e7d5;
+  /* 亮色的燈號不加光暈（設計只在深色加） */
+  --ac-lamp-glow: 0;
+  --ac-sans: 'IBM Plex Sans', 'Noto Sans TC', var(--tf-sans);
+  --ac-mono: 'IBM Plex Mono', 'Noto Sans TC', var(--tf-mono);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --ac-bg: #0d0e10;
+  --ac-rail: #08090a;
+  --ac-railon: #1a1d21;
+  --ac-nav: #0f1012;
+  --ac-navon: #1d2024;
+  --ac-navh: #17191d;
+  --ac-panel: #121417;
+  --ac-hover: #15171b;
+  --ac-sunk: #0f1012;
+  --ac-sunk2: #0a0b0c;
+  --ac-l1: #1f2226;
+  --ac-l2: #1a1c20;
+  --ac-l3: #23262b;
+  --ac-l4: #2b2f35;
+  --ac-l5: #3f444b;
+  --ac-btn: #181a1e;
+  --ac-btnh: #1d2024;
+  --ac-segon: #23262b;
+  --ac-segsh: none;
+  --ac-menu: #1a1c20;
+  --ac-menubc: #2e3238;
+  --ac-menuh: #24272c;
+  --ac-t1: #f4f5f6;
+  --ac-t2: #e6e7e9;
+  --ac-t3: #c9ccd1;
+  --ac-t4: #a6a9b0;
+  --ac-t5: #8b8f96;
+  --ac-t6: #4b4f56;
+  --ac-gold: #d4a64a;
+  --ac-goldt: #e2b968;
+  --ac-ongold: #17130a;
+  --ac-goldbtn: #d4a64a;
+  --ac-badbtn: #f2655a;
+  --ac-onbad: #17130a;
+  --ac-gsel: rgba(212, 166, 74, 0.07);
+  --ac-gline: rgba(212, 166, 74, 0.4);
+  --ac-scrim: rgba(0, 0, 0, 0.55);
+  --ac-pop: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ac-ok: #4cc38a;
+  --ac-warn: #f0a24a;
+  --ac-bad: #f2655a;
+  --ac-info: #6aa8ff;
+  --ac-idle: #6d7178;
+  --ac-idleok: #2f7a55;
+  --ac-okt: #7fd8aa;
+  --ac-warnt: #f5b971;
+  --ac-badt: #f58a80;
+  --ac-infot: #94c0ff;
+  --ac-okg: rgba(76, 195, 138, 0.45);
+  --ac-warng: rgba(240, 162, 74, 0.45);
+  --ac-badg: rgba(242, 101, 90, 0.55);
+  --ac-infog: rgba(106, 168, 255, 0.45);
+  --ac-okp: rgba(76, 195, 138, 0.12);
+  --ac-warnp: rgba(240, 162, 74, 0.14);
+  --ac-badp: rgba(242, 101, 90, 0.14);
+  --ac-infop: rgba(106, 168, 255, 0.14);
+  --ac-idlep: rgba(255, 255, 255, 0.06);
+  --ac-badrow: rgba(242, 101, 90, 0.05);
+  --ac-badbc: rgba(242, 101, 90, 0.28);
+  --ac-okbc: rgba(76, 195, 138, 0.25);
+  --ac-lamp-glow: 6px;
+
+  /* 管理後台裡仍會畫到全站共用的元件（Skeleton、帳號安全的 Modal、RouteError…），它們用的是 --tf-*：
+     深色下把這組對到主控台的色階，那些元件才不會是白底配深色外殼。管理頁本身一律用 --ac-*。
+     這裡的值不是對比契約的標的（契約測試讀的是最上面 :root 的那一組）。 */
+  --tf-canvas: #0d0e10;
+  --tf-surface: #121417;
+  --tf-fill-subtle: #0f1012;
+  --tf-border: #2b2f35;
+  --tf-border-weak: #1f2226;
+  --tf-divider: #1a1c20;
+  --tf-text-1: #f4f5f6;
+  --tf-text-2: #c9ccd1;
+  --tf-text-3: #8b8f96;
+  --tf-text-muted-aa: #a6a9b0;
+  --tf-text-4: #8b8f96;
+  --tf-graphite: #e6e7e9;
+  --tf-graphite-deep: #f4f5f6;
+  --tf-graphite-hover: #f4f5f6;
+  --tf-graphite-tint: #1d2024;
+  --tf-graphite-line: #2b2f35;
+  --tf-on-graphite: #121417;
+  --tf-gold-text: #e2b968;
+  --tf-gold-strong: #d4a64a;
+  --tf-gold-hover: #edc97f;
+  --tf-gold-tint: rgba(212, 166, 74, 0.14);
+  --tf-gold-line: rgba(212, 166, 74, 0.4);
+  --tf-gold-panel: rgba(212, 166, 74, 0.07);
+  --tf-on-gold: #17130a;
+  --tf-on-gold-muted: rgba(23, 19, 10, 0.75);
+  --tf-glass: rgba(18, 20, 23, 0.86);
+  --tf-glass-strong: rgba(18, 20, 23, 0.94);
+  --tf-glass-border: rgba(255, 255, 255, 0.08);
+  --tf-glass-sheen: none;
+  --tf-scrim: rgba(0, 0, 0, 0.55);
+  --tf-acrylic: #15171b;
+  --tf-acrylic-filter: none;
+  --tf-acrylic-sheen: inset 0 0 0 1px #2e3238;
+  --tf-shadow-xs: 0 0 0 1px #1f2226;
+  --tf-shadow-seg: 0 0 0 1px #2b2f35;
+  --tf-shadow-float: 0 0 0 1px #2b2f35, 0 8px 24px rgba(0, 0, 0, 0.45);
+  --tf-shadow-pop: 0 0 0 1px #2e3238, 0 14px 36px rgba(0, 0, 0, 0.55);
+  --tf-shadow-modal: 0 0 0 1px #2e3238, 0 24px 64px rgba(0, 0, 0, 0.6);
+  --tf-ring-graphite: 0 0 0 3.5px rgba(230, 231, 233, 0.16);
+  --tf-success: #4cc38a;
+  --tf-success-text: #7fd8aa;
+  --tf-success-line: rgba(76, 195, 138, 0.4);
+  --tf-success-soft: rgba(76, 195, 138, 0.18);
+  --tf-warn: #f0a24a;
+  --tf-warn-bg: rgba(240, 162, 74, 0.14);
+  --tf-warn-border: rgba(240, 162, 74, 0.4);
+  --tf-warn-text: #f5b971;
+  --tf-error: #f2655a;
+  --tf-error-bg: rgba(242, 101, 90, 0.14);
+  --tf-error-border: rgba(242, 101, 90, 0.28);
+  --tf-error-text: #f58a80;
+  --tf-mark: rgba(212, 166, 74, 0.3);
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -188,8 +385,12 @@ a { color: var(--tf-gold-text); }
 a:hover { color: var(--tf-gold-hover); }
 ::selection { background: var(--tf-gold-tint); }
 
+/* 管理後台（<html> 帶 data-theme 的期間）焦點環一律金色：外殼、內容區與 portal 到 body 的浮層同一個樣子。
+   用變數換色而不是另寫一條規則，各元件自己的 `outline: none`（輸入框只換邊框色）才不會被蓋掉。 */
+:root[data-theme] { --tf-focus-ring: var(--ac-gold); }
+
 :focus-visible {
-  outline: 2px solid var(--tf-graphite);
+  outline: 2px solid var(--tf-focus-ring, var(--tf-graphite));
   outline-offset: 2px;
 }
 

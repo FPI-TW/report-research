@@ -1,0 +1,18 @@
+/* 維運 → 來源主機。卡片、表格、橫幅沿用主控台的共用樣式；這裡只有這一頁的排版。 */
+.hostTitle { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.hostBody { display: flex; flex-direction: column; gap: 14px; }
+.verdict { flex-direction: column; gap: 4px; }
+.verdict p { margin: 0; }
+.group { display: flex; flex-direction: column; gap: 10px; }
+.groupTitle, .tierTitle {
+  margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  font-size: 13px; font-weight: 600; color: var(--ac-t1);
+}
+.tierTitle { font-size: 12px; color: var(--ac-t3); }
+.groupHint { font-size: 12px; font-weight: 400; color: var(--ac-t5); }
+.facts { grid-template-columns: 140px minmax(0, 1fr); }
+.facts dd { font-family: var(--ac-sans); font-size: 12.5px; }
+.tier { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--ac-l1); border-radius: 8px; padding: 10px 0 0; }
+.tier > .tierTitle { padding: 0 12px; }
+.reason { margin-top: 2px; font-size: 11.5px; color: var(--ac-badt); }
+.setupHint { margin: 0 16px 16px; }

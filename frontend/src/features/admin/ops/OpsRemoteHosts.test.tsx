@@ -128,9 +128,11 @@ test('沒設定要監看：空狀態說明怎麼啟用', async () => {
   expect(screen.getByText('HOST_BEACON_WATCH')).toBeInTheDocument()
 })
 
-test('子導覽有「來源主機」分頁', async () => {
+test('頁首是「來源主機」，切頁交給外殼的次級面板（這裡沒有子導覽）', async () => {
   mount({ body: { items: [] } })
-  expect(await screen.findByRole('link', { name: '來源主機' })).toHaveAttribute('href', '/admin/operations/remote-hosts')
+  expect(await screen.findByRole('heading', { level: 1, name: '來源主機' })).toBeInTheDocument()
+  expect(screen.getByText('維運 / 健康')).toBeInTheDocument()
+  expect(screen.queryByRole('navigation', { name: '維運子導覽' })).not.toBeInTheDocument()
 })
 
 test('fmtAge 與 remoteTone', () => {

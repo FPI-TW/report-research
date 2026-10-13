@@ -22,7 +22,7 @@ export function useApiClients() {
 /**
  * API 用戶端的寫入。每一種成功後都重抓清單與稽核：後端在同一筆交易裡改資料並寫稽核。
  *
- * 建立與輪替金鑰要已提升權限，由呼叫端以 `useElevationGate().guard` 包住 `mutateAsync`。
+ * 建立與輪替金鑰要已提升權限，由呼叫端以 `useElevate().elevated` 包住 `mutateAsync`。
  * 這兩個的回應帶**原始金鑰**（只此一次）：`gcTime: 0` 讓 mutation 一沒有觀察者就從快取清掉，
  * 呼叫端拿到金鑰後也要 `reset()`，金鑰只活在一次性對話框的 state 裡。
  */

@@ -1,17 +1,19 @@
 import { useSearchParams } from 'react-router'
+import { Button, Card, PageHeader, Segmented, type SegOption } from '../../../components/console'
+import c from '../../../components/console/Console.module.css'
 import { fmtDateTime } from '../auditLabels'
 import { OpsQueryError } from './OpsShared'
 import { useOpsLogs, useOpsServices } from './useOps'
-import adminStyles from '../Admin.module.css'
-import styles from './Ops.module.css'
+import styles from './exec/Exec.module.css'
 
 const SINCE_OPTIONS = [
   { value: '15m', label: '最近 15 分鐘' },
   { value: '1h', label: '最近 1 小時' },
   { value: '6h', label: '最近 6 小時' },
   { value: '1d', label: '最近 1 天' },
-] as const
+] as const satisfies readonly SegOption<string>[]
 const LINE_OPTIONS = [100, 200, 500, 1000] as const
+const LINE_SEG: readonly SegOption<string>[] = LINE_OPTIONS.map(n => ({ value: String(n), label: String(n) }))
 
 const DEFAULT_SINCE = '1h'
 const DEFAULT_LINES = 200
@@ -27,30 +29,40 @@ function pickLines(v: string | null): number {
 
 function LogView({ service, since, lines }: { service: string; since: string; lines: number }) {
   const q = useOpsLogs(service, since, lines)
-  if (q.isPending) return <p className={adminStyles.idle}>載入日誌中…</p>
+  if (q.isPending) return <p className={c.empty}>載入日誌中…</p>
   if (q.isError) return <OpsQueryError error={q.error} what="日誌" />
   const d = q.data
   return (
-    <>
-      <p className={styles.meta}>
-        <span><b>{d.name}</b>（{d.target}）</span>
-        <span>自 {fmtDateTime(d.since)} 起・{d.entries.length} 行</span>
-        <span>檢查時間 {fmtDateTime(d.checked_at)}</span>
-        <button type="button" className={adminStyles.action} onClick={() => q.refetch()} disabled={q.isFetching}>
-          {q.isFetching ? '更新中…' : '重新整理'}
-        </button>
-      </p>
-      {d.truncated && (
-        <p className={styles.warnNote} role="note">
-          回應超過上限，已從較舊的一端截掉部分內容；要看更早的請縮短時間範圍或減少行數。
+    <Card
+      title={<span className={c.mono}>{d.name}</span>}
+      hint={<span className={c.mono}>{d.target}</span>}
+      labelledBy="ops-logs-title"
+      right={(
+        <>
+          <span>檢查時間 {fmtDateTime(d.checked_at)}</span>
+          <Button size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
+            {q.isFetching ? '更新中…' : '重新整理'}
+          </Button>
+        </>
+      )}
+    >
+      <div className={styles.logBody}>
+        <p className={c.meta}>
+          <span>自 {fmtDateTime(d.since)} 起・{d.entries.length} 行</span>
         </p>
-      )}
-      {d.entries.length === 0 ? (
-        <p className={adminStyles.idle}>這段時間沒有日誌</p>
-      ) : (
-        <pre className={styles.logBox} aria-label={`${d.name} 的日誌`}>{d.entries.join('\n')}</pre>
-      )}
-    </>
+        {d.truncated && (
+          <p className={c.banner} data-tone="warn" role="note">
+            回應超過上限，已從較舊的一端截掉部分內容；要看更早的請縮短時間範圍或減少行數。
+          </p>
+        )}
+        {d.entries.length === 0 ? (
+          <p className={c.muted}>這段時間沒有日誌</p>
+        ) : (
+          // tabIndex：限高自己捲的區塊要能用鍵盤捲
+          <pre className={`${c.log} ${styles.logBox}`} aria-label={`${d.name} 的日誌`} tabIndex={0}>{d.entries.join('\n')}</pre>
+        )}
+      </div>
+    </Card>
   )
 }
 
@@ -65,41 +77,53 @@ export default function OpsLogsPage() {
     next.set(key, value)
     setParams(next, { replace: true })
   }
+  const header = (
+    <PageHeader
+      summary="單一服務最近的 journal 或容器日誌；形似祕密的片段已由維運代理遮成 <redacted>。"
+      help={(
+        <>
+          systemd 服務讀 journal、容器讀 docker logs，都經維運代理（唯讀）。回應超過上限時從較舊的一端截掉，
+          要看更早的請縮短時間範圍或減少行數。選的服務、時間範圍與行數都放在網址，連結可以直接分享。
+        </>
+      )}
+    />
+  )
 
-  if (services.isPending) return <p className={adminStyles.idle}>載入中…</p>
-  if (services.isError) return <OpsQueryError error={services.error} what="服務清單" />
+  if (services.isPending) return <>{header}<p className={c.empty}>載入中…</p></>
+  if (services.isError) return <>{header}<OpsQueryError error={services.error} what="服務清單" /></>
   const withLogs = services.data.items.filter(s => s.actions.includes('logs'))
   const service = params.get('service') ?? ''
+  const serviceOptions: SegOption<string>[] = withLogs.map(s => ({ value: s.name, label: <span className={c.mono}>{s.name}</span> }))
 
   return (
-    <section className={adminStyles.card} aria-labelledby="ops-logs-title">
-      <h2 id="ops-logs-title" className={adminStyles.ctitle}>日誌</h2>
-      <div className={adminStyles.form}>
-        <label className={adminStyles.field}>服務
-          <select value={service} onChange={e => set('service', e.target.value)}>
-            <option value="" disabled>請選擇服務</option>
-            {withLogs.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-          </select>
-        </label>
-        <label className={adminStyles.field}>時間範圍
-          <select value={since} onChange={e => set('since', e.target.value)}>
-            {SINCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
-        <label className={adminStyles.field}>行數
-          <select value={lines} onChange={e => set('lines', e.target.value)}>
-            {LINE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-      </div>
+    <>
+      {header}
       {withLogs.length === 0 ? (
-        <p className={adminStyles.idle}>沒有開放查看日誌的服務</p>
-      ) : service === '' ? (
-        <p className={adminStyles.idle}>請先選擇服務</p>
+        <p className={c.empty}>沒有開放查看日誌的服務</p>
       ) : (
-        <LogView service={service} since={since} lines={lines} />
+        <>
+          <div className={styles.pickers}>
+            <div className={styles.picker}>
+              <span className={styles.pickerLabel}>服務</span>
+              {/* 服務在測試環境有三十幾個：分段換行，每個都看得到、一下就切得過去。 */}
+              <Segmented wrap label="服務" options={serviceOptions} value={service} onChange={v => set('service', v)} />
+            </div>
+            <div className={styles.picker}>
+              <span className={styles.pickerLabel}>時間範圍</span>
+              <Segmented label="時間範圍" options={SINCE_OPTIONS} value={since} onChange={v => set('since', v)} />
+            </div>
+            <div className={styles.picker}>
+              <span className={styles.pickerLabel}>行數</span>
+              <Segmented label="行數" options={LINE_SEG} value={String(lines)} onChange={v => set('lines', v)} />
+            </div>
+          </div>
+          {service === '' ? (
+            <p className={c.empty}>請先選擇服務</p>
+          ) : (
+            <LogView service={service} since={since} lines={lines} />
+          )}
+        </>
       )}
-      <p className={adminStyles.hint}>形似祕密的片段已由維運代理遮成 &lt;redacted&gt;。</p>
-    </section>
+    </>
   )
 }

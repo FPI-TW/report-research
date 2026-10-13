@@ -58,7 +58,7 @@ test('管理員的帳號選單多一個「管理後台」入口（主導覽刻�
   wrap(<AccountMenu variant="row" />)
   expect(await screen.findByText('analyst')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { expanded: false }))
-  expect(await screen.findByRole('link', { name: /管理後台/ })).toHaveAttribute('href', '/admin/users')
+  expect(await screen.findByRole('link', { name: /管理後台/ })).toHaveAttribute('href', '/admin')
 })
 
 test('一般使用者的帳號選單沒有管理後台入口', async () => {

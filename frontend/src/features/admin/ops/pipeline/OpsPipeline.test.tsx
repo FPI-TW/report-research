@@ -47,15 +47,28 @@ function mount(replies: Body[], opts: { scopes?: string[] } = {}) {
 const progressCalls = (f: ReturnType<typeof mount>) => f.mock.calls.filter(([u]) => u === '/api/progress').length
 const card = (name: string) => within(screen.getByRole('region', { name }))
 
-test('維運子導覽有「管線」且是目前分頁；一切正常 → 管線正常、沒有待處理清單', async () => {
+test('一切正常 → 管線正常、沒有待處理清單（切頁在外殼，這裡沒有子導覽）', async () => {
   mount([progressFixture()])
   expect(await screen.findByText('管線正常')).toBeInTheDocument()
-  const tabs = within(screen.getByRole('navigation', { name: '維運子導覽' }))
-  expect(tabs.getByRole('link', { name: '管線' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.queryByRole('navigation', { name: '維運子導覽' })).not.toBeInTheDocument()
   const summary = card('管線狀態')
   expect(summary.queryByRole('list', { name: '需要處理的項目' })).not.toBeInTheDocument()
   expect(summary.getByText('14:32:05')).toBeInTheDocument()
   expect(summary.getByText(/每 15 秒/)).toBeInTheDocument()
+})
+
+test('頁首：H1 取導覽結構的頁名；長說明收在「說明」後面；重新整理在頁首', async () => {
+  mount([progressFixture()])
+  // 載入中頁首就在了，「重新整理」這時停用
+  expect(await screen.findByRole('heading', { level: 1, name: '管線' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '重新整理中…' })).toBeDisabled()
+  expect(await screen.findByText('管線正常')).toBeInTheDocument()
+  expect(screen.getByText('維運 / 資料')).toBeInTheDocument()
+  expect(screen.getByText(/研報導入管線的即時狀態/)).toBeInTheDocument()
+  expect(screen.queryByText(/不經維運代理/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '說明' }))
+  expect(screen.getByText(/不經維運代理/)).toBeInTheDocument()
+  expect(within(screen.getByRole('banner')).getByRole('button', { name: '重新整理' })).toBeInTheDocument()
 })
 
 test('待人看：低於門檻與抽取需複核只列數字並連到待複核，不影響結論', async () => {
@@ -82,6 +95,11 @@ test('近 24 小時排程失敗＋fail-open → 有異常・2 項，逐條連到
   expect(await screen.findByText('有異常・2 項')).toBeInTheDocument()
   const list = within(screen.getByRole('list', { name: '需要處理的項目' }))
   expect(list.getByText('近 24 小時有 2 次排程失敗，最近一次 2026-10-07 12:03')).toBeInTheDocument()
+  // 一條一個 banner，語氣跟著判準的等級（異常紅、注意橘）
+  const items = list.getAllByRole('listitem')
+  expect(items.map(li => li.getAttribute('data-tone'))).toEqual(['bad', 'warn'])
+  expect(within(items[0]).getByText('異常')).toBeInTheDocument()
+  expect(within(items[1]).getByText('注意')).toBeInTheDocument()
   expect(list.getByRole('link', { name: '看排程與執行' })).toHaveAttribute('href', '#pipeline-schedule')
   expect(list.getByRole('link', { name: '看品質' })).toHaveAttribute('href', '#pipeline-quality')
   expect(document.getElementById('pipeline-schedule')).not.toBeNull()
@@ -237,6 +255,9 @@ test('語料組成：舊後端沒有 sources → 降級文案', async () => {
 test('首抓失敗 → 錯誤訊息，不白屏', async () => {
   mount([{ status: 500 }])
   expect(await screen.findByRole('alert')).toHaveTextContent('管線狀態載入失敗')
+  // 頁首還在，可以直接重試
+  expect(screen.getByRole('heading', { level: 1, name: '管線' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '重新整理' })).toBeEnabled()
 })
 
 test('重新整理失敗時畫面保留上一筆，並標示不是最新', async () => {

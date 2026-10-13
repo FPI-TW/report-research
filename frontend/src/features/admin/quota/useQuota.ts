@@ -28,7 +28,7 @@ export function useQuotaStats(days: number) {
 }
 
 /**
- * 設定／清除個人覆寫。後端要已提升：呼叫端以 `useElevationGate().guard` 包住 `mutateAsync`。
+ * 設定／清除個人覆寫。後端要已提升：呼叫端以 `useElevate().elevated` 包住 `mutateAsync`。
  * 成功後重抓總覽與稽核（同一筆交易寫了 `quota.update`）。
  */
 export function useSetQuotaOverride() {

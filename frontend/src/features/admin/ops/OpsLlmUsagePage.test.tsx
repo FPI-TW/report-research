@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import OperationsLayout from './OperationsLayout'
@@ -51,29 +51,44 @@ function mount(body: unknown) {
   )
 }
 
+const firstCells = (name: string) => within(screen.getByRole('table', { name })).getAllByRole('row').slice(1)
+  .map(r => (r as HTMLTableRowElement).cells[0].textContent)
+
 test('合計、批次與線上兩段各自的表格；線上顯示歸因人數與未歸因次數', async () => {
-  mount({ ...BATCH, online: ONLINE, combined: { totals: totals(18), by_day: [], cost_available: false } })
+  mount({ ...BATCH, online: ONLINE, combined: { totals: totals(18), by_day: [{ day: '2026-10-05', ...totals(3) }, { day: '2026-10-06', ...totals(15) }], cost_available: false } })
   expect(await screen.findByRole('table', { name: '線上・依任務' })).toBeInTheDocument()
-  expect(within(screen.getByLabelText('合計呼叫次數')).getByText('18')).toBeInTheDocument()
-  expect(within(screen.getByLabelText('呼叫次數')).getByText('11')).toBeInTheDocument()
-  expect(within(screen.getByLabelText('線上呼叫次數')).getByText('7')).toBeInTheDocument()
+  expect(within(screen.getByRole('group', { name: '合計呼叫次數' })).getByText('18')).toBeInTheDocument()
+  expect(within(screen.getByRole('group', { name: '呼叫次數' })).getByText('11')).toBeInTheDocument()
+  expect(within(screen.getByRole('group', { name: '線上呼叫次數' })).getByText('7')).toBeInTheDocument()
+  // 三組磚畫面上的標籤都是「呼叫次數」，分得開靠的是所在的段落標題
+  expect(screen.getByRole('heading', { name: '合計（批次＋線上）' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '批次' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '線上（問答、忠實度抽查）' })).toBeInTheDocument()
   expect(screen.getByRole('table', { name: '依任務' })).toBeInTheDocument()
-  const tasks = within(screen.getByRole('table', { name: '線上・依任務' })).getAllByRole('row').slice(1)
-    .map(r => (r as HTMLTableRowElement).cells[0].textContent)
-  expect(tasks).toEqual(['ask_answer', 'faithfulness'])
-  const days = within(screen.getByRole('table', { name: '線上・依日期' })).getAllByRole('row').slice(1)
-    .map(r => (r as HTMLTableRowElement).cells[0].textContent)
-  expect(days).toEqual(['2026-10-06', '2026-10-05'])
+  expect(firstCells('線上・依任務')).toEqual(['ask_answer', 'faithfulness'])
+  // 批次與線上各有自己的分頁籤，切一邊不動另一邊
+  fireEvent.click(within(screen.getByRole('tablist', { name: '線上・用量明細' })).getByRole('tab', { name: '依日期' }))
+  expect(firstCells('線上・依日期')).toEqual(['2026-10-06', '2026-10-05'])
+  expect(screen.getByRole('table', { name: '依任務' })).toBeInTheDocument()
   expect(screen.getByText(/歸因到/)).toHaveTextContent('歸因到 3 位使用者')
   expect(screen.getByText(/未歸因/)).toHaveTextContent('未歸因 2 次')
+  // 線上讀得到：每日呼叫畫批次＋線上的合計
+  const daily = within(screen.getByRole('region', { name: '每日呼叫' }))
+  expect(daily.getByText('批次＋線上')).toBeInTheDocument()
+  expect(daily.getByTitle('2026-10-06・15 次')).toBeInTheDocument()
+  expect(daily.getByTitle('2026-10-04・0 次')).toBeInTheDocument()
 })
 
 test('線上讀不到時只在線上那段警示，批次照常', async () => {
   mount({ ...BATCH, online: { ...ONLINE, available: false, error: '線上用量暫時讀不到（OperationalError）',
     totals: totals(0), by_day: [], by_task: [], by_model: [] }, combined: { totals: totals(11), by_day: [], cost_available: false } })
   expect(await screen.findByRole('table', { name: '依任務' })).toBeInTheDocument()
-  expect(screen.getByText(/線上用量暫時讀不到/)).toBeInTheDocument()
-  expect(screen.queryByLabelText('合計呼叫次數')).not.toBeInTheDocument()
+  expect(screen.getByRole('alert')).toHaveTextContent('線上用量暫時讀不到（OperationalError）（批次用量不受影響）')
+  expect(screen.queryByRole('group', { name: '合計呼叫次數' })).not.toBeInTheDocument()
+  // 線上讀不到：每日呼叫只畫批次，並標明
+  const daily = within(screen.getByRole('region', { name: '每日呼叫' }))
+  expect(daily.getByText('只有批次')).toBeInTheDocument()
+  expect(daily.getByTitle('2026-10-06・11 次')).toBeInTheDocument()
 })
 
 test('批次檔案不存在時仍顯示線上用量', async () => {
@@ -87,4 +102,17 @@ test('線上這段沒有呼叫時說明', async () => {
   mount({ ...BATCH, online: { ...ONLINE, totals: totals(0), by_day: [], by_task: [], by_model: [], attributed_users: 0,
     unattributed_calls: 0 }, combined: { totals: totals(11), by_day: [], cost_available: false } })
   expect(await screen.findByText('這段期間沒有任何線上 LLM 呼叫。')).toBeInTheDocument()
+})
+
+test('後端帶費用時多一塊費用磚與費用欄；沒帶的列顯示 —', async () => {
+  mount({ ...BATCH, cost_available: true, totals: totals(11, { cost: 1.23456 }),
+    by_task: [{ task: 'summary', ...totals(8, { cost: 1.23456 }) }, { task: 'title', ...totals(3) }] })
+  const table = within(await screen.findByRole('table', { name: '依任務' }))
+  expect(table.getByRole('columnheader', { name: '費用' })).toBeInTheDocument()
+  const rows = table.getAllByRole('row').slice(1)
+  expect(rows[0]).toHaveTextContent('1.2346')
+  expect((rows[1] as HTMLTableRowElement).cells[8]).toHaveTextContent('—')
+  expect(screen.getByRole('group', { name: '費用' })).toHaveTextContent('1.2346')
+  // 沒有 online 欄位的舊後端：線上那段說明，不當成錯誤
+  expect(screen.getByText('後端沒有回傳線上用量。')).toBeInTheDocument()
 })

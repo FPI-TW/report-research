@@ -1,0 +1,20 @@
+/* 帳號管理頁自己的樣式；其餘用 components/console/Console.module.css。色彩一律 --ac-*。 */
+
+/* 帳號欄：名稱＋標籤（你／super／2FA）排成一行。帳號上限 64 字元（email 形式很容易到 40），
+   單行截斷、完整名稱放 title，長帳號才不會把操作欄擠出去；配額頁同一個帳號是同樣的做法。
+   選擇器帶元素名：要蓋過共用 c.truncate 的 max-width: 100%（表格自動版面下那個百分比不會收斂）。 */
+.name { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+span.username { flex: 0 1 auto; max-width: 240px; font-size: 13px; color: var(--ac-t1); }
+
+/* 排程刪除的倒數：縮排對齊狀態文字（燈號 6px＋間距 6px）。 */
+.countdown { margin: 2px 0 0 12px; font-size: 11px; color: var(--ac-t5); white-space: nowrap; }
+
+/* 工具列：有勾選時釘在頁面頂端（捲到下面的列也看得到「已選 N 個」與批次按鈕）。
+   底色不透明、疊在表格與釘住的操作欄（z-index 1）上面；上下各留 8px 當遮罩，用負邊距抵掉、不改版面。 */
+.toolbarSticky { position: sticky; top: 0; z-index: 3; margin: -8px 0; padding: 8px 0; background: var(--ac-bg); }
+
+/* 批次列 */
+.bulkCount { margin-right: 4px; font-size: 12.5px; color: var(--ac-goldt); white-space: nowrap; }
+
+/* 清單載入失敗：訊息框放在卡片裡，留出內距。 */
+.loadError { padding: 12px 14px; }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { downloadCsv } from './exportCsv'
-import styles from './Admin.module.css'
+import { Icon } from '../../components/primitives/Icon'
+import c from '../../components/console/Console.module.css'
 
 function messageOf(err: unknown): string {
   return err instanceof Error && err.message ? err.message : '匯出失敗，請重試'
@@ -30,21 +31,21 @@ export function ExportCsvButton({ href, what, label = '匯出 CSV' }: { href: st
   }
 
   return (
-    <span className={styles.exportBox}>
+    <span className={c.inlineRow}>
+      {msg && (
+        <span role={msg.error ? 'alert' : 'status'} className={c.inlineMsg} data-error={msg.error || undefined}>
+          {msg.text}
+        </span>
+      )}
       <button
         type="button"
-        className={styles.action}
+        className={c.btn}
         onClick={run}
         disabled={busy}
         title="下載目前篩選條件下的清單；每次匯出都會記在操作紀錄"
       >
-        {busy ? '匯出中…' : label}
+        <Icon name="download" size={14} />{busy ? '匯出中…' : label}
       </button>
-      {msg && (
-        <span role={msg.error ? 'alert' : 'status'} className={msg.error ? styles.exportError : styles.exportOk}>
-          {msg.text}
-        </span>
-      )}
     </span>
   )
 }

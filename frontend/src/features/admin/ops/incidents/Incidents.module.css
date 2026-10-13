@@ -1,0 +1,50 @@
+/* 事件頁的本地樣式（清單、詳情抽屜的時間線與 journal、趨勢區塊）。色一律走 tokens.css 的 --ac-*。 */
+
+/* ── 清單 ── */
+.rowOpen td { background: var(--ac-hover); }
+/* 原因欄：代碼（container_restarting）不折行，底下的說明才折；欄寬放寬到放得下一句說明。 */
+.reason { min-width: 180px; max-width: 420px; overflow-wrap: anywhere; }
+/* 結束欄：一般的時間一行放得下（min-width），「不明（最後轉換 …）」折成兩行，不讓這一欄吃掉原因欄的寬度。 */
+.end { min-width: 160px; font-variant-numeric: tabular-nums; }
+.inlineField { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ac-t5); white-space: nowrap; }
+.note { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ac-t5); }
+.warnNote { margin: 0 0 8px; font-size: 12px; line-height: 1.6; color: var(--ac-warnt); }
+
+/* ── 詳情抽屜：狀態轉換時間線（舊→新） ── */
+.timeline { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.event { display: grid; grid-template-columns: 118px 14px minmax(0, 1fr); gap: 8px; padding: 6px 0; }
+.eventTime { font-family: var(--ac-mono); font-size: 11.5px; color: var(--ac-t5); white-space: nowrap; padding-top: 1px; }
+.eventDot { margin-top: 6px; }
+.eventHead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--ac-t5); }
+.eventAction { font-size: 12.5px; font-weight: 600; color: var(--ac-t1); }
+.eventAction[data-tone='ok'] { color: var(--ac-okt); }
+.eventAction[data-tone='warn'] { color: var(--ac-warnt); }
+.eventAction[data-tone='bad'] { color: var(--ac-badt); }
+.eventReason { font-family: var(--ac-mono); font-size: 11.5px; color: var(--ac-t4); overflow-wrap: anywhere; }
+.eventSummary { margin: 3px 0 0; font-size: 12px; line-height: 1.6; color: var(--ac-t3); overflow-wrap: anywhere; }
+.journal { margin-top: 6px; }
+.journal summary { font-size: 12px; color: var(--ac-goldt); cursor: pointer; }
+.journal summary span { color: var(--ac-t5); overflow-wrap: anywhere; }
+.journal[open] summary { margin-bottom: 8px; }
+.journalLog { max-height: 320px; overflow: auto; }
+
+/* ── 趨勢 ── */
+.trendBody { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+/* 卡片裡的數字磚：底色換成 sunk；值是「a／b」並排，字小一點、允許換行（block 才不會被磚原本 20px 的行高撐開）。 */
+.trendTiles > [role='group'] { background: var(--ac-sunk); }
+.tileValue { display: block; font-size: 17px; white-space: normal; }
+.subTitle { margin: 0 0 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; font-weight: 600; color: var(--ac-t3); }
+.subHint { font-weight: 400; font-size: 11.5px; color: var(--ac-t5); }
+.subTable { border: 1px solid var(--ac-l2); border-radius: 6px; }
+.figure { margin: 0; min-width: 0; }
+/* 每週長條：依嚴重度堆疊（CRITICAL 在下） */
+.weeks { display: flex; align-items: flex-end; gap: 4px; height: 96px; overflow-x: auto; border-bottom: 1px solid var(--ac-l3); }
+.week { flex: 1 0 14px; max-width: 44px; display: flex; flex-direction: column-reverse; height: 100%; }
+.barCritical { background: var(--ac-bad); border-radius: 2px 2px 0 0; min-height: 0; }
+.barWarning { background: var(--ac-warn); border-radius: 2px 2px 0 0; min-height: 0; }
+.weekLabels { display: flex; justify-content: space-between; margin-top: 6px; font-family: var(--ac-mono); font-size: 10.5px; color: var(--ac-t5); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--ac-t5); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.swatchCritical, .swatchWarning { display: inline-block; width: 12px; height: 8px; border-radius: 2px; }
+.swatchCritical { background: var(--ac-bad); }
+.swatchWarning { background: var(--ac-warn); }

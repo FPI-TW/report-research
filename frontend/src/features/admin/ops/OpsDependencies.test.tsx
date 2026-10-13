@@ -81,9 +81,18 @@ test('依賴圖：根因與受影響的下游一眼看出，故障節點與斷�
   expect(alert).toHaveTextContent('受影響的下游（4）：nginx、public-edge、sync、web')
   expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain('/api/admin/ops/dependencies')
 
-  const graph = screen.getByRole('img', { name: /1 個節點故障、4 個受影響/ })
+  expect(screen.getByRole('heading', { level: 1, name: '依賴圖' })).toBeInTheDocument()
+  expect(screen.getByText('8 個節點，1 個故障、4 個受影響。')).toBeInTheDocument()
+  const graph = screen.getByRole('group', { name: /1 個節點故障、4 個受影響/ })
   const pg = within(graph).getByTestId('node-postgres')
   expect(pg).toHaveAttribute('data-health', 'down')
+  // 點節點開該服務的詳情抽屜（服務頁的 ?service=）；外部依賴沒有服務詳情，用虛線框標出來
+  expect(pg).toHaveAttribute('href', '/admin/operations/services?service=postgres')
+  expect(within(graph).getByRole('link', { name: 'web：受上游影響' })).toHaveAttribute('href', '/admin/operations/services?service=web')
+  const r2 = within(graph).getByTestId('node-r2')
+  expect(r2).toHaveAttribute('data-kind', 'external')
+  expect(r2).not.toHaveAttribute('href')
+  expect(r2).toHaveTextContent('外部')
   expect(within(graph).getByTestId('node-web')).toHaveAttribute('data-affected', 'true')
   expect(within(graph).getByTestId('node-r2')).toHaveAttribute('data-affected', 'false')
   expect(within(graph).getByTestId('edge-postgres-web')).toHaveAttribute('data-broken', 'true')
@@ -91,6 +100,10 @@ test('依賴圖：根因與受影響的下游一眼看出，故障節點與斷�
   // 沒有依賴關係的節點不進圖，另外列出
   expect(within(graph).queryByTestId('node-metrics')).not.toBeInTheDocument()
   expect(screen.getByText('沒有依賴關係的節點：')).toHaveTextContent('metrics')
+  expect(within(screen.getByText('沒有依賴關係的節點：')).getByRole('link', { name: /metrics/ }))
+    .toHaveAttribute('href', '/admin/operations/services?service=metrics')
+  expect(within(screen.getByRole('list', { name: '圖例' })).getByText('箭頭指向被依賴的一方')).toBeInTheDocument()
+  expect(screen.getByText(/檢查時間/)).toHaveTextContent('每 30 秒更新')
 })
 
 test('清單（手機上取代圖）：有問題的排前面，服務可連到詳情，外部依賴沒探針標「未監控」', async () => {
@@ -99,7 +112,7 @@ test('清單（手機上取代圖）：有問題的排前面，服務可連到�
   const items = list.getAllByRole('listitem').map(li => li.getAttribute('data-testid'))
   expect(items.slice(0, 5)).toEqual(['item-postgres', 'item-web', 'item-sync', 'item-nginx', 'item-public-edge'])
   const web = within(list.getByTestId('item-web'))
-  expect(web.getByRole('link', { name: 'web' })).toHaveAttribute('href', '/admin/operations/services/web')
+  expect(web.getByRole('link', { name: 'web' })).toHaveAttribute('href', '/admin/operations/services?service=web')
   expect(web.getByText('受影響')).toBeInTheDocument()
   expect(web.getByText(/上游故障：postgres/)).toBeInTheDocument()
   expect(web.getByText(/依賴 postgres、r2/)).toBeInTheDocument()
@@ -116,7 +129,20 @@ test('全部正常：一行帶過，並說明不明／未監控的節點不列�
     edges: DOWN_GRAPH.edges.map(e => ({ ...e, broken: false })) } })
   expect(await screen.findByRole('status')).toHaveTextContent('沒有故障的節點（2 個狀態不明或未監控，不列入傳播）')
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  expect(screen.getByRole('img', { name: /沒有故障/ })).toBeInTheDocument()
+  expect(screen.getByRole('group', { name: /沒有故障/ })).toBeInTheDocument()
+  expect(screen.getByText('8 個節點，沒有故障。')).toBeInTheDocument()
+})
+
+test('catalog 沒有宣告任何依賴：圖的位置換成說明，清單照常列出', async () => {
+  mount({ body: { ...DOWN_GRAPH, down: [], root_causes: [], affected: [], edges: [],
+    nodes: [node({ name: 'web' }), node({ name: 'metrics', tier: 'supporting' })] } })
+  expect(await screen.findByText('catalog 沒有宣告任何依賴（depends_on）')).toBeInTheDocument()
+  expect(within(screen.getByRole('list', { name: '依賴清單' })).getAllByRole('listitem')).toHaveLength(2)
+})
+
+test('後端錯誤（非代理不可用）：原樣顯示後端訊息', async () => {
+  mount({ status: 504, body: { detail: 'systemctl 逾時（8 秒）', code: 'ops_timeout' } })
+  expect(await screen.findByRole('alert')).toHaveTextContent('依賴圖載入失敗：systemctl 逾時（8 秒）')
 })
 
 test('代理不可用：整頁換成降級說明，不白屏', async () => {

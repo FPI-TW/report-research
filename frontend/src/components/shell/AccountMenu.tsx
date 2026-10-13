@@ -121,10 +121,10 @@ export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
         </button>
         {isAdmin && (
           <Link
-            to="/admin/users"
+            to="/admin"
             className={styles.menuItem}
             onClick={() => setOpen(false)}
-            onPointerEnter={() => { preloadRoute('adminShell'); preloadRoute('adminUsers') }}
+            onPointerEnter={() => { preloadRoute('adminShell'); preloadRoute('adminOverview') }}
           >
             <Icon name="shield" size={16} />管理後台
           </Link>

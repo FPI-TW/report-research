@@ -7,7 +7,7 @@ import {
 } from '../../lib/generated/adminApi'
 import { REPORTS_KEY } from './useAdminReports'
 import { AUDIT_KEY } from './useAdmin'
-import { fmtBytes, isInFlight, uploadFailure, type UploadFailure, type UploadTab } from './uploadLabels'
+import { fmtBytes, isInFlight, uploadFailure, type UploadFailure, type UploadTab, type UploadTabKey } from './uploadLabels'
 
 /**
  * 研報上傳的資料層：收檔（手寫 XHR）、清單／詳情／預覽／原檔的查詢、審核動作。
@@ -257,6 +257,24 @@ export function useUploadTab(tab: UploadTab) {
       }
     },
     refetchInterval: q => (q.state.data?.items.some(it => isInFlight(it.state)) ? POLL_MS : false),
+    retry: false,
+  })
+}
+
+/**
+ * 沒掛著清單的分頁籤的筆數：各狀態用 `limit=1` 取 `total`，不輪詢。key 放在 `list` 底下，
+ * 處理中的項目離開、或審核動作完成時，既有的 invalidate 會一併重抓。
+ */
+export function useUploadTabCounts(tabs: readonly UploadTab[]) {
+  return useQuery<Partial<Record<UploadTabKey, number>>>({
+    queryKey: [...UPLOADS_KEY, 'list', 'counts', tabs.map(t => t.key).join(',')],
+    queryFn: async () => {
+      const entries = await Promise.all(tabs.map(async t => {
+        const pages = await Promise.all(t.states.map(state => adminApi.listUploads({ state, limit: 1 })))
+        return [t.key, pages.reduce((n, p) => n + p.total, 0)] as const
+      }))
+      return Object.fromEntries(entries)
+    },
     retry: false,
   })
 }

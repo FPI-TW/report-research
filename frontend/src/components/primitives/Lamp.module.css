@@ -1,0 +1,10 @@
+/* 燈號圓點。色與光暈走主控台的 --ac-*；光暈半徑在亮色是 0（設計只在深色加光暈）。 */
+.lamp {
+  flex: none; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--lamp-c); box-shadow: 0 0 var(--ac-lamp-glow) var(--lamp-g);
+}
+.lamp[data-tone='bad'] { --lamp-c: var(--ac-bad); --lamp-g: var(--ac-badg); }
+.lamp[data-tone='warn'] { --lamp-c: var(--ac-warn); --lamp-g: var(--ac-warng); }
+.lamp[data-tone='ok'] { --lamp-c: var(--ac-ok); --lamp-g: var(--ac-okg); }
+.lamp[data-tone='info'] { --lamp-c: var(--ac-info); --lamp-g: var(--ac-infog); }
+.lamp[data-tone='idle'] { --lamp-c: var(--ac-idle); --lamp-g: transparent; }

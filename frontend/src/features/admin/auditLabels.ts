@@ -35,6 +35,17 @@ const ACTION_LABELS: Record<string, string> = {
   'api_client.update': '變更 API 用戶端設定',
   'api_client.entitlements': '變更 API 用戶端授權範圍',
   'api_client.rotate': '輪替 API 用戶端金鑰',
+  // 研報上傳：前五個是管理員在上傳頁的動作（`upload_intake.py`、`upload_review.py`），後四個是上傳 worker 自己寫的
+  // （`upload_worker.py`，沒有操作者）。收檔／發布／退回的說法與使用分析（`analytics/analyticsFormat.ts`）一致。
+  'upload.create': '上傳收檔',
+  'upload.publish': '上傳發布',
+  'upload.reject': '上傳退回',
+  'upload.unreject': '上傳撤銷退回',
+  'upload.retry': '上傳重試',
+  'upload.blocked': '上傳已攔截',
+  'upload.infected': '上傳偵測到惡意程式',
+  'upload.purge': '清除已退回的上傳',
+  'upload.evidence_purged': '清除已攔截上傳的留存檔',
 }
 
 /**
@@ -147,8 +158,11 @@ export function auditSummary(entry: AuditEntry): string {
   // API 用戶端：只講名稱與改了什麼。detail 的金鑰 prefix 刻意不顯示（原始金鑰與 hash 本來就不進稽核）。
   const isApiClient = entry.action.startsWith('api_client.')
   if (isApiClient) parts.push(...apiClientSummary(entry))
+  // 研報上傳：每一種 action 的 detail 都帶原始檔名；講檔名，不顯示上傳代號（UUID）。
+  const isUpload = entry.action.startsWith('upload.')
+  if (isUpload) parts.push(str(d.file_name) ?? (entry.target_id ? `上傳 ${entry.target_id.slice(0, 8)}` : '上傳'))
   const isReport = entry.action === 'report.hide' || entry.action === 'report.restore'
-  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport && !isBulk && !isApiClient && entry.action !== 'data.export') parts.unshift(`${entry.target_type} ${entry.target_id}`)
+  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport && !isBulk && !isApiClient && !isUpload && entry.action !== 'data.export') parts.unshift(`${entry.target_type} ${entry.target_id}`)
   const via = str(d.via)
   if (via === 'web_bulk') {
     if (!isBulk) parts.push('批次操作')

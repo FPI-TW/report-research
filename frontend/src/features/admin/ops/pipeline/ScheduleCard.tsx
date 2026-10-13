@@ -1,10 +1,11 @@
 import { Link } from 'react-router'
 import type { LogEntry, Progress, UnitFailures } from '../../../../lib/progressSchema'
+import { Card, Status, type LampTone } from '../../../../components/console'
+import c from '../../../../components/console/Console.module.css'
 import { SECTION_ID, fmtMinute } from './attention'
-import { Bar, Count, Row, TonePill, type Tone } from './parts'
+import { Bar, Count, Row, TonePill } from './parts'
 import { PIPELINE_ROWS } from './pipelineMeta'
 import { fmtInt, ingestRateText, rateText, type Rates } from './rate'
-import adminStyles from '../../Admin.module.css'
 import styles from './Pipeline.module.css'
 
 /**
@@ -14,19 +15,19 @@ import styles from './Pipeline.module.css'
  * runtime 區塊原本只認全量腳本的 log，生產實際的入庫路徑 sync 零可見度；`data/unit_failures.log`
  * 在 2026-07-28 停擺時寫了 10 筆卻零消費端。
  */
-const SYNC_TONE: Record<string, Tone> = { done: 'ok', running: 'run' }
+const SYNC_TONE: Record<string, LampTone> = { done: 'ok', running: 'info' }
 
 function SyncRow({ sync }: { sync: LogEntry | null | undefined }) {
-  if (sync === undefined) return <Row label="排程同步"><p className={adminStyles.idle}>此版後端未提供同步紀錄</p></Row>
-  if (sync === null) return <Row label="排程同步"><p className={adminStyles.idle}>尚無同步紀錄</p></Row>
+  if (sync === undefined) return <Row label="排程同步"><p className={styles.idle}>此版後端未提供同步紀錄</p></Row>
+  if (sync === null) return <Row label="排程同步"><p className={styles.idle}>尚無同步紀錄</p></Row>
   return (
     <Row label="排程同步">
       <div className={styles.line}>
-        <TonePill tone={SYNC_TONE[sync.status] ?? 'idle'}>{sync.label}</TonePill>
-        <span className={adminStyles.num}>{fmtMinute(sync.timestamp)}</span>
-        <span className={adminStyles.muted}>每 3 小時一輪</span>
+        <Status tone={SYNC_TONE[sync.status] ?? 'idle'}>{sync.label}</Status>
+        <span className={c.num}>{fmtMinute(sync.timestamp)}</span>
+        <span className={c.muted}>每 3 小時一輪</span>
       </div>
-      <pre className={styles.raw}>{sync.raw}</pre>
+      <pre className={`${c.log} ${styles.raw}`}>{sync.raw}</pre>
     </Row>
   )
 }
@@ -44,7 +45,7 @@ function BatchRow({ pipelines }: { pipelines: Progress['pipelines'] }) {
           : <TonePill tone="idle">目前沒有批次在跑</TonePill>}
       </div>
       {off.length > 0 && (
-        <div className={`${adminStyles.muted} ${styles.small}`}>未執行：{off.map(r => r.name).join('、')}</div>
+        <div className={`${c.muted} ${styles.small}`}>未執行：{off.map(r => r.name).join('、')}</div>
       )}
     </Row>
   )
@@ -55,7 +56,7 @@ function ProgressLine({ name, pct, stat, rate }: { name: string; pct: number; st
     <div className={styles.prog}>
       <span className={styles.progName}>{name}</span>
       <Bar pct={pct} label={`${name}進度`} gold />
-      <span className={adminStyles.num}>{`${pct.toFixed(1)}%・${stat}`}</span>
+      <span className={c.num}>{`${pct.toFixed(1)}%・${stat}`}</span>
       {rate && <span className={styles.progRate}>{rate}</span>}
     </div>
   )
@@ -77,14 +78,14 @@ function ProgressRow({ p, rates }: { p: Progress; rates: Rates }) {
     lines.push(
       <div key="ingest" className={styles.line}>
         <span className={styles.progName}>全量導入</span><span>{text}</span>
-        <span className={`${adminStyles.muted} ${styles.small}`}>{ingestRateText(rates.rpm, rates.cps)}</span>
+        <span className={`${c.muted} ${styles.small}`}>{ingestRateText(rates.rpm, rates.cps)}</span>
       </div>,
     )
   } else if (p.pipelines.sync_import) {
     lines.push(
       <div key="sync" className={styles.line}>
         <span className={styles.progName}>增量匯入</span><span>執行中</span>
-        <span className={`${adminStyles.muted} ${styles.small}`}>增量匯入沒有進度數字</span>
+        <span className={`${c.muted} ${styles.small}`}>增量匯入沒有進度數字</span>
       </div>,
     )
   }
@@ -107,26 +108,26 @@ function ProgressRow({ p, rates }: { p: Progress; rates: Rates }) {
 }
 
 function FailuresRow({ failures }: { failures: UnitFailures | undefined }) {
-  if (!failures) return <Row label="排程失敗"><p className={adminStyles.idle}>此版後端未提供失敗紀錄</p></Row>
+  if (!failures) return <Row label="排程失敗"><p className={styles.idle}>此版後端未提供失敗紀錄</p></Row>
   return (
     <Row label="排程失敗">
       <div className={styles.line}>
         <span>近 24 小時 <Count value={failures.count_24h} tone="bad" /> 次</span>
         <span>近 7 日 {fmtInt(failures.count_7d)} 次</span>
-        <span className={adminStyles.muted}>最後一次 {fmtMinute(failures.latest)}</span>
+        <span className={c.muted}>最後一次 {fmtMinute(failures.latest)}</span>
       </div>
       {failures.recent.length > 0 && (
-        <div className={adminStyles.tableWrap}>
-          <table className={adminStyles.table} aria-label="最近的排程失敗">
-            <thead><tr><th>時間</th><th>服務</th><th>階段</th><th className={styles.right}>退出碼</th></tr></thead>
+        <div className={`${c.tableWrap} ${styles.subTable}`}>
+          <table className={c.table} aria-label="最近的排程失敗">
+            <thead><tr><th>時間</th><th>服務</th><th>階段</th><th className={c.tdRight}>退出碼</th></tr></thead>
             <tbody>
               {failures.recent.map((e, i) => (
                 <tr key={`${e.ts ?? 'na'}-${i}`}>
-                  <td className={adminStyles.num}>{fmtMinute(e.ts)}</td>
-                  <td>{e.unit}</td>
+                  <td className={c.num}>{fmtMinute(e.ts)}</td>
+                  <td className={c.mono}>{e.unit}</td>
                   <td>{e.stage ?? '—'}</td>
-                  <td className={`${adminStyles.num} ${styles.right}`}>
-                    {e.rc === null ? <span className={adminStyles.muted}>不明</span> : e.rc}
+                  <td className={`${c.num} ${c.tdRight}`}>
+                    {e.rc === null ? <span className={c.muted}>不明</span> : e.rc}
                   </td>
                 </tr>
               ))}
@@ -140,20 +141,24 @@ function FailuresRow({ failures }: { failures: UnitFailures | undefined }) {
 
 export function ScheduleCard({ progress: p, rates }: { progress: Progress; rates: Rates }) {
   return (
-    <section id={SECTION_ID.schedule} className={adminStyles.card} aria-labelledby="pipeline-schedule-title">
-      <div className={adminStyles.cardHead}>
-        <h2 id="pipeline-schedule-title" className={adminStyles.ctitle}>排程與執行</h2>
-        <Link className={adminStyles.action} to="../jobs" relative="path">看排程工作</Link>
-      </div>
-      <div className={styles.rows}>
-        <SyncRow sync={p.sync} />
-        <BatchRow pipelines={p.pipelines} />
-        <ProgressRow p={p} rates={rates} />
-        <FailuresRow failures={p.unit_failures} />
-      </div>
-      <p className={adminStyles.hint}>
-        摘要、標題、摘錄三段是 best-effort，失敗不會讓 unit 變紅；停更由每日的 report-mark-freshness 偵測後寫進同一份失敗紀錄。
-      </p>
-    </section>
+    <div id={SECTION_ID.schedule}>
+      <Card
+        title="排程與執行"
+        labelledBy="pipeline-schedule-title"
+        right={<Link className={`${c.btn} ${c.btnSm}`} to="../jobs" relative="path">看排程工作</Link>}
+      >
+        <div className={styles.body}>
+          <div className={styles.rows}>
+            <SyncRow sync={p.sync} />
+            <BatchRow pipelines={p.pipelines} />
+            <ProgressRow p={p} rates={rates} />
+            <FailuresRow failures={p.unit_failures} />
+          </div>
+          <p className={styles.note}>
+            摘要、標題、摘錄三段是 best-effort，失敗不會讓 unit 變紅；停更由每日的 report-mark-freshness 偵測後寫進同一份失敗紀錄。
+          </p>
+        </div>
+      </Card>
+    </div>
   )
 }

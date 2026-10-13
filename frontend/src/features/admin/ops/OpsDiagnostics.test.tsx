@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
+import { Toaster, dismissToast } from '../../../components/console'
 import * as clipboard from '../../../lib/clipboard'
 import OperationsLayout from './OperationsLayout'
 import OpsDiagnosticsPage from './OpsDiagnosticsPage'
@@ -9,6 +10,7 @@ import OpsDiagnosticsPage from './OpsDiagnosticsPage'
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  dismissToast()
 })
 
 const SHA_START = '8aa38ce19e5dac15192dedf26d8db8cddaff894d'
@@ -63,10 +65,10 @@ const DIAG = {
   },
 }
 
-function mount(body: unknown = DIAG) {
+function mount(body: unknown = DIAG, reply: { status?: number } = {}) {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === '/api/me') return new Response(JSON.stringify({ id: 'me', username: 'root', role: 'admin', scopes: ['admin', 'ops.read'] }))
-    if (url === '/api/admin/diagnostics') return new Response(JSON.stringify(body))
+    if (url === '/api/admin/diagnostics') return new Response(JSON.stringify(body), { status: reply.status ?? 200 })
     return new Response('{}', { status: 404 })
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -79,6 +81,7 @@ function mount(body: unknown = DIAG) {
             <Route path="diagnostics" element={<OpsDiagnosticsPage />} />
           </Route>
         </Routes>
+        <Toaster />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -87,10 +90,12 @@ function mount(body: unknown = DIAG) {
 
 test('診斷頁：分區顯示摘要、版本、schema、連通性', async () => {
   mount()
-  expect(await screen.findByRole('heading', { name: '診斷' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '診斷' })).toHaveAttribute('href', '/admin/operations/diagnostics')
+  expect(await screen.findByRole('heading', { level: 1, name: '診斷' })).toBeInTheDocument()
+  expect(screen.getByText('維運 / 執行')).toBeInTheDocument()
+  expect(await screen.findByText(/產生時間/)).toHaveTextContent('伺服器快取 30 秒')
 
   const summary = screen.getByRole('list', { name: '診斷摘要' })
+  expect(within(summary).getAllByRole('listitem')).toHaveLength(6)
   expect(within(summary).getByText('DB 落後')).toBeInTheDocument()
   expect(within(summary).getByText('待重啟')).toBeInTheDocument()
   expect(within(summary).getByText('餘額偏低')).toBeInTheDocument()
@@ -108,13 +113,105 @@ test('診斷頁：分區顯示摘要、版本、schema、連通性', async () =>
   expect(screen.getByLabelText('祕密')).toHaveTextContent('edge_secret未設')
 })
 
+test('診斷頁：每一區的每一項都還在（連通性、每日檢查、執行環境、模型、連線池、併發閘、設定）', async () => {
+  mount()
+  const region = async (name: string) => within(await screen.findByRole('region', { name }))
+  const field = (scope: ReturnType<typeof within>, list: string, key: string) =>
+    within(scope.getByLabelText(list)).getByText(key).nextElementSibling as HTMLElement
+
+  const checks = await region('連通性')
+  expect(checks.getByText(/診斷頁不會另外呼叫（計費）/)).toBeInTheDocument()
+  expect(field(checks, '連通性', '資料庫')).toHaveTextContent('正常 SELECT 1 1.2 ms；PostgreSQL 16.4')
+  expect(field(checks, '連通性', '物件儲存')).toHaveTextContent('正常 上次探測 2 分鐘前')
+  expect(field(checks, '連通性', 'DeepSeek')).toHaveTextContent('餘額偏低 上次查詢 30 秒前')
+  expect(field(checks, '連通性', '維運代理')).toHaveTextContent('連不上 OpsAgentUnavailable')
+
+  const schema = await region('Schema')
+  expect(field(schema, 'schema 版本', '程式 head')).toHaveTextContent('0007')
+  expect(field(schema, 'schema 版本', '尚未套用')).toHaveTextContent('0007')
+  expect(field(schema, '每日檢查', '最後一次')).toHaveTextContent('（6.5 小時前）')
+  expect(field(schema, '每日檢查', '模式')).toHaveTextContent('full')
+  expect(field(schema, '每日檢查', '退出碼')).toHaveTextContent('1（會告警）')
+  expect(field(schema, '每日檢查', '版本／drift')).toHaveTextContent('behind／ok（0 項）')
+  expect(field(schema, '每日檢查', '說明')).toHaveTextContent('DB 落後')
+
+  const versions = await region('版本')
+  expect(field(versions, '程式版本', '啟動時分支')).toHaveTextContent('main')
+  expect(field(versions, '程式版本', '磁碟上 commit')).toHaveTextContent(SHA_DISK)
+  expect(field(versions, '套件版本', 'Python')).toHaveTextContent('3.13.11')
+  expect(field(versions, '套件版本', '平台')).toHaveTextContent('Linux 6.1 x86_64')
+  expect(field(versions, '套件版本', 'fastapi')).toHaveTextContent('0.141.1')
+
+  const runtime = await region('執行環境')
+  expect(field(runtime, '行程', '主機')).toHaveTextContent('prod-host')
+  expect(field(runtime, '行程', 'PID')).toHaveTextContent('1234')
+  expect(field(runtime, '行程', '啟動時間')).toHaveTextContent('已執行 2.0 小時')
+  expect(field(runtime, '行程', '記憶體 RSS')).toHaveTextContent('2.00 GiB（峰值 3.00 GiB）')
+  expect(field(runtime, '行程', '執行緒')).toHaveTextContent('40')
+  expect(field(runtime, '行程', '時區')).toHaveTextContent('CST +0800')
+  expect(field(runtime, '行程', 'Python')).toHaveTextContent('/srv/report-mark/.venv/bin/python3')
+  expect(field(runtime, '模型', '嵌入模型')).toHaveTextContent('BAAI/bge-m3：已載入')
+  expect(field(runtime, '模型', 'rerank')).toHaveTextContent('尚未載入')
+  expect(field(runtime, '模型', '暖機')).toHaveTextContent('已結束')
+  expect(field(runtime, '連線池', '使用中')).toHaveTextContent('2／上限 20')
+  expect(field(runtime, '連線池', '已開啟')).toHaveTextContent('5（常駐 5）')
+  expect(field(runtime, '併發閘', 'ask')).toHaveTextContent('使用中 1／3；排隊 0（上限 20）')
+
+  const config = await region('設定（白名單）')
+  expect(field(config, '設定', '資料庫')).toHaveTextContent('localhost:5436/research')
+  expect(field(config, '設定', '物件儲存')).toHaveTextContent('r2')
+  expect(field(config, '設定', 'LLM 供應商')).toHaveTextContent('deepseek')
+  expect(field(config, '設定', '抽取器')).toHaveTextContent('pypdf')
+  expect(field(config, '設定', '日誌等級')).toHaveTextContent('INFO')
+  expect(field(config, '設定', '維運代理')).toHaveTextContent('production /run/report-mark-ops/agent.sock')
+  expect(field(config, '模型', 'ask_answer')).toHaveTextContent('deepseek-flash')
+  expect(field(config, '功能旗標', 'ask_enable_web')).toHaveTextContent('關')
+  expect(field(config, '功能旗標', 'ask_rerank_enabled')).toHaveTextContent('開')
+  expect(field(config, '祕密', 'deepseek_api_key')).toHaveTextContent('已設')
+  expect(field(config, '上限', 'db_statement_timeout_ms')).toHaveTextContent('60000')
+})
+
+test('「重新整理」重查診斷；長說明收在「說明」後面', async () => {
+  const fetchMock = mount()
+  const diagCalls = () => fetchMock.mock.calls.filter(([u]) => u === '/api/admin/diagnostics').length
+  fireEvent.click(await screen.findByRole('button', { name: '重新整理' }))
+  await waitFor(() => expect(diagCalls()).toBe(2))
+  expect(screen.queryByText(/祕密只顯示有沒有設/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '說明' }))
+  expect(screen.getByText(/祕密只顯示有沒有設/)).toBeInTheDocument()
+})
+
+test('每日檢查的狀態檔超過 36 小時沒更新時提醒', async () => {
+  mount({
+    ...DIAG,
+    schema_info: { ...DIAG.schema_info, daily_check: { ...DIAG.schema_info.daily_check, stale: true } },
+  })
+  expect(await screen.findByText(/狀態檔超過 36 小時沒更新/)).toBeInTheDocument()
+})
+
+test('每日檢查沒有狀態檔：說明原因', async () => {
+  mount({
+    ...DIAG,
+    schema_info: { ...DIAG.schema_info, daily_check: { available: false, unavailable_reason: 'missing' } },
+  })
+  expect(await screen.findByText('還沒有狀態檔。')).toBeInTheDocument()
+})
+
+test('診斷載入失敗：頁首還在，原樣顯示後端訊息，沒有複製按鈕', async () => {
+  mount({ detail: '缺少權限：ops.read', code: 'scope_required' }, { status: 403 })
+  expect(await screen.findByRole('alert')).toHaveTextContent('診斷載入失敗：缺少權限：ops.read')
+  expect(screen.getByRole('heading', { level: 1, name: '診斷' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '複製診斷包' })).not.toBeInTheDocument()
+})
+
 test('複製診斷包：整份 JSON 經 copyText', async () => {
   const copy = vi.spyOn(clipboard, 'copyText').mockResolvedValue()
   mount()
   fireEvent.click(await screen.findByRole('button', { name: '複製診斷包' }))
   await waitFor(() => expect(copy).toHaveBeenCalledTimes(1))
   expect(JSON.parse(copy.mock.calls[0][0])).toEqual(DIAG)
-  expect(await screen.findByText('已複製（JSON，不含祕密）')).toBeInTheDocument()
+  expect(await screen.findByRole('status')).toHaveTextContent('已複製（JSON，不含祕密）')
+  expect(screen.queryByLabelText('診斷包 JSON')).not.toBeInTheDocument()
 })
 
 test('複製失敗：顯示可手動複製的文字框', async () => {
@@ -122,7 +219,7 @@ test('複製失敗：顯示可手動複製的文字框', async () => {
   mount()
   fireEvent.click(await screen.findByRole('button', { name: '複製診斷包' }))
   expect(await screen.findByText('無法自動複製，請從下方手動複製')).toBeInTheDocument()
-  const box = screen.getByLabelText('診斷包 JSON') as HTMLTextAreaElement
+  const box = await screen.findByLabelText('診斷包 JSON') as HTMLTextAreaElement
   expect(JSON.parse(box.value).generated_at).toBe(DIAG.generated_at)
 })
 

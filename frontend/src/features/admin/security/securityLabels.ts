@@ -44,6 +44,13 @@ export function eventLabel(event: string, reason?: string | null): string {
   return authEventLabel(event, reason)
 }
 
+/** 事件列的語氣色：失敗＝bad、被擋下的彙總列＝warn，其餘不上色。未知事件不上色。 */
+export function eventTone(event: string): 'bad' | 'warn' | undefined {
+  if (event === 'login.failure' || event === 'login.totp_failure' || event === 'elevate.failure') return 'bad'
+  if (event === 'login.locked' || event === 'login.insecure') return 'warn'
+  return undefined
+}
+
 /** 稽核或事件是告警狀態（需要人看）嗎。 */
 export function isAlertState(state: string): boolean {
   return state !== 'ok' && state !== 'unknown'

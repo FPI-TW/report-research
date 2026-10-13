@@ -373,7 +373,7 @@ depends_on = ["postgres", "clamav", "deepseek", "r2"]
 description = "上傳 worker（掃毒、草稿入庫、清除；每 5 分鐘）"
 
 # ── Admin v2：DB 統計快照、使用分析彙總、安全告警與保留期清除 ──────────────────────
-# 安裝步驟在 docs/production_resilience.md 各自的章節，順序見同檔「Admin v2 部署順序」。run 逐項判斷：
+# 安裝步驟在 docs/production_resilience.md 各自的章節，順序見同檔「部署順序」。run 逐項判斷：
 # - db-snapshot 給 run：只查系統目錄、寫 db_stat_snapshot（同一小時已有就不寫、每日列已有就不補，ON CONFLICT DO
 #   NOTHING），零 LLM、無外部費用；它順手做的保留期刪除與 timer 觸發時完全相同（依當下時間刪逐時 30 天、每日 400 天
 #   之外的監控統計），多跑一次不會多刪。用途：裝好後立刻驗收、或趨勢缺一段時補一筆。

@@ -6,7 +6,7 @@
 1. **`SKIP_WARMUP` / `make serve-dev`**。`make serve` 刻意沒有 `--reload`（生產是對
    的），但 BGE-M3 ＋ reranker 冷載入合計約一分鐘，所以改一行 Python 就要再等一次
    ——那正是「直接在生產機上改檔然後懶得重啟」的溫床（`docs/production_resilience.md`
-   已記錄過一次 unit 漂移）。這裡釘住捷徑存在、且**預設仍會暖機**。
+   「unit 的真相來源與安裝」）。這裡釘住捷徑存在、且**預設仍會暖機**。
 
 2. **`pytest-asyncio` 不得回來**。它曾在 dev 依賴裡但全 repo 零使用（42 個測試檔走
    stdlib 的 `unittest.IsolatedAsyncioTestCase`）。留著它會讓下一個人以為「這個 repo

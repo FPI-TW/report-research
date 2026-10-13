@@ -14,7 +14,7 @@
 | 正式 | EC2（`research.tingfong.com`） | RDS | CloudFormation stack 與 RDS 的 `report-research-staging*`、`deploy/ops/services.staging.toml`、`report-mark-ops-agent-staging.service`、`OPS_AGENT_ENVIRONMENT=staging` |
 | 開發與測試（文件稱「測試環境」） | 辦公室主機，即本機（`research.kashionzarchive.com`） | 容器 `report-mark-postgres`（`localhost:5436/research`），**有真實資料** | `deploy/ops/services.prod.toml`、`OPS_AGENT_ENVIRONMENT` 的預設值 `production`；程式、註解與較舊文件裡的「生產」「本機生產庫」多指這台 |
 
-- 要部署、安裝 unit 或改主機上的資料時，目標主機不明確就先問：使用者給了 hostname，或明說「正式（EC2）」「測試（辦公室主機）」就照做；只說「staging」「生產」「production」這類歷史用字時視為不明確。不要從資源名、catalog 檔名、環境變數值或文件用字推斷。唯讀查證與文件工作不必問。站序是 devdb 演練 → 測試 → 正式，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照），步驟見 `docs/production_resilience.md`「Admin v2 部署順序」。
+- 要部署、安裝 unit 或改主機上的資料時，目標主機不明確就先問：使用者給了 hostname，或明說「正式（EC2）」「測試（辦公室主機）」就照做；只說「staging」「生產」「production」這類歷史用字時視為不明確。不要從資源名、catalog 檔名、環境變數值或文件用字推斷。唯讀查證與文件工作不必問。站序是 devdb 演練 → 測試 → 正式，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照），步驟見 `docs/production_resilience.md`「部署順序」。
 - **預設 DB 是真實資料**：沒設 `REPORT_MARK_DB_URL` 時連 `localhost:5436/research`（`app/services/db.py`）。在辦公室主機上，沒有 `.env` 的 worktree 也會連到它；pytest 不保證先載入 `.env`，要指定別的庫就在命令列設 `REPORT_MARK_DB_URL=…`。
 - 對已有資料的庫做 migration 要 `CONFIRM=<host:port/db>`（逐字）。`make schema`、`make db-backup`、`make ingest-lowio` 走 `docker exec`，只適用 DB 在容器裡的主機；正式環境（RDS）改跑 `REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> uv run alembic upgrade head`。
 - 在 EC2 安裝 `deploy/systemd/` 的 unit 一律用 `deploy/install_units.sh`，不要 `sudo cp`（理由見改動對照表的 `deploy/systemd/` 列）。
@@ -56,7 +56,7 @@ cd frontend && npm run typecheck     # tsc --noEmit
 cd frontend && npm run lint          # eslint
 
 make summaries / titles / takeaways / signals / brief   # 批次，都呼叫 LLM（預設 DeepSeek）、以 flock 互斥
-make sync-once / db-backup / freshness / db-audit        # 維運
+make sync-once / db-backup / freshness / db-audit        # 維運（sync-once 不經 unit、不載入 /etc/default/report-mark-sync；部署主機要跑一輪用 systemctl start report-mark-sync.service）
 make llm-blocked                     # LLM 批次跳過名單（唯讀；research.llm_task_failure）
 make boilerplate                     # 重建跨文件樣板字典 data/boilerplate/（入庫切塊前剔除；零 LLM）
 make up-edge / down-edge / edge-logs / edge-reload       # 對外 nginx + cloudflared（測試環境；EC2 用 apt 的 nginx）
@@ -116,6 +116,7 @@ uv run python scripts/ingest_all.py
 | 新增或修改功能旗標 | 先讀 `app/services/feature_flags.py` 的 docstring：DB 讀取失敗退回 registry 預設，所以**安全閘門不可做成旗標**；批次腳本不讀旗標 |
 | 上傳 worker、PDF 預檢或清除流程 | 先讀 `app/services/upload_worker.py` 與 `app/services/pdf_preflight.py` 的 docstring（交易邊界、條件式狀態轉移、commit 之後才刪檔與 R2 物件、不可信 PDF 只在受限子行程檢查）；入庫重用 `scripts/_ingest_core.py` 的 `ingest_one`，不另寫一份 |
 | 使用分析新增維度或匯出 | 先讀 `app/services/analytics.py` 的隱私契約（只出彙總、k 門檻、互補抑制與被抑制格子的處理）；不讀問答原文 |
+| 管理後台新增或搬動頁面 | `frontend/src/components/shell/adminNav.ts` 的 `ADMIN_IA` 是導覽、麵包屑、⌘K 搜尋與總覽捷徑的唯一來源，路由另外在 `frontend/src/App.tsx`；頁面的 `scope` 只是顯示層（擋人的是後端）。資料要靠主機上另外安裝的元件才有的頁面標 `requires`，判斷寫在 `frontend/src/features/admin/adminCapabilities.ts`（依維運代理的服務清單；不知道時照常列出）——正式環境沒裝監控匯入器，主機、排程工作、事件三頁因此不列。共用元件在 `frontend/src/components/console/`，深淺色的色票在 `frontend/src/styles/tokens.css` |
 | 前端在別頁讀功能旗標 | `useFeature()` 只讀 store，目前只有問答頁呼叫 `useFeatures()` 去抓 `/api/features`；新頁面要在頁面層呼叫一次 `useFeatures()`，否則旗標永遠是 false（`frontend/src/lib/useFeatures.ts`） |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
 | 要做審批流程、RLS、分區或管理面 SSE | 目前刻意不提供，門檻未達不做；啟用門檻、掛點與前置見 `docs/ARCHITECTURE.md` §11 |
@@ -198,5 +199,5 @@ uv run python scripts/ingest_all.py
 - `app/services/`：抽取（`extract.py`、`extraction/`）、標註、切塊、嵌入、混合檢索（`retrieval.py`、`retrieval_pipeline.py`）、RAG 問答（`answer.py`），以及 `reading/`、`radar/`、`brief.py`。`app/config.py` 是新旋鈕唯一去處。
 - `web/`：`server.py` 組合層、`routers/`、`deps.py`。`frontend/`：`src/features/*` 每頁一個、`src/lib/*` 是 API 邊界（zod、SSE、reducer）。
 - `scripts/`：批次與維運；`deploy/`：systemd、nginx、docker-compose 的真相來源；`db/`：`schema.sql`（凍結的 baseline）、`migrations/`（Alembic，設定在 repo 根 `alembic.ini`）與約束 golden；`eval/`：離線評測與基準線（不進 CI）。`研報自動匯入/`（唯讀鏡像）與 `data/`（執行期產物）不進版控。
-- 文件：`README.md`（開發總覽、完整 API 表、環境變數、部署）、`docs/ARCHITECTURE.md`（模組地圖與不變量完整版）、`docs/WORKFLOW.md`（端到端管線、階段 I/O、標籤詞彙、API 契約、R2 遷移順序）、`docs/EXTRACTION.md`（抽取層）；維運類 `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/nas_scheduled_sync_deployment.md`、`docs/incidents/`、`docs/benchmarks/`。
+- 文件：`README.md`（開發總覽、完整 API 表、環境變數、部署）、`docs/ARCHITECTURE.md`（模組地圖與不變量完整版）、`docs/WORKFLOW.md`（端到端管線、階段 I/O、標籤詞彙、API 契約、物件儲存的不變量）、`docs/EXTRACTION.md`（抽取層）；維運類 `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/nas_scheduled_sync_deployment.md`；EC2 的基礎設施 `deploy/aws/README.md`。
 - 文件只描述現況；歷史規劃、架構檢視快照、版面診斷與設計稿已於 2026-09-18 移出 repo，需要時看 git 歷史（原檔名 docs/EXTRACTION_REDESIGN.md、docs/ARCHITECTURE_REVIEW_2026-07.md 與其 _VERIFY、docs/REPORT_LAYOUT_FIXES.md、docs/design/；刻意不加反引號，免得觸發文件契約測試的路徑檢查）。

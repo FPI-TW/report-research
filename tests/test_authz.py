@@ -35,6 +35,7 @@ _ADMIN_PATHS = frozenset({"/api/progress"})
 # 取單筆的 GET → 它的清單端點（分享連結用；scope 必須相同）。
 _SINGLE_LOOKUPS = {
     "/api/admin/audit/{entry_id}": "/api/admin/audit",
+    "/api/admin/reports/{file_hash}": "/api/admin/reports",
 }
 
 

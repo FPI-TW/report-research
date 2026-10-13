@@ -1,7 +1,7 @@
 """管理後台的研報治理（/api/admin/reports*）：查研報、隱藏／恢復。整組限管理員＋`reports.manage`。
 
 v1 只做 review＋hide／restore（草稿／發布、metadata 覆寫、上傳不在這裡）。規則與 SQL 在
-`app/services/visibility.py`（`list_reports`／`set_visibility`），這裡只做 HTTP 轉換；呼叫一律經
+`app/services/visibility.py`（`list_reports`／`get_report`／`set_visibility`），這裡只做 HTTP 轉換；呼叫一律經
 `deps.report_visibility`（測試的替換點）。
 
 - 隱藏以 `file_hash` 為鍵：重新入庫換了 report_id 也不會失效。
@@ -20,12 +20,13 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.services.accounts import User
 from app.services.visibility import (
     BULK_MAX_REPORTS,
+    FILE_HASH_PATTERN,
     InvalidBulkRequestError,
     InvalidReasonError,
     ReportIsDraftError,
@@ -116,6 +117,15 @@ def _iso(v) -> str | None:
     return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v is not None else None)
 
 
+def _report_item(r) -> AdminReportItem:
+    return AdminReportItem(
+        report_id=r.report_id, file_hash=r.file_hash, file_name=r.file_name, title=r.title,
+        source=r.source, market=r.market, report_date=_iso(r.report_date), created_at=_iso(r.created_at),
+        hidden=r.hidden, hidden_reason=r.reason, visibility_updated_by=r.updated_by,
+        visibility_updated_at=_iso(r.updated_at), publication=r.publication,
+    )
+
+
 def _http_error(exc: VisibilityError) -> AppError:
     if isinstance(exc, ReportNotFoundError):
         return AppError(404, "not_found", str(exc))
@@ -144,16 +154,22 @@ async def list_reports(
     return AdminReportListResponse(
         total=total, limit=limit, offset=offset, has_more=has_more,
         next_offset=next_offset if has_more else None,
-        items=[
-            AdminReportItem(
-                report_id=r.report_id, file_hash=r.file_hash, file_name=r.file_name, title=r.title,
-                source=r.source, market=r.market, report_date=_iso(r.report_date), created_at=_iso(r.created_at),
-                hidden=r.hidden, hidden_reason=r.reason, visibility_updated_by=r.updated_by,
-                visibility_updated_at=_iso(r.updated_at), publication=r.publication,
-            )
-            for r in rows
-        ],
+        items=[_report_item(r) for r in rows],
     )
+
+
+@router.get("/api/admin/reports/{file_hash}", response_model=AdminReportItem, dependencies=[_REPORTS])
+async def get_report(file_hash: str = Path(..., pattern=FILE_HASH_PATTERN)):
+    """單筆研報的管理檢視（欄位與 `/api/admin/reports` 的一列相同），給 `?report=<file_hash>` 的分享連結用。
+
+    與清單一樣不過濾可見性：被隱藏的與草稿照樣回（管理員正是要看它們）。`file_hash` 必須是 64 位小寫
+    十六進位（否則 422）；不存在 404 `not_found`。讀取不寫稽核。
+    """
+    async with deps.SessionFactory() as session:
+        row = await deps.report_visibility.get_report(session, file_hash)
+    if row is None:
+        raise AppError(404, "not_found", "找不到這份研報")
+    return _report_item(row)
 
 
 @router.put(

@@ -64,6 +64,12 @@ class _FakeVisibility:
         )
         return 3, [row, draft]
 
+    async def get_report(self, session, file_hash):
+        self.calls.append(("get", file_hash))
+        _total, rows = await self.list_reports(session, q=None, hidden=None, limit=50, offset=0)
+        self.calls.pop()
+        return next((r for r in rows if r.file_hash == file_hash), None)
+
     async def set_visibility(self, session, file_hash, *, hidden, reason, actor_id):
         self.calls.append(("set", file_hash, hidden, reason, actor_id))
         if self.error is not None:
@@ -101,12 +107,14 @@ class AdminReportsApiTests(unittest.TestCase):
     def test_user_gets_403_and_nothing_happens(self):
         user = self._login("alice", USER_PW)
         self.assertEqual(user.get("/api/admin/reports").status_code, 403)
+        self.assertEqual(user.get(f"/api/admin/reports/{HASH}").status_code, 403)
         r = user.put(f"/api/admin/reports/{HASH}/visibility", json={"hidden": True, "reason": "x"})
         self.assertEqual(r.status_code, 403)
         self.assertEqual(self.fake.calls, [])
 
     def test_unauthenticated_gets_401(self):
         self.assertEqual(_client().get("/api/admin/reports").status_code, 401)
+        self.assertEqual(_client().get(f"/api/admin/reports/{HASH}").status_code, 401)
 
     def test_list_passes_filters_and_pages(self):
         r = self._login("root", ADMIN_PW).get(
@@ -137,6 +145,35 @@ class AdminReportsApiTests(unittest.TestCase):
         self.assertEqual(self.fake.calls, [("list", None, None, 50, 0, "draft")])
         self.assertEqual(admin.get("/api/admin/reports", params={"publication": "pending"}).status_code, 422)
         self.assertEqual(len(self.fake.calls), 1)
+
+    def test_single_report_returns_the_same_row_as_the_list(self):
+        """`GET /api/admin/reports/{file_hash}`：欄位與清單的一列相同；隱藏的與草稿照樣回（管理面不過濾）。"""
+        admin = self._login("root", ADMIN_PW)
+        listed = {i["file_hash"]: i for i in admin.get("/api/admin/reports").json()["items"]}
+        self.fake.calls.clear()
+        for file_hash in (HASH, "b" * 64):
+            r = admin.get(f"/api/admin/reports/{file_hash}")
+            self.assertEqual((r.status_code, r.json()), (200, listed[file_hash]), r.text)
+        self.assertEqual(self.fake.calls, [("get", HASH), ("get", "b" * 64)])
+        self.assertEqual((listed[HASH]["hidden"], listed["b" * 64]["publication"]), (True, "draft"))
+        self.assertEqual(self.tx, [])  # 讀取不 commit、不寫稽核
+        self.assertEqual(self.store.audit, [])
+
+    def test_single_report_not_found_and_strict_hash(self):
+        admin = self._login("root", ADMIN_PW)
+        r = admin.get(f"/api/admin/reports/{'c' * 64}")
+        self.assertEqual((r.status_code, r.json()["code"]), (404, "not_found"))
+        self.fake.calls.clear()
+        for bad in ("abc", "A" * 64, "g" * 64, "a" * 63, "a" * 65, "bulk-visibility", "%27%20OR%201=1"):
+            self.assertEqual(admin.get(f"/api/admin/reports/{bad}").status_code, 422, bad)
+        self.assertEqual(self.fake.calls, [])  # 格式沒過的請求到不了服務層
+
+    def test_single_report_does_not_shadow_sibling_routes(self):
+        """同前綴的既有路由照舊：批次（POST）與隱藏（PUT）不被 `{file_hash}` 的 GET 吃掉。"""
+        admin = self._login("root", ADMIN_PW)
+        r = admin.put(f"/api/admin/reports/{HASH}/visibility", json={"hidden": False})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.fake.calls, [("set", HASH, False, None, self.root)])
 
     def test_hide_commits_with_actor(self):
         r = self._login("root", ADMIN_PW).put(

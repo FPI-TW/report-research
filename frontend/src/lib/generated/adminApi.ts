@@ -2109,6 +2109,8 @@ export const adminApi = {
   listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/reports/bulk-visibility — Bulk Set Report Visibility */
   bulkSetReportVisibility: (body: z.input<typeof BulkVisibilityRequestSchema>) => requestJSON('/api/admin/reports/bulk-visibility', BulkVisibilityResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/reports/{file_hash} — Get Report */
+  getReport: (fileHash: string) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}`, AdminReportItemSchema, { cache: 'no-store' }),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */

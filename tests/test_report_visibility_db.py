@@ -299,6 +299,43 @@ class ReportVisibilityDbTests(unittest.TestCase):
             with self.subTest(path=key, phase="reingested"):
                 self.assertEqual(reingested[key], {"B"})
 
+    def test_get_report_matches_the_list_row_for_hidden_draft_and_plain(self):
+        """`get_report`（`?report=<file_hash>` 的分享連結）：與管理清單的同一列逐欄相同；隱藏的、草稿、
+        沒有可見性列的都取得到（管理面不過濾）；不存在與格式不對回 None。"""
+        hash_a, hash_b = _hashes("one-")
+        hash_c = hashlib.sha256(f"one-c-{uuid.uuid4().hex}".encode()).hexdigest()
+
+        async def fn(session):
+            await _setup_pair(session, hash_a, hash_b)
+            await _ingest(session, "C", hash_c, FUTURE)
+            await visibility.set_visibility(session, hash_a, hidden=True, reason="單筆查詢測試", actor_id=None)
+            await session.execute(text(
+                "INSERT INTO research.report_visibility (file_hash, hidden, publication) VALUES (:h, false, 'draft')"
+            ), {"h": hash_c})
+            await session.execute(_INSERT_UPLOAD, {
+                "h": hash_c, "name": "C.pdf", "state": "draft", "reason": None, "sig": None,
+            })
+            _t, rows = await visibility.list_reports(session, q=TERM, limit=200)
+            listed = {r.file_hash: r for r in rows}
+            single = {h: await visibility.get_report(session, h) for h in (hash_a, hash_b, hash_c)}
+            missing = await visibility.get_report(session, hashlib.sha256(uuid.uuid4().bytes).hexdigest())
+            malformed = [await visibility.get_report(session, bad)
+                         for bad in ("", "not-a-hash", hash_a.upper(), hash_a[:63], hash_a + "0")]
+            return listed, single, missing, malformed
+
+        listed, single, missing, malformed = self._run(fn)
+        for h in (hash_a, hash_b, hash_c):
+            with self.subTest(file_hash=h[:8]):
+                self.assertIsNotNone(single[h])
+                self.assertEqual(single[h], listed[h])
+        self.assertEqual((single[hash_a].hidden, single[hash_a].reason, single[hash_a].publication),
+                         (True, "單筆查詢測試", "published"))
+        self.assertEqual((single[hash_b].hidden, single[hash_b].publication, single[hash_b].updated_at),
+                         (False, "published", None))
+        self.assertEqual((single[hash_c].hidden, single[hash_c].publication), (False, "draft"))
+        self.assertIsNone(missing)
+        self.assertEqual(malformed, [None] * 5)
+
     def test_hide_requires_existing_report_and_reason(self):
         async def fn(session):
             missing = hashlib.sha256(uuid.uuid4().bytes).hexdigest()

@@ -537,3 +537,123 @@ test('存完還在目前篩選裡的那筆（全部）維持選取，表單回�
   expect(seg('處理狀態', '略過')).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByRole('button', { name: '儲存' })).toBeDisabled()
 })
+
+// ── `?review=` 指的那筆不在已載入的清單：用單筆端點取 ─────────────────────────────
+
+const PINNED = '3f9a2c1e-0000-4000-8000-000000000001'
+const pinnedQa = (over: Record<string, unknown> = {}) => ({
+  qa_id: PINNED, created_at: '2026-09-18T03:00:00+00:00', faithfulness_score: 0.12, judge_model: 'deepseek-flash',
+  asker_code: 'a1b2c3d4', review_status: 'resolved', review_note: '已看過', verification: 'passed',
+  reviewed_at: '2026-09-19T03:00:00Z', reviewer: 'root', ...over,
+})
+const itemReads = (f: FetchMock) => f.mock.calls
+  .filter(([u, init]) => /^\/api\/review\/(faithfulness|feedback|extraction)\/[^/]+$/.test(parse(u).pathname)
+    && (init?.method ?? 'GET') === 'GET')
+  .map(([u]) => parse(u).pathname)
+
+/** 清單固定是 qa1、qa2；單筆端點由 `single` 決定怎麼回。 */
+const withSingle = (single: Handler, list: unknown[] = [qa(1), qa(2)]): Handler => (url, init) => {
+  if (url.pathname === '/api/review/queue') return { body: page(url.searchParams.get('kind')!, url.searchParams.get('kind') === 'faithfulness' ? list : []) }
+  return single(url, init)
+}
+
+test('review 指的那筆不在已載入的清單：用單筆端點取來顯示，清單不動並註明；不顯示原文', async () => {
+  // 單筆端點就算被竄改成帶原文，畫面也不印：zod 會把未宣告的鍵丟掉。
+  const fetchMock = mount(withSingle(() => ({ body: pinnedQa({ question: '機密提問', answer: '機密回答', asked_by: 'alice' }) })),
+    { entry: `/admin/reviews?review=${PINNED}` })
+  expect(await detail().findByRole('heading', { level: 2, name: '問答 3f9a2c1e' })).toBeInTheDocument()
+  expect(metaValue('忠實度')).toBe('0.120')
+  expect(metaValue('提問者')).toBe('#a1b2c3d4')
+  expect(metaValue('處理人')).toBe('root（2026-09-19）')
+  expect(seg('處理狀態', '已處理')).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.queryByText(/機密/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/alice/)).not.toBeInTheDocument()
+  // 清單照舊兩筆，沒有哪一列被標成目前這筆；註明它不在清單裡。
+  expect(queue().getAllByText(/^問答 qa/)).toHaveLength(2)
+  expect(rowButton('問答 qa1')).not.toHaveAttribute('aria-current')
+  expect(screen.getByText(/連結指的這一筆不在目前載入的清單裡/)).toBeInTheDocument()
+  expect(itemReads(fetchMock)).toEqual([`/api/review/faithfulness/${PINNED}`])
+  expect(search()).toBe(`?review=${PINNED}`)
+})
+
+test('review 指的那筆就在清單裡：不另外打單筆端點', async () => {
+  const fetchMock = mount(withSingle(() => ({ status: 500, body: {} }), [qa(1), pinnedQa()]),
+    { entry: `/admin/reviews?review=${PINNED}` })
+  await findRow('問答 3f9a2c1e')
+  expect(rowButton('問答 3f9a2c1e')).toHaveAttribute('aria-current', 'true')
+  expect(itemReads(fetchMock)).toEqual([])
+})
+
+test('單筆取來的問答：「查看內容」流程不變，切到清單裡的別筆就丟掉', async () => {
+  const fetchMock = mount(withSingle((_url, init) => (init?.method === 'POST'
+    ? { body: { qa_id: PINNED, kinds: ['faithfulness'], created_at: null, question: '台積電目標價？', answer: '依研報…' } }
+    : { body: pinnedQa() })), { entry: `/admin/reviews?review=${PINNED}`, canReadContent: true })
+  await detail().findByRole('heading', { name: '問答 3f9a2c1e' })
+  expect(accessCalls(fetchMock)).toHaveLength(0)
+  fireEvent.click(detail().getByRole('button', { name: '查看內容' }))
+  expect(await detail().findByText('台積電目標價？')).toBeInTheDocument()
+  expect(detail().getByText('提問與回答（這次查看已記入稽核）')).toBeInTheDocument()
+  expect(String(accessCalls(fetchMock)[0][0])).toBe(`/api/review/qa/${PINNED}/access`)
+  fireEvent.click(queue().getByText('問答 qa2'))
+  expect(search()).toBe('?review=qa2')
+  expect(detail().getByRole('heading', { name: '問答 qa2' })).toBeInTheDocument()
+  expect(screen.queryByText('台積電目標價？')).not.toBeInTheDocument()
+})
+
+test('單筆端點回 404（已不在佇列）：顯示第一筆並說明', async () => {
+  const fetchMock = mount(withSingle(() => ({ status: 404, body: { detail: '待複核項目不存在', code: 'not_found' } })),
+    { entry: `/admin/reviews?review=${PINNED}` })
+  expect(await detail().findByRole('heading', { name: '問答 qa1' })).toBeInTheDocument()
+  expect(rowButton('問答 qa1')).toHaveAttribute('aria-current', 'true')
+  expect(screen.getByText(/連結指的那一筆已不在這個分頁的佇列裡（或已超過 30 天），右邊顯示第一筆。/)).toBeInTheDocument()
+  expect(itemReads(fetchMock)).toHaveLength(1)
+})
+
+test('舊版後端沒有單筆端點（405）：照舊顯示第一筆，不多說', async () => {
+  mount(withSingle(() => ({ status: 405, body: { detail: 'Method Not Allowed', code: 'method_not_allowed' } })),
+    { entry: `/admin/reviews?review=${PINNED}` })
+  expect(await detail().findByRole('heading', { name: '問答 qa1' })).toBeInTheDocument()
+  expect(rowButton('問答 qa1')).toHaveAttribute('aria-current', 'true')
+  expect(screen.queryByText(/連結指的/)).not.toBeInTheDocument()
+})
+
+test('單筆取來的那筆可以直接處理：PUT 它的 id，表單回到存好的值，選取不變', async () => {
+  let state = { review_status: 'resolved', review_note: '已看過', verification: 'passed', reviewed_at: '2026-09-19T03:00:00Z' }
+  const fetchMock = mount(withSingle((_url, init) => {
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(init.body as string)
+      state = { review_status: body.status, review_note: body.note, verification: body.verification, reviewed_at: '2026-09-21T03:00:00Z' }
+      return { body: { kind: 'faithfulness', subject_id: PINNED, ...body, updated_at: state.reviewed_at, reviewer: 'root' } }
+    }
+    return { body: pinnedQa(state) }
+  }), { entry: `/admin/reviews?status=all&review=${PINNED}` })
+  await detail().findByRole('heading', { name: '問答 3f9a2c1e' })
+  fireEvent.click(seg('處理狀態', '略過'))
+  fireEvent.click(screen.getByRole('button', { name: '儲存' }))
+  expect(await screen.findByText('已儲存：問答 3f9a2c1e・略過・通過')).toBeInTheDocument()
+  const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!
+  expect(String(put[0])).toBe(`/api/review/faithfulness/${PINNED}`)
+  expect(search()).toBe(`?status=all&review=${PINNED}`)
+  await waitFor(() => expect(seg('處理狀態', '略過')).toHaveAttribute('aria-pressed', 'true'))
+  expect(detail().getByRole('heading', { name: '問答 3f9a2c1e' })).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('button', { name: '儲存' })).toBeDisabled())
+  expect(metaValue('處理人')).toBe('root（2026-09-21）')
+})
+
+test('抽取品質分頁同樣取單筆：研報的詳情連到閱讀頁', async () => {
+  const fetchMock = mount(url => {
+    if (url.pathname === '/api/review/queue') return { body: page(url.searchParams.get('kind')!, []) }
+    return { body: extractionItem({ report_id: PINNED, title: '別頁的研報', source: '凱基', quality_score: 0.4,
+      review_reasons: ['low_score'] }) }
+  }, { entry: `/admin/reviews?kind=extraction&review=${PINNED}` })
+  expect(await detail().findByRole('heading', { name: '別頁的研報' })).toBeInTheDocument()
+  expect(detail().getByRole('link', { name: '開啟閱讀頁' })).toHaveAttribute('href', `/report/${'a'.repeat(64)}`)
+  expect(itemReads(fetchMock)).toEqual([`/api/review/extraction/${PINNED}`])
+  expect(screen.getByText('目前沒有項目')).toBeInTheDocument()
+})
+
+test('review 不是 UUID：不拿去打單筆端點，照舊顯示第一筆', async () => {
+  const fetchMock = mount(withSingle(() => ({ status: 500, body: {} })), { entry: '/admin/reviews?review=gone' })
+  expect(await detail().findByRole('heading', { name: '問答 qa1' })).toBeInTheDocument()
+  expect(itemReads(fetchMock)).toEqual([])
+})

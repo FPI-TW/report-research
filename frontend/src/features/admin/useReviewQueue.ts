@@ -1,13 +1,16 @@
-import { useInfiniteQuery, useMutation, useQueries, useQueryClient, type InfiniteData } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { getJSON, requestJSON } from '../../lib/api'
 import {
-  reviewQueueSchema, reviewStateSchema,
+  reviewItemSchema, reviewQueueSchema, reviewStateSchema,
   type ReviewItem, type ReviewKind, type ReviewQueue, type ReviewStatus, type ReviewVerification,
 } from '../../lib/reviewSchemas'
 
 const PAGE_SIZE = 10
 const REVIEW_COUNT_KEY = ['review-queue-count']
 const REVIEW_KINDS: readonly ReviewKind[] = ['faithfulness', 'feedback', 'extraction']
+/** 單筆查詢的 key。刻意不放在 `['review-queue', …]` 底下：儲存後那一組會被當成分頁資料裁切。 */
+const REVIEW_ITEM_KEY = ['review-item']
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export interface UseReviewQueue {
   items: ReviewItem[]
@@ -48,7 +51,7 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
       getJSON(`/api/review/${kind}/${encodeURIComponent(id)}`, reviewStateSchema, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update),
       }),
-    onSuccess: async saved => {
+    onSuccess: async (saved, { id }) => {
       const filter = { queryKey: ['review-queue', saved.kind] }
       await client.cancelQueries(filter)
       // 狀態變更會讓 OFFSET 位移；回到首頁重新取數，避免跳過項目，
@@ -57,7 +60,14 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
         pages: data.pages.slice(0, 1),
         pageParams: data.pageParams.slice(0, 1),
       }))
-      await client.invalidateQueries(filter)
+      // 開著的若是單筆取來的那一筆（不在清單裡）：先把存好的值寫進它的快取，表單立刻回到存好的值，
+      // 再標成過期（之後重新開啟會重抓）。
+      const itemFilter = { queryKey: [...REVIEW_ITEM_KEY, saved.kind] }
+      client.setQueriesData<ReviewItem>(itemFilter, item => (item && (item.qa_id ?? item.report_id) === id ? {
+        ...item, review_status: saved.status, review_note: saved.note, verification: saved.verification,
+        reviewed_at: saved.updated_at, reviewer: saved.reviewer ?? item.reviewer,
+      } : item))
+      await Promise.all([client.invalidateQueries(filter), client.invalidateQueries(itemFilter)])
       // 分頁籤與外殼導覽上的待處理數（useAdminSignals 同一組 key）：不等它，數字晚一點到不該卡住儲存。
       void client.invalidateQueries({ queryKey: REVIEW_COUNT_KEY })
     },
@@ -77,6 +87,23 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
     save: async (id, update) => { await mutation.mutateAsync({ id, update }) },
     isSaving: mutation.isPending,
   }
+}
+
+/**
+ * 佇列裡的單筆（`GET /api/review/{kind}/{subject_id}`）：`?review=` 指的那筆不在已載入的清單時用
+ * （已處理、在後面的分頁）。回的欄位與佇列的一列相同——問答一樣沒有原文，要看仍走「查看內容」。
+ *
+ * 不在佇列（含超過 30 天、屬於另一個分頁）是 404；舊版後端沒有這支 GET，回 405。兩種都由呼叫端
+ * 退回顯示清單第一筆。id 不是 UUID 就不送出（後端只會回 422）。
+ */
+export function useReviewItem(kind: ReviewKind, id: string | null, enabled: boolean) {
+  return useQuery<ReviewItem>({
+    queryKey: [...REVIEW_ITEM_KEY, kind, id],
+    queryFn: () => requestJSON(`/api/review/${kind}/${encodeURIComponent(id as string)}`, reviewItemSchema, { cache: 'no-store' }),
+    enabled: enabled && id != null && UUID.test(id),
+    staleTime: 60_000,
+    retry: false,
+  })
 }
 
 /**

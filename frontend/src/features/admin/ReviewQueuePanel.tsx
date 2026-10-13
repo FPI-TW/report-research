@@ -1,4 +1,5 @@
 import { Lamp, PageHeader, Segmented, Tabs, toast } from '../../components/console'
+import { ApiError } from '../../lib/api'
 import c from '../../components/console/Console.module.css'
 import type { JudgeScale, ReviewItem } from '../../lib/reviewSchemas'
 import { isNewDeepSeekScale, newScaleText } from '../../lib/judgeScale'
@@ -7,7 +8,7 @@ import {
   KIND_TABS, STATUS_FILTERS, STATUS_LABEL, STATUS_TONE, VERIFY_LABEL, hintText, itemId, metaLine, subjectOf,
 } from './reviews/reviewItem'
 import { useReviewParams } from './reviews/useReviewParams'
-import { useReviewOpenCounts, useReviewQueue } from './useReviewQueue'
+import { useReviewItem, useReviewOpenCounts, useReviewQueue } from './useReviewQueue'
 import styles from './ReviewQueue.module.css'
 
 /**
@@ -24,7 +25,8 @@ import styles from './ReviewQueue.module.css'
  * 提問者標「共用帳號」，處理人不顯示。整頁限管理員（後端 `/api/review/*` 對一般使用者回 403）。
  *
  * 分頁、狀態與選中的那筆都在 URL query（`reviews/useReviewParams.ts`）。`?review=` 指的那筆不在已載入的
- * 清單裡（已處理、在後面的分頁、或已超過 30 天）就顯示第一筆：後端沒有取單筆的端點。
+ * 清單裡（已處理、在後面的分頁）就用單筆端點取來，右欄照樣顯示它（清單不動，註明它不在清單裡）；
+ * 取不到（已不在佇列、超過 30 天、屬於另一個分頁，或舊版後端沒有那支端點）才顯示第一筆。
  *
  * `scale` 是 `/api/review/judge-scale` 的判定尺（與管線分頁的忠實度卡同一份快照）：判定尺剛換成 DeepSeek、
  * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
@@ -47,7 +49,15 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
   const q = useReviewQueue(kind, status)
   const counts = useReviewOpenCounts()
   const tab = KIND_TABS.find(t => t.value === kind)!
-  const current = q.items.find(item => itemId(kind, item) === review) ?? q.items[0] ?? null
+  // 選中的那筆：清單裡有就用清單的；沒有就向後端取那一筆；再取不到才退回第一筆。
+  const listed = review ? q.items.find(item => itemId(kind, item) === review) : undefined
+  // 儲存中不查：存完那筆可能剛離開目前的篩選，等一下就會被取消選取，不必為它多打一次。
+  const single = useReviewItem(kind, review, !q.isLoading && !q.isSaving && !listed)
+  const pinned = !listed && review ? single.data : undefined
+  const lookingUp = !listed && single.isPending && single.fetchStatus !== 'idle'
+  const current = listed ?? pinned ?? (lookingUp ? null : q.items[0] ?? null)
+  // 後端明確說不在佇列（404）才提示；舊版後端沒有這支端點（405）就安靜地照舊顯示第一筆。
+  const gone = !listed && !pinned && single.error instanceof ApiError && single.error.status === 404
 
   const save = (item: ReviewItem, update: ReviewUpdate) => {
     q.save(itemId(kind, item), update).then(() => {
@@ -113,6 +123,8 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
             </>
           )}
           <div className={styles.listFoot}>
+            {pinned && <p role="status">連結指的這一筆不在目前載入的清單裡（已處理，或在後面的分頁）；詳情在右邊。</p>}
+            {gone && <p role="status">連結指的那一筆已不在這個分頁的佇列裡（或已超過 30 天）{q.items.length > 0 ? '，右邊顯示第一筆' : ''}。</p>}
             <p>{hintText(kind, q.minScore)}</p>
             {kind === 'faithfulness' && scale && isNewDeepSeekScale(scale) && (
               <p>{`判定尺 ${scale.judge_model} 是${newScaleText(scale)}：分數與換尺前的不可直接比較`}</p>
@@ -122,7 +134,7 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
         <section className={c.card} aria-label="詳情">
           {current
             ? <ReviewDetail kind={kind} item={current} canReadContent={canReadContent} saving={q.isSaving} onSave={save} />
-            : <div className={styles.detailEmpty}>從左邊選一筆</div>}
+            : <div className={styles.detailEmpty}>{lookingUp ? '載入中…' : '從左邊選一筆'}</div>}
         </section>
       </div>
     </>

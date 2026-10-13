@@ -52,9 +52,9 @@ export function AdminShell() {
   const ready = me.data?.role === 'admin' && !mfaRequired
   const scopeList = me.data?.scopes
   const scopes = useMemo(() => scopeList ?? [], [scopeList])
-  const domains = useMemo(() => (ready ? visibleDomains(scopes) : []), [ready, scopes])
+  const { signals, env, missing } = useAdminSignals({ enabled: ready, scopes })
+  const domains = useMemo(() => (ready ? visibleDomains(scopes, missing) : []), [ready, scopes, missing])
   const pages = useMemo(() => flattenPages(domains), [domains])
-  const { signals, env } = useAdminSignals({ enabled: ready, scopes })
   const elevated = useElevated(me.data?.elevated_until)
 
   const here = locate(domains, pathname)

@@ -110,6 +110,14 @@ const svc = (name: string, tier: string, summary: string) => ({
   name, kind: 'systemd', tier, target: `report-mark-${name}.service`, timer: null, actions: ['status'],
   description: '', summary, error: null, systemd: null, container: null, timer_state: null,
 })
+/** 有裝監控匯入器的主機（辦公室主機）：服務清單多一個 load-observations。 */
+const MONITORED_API: Api = url => {
+  const body = SIGNAL_API(url)
+  if (url === '/api/admin/ops/services' && body) {
+    return { ...body, items: [...(body.items as unknown[]), svc('load-observations', 'supporting', 'idle')] }
+  }
+  return body
+}
 const queue = (kind: string, total: number) => ({ kind, total, limit: 1, offset: 0, has_more: false, next_offset: null, items: [] })
 const SIGNAL_API: Api = url => {
   if (url === '/api/admin/ops/services') {
@@ -133,7 +141,7 @@ const SIGNAL_API: Api = url => {
 }
 
 test('燈號：服務失敗亮紅、進行中的事件亮橘並帶筆數；圖示軌取該領域最嚴重的那一顆', async () => {
-  mount('admin', '/admin/operations/logs', ALL, { api: SIGNAL_API })
+  mount('admin', '/admin/operations/logs', ALL, { api: MONITORED_API })
   await screen.findByText('其他管理頁')
   expect(await panel().findByRole('link', { name: /服務.*有異常/ })).toBeInTheDocument()
   expect(await panel().findByRole('link', { name: /事件.*需要注意/ })).toHaveTextContent('1')
@@ -142,6 +150,56 @@ test('燈號：服務失敗亮紅、進行中的事件亮橘並帶筆數；圖�
   expect(rail().getByRole('link', { name: '維運（有異常）' })).toBeInTheDocument()
   // 環境卡來自服務清單
   expect(within(screen.getByLabelText('環境')).getByText('office-host')).toBeInTheDocument()
+})
+
+test('這台沒有監控匯入器（服務清單裡沒有 load-observations）：主機、排程工作、事件不列，⌘K 也搜尋不到', async () => {
+  mount('admin', '/admin/operations/logs', ALL, { api: SIGNAL_API })
+  await screen.findByText('其他管理頁')
+  await waitFor(() => expect(panel().queryByRole('link', { name: /^主機/ })).not.toBeInTheDocument())
+  expect(panel().getAllByRole('link').map(a => a.textContent)).toEqual([
+    '服務', '依賴圖', '來源主機', '管線', '資料健康', '資料庫', '日誌', '診斷', 'LLM 用量',
+  ])
+  expect(window.localStorage.getItem('tf.admin.missing')).toBe('["monitoring"]')
+  // ⌘K 也搜尋不到
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+  const dialog = within(await screen.findByRole('dialog', { name: '搜尋頁面' }))
+  fireEvent.change(dialog.getByRole('combobox'), { target: { value: '排程' } })
+  expect(dialog.getByText('找不到這個頁面')).toBeInTheDocument()
+})
+
+test('上次判斷過沒有監控匯入器：服務清單回來之前就先不列（不閃一下）；清單說有裝之後恢復並更新記錄', async () => {
+  window.localStorage.setItem('tf.admin.missing', '["monitoring"]')
+  let release: () => void = () => {}
+  const gate = new Promise<void>(ok => { release = ok })
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === '/api/me') return new Response(JSON.stringify({ id: 'me', username: 'root', role: 'admin', scopes: ALL }))
+    if (url === '/api/admin/ops/services') {
+      await gate
+      return new Response(JSON.stringify(MONITORED_API(url)))
+    }
+    return new Response(JSON.stringify(MONITORED_API(url) ?? {}))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/admin/operations/logs']}>
+        <Routes>
+          <Route path="/admin" element={<AdminShell />}><Route path="*" element={<div>其他管理頁</div>} /></Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findByText('其他管理頁')
+  expect(panel().queryByRole('link', { name: /^主機/ })).not.toBeInTheDocument()
+  // 事件是匯入器寫進 DB 的投影：還以為沒裝的時候不查
+  await waitFor(() => expect(fetchMock.mock.calls.some(c => String(c[0]) === '/api/progress')).toBe(true))
+  expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/admin/incidents'))).toBe(false)
+  release()
+  expect(await panel().findByRole('link', { name: /^主機/ })).toBeInTheDocument()
+  expect(panel().getByRole('link', { name: /排程工作/ })).toBeInTheDocument()
+  await waitFor(() => expect(window.localStorage.getItem('tf.admin.missing')).toBe('[]'))
+  await waitFor(() => expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/admin/incidents'))).toBe(true))
 })
 
 test('待處理佇列只給數字、不亮燈：待複核是三個分頁的待處理數相加，上傳研報是待審草稿數', async () => {
@@ -154,7 +212,7 @@ test('待處理佇列只給數字、不亮燈：待複核是三個分頁的待�
 })
 
 test('總覽領域多一組「異常」捷徑，bad 在前；圖示軌的總覽不亮點', async () => {
-  mount('admin', '/admin', ALL, { api: SIGNAL_API })
+  mount('admin', '/admin', ALL, { api: MONITORED_API })
   await screen.findByText('總覽內容')
   await panel().findByRole('link', { name: /服務.*有異常/ })
   expect(panel().getAllByRole('link').map(a => a.getAttribute('href'))).toEqual([

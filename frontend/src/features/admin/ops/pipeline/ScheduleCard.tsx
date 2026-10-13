@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import type { LogEntry, Progress, UnitFailures } from '../../../../lib/progressSchema'
 import { Card, Status, type LampTone } from '../../../../components/console'
 import c from '../../../../components/console/Console.module.css'
+import { useMonitoringMissing } from '../../adminCapabilities'
 import { SECTION_ID, fmtMinute } from './attention'
 import { Bar, Count, Row, TonePill } from './parts'
 import { PIPELINE_ROWS } from './pipelineMeta'
@@ -140,12 +141,15 @@ function FailuresRow({ failures }: { failures: UnitFailures | undefined }) {
 }
 
 export function ScheduleCard({ progress: p, rates }: { progress: Progress; rates: Rates }) {
+  // 排程工作頁讀監控匯入器的 DB 投影；這台沒裝就不放連結（導覽也不列那一頁）。
+  const noJobsPage = useMonitoringMissing()
   return (
     <div id={SECTION_ID.schedule}>
       <Card
         title="排程與執行"
         labelledBy="pipeline-schedule-title"
-        right={<Link className={`${c.btn} ${c.btnSm}`} to="../jobs" relative="path">看排程工作</Link>}
+        right={noJobsPage ? undefined
+          : <Link className={`${c.btn} ${c.btnSm}`} to="../jobs" relative="path">看排程工作</Link>}
       >
         <div className={styles.body}>
           <div className={styles.rows}>

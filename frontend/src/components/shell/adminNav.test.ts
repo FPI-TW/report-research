@@ -41,6 +41,19 @@ describe('管理後台的資訊架構', () => {
     expect(flattenPages(visibleDomains(ALL))).toHaveLength(flattenPages(ADMIN_IA).length)
   })
 
+  it('主機確定沒有監控匯入器時，靠它供應資料的頁不列；不知道就照常列', () => {
+    const keys = (missing?: 'monitoring'[]) => flattenPages(visibleDomains(ALL, missing)).map(e => e.page.key)
+    expect(keys()).toEqual(expect.arrayContaining(['host', 'jobs', 'incidents']))
+    expect(keys([])).toEqual(keys())
+    const without = keys(['monitoring'])
+    for (const k of ['host', 'jobs', 'incidents']) expect(without).not.toContain(k)
+    // 其他維運頁不受影響
+    expect(without).toEqual(expect.arrayContaining(['services', 'dependencies', 'remoteHosts', 'pipeline', 'logs', 'diagnostics']))
+    expect(keys().length - without.length).toBe(3)
+    // 被拿掉的頁也搜尋不到、算不到位置
+    expect(locate(visibleDomains(ALL, ['monitoring']), '/admin/operations/host')).toBeNull()
+  })
+
   it('locate：總覽只認 /admin 本身，其他頁連同子路徑', () => {
     const d = visibleDomains(ALL)
     expect(locate(d, '/admin')?.page.key).toBe('home')

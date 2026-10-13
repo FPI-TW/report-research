@@ -646,10 +646,14 @@ class AgentRequestTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_logs_argv_for_container(self):
         runner = FakeRunner(lambda argv: RunResult(0, b"2026-10-06T02:00:00Z LOG: ok\n", b""))
-        resp = await self._call(Agent(_catalog(), runner), _req("logs", "postgres", since="2026-10-06T00:00:00Z"))
+        # since 是絕對時間時，代理拿它和「現在」比（最多往前 max_log_age_hours）。寫死日期的話，
+        # 那一天過了 7 天這題就會開始紅——用相對於現在的時間。
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0)
+        resp = await self._call(Agent(_catalog(), runner),
+                                _req("logs", "postgres", since=since.strftime("%Y-%m-%dT%H:%M:%SZ")))
         self.assertTrue(resp["ok"], resp)
         argv = runner.calls[0]["argv"]
-        epoch = int(datetime(2026, 10, 6, tzinfo=timezone.utc).timestamp())
+        epoch = int(since.timestamp())
         self.assertEqual(argv, ["/usr/bin/docker", "logs", "--timestamps", "--since", str(epoch), "--tail", "200",
                                 "--", "report-mark-postgres"])
         self.assertTrue(runner.calls[0]["merge_stderr"])

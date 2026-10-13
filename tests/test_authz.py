@@ -36,6 +36,7 @@ _ADMIN_PATHS = frozenset({"/api/progress"})
 _SINGLE_LOOKUPS = {
     "/api/admin/audit/{entry_id}": "/api/admin/audit",
     "/api/admin/reports/{file_hash}": "/api/admin/reports",
+    "/api/review/{kind}/{subject_id}": "/api/review/queue",
 }
 
 

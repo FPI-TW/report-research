@@ -8,6 +8,7 @@ import sys
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
@@ -279,6 +280,137 @@ _QUESTION = "台積電明年目標價多少"
 _ANSWER = "依凱基 2026-09 報告，目標價 1,500 元 [1]"
 # 逐筆讀取的一列：question, answer, created_at, 是否低分, 是否倒讚
 _CONTENT_ROW = (_QUESTION, _ANSWER, _TS, True, False)
+
+
+class ReviewItemTests(unittest.TestCase):
+    """`GET /api/review/{kind}/{subject_id}`：佇列裡的單筆，欄位與佇列的一列完全相同。"""
+
+    def setUp(self):
+        self._orig = deps.SessionFactory
+
+    def tearDown(self):
+        deps.SessionFactory = self._orig
+
+    def _use(self, results) -> _Session:
+        session = _Session(results)
+        deps.SessionFactory = lambda: session
+        return session
+
+    def _queue_item(self, kind: str, row) -> dict:
+        self._use([1, [row]])
+        return _authed().get(f"/api/review/queue?kind={kind}").json()["items"][0]
+
+    def test_requires_login_and_admin(self):
+        anon = TestClient(app, follow_redirects=False)
+        self.assertEqual(anon.get(f"/api/review/feedback/{_QA_ROW[0]}").status_code, 401)
+        store = FakeAccounts()
+        store.add_user("plain", "plain-password", "user")
+        session = self._use([_QA_ROW])
+        with install(store):
+            user = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
+            self.assertEqual(user.post("/login", data={"username": "plain", "password": "plain-password"}).status_code,
+                             303)
+            self.assertEqual(user.get(f"/api/review/feedback/{_QA_ROW[0]}").status_code, 403)
+        self.assertEqual(session.calls, [])
+
+    def test_qa_item_equals_the_queue_row_and_carries_no_content(self):
+        """硬性的隱私契約：單筆回的鍵與佇列的一列逐鍵相同，沒有提問原文、回答、提問者帳號與對話串。"""
+        for kind in ("faithfulness", "feedback"):
+            with self.subTest(kind=kind):
+                listed = self._queue_item(kind, _QA_ROW)
+                session = self._use([_QA_ROW])
+                r = _authed().get(f"/api/review/{kind}/{_QA_ROW[0]}")
+                self.assertEqual(r.status_code, 200, r.text)
+                item = r.json()
+                self.assertEqual(item, listed)
+                self.assertEqual(set(item), set(review.ReviewItem.model_fields))
+                for key in ("question", "answer", "asked_by", "username", "user_id", "conversation_id"):
+                    self.assertNotIn(key, item)
+                # 回應文字裡也不能藏著提問者的 user id；代號不可逆。
+                self.assertNotIn(_ASKER_ID, r.text)
+                self.assertRegex(item["asker_code"], r"^[0-9a-f]{8}$")
+                # SQL 本身就不選原文（不是選了再丟掉），而且只查一次、不寫稽核、不 commit。
+                self.assertEqual(len(session.calls), 1)
+                sql, params = session.calls[0]
+                self.assertNotIn("question", sql)
+                self.assertNotIn("answer", sql)
+                self.assertNotIn("conversation_id", sql)
+                self.assertNotIn("admin_audit_log", sql)
+                self.assertEqual(session.commits, 0)
+                self.assertEqual(str(params["id"]), _QA_ROW[0])
+
+    def test_response_model_has_no_content_fields(self):
+        """模型本身就沒有原文欄位：日後有人在 SELECT 多選一欄，也沒有地方可以放。"""
+        fields = set(review.ReviewItem.model_fields)
+        self.assertFalse(fields & {"question", "answer", "asked_by", "username", "user_id", "conversation_id"})
+        schema = app.openapi()["paths"]["/api/review/{kind}/{subject_id}"]["get"]
+        ref = schema["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        self.assertTrue(ref.endswith("/ReviewItem"), ref)
+
+    def test_qa_item_uses_the_queue_conditions_and_fixed_window(self):
+        session = self._use([_QA_ROW])
+        r = _authed().get(f"/api/review/faithfulness/{_QA_ROW[0]}?days=365&status=open")
+        self.assertEqual(r.status_code, 200)
+        sql, params = session.calls[0]
+        # 與佇列同一段條件字串：現行 judge、門檻、active／stopped、窗期；外加 id 相符。
+        self.assertIn(" ".join(review._FAITHFULNESS_COND.split()), sql)
+        self.assertIn("active AND stopped IS NOT TRUE", sql)
+        self.assertIn("rv.kind = 'faithfulness'", sql)
+        self.assertIn("qa_log.id = :id", sql)
+        # 呼叫端不能放寬窗期，也不看處理狀態（已處理的連結仍打得開）。
+        self.assertEqual({k: v for k, v in params.items() if k != "id"},
+                         {"days": review._DEFAULT_DAYS, "fmin": review._FAITHFULNESS_MIN,
+                          "judge_model": review._JUDGE_MODEL})
+        self.assertNotIn("review_status", sql)
+        session = self._use([_QA_ROW])
+        _authed().get(f"/api/review/feedback/{_QA_ROW[0]}")
+        sql, params = session.calls[0]
+        self.assertIn(review._FEEDBACK_COND, sql)
+        self.assertNotIn(":fmin", sql)
+        self.assertEqual({k: v for k, v in params.items() if k != "id"}, {"days": review._DEFAULT_DAYS})
+
+    def test_extraction_item_equals_the_queue_row(self):
+        listed = self._queue_item("extraction", _RR_ROW)
+        session = self._use([_RR_ROW])
+        r = _authed().get(f"/api/review/extraction/{_RR_ROW[0]}")
+        self.assertEqual((r.status_code, r.json()), (200, listed))
+        sql, params = session.calls[0]
+        self.assertIn("WHERE rr.needs_review AND rr.id = :id", sql)
+        # needs_review 是現況：沒有窗期。
+        self.assertEqual(list(params), ["id"])
+
+    def test_not_in_queue_is_404_with_one_message(self):
+        """不存在、超過窗期、屬於另一個 kind 都是同一個 404：不洩漏某個 id 存不存在。"""
+        bodies = []
+        for kind in ("faithfulness", "feedback", "extraction"):
+            session = self._use([None])
+            r = _authed().get(f"/api/review/{kind}/{_QA_ROW[0]}")
+            self.assertEqual((r.status_code, r.json()["code"]), (404, "not_found"), kind)
+            self.assertEqual(len(session.calls), 1)
+            bodies.append(r.json()["detail"])
+        self.assertEqual(len(set(bodies)), 1)
+
+    def test_kind_and_id_are_validated_before_db(self):
+        session = self._use([])
+        client = _authed()
+        self.assertEqual(client.get(f"/api/review/everything/{_QA_ROW[0]}").status_code, 422)
+        self.assertEqual(client.get("/api/review/feedback/not-a-uuid").status_code, 422)
+        self.assertEqual(session.calls, [])
+
+    def test_does_not_shadow_sibling_routes(self):
+        """同一支 router 的固定路徑與同路徑的 PUT 照舊。"""
+        async def snapshot():
+            return {}
+
+        self._use([0, []])
+        client = _authed()
+        self.assertEqual(client.get("/api/review/queue?kind=feedback").json()["kind"], "feedback")
+        with mock.patch.object(review.stats_snapshot, "db_stats_snapshot", snapshot):
+            self.assertEqual(client.get("/api/review/judge-scale").json()["judge_model"], review._JUDGE_MODEL)
+        session = self._use([True, _TS, None])
+        r = client.put(f"/api/review/feedback/{_QA_ROW[0]}", json={"status": "resolved"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(session.commits, 1)
 
 
 class _FailingAuditSession(_Session):

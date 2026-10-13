@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import unittest
@@ -208,6 +209,112 @@ class ReviewQueueDbTests(unittest.TestCase):
         self.assertEqual((question, answer, kinds), ("q-low", "答", ["faithfulness"]))
         self.assertEqual(got["disliked"][3], ["feedback"])
         self.assertEqual(got["both"][3], ["faithfulness", "feedback"])
+
+    def test_single_item_reaches_exactly_what_the_queue_lists(self):
+        """取單筆（`_fetch_one`）的條件＝佇列的條件（status=all、預設窗期）：佇列列得出來的才取得到，
+        而且那一筆與佇列的同一列逐欄相同；不在佇列、屬於另一個 kind、不存在都是 None。"""
+        ids = {name: uuid.uuid4() for name in (
+            "low", "ok", "malformed", "old", "inactive", "stopped", "disliked", "liked", "both", "old_judge",
+        )}
+        missing = uuid.uuid4()
+        reviewer = uuid.uuid4()
+        suffix = uuid.uuid4().hex[:8]
+
+        async def fn(session):
+            async def add(name, *, evaluation=None, feedback=None, active=True, stopped=False, age=1):
+                await session.execute(_INSERT_QA, {
+                    "id": ids[name], "q": f"q-{name}", "active": active, "stopped": stopped, "feedback": feedback,
+                    "evaluation": json.dumps(evaluation) if evaluation is not None else None, "age": age,
+                })
+
+            cur = review._JUDGE_MODEL
+            await add("low", evaluation={"faithfulness_score": 0.05, "judge_model": cur})
+            await add("ok", evaluation={"faithfulness_score": 0.99, "judge_model": cur})
+            await add("malformed", evaluation={"faithfulness_score": "n/a", "judge_model": cur})
+            await add("old", evaluation={"faithfulness_score": 0.01, "judge_model": cur}, age=90)
+            await add("inactive", evaluation={"faithfulness_score": 0.01, "judge_model": cur}, active=False)
+            await add("stopped", feedback="dislike", stopped=True)
+            await add("disliked", feedback="dislike")
+            await add("liked", feedback="like")
+            await add("both", evaluation={"faithfulness_score": 0.02, "judge_model": cur}, feedback="dislike")
+            await add("old_judge", evaluation={"faithfulness_score": 0.01, "judge_model": "some-retired-judge"})
+            # 已處理的照樣取得到（不看處理狀態），處理人一樣補成帳號名。
+            await session.execute(
+                text("INSERT INTO research.app_user (id, username, password_hash) VALUES (:id, :u, 'x')"),
+                {"id": reviewer, "u": f"rev_{suffix}"},
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO research.review_state (kind, subject_id, status, note, reviewer_user_id) "
+                    "VALUES ('faithfulness', :id, 'resolved', '已看過', :r)"
+                ),
+                {"id": ids["low"], "r": reviewer},
+            )
+            out = {}
+            for kind in ("faithfulness", "feedback"):
+                _t, items = await review._fetch(
+                    session, kind, limit=1000, offset=0, days=review._DEFAULT_DAYS, status="all",
+                )
+                listed = {i.qa_id: i for i in items}
+                single = {name: await review._fetch_one(session, kind, qid) for name, qid in ids.items()}
+                single["missing"] = await review._fetch_one(session, kind, missing)
+                out[kind] = (listed, single)
+            # 問答的 id 拿去當研報查，一樣查不到。
+            out["cross"] = await review._fetch_one(session, "extraction", ids["low"])
+            return out
+
+        out = self._run(fn)
+        expected = {"faithfulness": {"low", "both"}, "feedback": {"disliked", "both"}}
+        for kind, names in expected.items():
+            listed, single = out[kind]
+            with self.subTest(kind=kind):
+                self.assertEqual({name for name, item in single.items() if item is not None}, names)
+                for name in names:
+                    self.assertEqual(single[name], listed[str(ids[name])])
+        low = out["faithfulness"][1]["low"]
+        self.assertEqual((low.review_status, low.review_note, low.reviewer), ("resolved", "已看過", f"rev_{suffix}"))
+        self.assertAlmostEqual(low.faithfulness_score, 0.05)
+        # 單筆與佇列一樣不帶原文。
+        self.assertNotIn("q-low", low.model_dump_json())
+        self.assertIsNone(out["cross"])
+
+    def test_single_extraction_item_follows_needs_review(self):
+        """研報的單筆：目前標著 needs_review 才取得到，欄位與佇列的同一列相同；解除標記就是 None。"""
+        flagged, clean = uuid.uuid4(), uuid.uuid4()
+        tag = uuid.uuid4().hex
+
+        async def fn(session):
+            for rid, name, needs in ((flagged, "flagged", True), (clean, "clean", False)):
+                await session.execute(
+                    text(
+                        "INSERT INTO research.research_report (id, file_hash, file_name, file_path, needs_review, "
+                        "quality_score, quality_flags, pages_failed) "
+                        "VALUES (:id, :h, :n, :p, :needs, -1, CAST(:flags AS jsonb), CAST(:failed AS int[]))"
+                    ),
+                    {"id": rid, "h": hashlib.sha256(f"{name}-{tag}".encode()).hexdigest(), "n": f"{name}.pdf",
+                     "p": f"/nonexistent/{name}.pdf", "needs": needs,
+                     "flags": json.dumps({"garbled_ratio": 0.2}), "failed": [3]},
+                )
+            await session.execute(
+                text("INSERT INTO research.review_state (kind, subject_id, status) "
+                     "VALUES ('extraction', :id, 'dismissed')"),
+                {"id": flagged},
+            )
+            _t, items = await review._fetch(session, "extraction", limit=100, offset=0, days=30, status="all")
+            listed = {i.report_id: i for i in items}
+            got = {name: await review._fetch_one(session, "extraction", rid)
+                   for name, rid in (("flagged", flagged), ("clean", clean), ("missing", uuid.uuid4()))}
+            # 研報的 id 拿去當問答查，一樣查不到。
+            got["cross"] = await review._fetch_one(session, "feedback", flagged)
+            return listed, got
+
+        listed, got = self._run(fn)
+        self.assertIsNotNone(got["flagged"])
+        self.assertEqual((got["flagged"].report_id, got["flagged"].review_status, got["flagged"].pages_failed),
+                         (str(flagged), "dismissed", [3]))
+        # 分數 -1 一定排在佇列最前面（分數低的在前），所以第一頁裡有它；兩邊必須逐欄相同。
+        self.assertEqual(got["flagged"], listed[str(flagged)])
+        self.assertEqual((got["clean"], got["missing"], got["cross"]), (None, None, None))
 
     def test_qa_content_audit_row_lands_in_same_transaction_without_content(self):
         """稽核與讀取同一筆交易；detail 只有 qa_id 與 kinds（rollback，不留痕）。"""

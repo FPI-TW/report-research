@@ -282,7 +282,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 ### 對外 API（`/external/v1/*`）
 
-兩條端點：`GET /external/v1/search`（需 `search` scope）與 `GET /external/v1/reports/{report_id}/file-url`（需 `report.file` scope），參數與回應欄位見 README 的 API 表。路由在 `web/routers/external.py`，認證在 `web/external_auth.py`，用戶端規則在 `app/services/api_clients.py`、授權範圍在 `app/services/entitlement.py`，原檔連結與站內 `/api/report/{report_id}/file` 共用 `app/services/original_file_url.py`。
+兩條端點：`GET /external/v1/search`（需 `search` scope）與 `GET /external/v1/reports/{report_id}/file-url`（需 `report.file` scope），參數與回應欄位見 README 的 API 表。路由在 `web/routers/external.py`，認證在 `web/external_auth.py`，用戶端規則在 `app/services/api_clients.py`、授權範圍在 `app/services/entitlement.py`，原檔連結與站內 `/api/report/{report_id}/file` 共用 `app/services/original_file_url.py`。交給 API 用戶端的說明是 `docs/EXTERNAL_API.md`（只寫用戶端需要知道的事），後台「API 用戶端」頁的「說明文件」分頁照它渲染（`{BASE_URL}` 代入當下站台）、「試打」分頁的端點與參數表單也從它解析；它與路由、參數、scope、錯誤碼、回應欄位的一致性由 `tests/test_external_api_doc.py` 對帳。
 
 **認證**：`Authorization: Bearer <api_key>`，一個 API 用戶端一把金鑰（`rmk_<8 hex>_<43 字元>`；DB 只存 sha256，原始金鑰只在建立／輪替時顯示一次）。`web/server.py` 的 session middleware 對 `/external/` 前綴整個放行（不查、不發 session cookie，免登入開發模式也不作用），認證完全由路由 dependency 負責；站內 `/api/*` 一律不認 Bearer。每個請求都查 DB（不快取），停用與輪替下一個請求就生效。檢查順序：解析標頭 → 查金鑰 → scope → 每分鐘限流 → 每日額度；未認證的請求拿到的是 401，不是參數驗證的 422。日誌只記 client id 與 `key_prefix`，不記原始金鑰。
 

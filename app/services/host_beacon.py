@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Mapping
 
 from app.services.object_storage import ObjectNotFound, ObjectStorage, ObjectStorageError
-from app.services.ops_topology import service_health
+from app.services.ops_topology import probe_service_health, service_health
 
 SCHEMA_VERSION = 1
 KEY_PREFIX = "beacons/"
@@ -216,12 +216,14 @@ def _last_run(item: Mapping) -> str | None:
 
 
 def project_services(listing: Mapping) -> list[dict]:
-    """維運代理 ``list`` 的結果 → 每個服務一列（名稱、層級、狀態與判讀）。判讀沿用依賴圖的 ``service_health``。"""
+    """維運代理 ``list`` 的結果 → 每個服務一列（名稱、層級、狀態與判讀）。判讀與依賴圖一致：探針以它所探測的外部依賴
+    認得的退出碼結束時算 ok（``probe_service_health``），其餘照 ``service_health``。判讀在發布端做，EC2 只顯示。"""
+    externals = [e for e in listing.get("externals") or [] if isinstance(e, dict) and e.get("name")]
     out: list[dict] = []
     for item in listing.get("items") or []:
         if not isinstance(item, dict) or not item.get("name"):
             continue
-        health, reason = service_health(item)
+        health, reason = probe_service_health(item, externals) or service_health(item)
         timer = item.get("timer_state") if item.get("timer") else None
         systemd = item.get("systemd") or {}
         out.append({

@@ -259,6 +259,22 @@ class ProjectServicesTests(unittest.TestCase):
         self.assertIs(beacon["sync"]["timer_active"], False)
         self.assertEqual(_eval(hb.parse(hb.encode(beacon))), ["timer_inactive"])
 
+    def test_probe_reporting_an_external_is_ok_like_the_dependency_graph(self):
+        """web 探針 7（DeepSeek 餘額低）：unit 停在 failed，但「來源主機」頁要與依賴圖一樣算 ok，不是 down。"""
+        def probe(code):
+            return {"name": "health", "kind": "systemd", "tier": "important", "timer": "report-mark-health.timer",
+                    "summary": "failed", "systemd": {"type": "oneshot", "exec_main_code": "exited",
+                                                     "exec_main_status": code}}
+        externals = [{"name": "deepseek", "probe": "health", "degraded_exit_codes": [7], "down_exit_codes": [8]},
+                     "junk"]
+        row = hb.project_services({"items": [probe(7)], "externals": externals})[0]
+        self.assertEqual(row["health"], "ok")
+        self.assertIn("deepseek", row["health_reason"])
+        self.assertEqual(row["exit_status"], 7)
+        # 外部依賴不認得的退出碼（1＝web 本身不健康）、或代理沒給 externals：照常是 down
+        self.assertEqual(hb.project_services({"items": [probe(1)], "externals": externals})[0]["health"], "down")
+        self.assertEqual(hb.project_services({"items": [probe(7)]})[0]["health"], "down")
+
 
 class ReadTests(unittest.TestCase):
     def _read(self, storage, name="office", now=NOW):

@@ -754,6 +754,31 @@ class SummaryTests(unittest.TestCase):
         self.assertIsNone(backends.parse_ts("n/a"))
         self.assertIsNone(backends.parse_ts("Tue 2026-10-06 12:00:00 CST"))  # 不是 UTC：寧可空也不猜
 
+    def test_parse_span(self):
+        self.assertAlmostEqual(backends.parse_span("23min 51.033993s"), 23 * 60 + 51.033993)
+        self.assertEqual(backends.parse_span("2d 3h"), 2 * 86400 + 3 * 3600)
+        self.assertEqual(backends.parse_span("1month 1w 500ms"), 2629800 + 604800 + 0.5)
+        for value in (None, "", "0", "infinity", "5 min", "3x"):
+            with self.subTest(value=value):
+                self.assertIsNone(backends.parse_span(value))
+
+    def test_timer_next_elapse_falls_back_to_monotonic(self):
+        """只有 OnBootSec／OnUnitActiveSec 的 timer（每 2 分鐘的探針）沒有 realtime 的下次觸發。
+
+        2026-10-22：後台「來源主機」的 linebot-health 等 13 支探針因此一律顯示「下次 —」。
+        """
+        clock = lambda: (1_791_000_000.0, 1_000.0)  # noqa: E731 — 現在、開機後 1000 秒
+        mono_only = {"NextElapseUSecRealtime": "", "NextElapseUSecMonotonic": "18min 20s"}
+        self.assertEqual(backends.timer_state("t", mono_only, clock)["next_elapse_at"],
+                         backends.iso_utc(1_791_000_000 + 100))
+        # 兩種觸發都有時取較早的那個
+        both = {"NextElapseUSecRealtime": "@1791000050", "NextElapseUSecMonotonic": "18min 20s"}
+        self.assertEqual(backends.timer_state("t", both, clock)["next_elapse_at"], backends.iso_utc(1_791_000_050))
+        realtime_only = {"NextElapseUSecRealtime": "@1791003600", "NextElapseUSecMonotonic": "0"}
+        self.assertEqual(backends.timer_state("t", realtime_only, clock)["next_elapse_at"],
+                         backends.iso_utc(1_791_003_600))
+        self.assertIsNone(backends.timer_state("t", {}, clock)["next_elapse_at"])
+
 
 # ── socket：SO_PEERCRED、請求大小、權限、收尾 ─────────────────────────────
 

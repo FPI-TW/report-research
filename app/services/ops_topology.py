@@ -13,6 +13,10 @@
   `down_exit_codes` → down、`degraded_exit_codes` → degraded、`ok_exit_codes` → ok；其他退出碼一律 unknown——
   探針的退出碼有優先序（例如 web 探針 8 會蓋住 6），被蓋住的那一項判斷不出來，不能當成正常。探針沒結果、
   正在跑、結果比 `PROBE_STALE` 舊（timer 停了），也都是 unknown。
+- 探針服務本身（某個外部依賴的 `probe`）：探針以非零退出碼回報發現，systemd 因此停在 `failed`，但那是「探針跑完、
+  回報了外部依賴的狀況」，不是探針壞了。最後一次退出碼落在它所探測的外部依賴的任一組退出碼裡時，探針節點算 ok，
+  發現只記在外部依賴節點上——否則例如 DeepSeek 餘額低（web 探針 7）會讓探針自己變成 down、被列成根因。
+  沒有任何外部依賴認得的退出碼（例如 web 探針 1／2＝web 本身不健康、4＝探針自己不能執行）照常是 down。
 
 傳播只看 down：某節點（直接或間接）依賴的節點有 down，它就是 `affected`，`impacted_by` 列出那些 down 的上游；
 degraded 與 unknown 不傳播（不確定的狀態不擴大成一片紅）。`root_causes` 是自己 down、但上游沒有 down 的節點——
@@ -62,6 +66,23 @@ def service_health(item: dict) -> tuple[str, str]:
     if summary == "transitioning":
         return ("degraded", "啟動或停止中") if resident else ("ok", "執行中")
     return "unknown", item.get("error") or "狀態查不到"
+
+
+def probe_service_health(item: dict, externals: list[dict]) -> tuple[str, str] | None:
+    """探針服務以外部依賴認得的退出碼結束時的健康（見模組 docstring）；不適用時回 None，照 `service_health` 判。"""
+    if item.get("summary") != "failed":
+        return None
+    systemd = item.get("systemd") or {}
+    code = systemd.get("exec_main_status")
+    if systemd.get("exec_main_code") != "exited" or not isinstance(code, int):
+        return None
+    probed = [e for e in externals if e.get("probe") == item.get("name")]
+    owners = [e["name"] for e in probed
+              if code in [*(e.get("ok_exit_codes") or [0]), *(e.get("degraded_exit_codes") or []),
+                          *(e.get("down_exit_codes") or [])]]
+    if not owners:
+        return None
+    return "ok", f"探針正常執行；退出碼 {code} 反映在 {'、'.join(owners)}"
 
 
 def external_health(ext: dict, probe_item: dict | None, checked_at: datetime | None) -> tuple[str, str, str | None]:
@@ -138,7 +159,7 @@ def build_topology(listing: dict) -> dict:
 
     nodes: dict[str, dict] = {}
     for item in items:
-        health, reason = service_health(item)
+        health, reason = probe_service_health(item, externals) or service_health(item)
         nodes[item["name"]] = {
             "name": item["name"], "kind": item.get("kind"), "tier": item.get("tier"), "target": item.get("target"),
             "description": item.get("description") or "", "summary": item.get("summary"), "health": health,

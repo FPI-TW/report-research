@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 
 from ops_agent.catalog import Catalog, Service
@@ -28,7 +29,8 @@ SYSTEMD_PROPS = (
     "ExecMainCode", "ExecMainStatus", "MainPID", "NRestarts", "ExecMainStartTimestamp",
     "ExecMainExitTimestamp", "ActiveEnterTimestamp", "StateChangeTimestamp", "InvocationID",
 )
-TIMER_PROPS = ("Id", "LoadState", "ActiveState", "NextElapseUSecRealtime", "LastTriggerUSec")
+TIMER_PROPS = ("Id", "LoadState", "ActiveState", "NextElapseUSecRealtime", "NextElapseUSecMonotonic",
+               "LastTriggerUSec")
 _ALL_PROPS = ",".join(dict.fromkeys(SYSTEMD_PROPS + TIMER_PROPS))
 
 DOCKER_INSPECT_FORMAT = (
@@ -45,6 +47,10 @@ _TRANSITIONING = {"activating", "deactivating", "reloading", "refreshing"}
 
 _UNIX_TS = re.compile(r"@(\d{1,12})")
 _UTC_TS = re.compile(r"(?:[A-Za-z]{3} )?(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? UTC")
+# systemd 的 timespan 格式（`23min 51.033993s`、`2d 3h`）：NextElapseUSecMonotonic 只有這種格式，`--timestamp` 管不到。
+_SPAN_UNITS = {"y": 31557600, "month": 2629800, "w": 604800, "d": 86400, "h": 3600, "min": 60, "s": 1,
+               "ms": 1e-3, "us": 1e-6}
+_SPAN_PART = re.compile(r"(\d+(?:\.\d+)?)(month|min|ms|us|y|w|d|h|s)")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
@@ -130,12 +136,44 @@ def systemd_state(props: dict[str, str]) -> dict:
     }
 
 
-def timer_state(unit: str, props: dict[str, str]) -> dict:
+def parse_span(value: str | None) -> float | None:
+    """systemd timespan（`23min 51.033993s`）→ 秒；空值、`0`、`infinity` 或讀不懂 → None。"""
+    parts = (value or "").split()
+    if not parts:
+        return None
+    total = 0.0
+    for part in parts:
+        m = _SPAN_PART.fullmatch(part)
+        if not m:
+            return None
+        total += float(m.group(1)) * _SPAN_UNITS[m.group(2)]
+    return total or None
+
+
+def _clock() -> tuple[float, float]:
+    return time.time(), time.monotonic()
+
+
+def timer_state(unit: str, props: dict[str, str], clock=_clock) -> dict:
+    """`next_elapse_at` 取 realtime 與 monotonic 兩種觸發裡較早的那個。
+
+    只有 `OnBootSec`／`OnUnitActiveSec` 的 timer（例如每 2 分鐘的探針）沒有 NextElapseUSecRealtime，
+    下次觸發只以 CLOCK_MONOTONIC（開機後經過的時間）表示；換算成實際時間＝現在 −（開機後經過）＋ 那個值。
+    代理與 systemd 在同一台主機、同一個 CLOCK_MONOTONIC，換算誤差只有兩次讀時鐘之間的幾毫秒。
+    """
+    candidates: list[float] = []
+    realtime = parse_ts(props.get("NextElapseUSecRealtime"))
+    if realtime:
+        candidates.append(datetime.fromisoformat(realtime.replace("Z", "+00:00")).timestamp())
+    span = parse_span(props.get("NextElapseUSecMonotonic"))
+    if span is not None:
+        now, mono = clock()
+        candidates.append(now - mono + span)
     return {
         "unit": unit,
         "load_state": props.get("LoadState") or None,
         "active_state": props.get("ActiveState") or None,
-        "next_elapse_at": parse_ts(props.get("NextElapseUSecRealtime")),
+        "next_elapse_at": iso_utc(round(min(candidates))) if candidates else None,
         "last_trigger_at": parse_ts(props.get("LastTriggerUSec")),
     }
 

@@ -179,7 +179,7 @@ systemctl list-timers report-mark-backup.timer   # 排程：每日 03:30（Persi
 - **`docker exec` 一律不加 `-t`**：配 TTY 會對 stdout 做行尾轉換，把二進位 dump 悄悄弄壞。
 - **週備用 `cp` 不用 hardlink**：drvfs 的 hardlink 支援不可靠。
 - **docker CLI 由 `scripts/_docker_bin.sh` 實際探 `docker info` 決定**：WSL 上 `/usr/bin/docker` 可能是連不到 daemon 的死連結，只看 binary 存在與否會讓備份在第一步中止，而 unit 從外面看起來仍是 enabled。
-- **NAS 只在備份時由 `mount-nas-backup` 掛上**。刪帳執行、刪帳重放與稽核錨定也寫同一個落點，WSL 重啟後到下一次備份之前它們會以 rc=2 告警。手動補掛要在 systemd 的命名空間裡做（互動 shell 裡掛的，服務看不到）：`sudo systemd-run --wait --pipe /usr/local/sbin/mount-nas-backup`。
+- **寫這個落點的 unit 都自己掛 NAS**：備份在 `scripts/db_backup.sh` 裡掛；刪帳執行、刪帳重放與稽核錨定以 `ExecStartPre` 跑 `scripts/ensure_backup_mount.sh`（同一個 sudoers 條目 `sudo -n mount-nas-backup`；主機沒裝掛載輔助程式時略過，掛載失敗不擋主程式，由主程式以 rc=2 告警），所以 WSL 重開後下一次觸發就會掛回來。要立刻手動掛時要在 systemd 的命名空間裡做（互動 shell 裡掛的，服務看不到）：`sudo systemd-run --wait --pipe /usr/local/sbin/mount-nas-backup`。
 
 ### 還原步驟（沒演練過的備份不算備份）
 

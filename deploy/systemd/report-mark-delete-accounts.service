@@ -15,5 +15,7 @@ Environment=HOME=/home/kashionz
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # REPORT_MARK_ROOT 與 tombstone 落點 REPORT_MARK_BACKUP_DIR 都由這個檔提供。
 EnvironmentFile=-/etc/default/report-mark-sync
+# 落點在 NAS：WSL 重開後備份還沒跑之前不會掛著，先掛上（沒有 NAS 的主機略過、失敗也不擋；見腳本檔頭）。
+ExecStartPre=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/ensure_backup_mount.sh"'
 ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/execute_deletions.py'
 TimeoutStartSec=300

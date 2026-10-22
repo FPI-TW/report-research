@@ -123,7 +123,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 ## 備份與還原
 
-本節適用 DB 在容器裡的辦公室主機。EC2 沒有應用層備份（只有 RDS 自動備份，見 `deploy/aws/README.md`），所以也沒有 tombstone 與稽核錨點的落點。
+本節適用 DB 在容器裡的辦公室主機。EC2 沒有應用層備份（只有 RDS 自動備份，見 `deploy/aws/README.md`）與稽核錨點；帳號刪除的 tombstone 在 EC2 寫本機磁碟（見「還原後重放帳號刪除」）。
 
 ### 為什麼只備這二十張表
 
@@ -255,6 +255,7 @@ docker exec -i report-mark-postgres psql -U postgres -c 'DROP DATABASE restore_c
 - **每次還原（整組或單表）之後手動跑一次**（上面步驟 3、4 已列）。rc=1 在還原後是預期結果：代表它找到並清掉了復活的資料；再跑一次應該是 rc=0。只想看不想刪用 `--check-only`。
 - 平時由 `report-mark-replay-deletions.timer` 每日 04:30 跑；平常日出現 rc=1（`OnFailure` 告警）表示有人在沒走這份流程的情況下還原過資料，要追查。
 - tombstone 檔本身不要刪、不要手改；它和稽核錨點（`audit-anchors.jsonl`，`report-mark-audit-anchor.timer` 每日 04:15 由 `scripts/audit_anchor.py` 寫入並驗鏈）一樣是 DB 之外唯一的證據。
+- **EC2（正式環境）**：沒有 NAS，`/etc/default/report-mark-sync` 的 `REPORT_MARK_BACKUP_DIR` 指向本機磁碟 `/var/lib/report-mark/tombstones`（`sudo install -d -o ubuntu -g ubuntu -m 0750`）。DB 在 RDS，從快照還原不會動到這顆磁碟，所以仍符合「不跟 DB 一起被還原」；EC2 整台遺失時 tombstone 跟著消失。安裝：`sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark report-mark-delete-accounts.timer report-mark-replay-deletions.timer`，再 `enable --now` 兩支 timer；從 RDS 快照還原後一樣要手動跑一次重放。
 
 ### `make ingest-lowio` 的硬閘
 
@@ -2022,7 +2023,7 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
 ### v2 功能的啟用矩陣（測試環境與正式環境）
 
 測試環境＝辦公室主機（`research.kashionzarchive.com`），正式環境＝EC2（`research.tingfong.com`）。結構上的差異：EC2 的 DB 是
-RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（沒有應用層備份、稽核錨定與 tombstone 的落點）、不以容器跑任何東西。EC2 沒裝
+RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（沒有應用層備份與稽核錨定；tombstone 改寫本機磁碟）、不以容器跑任何東西。EC2 沒裝
 哪些 unit 與連帶的後果列在 `README.md`「非辦公室主機（EC2）」，查證日期與現況在 `docs/DEPLOYMENT_STATUS.md`；功能旗標各項的
 上限與覆寫建議另見「功能開關與啟用矩陣」。
 
@@ -2042,5 +2043,5 @@ RDS（沒有容器、app 帳號權限較窄）、碰不到 NAS（沒有應用層
 | 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 預載＋重啟容器 | master 帳號 `CREATE EXTENSION`（參數群組已預載） | 不綁版本部署；沒做時頁面只顯示原因 |
 | 主機、排程工作、事件三頁（`service_observation`、`job_execution`、`incident`） | 安裝監控收集與匯入（`report-mark-metrics`、`report-mark-load-observations`） | 安裝 | 不裝 | 收集器讀 docker 的 cgroup；維運代理的服務清單沒有 `load-observations` 時，管理後台不列這三頁 |
 | 研報上傳（`UPLOAD_ENABLED`） | ClamAV＋上傳 worker＋環境變數 | 安裝；收檔（設 1）經同意才開 | 維持 0 | EC2 沒有 ClamAV 與上傳 worker |
-| 帳號刪除的執行與重放 | 安裝 unit（tombstone 寫 NAS） | 安裝 | 不裝 | 在 EC2 提出的刪除排程會停在待執行（帳號已停用、資料尚未刪） |
+| 帳號刪除的執行與重放 | 安裝 unit＋`REPORT_MARK_BACKUP_DIR` | 安裝（tombstone 寫 NAS） | 安裝（tombstone 寫本機 `/var/lib/report-mark/tombstones`） | EC2 的 DB 在 RDS，快照還原不會動到本機磁碟；EC2 整台遺失時 tombstone 跟著消失 |
 | ops catalog 與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` | `services.staging.toml` | 維運代理要已安裝；「立即執行」在 EC2 只給 freshness、audit、db-snapshot、analytics-rollup |

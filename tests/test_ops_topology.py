@@ -156,6 +156,35 @@ class BuildTopologyTests(unittest.TestCase):
         nodes8 = {n["name"]: n for n in g8["nodes"]}
         self.assertEqual((nodes8["deepseek"]["health"], nodes8["r2"]["health"]), ("down", "unknown"))
 
+    def test_probe_reporting_an_external_is_not_itself_a_root_cause(self):
+        """探針以外部依賴認得的退出碼結束（systemd 停在 failed）：發現記在外部依賴上，探針自己不是根因。
+
+        2026-10-22 正式環境：DeepSeek 餘額低（web 探針 7），依賴圖卻把 health 列成唯一根因。
+        """
+        items = [_svc("web", deps=["r2", "deepseek"], tier="critical"),
+                 _probe("health", 7, summary="failed")]
+        externals = [_ext("r2", probe="health", down=(6,)), _ext("deepseek", probe="health", down=(8,), degraded=(7,))]
+        g = build_topology(_listing(items, externals))
+        nodes = {n["name"]: n for n in g["nodes"]}
+        self.assertEqual((nodes["health"]["health"], g["down"], g["root_causes"]), ("ok", [], []))
+        self.assertIn("deepseek", nodes["health"]["health_reason"])
+        self.assertEqual(nodes["deepseek"]["health"], "degraded")
+
+        # 8：根因是 deepseek（下游 web 受影響），不是探針
+        items[1] = _probe("health", 8, summary="failed")
+        g8 = build_topology(_listing(items, externals))
+        self.assertEqual((g8["down"], g8["root_causes"], g8["affected"]), (["deepseek"], ["deepseek"], ["web"]))
+
+        # 沒有外部依賴認得的退出碼（1＝web HTTP 失敗、4＝探針自己不能執行）：探針照常是 down
+        for code in (1, 4):
+            items[1] = _probe("health", code, summary="failed")
+            with self.subTest(code=code):
+                self.assertEqual(build_topology(_listing(items, externals))["root_causes"], ["health"])
+
+        # 不是任何外部依賴的探針：failed 照常是 down
+        other = build_topology(_listing([_probe("backup", 7, summary="failed")], externals))
+        self.assertEqual(other["root_causes"], ["backup"])
+
     def test_degraded_and_unknown_do_not_propagate(self):
         items = [_svc("web", deps=["pg"]), _svc("pg", "transitioning", kind="container")]
         g = build_topology(_listing(items, [_ext("nas")]))

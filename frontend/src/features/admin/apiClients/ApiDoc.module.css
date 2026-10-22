@@ -1,0 +1,63 @@
+/* 對外 API 說明文件與試打分頁。色全部走 --ac-* token，深色與亮色共用。 */
+
+/* ── 文件目錄 ── */
+.toc { display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 10px 16px; border-bottom: 1px solid var(--ac-l1); }
+.tocItem {
+  border: 1px solid var(--ac-l2); border-radius: 999px; background: none; padding: 3px 10px;
+  font: inherit; font-size: 12px; color: var(--ac-t3); cursor: pointer;
+}
+.tocItem:hover { color: var(--ac-t1); border-color: var(--ac-l4); }
+
+/* ── 文件本文：閱讀寬度收窄，表格與程式碼可以橫向捲 ── */
+.doc { max-width: 920px; padding: 6px 20px 24px; font-size: 13px; line-height: 1.75; color: var(--ac-t2); }
+.doc p, .doc ul, .doc ol { margin: 8px 0; }
+.doc ul, .doc ol { padding-left: 22px; }
+.doc li { margin: 3px 0; }
+.doc strong { color: var(--ac-t1); font-weight: 600; }
+.doc a { color: var(--ac-goldt); }
+.doc code {
+  font-family: var(--ac-mono); font-size: 12px; padding: 1px 5px; border-radius: 4px;
+  background: var(--ac-sunk2); color: var(--ac-t1); overflow-wrap: anywhere;
+}
+.h2 { margin: 18px 0 6px; font-size: 18px; font-weight: 600; color: var(--ac-t1); }
+.h3 { margin: 26px 0 8px; padding-top: 14px; border-top: 1px solid var(--ac-l1); font-size: 15px; font-weight: 600; color: var(--ac-t1); }
+.h4 {
+  margin: 22px 0 8px; font-size: 13.5px; font-weight: 600; color: var(--ac-t1);
+  font-family: var(--ac-mono);
+}
+.h5 { margin: 16px 0 6px; font-size: 13px; font-weight: 600; color: var(--ac-t1); }
+
+.pre {
+  margin: 10px 0; padding: 10px 12px; border: 1px solid var(--ac-l2); border-radius: 6px; background: var(--ac-sunk);
+  overflow-x: auto; font-family: var(--ac-mono); font-size: 12px; line-height: 1.6; color: var(--ac-t1);
+}
+.doc .pre code, .result code { padding: 0; background: none; font-size: inherit; }
+
+.tableWrap { margin: 10px 0; overflow-x: auto; }
+.tableWrap table { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+.tableWrap th {
+  text-align: left; font-weight: 500; font-size: 11.5px; color: var(--ac-t5); white-space: nowrap;
+  padding: 7px 10px; border-bottom: 1px solid var(--ac-l2);
+}
+.tableWrap td { padding: 7px 10px; border-bottom: 1px solid var(--ac-l1); vertical-align: top; }
+.tableWrap tbody tr:last-child td { border-bottom: none; }
+
+/* ── 試打 ── */
+.tester { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 960px) { .tester { grid-template-columns: minmax(0, 1fr); } }
+.form { display: flex; flex-direction: column; gap: 12px; }
+.endpointPath { font-family: var(--ac-mono); font-size: 12px; color: var(--ac-t1); overflow-wrap: anywhere; }
+.paramName { font-family: var(--ac-mono); }
+.required { margin-left: 4px; color: var(--ac-badt); }
+.result { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.statusLine { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; }
+.statusCode { font-family: var(--ac-mono); font-weight: 600; }
+.statusCode[data-tone='ok'] { color: var(--ac-okt); }
+.statusCode[data-tone='warn'] { color: var(--ac-warnt); }
+.statusCode[data-tone='bad'] { color: var(--ac-badt); }
+.headers { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; font-size: 12px; }
+.headers dt { font-family: var(--ac-mono); color: var(--ac-t5); }
+.headers dd { margin: 0; font-family: var(--ac-mono); color: var(--ac-t2); overflow-wrap: anywhere; }
+.resultBody { max-height: 520px; overflow: auto; }
+.curl { display: flex; align-items: flex-start; gap: 8px; }
+.curl .pre { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

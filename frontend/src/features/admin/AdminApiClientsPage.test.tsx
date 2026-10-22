@@ -611,3 +611,67 @@ test('稽核：API 用戶端四種動作的中文摘要，不顯示金鑰前綴'
     expect(s).not.toContain('fedcba98')
   }
 })
+
+test('說明文件分頁：渲染 docs/EXTERNAL_API.md，站台網址代入目前 origin；可下載 Markdown', async () => {
+  const createObjectURL = vi.fn((_blob: Blob) => 'blob:doc')
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }))
+  mount({ at: '/admin/api-clients?tab=docs' })
+  expect(await screen.findByRole('heading', { name: 'GET /external/v1/search' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '錯誤' })).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'API 用戶端清單' })).not.toBeInTheDocument()
+  const doc = screen.getByRole('region', { name: '對外 API 說明文件' })
+  expect(doc.textContent).not.toContain('{BASE_URL}')
+  expect(doc.textContent).toContain(`${window.location.origin}/external/v1/search?`)
+
+  fireEvent.click(screen.getByRole('button', { name: '下載 .md' }))
+  const blob = createObjectURL.mock.calls[0][0]
+  const text = await blob.text()
+  expect(text).toMatch(/^# /)
+  expect(text).not.toContain('{BASE_URL}')
+
+  fireEvent.click(screen.getByRole('button', { name: '複製 Markdown' }))
+  await waitFor(() => expect(copyText).toHaveBeenCalledWith(text))
+})
+
+test('分頁寫進 URL：切到說明文件帶 ?tab=docs，切回用戶端拿掉參數', async () => {
+  mount()
+  await row('外部系統 A')
+  fireEvent.click(screen.getByRole('tab', { name: '說明文件' }))
+  expect(screen.getByTestId('loc')).toHaveTextContent('/admin/api-clients?tab=docs')
+  fireEvent.click(screen.getByRole('tab', { name: '用戶端' }))
+  expect(screen.getByTestId('loc')).toHaveTextContent(/^\/admin\/api-clients$/)
+  expect(await screen.findByRole('region', { name: 'API 用戶端清單' })).toBeInTheDocument()
+})
+
+test('試打：以 Bearer 金鑰直接呼叫對外 API、不帶 cookie；顯示狀態、標頭與回應，curl 不含真金鑰', async () => {
+  const fetchMock = mount({
+    at: '/admin/api-clients?tab=try',
+    override: path => (path.startsWith('/external/')
+      ? { status: 429, body: { detail: '請求過於頻繁，請稍後再試', code: 'api_rate_limited', request_id: 'rid-1' } }
+      : undefined),
+  })
+  fireEvent.change(await screen.findByLabelText('API 金鑰'), { target: { value: RAW_KEY } })
+  fireEvent.change(screen.getByRole('textbox', { name: /^q/ }), { target: { value: 'AI 伺服器' } })
+  fireEvent.change(screen.getByRole('textbox', { name: /^limit/ }), { target: { value: '5' } })
+  fireEvent.click(screen.getByRole('button', { name: '送出' }))
+
+  expect(await screen.findByText('429')).toBeInTheDocument()
+  const call = fetchMock.mock.calls.find(([p]) => p.startsWith('/external/'))!
+  expect(call[0]).toBe('/external/v1/search?q=AI+%E4%BC%BA%E6%9C%8D%E5%99%A8&limit=5')
+  expect(call[1]).toMatchObject({ method: 'GET', credentials: 'omit', headers: { Authorization: `Bearer ${RAW_KEY}` } })
+  expect(screen.getByLabelText('回應內容')).toHaveTextContent('"code": "api_rate_limited"')
+  const curl = screen.getByLabelText('curl 指令').textContent!
+  expect(curl).toContain('$API_KEY')
+  expect(curl).toContain('/external/v1/search?q=')
+  expect(document.body.textContent).not.toContain(RAW_KEY)
+})
+
+test('試打：換到原檔連結端點，沒填 report_id 不能送', async () => {
+  const fetchMock = mount({ at: '/admin/api-clients?tab=try' })
+  fireEvent.click(await screen.findByRole('button', { name: '/reports/{report_id}/file-url' }))
+  expect(screen.getByRole('button', { name: '送出' })).toBeDisabled()
+  expect(screen.getByText('請填 report_id')).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: /^report_id/ }), { target: { value: 'abc' } })
+  fireEvent.click(screen.getByRole('button', { name: '送出' }))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([p]) => p === '/external/v1/reports/abc/file-url')).toBe(true))
+})

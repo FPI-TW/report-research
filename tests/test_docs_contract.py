@@ -49,6 +49,7 @@ LIVING_DOCS = (
     "docs/ARCHITECTURE.md",
     "docs/EXTRACTION.md",
     "docs/DEPLOYMENT_STATUS.md",
+    "docs/EXTERNAL_API.md",
 )
 
 # 走訪檔案系統時整棵剪掉的目錄（產物、相依、快取、唯讀來源）。

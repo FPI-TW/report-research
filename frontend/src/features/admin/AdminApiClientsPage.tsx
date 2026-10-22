@@ -1,14 +1,18 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
-  Button, Card, ConfirmDialog, ConsolePage, PageHeader, RowActions, Status, isElevationCancelled, toast, useElevate,
+  Button, Card, ConfirmDialog, ConsolePage, PageHeader, RowActions, Status, Tabs, isElevationCancelled, toast, useElevate,
   useQueryParam, type RowAction,
 } from '../../components/console'
 import c from '../../components/console/Console.module.css'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import type { ApiClientEntitlements, CreateApiClientRequest } from '../../lib/generated/adminApi'
+import { endpointsOf, parseMarkdown, withBaseUrl } from './apiClients/apiDoc'
+import { ApiDocView } from './apiClients/ApiDocView'
+import { ApiTester } from './apiClients/ApiTester'
 import { ClientDrawer, type ClientAction } from './apiClients/ClientDrawer'
 import { CreateClientDialog, LimitsDialog, NoteDialog, ScopeDialog } from './apiClients/ClientDialogs'
 import { dimsText, keyPrefixText, marketsText, messageOf } from './apiClients/clientFields'
+import { EXTERNAL_API_MD } from './apiClients/externalApiDoc'
 import { KeyDialog, type ShownKey } from './apiClients/KeyDialog'
 import { fmtDateTime } from './auditLabels'
 import { RequireScope } from './RequireScope'
@@ -16,6 +20,13 @@ import {
   useApiClientActions, useApiClients, type AdminApiClient, type ApiClientPatch, type ApiClientScope,
 } from './useAdminApiClients'
 import local from './ApiClients.module.css'
+
+type TabKey = 'clients' | 'docs' | 'try'
+const TABS: readonly { value: TabKey; label: string }[] = [
+  { value: 'clients', label: '用戶端' },
+  { value: 'docs', label: '說明文件' },
+  { value: 'try', label: '試打' },
+]
 
 type Form = { kind: 'create' } | { kind: 'limits' | 'scope' | 'note'; id: number }
 type Pending = { kind: 'disable' | 'rotate'; client: AdminApiClient }
@@ -38,6 +49,12 @@ function ApiClients() {
   const { create, update, entitlements, rotate } = useApiClientActions()
   const { elevated, dialog } = useElevate()
   const [openId, setOpenId] = useQueryParam('client')
+  const [tabParam, setTabParam] = useQueryParam('tab')
+  const tab = TABS.find(t => t.value === tabParam)?.value ?? 'clients'
+  // 文件裡的 {BASE_URL} 代入目前站台：在哪個環境下載，交出去的就是那個環境的網址。
+  const baseUrl = window.location.origin
+  const docMarkdown = useMemo(() => withBaseUrl(EXTERNAL_API_MD, baseUrl), [baseUrl])
+  const endpoints = useMemo(() => endpointsOf(parseMarkdown(docMarkdown)), [docMarkdown])
   const [form, setForm] = useState<Form | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
   const [shownKey, setShownKey] = useState<ShownKey | null>(null)
@@ -112,15 +129,19 @@ function ApiClients() {
 
   return (
     <ConsolePage>
-      <PageHeader summary="對外 API（/external/v1）的金鑰、限流、每日額度與授權範圍。"
+      <PageHeader summary="對外 API（/external/v1）的金鑰、限流、每日額度與授權範圍，以及交給對方的說明文件。"
         actions={<Button variant="primary" onClick={() => setForm({ kind: 'create' })}>建立用戶端</Button>}
         help={<>
           每個 API 用戶端一把金鑰，以 <code>Authorization: Bearer</code> 認證，不查也不發 session。
           金鑰只在建立與輪替時顯示一次，系統只保存雜湊值；建立與輪替需要重新驗證身分。
           停用、輪替與設定變更都在對方的下一個請求生效。授權範圍：市場必選；券商、報告類型、商品類型留空＝不限。
           每日額度以台北時間日曆日計。每一筆操作都會留在「操作紀錄」。
+          「說明文件」可下載後交給 API 用戶端；「試打」用金鑰直接呼叫對外 API，會計入該用戶端的額度。
         </>} />
-      <Card title="API 用戶端清單" labelledBy="api-clients-title"
+      <Tabs label="API 用戶端的分頁" tabs={TABS} value={tab} onChange={v => setTabParam(v === 'clients' ? null : v)} />
+      {tab === 'docs' && <ApiDocView markdown={docMarkdown} baseUrl={baseUrl} />}
+      {tab === 'try' && <ApiTester endpoints={endpoints} baseUrl={baseUrl} />}
+      {tab === 'clients' && <Card title="API 用戶端清單" labelledBy="api-clients-title"
         hint={clients.data ? `${clients.data.length} 個` : undefined}>
         {clients.isPending ? (
           <p className={c.empty}>載入中…</p>
@@ -175,7 +196,7 @@ function ApiClients() {
             </table>
           </div>
         )}
-      </Card>
+      </Card>}
       <ClientDrawer client={opened} busy={busy} onClose={() => setOpenId(null)} onAction={start} />
       {form?.kind === 'create' && <CreateClientDialog onClose={() => setForm(null)} onCreate={onCreate} />}
       {form?.kind === 'limits' && editing && (

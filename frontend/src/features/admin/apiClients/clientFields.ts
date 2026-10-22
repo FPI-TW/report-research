@@ -13,10 +13,10 @@ export const SCOPE_LABELS: Record<ApiClientScope, string> = {
 }
 export const SCOPE_ORDER = Object.keys(SCOPE_LABELS) as ApiClientScope[]
 
-// 選填維度：留空＝不限。值是語料裡的原字串（券商名、報告類型、商品類型代碼），逐字比對。
+// 選填維度：留空＝不限。值是語料裡的原字串（券商代碼、報告類型、商品類型代碼），逐字比對——券商是代碼不是中文名。
 export const OPTIONAL_DIMS = [
-  { key: 'source', label: '券商', example: '元大、凱基' },
-  { key: 'report_type', label: '報告類型', example: '個股報告、產業報告' },
+  { key: 'source', label: '券商', example: 'yuanta、kgi' },
+  { key: 'report_type', label: '報告類型', example: '速報、報告' },
   { key: 'instrument_type', label: '商品類型', example: 'equity、etf' },
 ] as const
 export type OptionalDim = (typeof OPTIONAL_DIMS)[number]['key']

@@ -32,7 +32,7 @@
 | 閱讀頁 | `/app/report/:hash` | 原檔 PDF 內嵌檢視（EmbedPDF）、重點摘錄、券商訊號卡、相似研報 |
 | 觀點雷達 | `/app/radar` | 標的目錄、多券商評等與目標價共識、四維論點、券商時間軸，讀取零 LLM |
 | 每日簡報 | `/app/brief` | 窗期內新研報與評等變動的日報 |
-| 管理後台 | `/app/admin` | 限管理員，各頁依 scope 顯示。主控台版面：圖示軌分七個領域（總覽、內容、存取、維運、安全、洞察、設定）＋次級面板＋頂列（⌘K 頁面搜尋、深淺色主題）。內容：待複核、研報管理、上傳研報；存取：帳號、配額、API 用戶端；維運（`/app/admin/operations/*`）：服務、依賴圖、來源主機、事件、管線、資料健康、資料庫、排程工作、日誌、主機、診斷、LLM 用量；安全與操作紀錄；使用分析；功能旗標。主機、排程工作、事件三頁要靠監控匯入器（`load-observations`）才有資料，沒裝的主機（正式環境）不列。舊入口 `/app/monitor` 導回檢索頁 |
+| 管理後台 | `/app/admin` | 限管理員，各頁依 scope 顯示。主控台版面：圖示軌分七個領域（總覽、內容、存取、維運、安全、洞察、設定）＋次級面板＋頂列（⌘K 頁面搜尋、深淺色主題）。內容：待複核、研報管理、上傳研報；存取：帳號、配額、API 用戶端（含對外 API 說明文件與試打）；維運（`/app/admin/operations/*`）：服務、依賴圖、來源主機、事件、管線、資料健康、資料庫、排程工作、日誌、主機、診斷、LLM 用量；安全與操作紀錄；使用分析；功能旗標。主機、排程工作、事件三頁要靠監控匯入器（`load-observations`）才有資料，沒裝的主機（正式環境）不列。舊入口 `/app/monitor` 導回檢索頁 |
 
 ## 系統架構
 
@@ -131,7 +131,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 
 所有路徑除 `/login`、`/healthz`、`/app/assets/` 外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*`、`/api/admin/*` 與 `/api/progress` 限管理員（一般使用者回 403），每條另要求一個 scope（管理員預設有 `admin`、`accounts.manage`、`audit.read`、`review.manage`、`ops.read`、`reports.manage`、`analytics.read`；`qa_content.read`、`ops.operate`、`api_clients.manage` 要另外授予；super admin 全部都有）。表中寫「已提升」指近 10 分鐘內在同一個 session 重新驗證過密碼（`POST /api/me/elevate`），否則 403 `elevation_required`。會改變狀態的請求（POST／PUT／PATCH／DELETE）帶了 `Origin` 就必須與 `Host` 相同，跨站一律 403 `csrf_rejected`。JSON 錯誤一律是 `{detail, code, request_id}`：`detail` 維持原意（多半是中文訊息，422 是欄位錯誤清單），`code` 是穩定字串，`request_id` 對得上 journal 那一行。SSE 端點每 20 秒送一行心跳註解。
 
-對外 API（`/external/v1/*`）不走登入與 session：每個 API 用戶端一把金鑰，以 `Authorization: Bearer <api_key>` 認證，不查也不發 session cookie；反過來，站內 `/api/*` 一律不認 Bearer。缺金鑰 401 `api_key_missing`、金鑰無效／停用／已輪替 401 `api_key_invalid`（帶 `WWW-Authenticate: Bearer`）、scope 不足 403 `api_scope_missing`、每分鐘限流 429 `api_rate_limited`、每日額度用完 429 `api_quota_exceeded`（每日額度以台北時間日曆日計，台北 0 點＝UTC 16:00 重置；429 都帶 `Retry-After`）。認證、錯誤碼與授權範圍語意見 `docs/WORKFLOW.md` 的「對外 API」。
+對外 API（`/external/v1/*`）不走登入與 session：每個 API 用戶端一把金鑰，以 `Authorization: Bearer <api_key>` 認證，不查也不發 session cookie；反過來，站內 `/api/*` 一律不認 Bearer。缺金鑰 401 `api_key_missing`、金鑰無效／停用／已輪替 401 `api_key_invalid`（帶 `WWW-Authenticate: Bearer`）、scope 不足 403 `api_scope_missing`、每分鐘限流 429 `api_rate_limited`、每日額度用完 429 `api_quota_exceeded`（每日額度以台北時間日曆日計，台北 0 點＝UTC 16:00 重置；429 都帶 `Retry-After`）。認證、錯誤碼與授權範圍語意見 `docs/WORKFLOW.md` 的「對外 API」；交給 API 用戶端的說明是 `docs/EXTERNAL_API.md`（後台「API 用戶端」頁可檢視、下載與試打）。
 
 | 方法 | 路徑 | 參數 | 回應 | 備註 |
 |---|---|---|---|---|
@@ -417,6 +417,7 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 | `docs/EXTRACTION.md` | 抽取層現況：選型與授權、文件模型、回退、品質指標、快取、`extraction_log`、golden set、回填、切塊與樣板 |
 | `docs/DEPLOYMENT_STATUS.md` | 各主機的部署現況與待確認事項 |
 | `docs/production_resilience.md` | 部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
+| `docs/EXTERNAL_API.md` | 交給 API 用戶端的對外 API 說明（認證、權限與資料範圍、限流與額度、端點、錯誤碼、範例）；後台「API 用戶端」頁的「說明文件」與「試打」分頁直接取用 |
 | `docs/EXTERNAL_ACCESS.md` | 辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |
 | `docs/nas_scheduled_sync_deployment.md` | NAS 定時同步的掛載、sudoers、timer 安裝 |
 | `docs/LINEBOT_ALWAYS_ON.md` | LineBot 常駐與監控 |

@@ -328,6 +328,33 @@ class DependencyGraphTests(unittest.TestCase):
         staging = load_catalog(STAGING_TOML, resolve_user=_uid)
         self.assertEqual(set(staging.get("web").depends_on), {"rds", "r2", "deepseek"})
 
+    def test_web_probe_exit_codes_follow_the_probe_priority(self):
+        """scripts/check_web_health.sh 的優先序是 8→6→7：被蓋住的那項判斷不出來，但沒被蓋住的要判得出來。
+
+        2026-10-22：DeepSeek 餘額低（7）時 r2 顯示「不明」——7 只在 R2 沒問題時才會出現，r2 卻沒把它當正常。
+        """
+        expected = {  # 退出碼 → (r2, deepseek)
+            0: ("ok", "ok"),
+            6: ("down", "unknown"),     # 6 蓋住 7：餘額低與否看不出來
+            7: ("ok", "degraded"),
+            8: ("unknown", "down"),     # 8 蓋住 6
+        }
+
+        def judge(ext, code):
+            if code in ext.down_exit_codes:
+                return "down"
+            if code in ext.degraded_exit_codes:
+                return "degraded"
+            return "ok" if code in ext.ok_exit_codes else "unknown"
+
+        for toml in (PROD_TOML, STAGING_TOML):
+            cat = load_catalog(toml, resolve_user=_uid)
+            exts = {e.name: e for e in cat.externals if e.probe == "health"}
+            self.assertEqual(set(exts), {"r2", "deepseek"})
+            for code, (r2, deepseek) in expected.items():
+                with self.subTest(catalog=toml.name, code=code):
+                    self.assertEqual((judge(exts["r2"], code), judge(exts["deepseek"], code)), (r2, deepseek))
+
     def test_valid_graph_with_externals(self):
         cat = self._parse([_svc("web", ["r2"]), _svc("health")],
                           [{"name": "r2", "tier": "critical", "probe": "health", "down_exit_codes": [6]},

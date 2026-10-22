@@ -439,14 +439,16 @@ depends_on = ["postgres"]
 description = "登入事件與已結束 session 的保留期清除（04:45）"
 
 # ── 外部依賴（依賴圖的節點；代理不查也不動它們）──────────────────────────────
-# 退出碼對照：scripts/check_web_health.sh（6＝R2、7＝DeepSeek 餘額低、8＝DeepSeek 不可用；優先序 8→5→6→7，
-# 被蓋住的那項判斷不出來）、scripts/check_edge_health.sh（1＝邊緣故障、3＝origin 自己壞了、4＝判不出來）、
+# 退出碼對照：scripts/check_web_health.sh（6＝R2、7＝DeepSeek 餘額低、8＝DeepSeek 不可用；優先序 8→6→7（5 已退役），
+# 被蓋住的那項判斷不出來；反過來，7 只在 R2 沒問題時才會出現，所以對 r2 而言 7 等同 0）、scripts/check_edge_health.sh（1＝邊緣故障、3＝origin 自己壞了、4＝判不出來）、
 # scripts/check_linebot_health.sh（1＝bot 沒在跑、2＝存不了檔）。
 
 [[externals]]
 name = "r2"
 tier = "critical"
 probe = "health"
+# 7（DeepSeek 餘額低）排在 6 之後：R2 有問題時一定回 6，回 7 就代表 R2 沒問題。
+ok_exit_codes = [0, 7]
 down_exit_codes = [6]
 description = "Cloudflare R2 物件儲存（原檔、PDF；/healthz/storage）"
 

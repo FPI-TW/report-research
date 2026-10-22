@@ -279,6 +279,8 @@ description = "AWS RDS PostgreSQL 16（report-research-staging-postgres，TLS ve
 name = "r2"
 tier = "critical"
 probe = "health"
+# 7（DeepSeek 餘額低）排在 6 之後：R2 有問題時一定回 6，回 7 就代表 R2 沒問題。
+ok_exit_codes = [0, 7]
 down_exit_codes = [6]
 description = "Cloudflare R2 物件儲存（與辦公室主機共用 bucket；/healthz/storage）"
 

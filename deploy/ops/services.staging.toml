@@ -8,7 +8,7 @@
 # - DB 是 RDS（不是容器）→ 外部依賴 rds，沒有 postgres 容器；主機上沒有任何 Docker workload，所以這裡沒有
 #   container 服務，代理 unit 也不加 docker 群組。
 # - 沒有 NAS：新研報走 SYNC_SOURCE=r2-inbox；不裝 report-mark-backup（RDS 自動備份）、report-mark-linebot-*、
-#   report-mark-metrics、report-mark-backfill。
+#   report-mark-metrics、report-mark-backfill。帳號刪除的 tombstone 改寫 EC2 本機磁碟（見下面「帳號刪除」段）。
 # - 對外是 Cloudflare 橘雲 A record → EIP:443 → apt 安裝的 nginx（systemd 的 nginx.service）→ web；沒有 cloudflared。
 # - 這裡只列已安裝的 unit：2026-10-02 起的 web、nginx 與 8 組 timer，加上 2026-10-07 部署 Admin v1.5 時裝的
 #   schema-check（`SCHEMA_CHECK_MODE=version`：app 帳號沒有 CREATEDB）。其餘 Admin v1 的 unit（load-observations、
@@ -240,6 +240,31 @@ tier = "supporting"
 actions = ["status", "logs"]
 depends_on = ["rds"]
 description = "登入事件與已結束 session 的保留期清除（04:45）"
+
+# ── 帳號刪除的執行與重放（2026-10-22 安裝到 EC2）────────────────────────────────
+# EC2 沒有 NAS：tombstone 寫在 EC2 本機磁碟（/etc/default/report-mark-sync 的 REPORT_MARK_BACKUP_DIR＝
+# /var/lib/report-mark/tombstones）。DB 在 RDS，從快照還原不會動到這顆磁碟，所以仍符合「tombstone 不跟 DB 一起被還原」。
+# 唯讀：刪除不可逆，不給 run。
+
+[[services]]
+name = "delete-accounts"
+kind = "systemd"
+unit = "report-mark-delete-accounts.service"
+timer = "report-mark-delete-accounts.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["rds"]
+description = "執行到期的帳號刪除（先寫本機 tombstone 再刪 DB，每小時）"
+
+[[services]]
+name = "replay-deletions"
+kind = "systemd"
+unit = "report-mark-replay-deletions.service"
+timer = "report-mark-replay-deletions.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["rds"]
+description = "還原後重放帳號刪除（比對本機 tombstone，資料復活就重刪並告警，每日）"
 
 # ── 外部依賴 ─────────────────────────────────────────────────────────────
 # 退出碼對照同 services.prod.toml。RDS 沒有專屬探針：health 的 1（/healthz 非 200）分不出是 web 還是 DB 壞了，

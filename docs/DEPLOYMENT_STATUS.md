@@ -8,8 +8,9 @@
 - **schema 版本**（2026-10-13）：兩個環境都在 revision 0011（目前的 head）。
 - **正式環境（EC2）**（2026-10-13）：
   - 已裝並啟用：`report-mark-web`、`report-mark-ops-agent-staging`，以及 sync、freshness、audit、r2-reconcile、schema-check、db-snapshot、analytics-rollup、security-retention 的 timer，和 health／incident、edge-health／edge-incident、security-health／security-incident、feed-health／feed-incident 四組探針與事件。
-  - 沒裝：監控收集與匯入（metrics、load-observations、rollup-observations）、容器與主機探針（container-*、host-*）、linebot 探針、應用層備份（backup）、稽核錨定（audit-anchor）、刪帳執行與重放（delete-accounts、replay-deletions）、檢索回歸（retrieval-regression）、上傳 worker（upload）與 ClamAV、回填（backfill）、信標發布（beacon）。本專案在 EC2 不用容器。
-  - 連帶的現況：排程刪除帳號不會執行；備份只有 RDS 自動備份；管理後台不列主機、排程工作、事件三頁（服務清單裡沒有 load-observations 時前端自動隱藏）。
+  - 沒裝：監控收集與匯入（metrics、load-observations、rollup-observations）、容器與主機探針（container-*、host-*）、linebot 探針、應用層備份（backup）、稽核錨定（audit-anchor）、檢索回歸（retrieval-regression）、上傳 worker（upload）與 ClamAV、回填（backfill）、信標發布（beacon）。本專案在 EC2 不用容器。
+  - 2026-10-22 補裝並啟用刪帳執行與重放（delete-accounts、replay-deletions）：tombstone 寫本機磁碟 `/var/lib/report-mark/tombstones`（`REPORT_MARK_BACKUP_DIR`，`/etc/default/report-mark-sync`）；首跑執行了 1 筆積壓的到期刪除，重放全部乾淨。
+  - 連帶的現況：備份只有 RDS 自動備份；管理後台不列主機、排程工作、事件三頁（服務清單裡沒有 load-observations 時前端自動隱藏）。
   - repo 可查：`deploy/ops/services.staging.toml` 只列已安裝的 unit；兩個環境的差異表在 `docs/production_resilience.md`「v2 功能的啟用矩陣」。
 - **測試環境（辦公室主機）**（2026-10-13）：`deploy/systemd/` 裡屬於這台的 unit 全裝且 timer 都啟用（沒裝的只有 EC2 專用的 feed-health／feed-incident、`report-mark-ops-agent-staging`，與開發用的 dev-smoke、ops-agent-dev），含 ClamAV 容器與上傳 worker。已知缺口：刪帳執行、刪帳重放、稽核錨定要寫 NAS（`REPORT_MARK_BACKUP_DIR`），而 NAS 只在每日備份（`scripts/db_backup.sh`）時掛載；WSL 重啟後到下次備份前，這三支會以 rc=2 告警。手動補掛要在 systemd 的命名空間裡做：`sudo systemd-run --wait --pipe /usr/local/sbin/mount-nas-backup`（互動 shell 裡 `sudo mount-nas-backup` 掛的，服務看不到）。
 - **來源主機信標**（2026-10-13）：兩台都已啟用——辦公室主機設 `HOST_BEACON_NAME=office` 並跑 `report-mark-beacon.timer`，EC2 設 `HOST_BEACON_WATCH=office` 並跑 feed-health／feed-incident。**告警還沒演練過**（沒有實際驗證過失聯或推送失敗時通知會送達）。處置與停用見 `docs/production_resilience.md`「來源主機信標」。

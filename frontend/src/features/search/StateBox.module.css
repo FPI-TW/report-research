@@ -1,0 +1,12 @@
+.box { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 24px; animation: fadeIn 0.32s ease both; }
+.icon {
+  width: 44px; height: 44px; border-radius: 999px;
+  background: var(--tf-border-weak); color: var(--tf-text-muted-aa);
+  display: flex; align-items: center; justify-content: center;
+}
+.title { margin: 14px 0 0; font-size: 16px; font-weight: 600; color: var(--tf-text-1); }
+.desc { margin: 6px 0 0; max-width: 360px; font-size: 13.5px; line-height: 1.65; color: var(--tf-text-muted-aa); }
+.actions { display: flex; gap: 8px; margin-top: 18px; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .box { animation: none; } }

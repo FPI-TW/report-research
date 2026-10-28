@@ -174,6 +174,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/reading/{file_hash}/text` | `chunk`（選填） | `ReadingText`（正典文字，超過 `READING_TEXT_MAX_CHARS` 截斷並標 `truncated`） | `text_sha256` 一律對完整文字算 |
 | GET | `/api/reading/{file_hash}/similar` | `limit`（1–20，6） | 相似研報清單 | dense 近鄰 |
 | GET | `/api/radar/instruments` | `market`、`q`、`limit`（1–100）、`offset`、`sort`（`latest`／`reports`／`brokers`／`code`）、`stance`、`with_consensus` | `{total, limit, offset, has_more, next_offset, items, facets, latest_report_date}` | 帶 `stance` 時 Python 端分頁；目標價只回方向 |
+| GET | `/api/radar/rating-changes` | `limit`（1–20，預設 4） | `{items: [{market, instrument_code, instrument_name, broker, broker_display, report_date, rating_from, rating_to, direction}]}` | 跨標的最新評等變動（研報庫首頁），與該券商對同一標的的前一份訊號相比；只回評等 |
 | GET | `/api/instrument/{code:path}/radar` | `market`（必填）、`window`（`30`／`90`／`180`／`all`，預設 `90`） | 共識、四維論點、近期事件、券商清單 | 未擷取回 200 `pending_extraction` |
 | GET | `/api/instrument/{code:path}/radar/events` | `market`、`window`、`limit`（1–50）、`offset` | 事件列 | |
 | GET | `/api/instrument/{code:path}/radar/brokers/{broker:path}` | `market`、`window` | 單一券商對該標的的歷史 | |

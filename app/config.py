@@ -350,7 +350,7 @@ class Settings:
     # 執行期可觀測性
     log_level: str
 
-    # 觀點雷達目錄（web/routers/radar.py）的回應快取秒數；0＝停用
+    # 觀點雷達目錄與最新評等變動（web/routers/radar.py）的回應快取秒數；0＝停用
     radar_catalog_cache_ttl: float
 
     # DB 連線池與逾時（app/services/db.py）—— 本區段只放 DB_* 旋鈕

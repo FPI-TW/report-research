@@ -1,7 +1,6 @@
 .wrap {
-  border: 1px solid var(--tf-border); border-radius: var(--tf-radius-card);
+  border: 1px solid #e6e6e9; border-radius: 16px;
   overflow: hidden; overflow-x: auto; background: var(--tf-surface);
-  box-shadow: var(--tf-shadow-xs); margin-top: 10px;
 }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .table th {
@@ -12,8 +11,8 @@
 .sortable { cursor: pointer; user-select: none; }
 .sortable:hover { color: var(--tf-graphite); }
 .row { border-top: 1px solid var(--tf-border-weak); cursor: pointer; }
-.row:hover { background: var(--tf-border-weak); }
-.row:focus-visible { outline: none; box-shadow: inset 2px 0 0 var(--tf-graphite); background: var(--tf-border-weak); }
+.row:hover { background: var(--tf-hover); }
+.row:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; background: var(--tf-border-weak); }
 .table td { padding: 10px 12px; color: var(--tf-text-2); }
 .name { color: var(--tf-text-1); font-weight: 500; max-width: 380px; }
 /* 報告名稱是真連結，但視覺沿用儲存格文字（整列已是可點區） */

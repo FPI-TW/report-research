@@ -1,31 +1,33 @@
-.bar { display: flex; align-items: center; gap: 8px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 8px 14px; box-shadow: var(--tf-shadow-xs); transition: box-shadow var(--tf-dur-2) var(--tf-ease-standard), border-color var(--tf-dur-2) var(--tf-ease-standard); }
-.bar:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite); }
-.icon { color: var(--tf-text-3); flex-shrink: 0; }
-.input { flex: 1; min-width: 0; border: none; outline: none; background: none; font-size: 14px; color: var(--tf-text-1); font-family: inherit; }
+.field {
+  display: flex; align-items: center; gap: 14px;
+  height: 56px; padding: 0 12px 0 20px;
+  border: 1px solid var(--tf-border); border-radius: 16px; background: var(--tf-surface);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+.field:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite); }
+.icon { flex: none; color: var(--tf-text-muted-aa); }
+.input {
+  flex: 1; min-width: 0; height: 100%;
+  border: none; outline: none; background: none; padding: 0;
+  font-family: inherit; font-size: 16px; color: var(--tf-text-1);
+}
 .input::placeholder { color: var(--tf-text-4); }
-.clear { border: none; background: none; cursor: pointer; color: var(--tf-text-3); display: flex; padding: 2px; }
+/* 隱藏瀏覽器內建的藍色清除鈕，一律用自訂的（交接包「互動」） */
+.input::-webkit-search-cancel-button,
+.input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
 
-/* ── 檢索台主角大框：全頁唯一主角 ──
-   靠尺寸、圓角與高度取得份量，不靠彩色描邊——簡白調性下深色實線框會顯得髒重。 */
-.lg {
-  border-radius: var(--tf-radius-panel);
-  border-color: var(--tf-border);
-  box-shadow: var(--tf-shadow-float);
-  height: 60px; padding: 0 12px 0 20px; gap: 15px;
+.clear {
+  flex: none; width: 32px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; background: transparent; color: var(--tf-text-muted-aa);
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
 }
-.lg:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite), var(--tf-shadow-float); }
-.lg .input { font-size: 16.5px; }
-.lg .icon { color: var(--tf-text-2); }
+.clear:hover { background: var(--tf-hover); color: var(--tf-text-1); }
+.clear:active { transform: scale(0.92); }
+.clear:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
 
-/* Enter 鍵帽（僅大框）：下緣加粗做出鍵帽的實體感 */
-.key {
-  font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-text-3);
-  border: 1px solid var(--tf-border); border-bottom-width: 2px; border-radius: 5px;
-  padding: 4px 8px; background: var(--tf-canvas); flex: none;
-}
-
-@media (max-width: 900px) {
-  .lg { height: 56px; padding-left: 16px; }
-  .lg .input { font-size: 16px; }
-  .key { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .field, .clear { transition: none; }
+  .clear:active { transform: none; }
 }

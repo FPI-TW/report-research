@@ -1,87 +1,56 @@
-import { Skeleton } from '../../components/primitives/Skeleton'
+import type { CSSProperties } from 'react'
+import shared from './shared.module.css'
 import styles from './RadarSkeleton.module.css'
 
+function Skel({ w, h, style }: { w: number | string; h: number; style?: CSSProperties }) {
+  return <span className={shared.skel} style={{ width: w, height: h, ...style }} />
+}
+
 /**
- * 各區塊版型骨架（非中央 spinner）。
- *
- * 它是 `q.isLoading && !data` 期間唯一的內容，資料回來後整段被換掉——所以它必須**鏡射**
- * 真實版型，而不只是「看起來像在載入」。骨架與真物的欄數、卡片邊界、章節標題數量一旦
- * 對不上，載入完成當下整頁就會往上或往下跳，捲動位置一起失準。
- *
- * 對應真物：CoverageStrip（薄卡）→ 市場共識摘要（左面板：評等窄列＋兩張點圖；
- * 右欄：切換鈕＋已選券商面板）→ 四向觀點 → 近期關鍵變化 → 各券商最新觀點。
+ * 詳情載入中的骨架，版面對齊實際內容：三張摘要卡 → 目標價點圖 → 四向觀點 → 各券商最新觀點。
+ * 資料回來後整段被換掉，所以各區塊的高度要接近真的，否則載入完成那一刻整頁會跳。
  */
 export function RadarSkeleton() {
   return (
-    <div aria-busy="true" data-testid="radar-skeleton">
-      <div className={`${styles.card} ${styles.coverage}`}>
-        <Skeleton width={220} height={14} radius={4} />
-        <Skeleton width={112} height={14} radius={4} />
+    <div aria-busy="true" aria-label="載入中" data-testid="radar-skeleton">
+      <div className={styles.cards}>
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className={`${shared.tile} ${styles.card}`}>
+            <Skel w={72} h={12} />
+            <Skel w={96} h={30} style={{ marginTop: 10 }} />
+            <Skel w="100%" h={8} style={{ marginTop: 18 }} />
+            <Skel w="60%" h={12} style={{ marginTop: 12 }} />
+            <Skel w={120} h={12} style={{ marginTop: 26 }} />
+          </div>
+        ))}
       </div>
 
-      <div className={styles.sectionTitle}><Skeleton width={112} height={19} radius={4} /></div>
-      <div className={styles.summary}>
-        <div className={`${styles.card} ${styles.summaryMain}`}>
-          <div className={styles.strip}>
-            <Skeleton width={64} height={12} radius={4} />
-            <Skeleton width={52} height={20} radius={4} />
-            <Skeleton width={86} height={13} radius={4} />
-            <Skeleton width={180} height={13} radius={4} />
-          </div>
-          {Array.from({ length: 2 }, (_, i) => (
-            <div key={i} className={styles.plot}>
-              <Skeleton width={120} height={15} radius={4} />
-              <Skeleton width={200} height={12} radius={4} style={{ marginTop: 8 }} />
-              {Array.from({ length: 4 }, (_, r) => (
-                <Skeleton key={r} height={14} radius={4} style={{ marginTop: 20 }} />
-              ))}
-              <Skeleton width="60%" height={12} radius={4} style={{ marginTop: 22 }} />
-            </div>
-          ))}
-        </div>
-        <div className={styles.summarySide}>
-          <Skeleton height={44} radius={14} />
-          <div className={`${styles.card} ${styles.detail}`}>
-            <Skeleton width={64} height={12} radius={4} />
-            <Skeleton width={110} height={22} radius={6} style={{ marginTop: 12 }} />
-            {Array.from({ length: 3 }, (_, i) => (
-              <Skeleton key={i} width="72%" height={21} radius={4} style={{ marginTop: 20 }} />
-            ))}
-            <Skeleton height={44} radius={10} style={{ marginTop: 20 }} />
-          </div>
-        </div>
+      <div className={`${shared.tile} ${styles.plot}`}>
+        <Skel w={110} h={15} />
+        <Skel w="100%" h={1} style={{ marginTop: 64 }} />
+        <div className={styles.ends}><Skel w={36} h={11} /><Skel w={36} h={11} /></div>
       </div>
 
-      <div className={styles.sectionTitle}><Skeleton width={80} height={19} radius={4} /></div>
+      <div className={styles.heading}><Skel w={72} h={17} /></div>
       <div className={styles.thesis}>
         {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className={styles.card}>
-            <Skeleton width={48} height={12} radius={4} />
-            <Skeleton width={100} height={20} radius={4} style={{ marginTop: 12 }} />
-            <Skeleton width="80%" height={12} radius={4} style={{ marginTop: 10 }} />
+          <div key={i} className={`${shared.tile} ${styles.card}`}>
+            <Skel w={48} h={14} />
+            <Skel w="70%" h={12} style={{ marginTop: 12 }} />
+            <Skel w="100%" h={12} style={{ marginTop: 12 }} />
+            <Skel w="80%" h={12} style={{ marginTop: 8 }} />
           </div>
         ))}
       </div>
 
-      <div className={styles.sectionTitle}><Skeleton width={112} height={19} radius={4} /></div>
-      <div className={styles.events}>
-        {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className={styles.card}>
-            <Skeleton width={160} height={12} radius={4} />
-            <Skeleton width="90%" height={16} radius={4} style={{ marginTop: 10 }} />
-            <Skeleton width="70%" height={36} radius={6} style={{ marginTop: 10 }} />
-          </div>
-        ))}
-      </div>
-
-      <div className={styles.sectionTitle}><Skeleton width={128} height={19} radius={4} /></div>
-      <div className={styles.card}>
-        {Array.from({ length: 5 }, (_, i) => (
+      <div className={styles.heading}><Skel w={110} h={17} /></div>
+      <div className={shared.tile}>
+        {Array.from({ length: 4 }, (_, i) => (
           <div key={i} className={styles.row}>
-            <Skeleton width="18%" height={14} radius={4} />
-            <Skeleton width="12%" height={14} radius={4} />
-            <Skeleton width="14%" height={14} radius={4} />
-            <Skeleton width="20%" height={14} radius={4} />
+            <Skel w="22%" h={14} />
+            <Skel w={44} h={22} />
+            <Skel w="12%" h={14} />
+            <Skel w="24%" h={12} />
           </div>
         ))}
       </div>

@@ -1,0 +1,161 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+/* 依序進場（間隔 0.07s）；減少動態時直接顯示。 */
+.grid > * {
+  animation: rise 0.65s var(--tf-ease-apple) both;
+}
+.grid > :nth-child(1) { animation-delay: 0.05s; }
+.grid > :nth-child(2) { animation-delay: 0.12s; }
+.grid > :nth-child(3) { animation-delay: 0.19s; }
+
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px;
+}
+
+.cardTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tf-text-muted-aa);
+}
+
+.basis { font-weight: 500; }
+
+.bigRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px 10px;
+  margin-top: 8px;
+}
+
+.big {
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+.bigNum { letter-spacing: -0.02em; }
+
+.unit {
+  font-size: 13px;
+  color: var(--tf-text-muted-aa);
+}
+
+.distBar { margin-top: 16px; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--tf-text-2);
+}
+.legend li { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 8px; height: 8px; border-radius: 2px; }
+.legendN { color: var(--tf-text-muted-aa); }
+
+.buy { background: var(--tf-rating-buy); }
+.overweight { background: var(--tf-rating-overweight); }
+.neutral { background: var(--tf-rating-neutral); }
+.underweight { background: var(--tf-rating-underweight); }
+.sell { background: var(--tf-rating-sell); }
+
+.range {
+  position: relative;
+  height: 24px;
+  margin-top: 14px;
+}
+.track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 11px;
+  height: 2px;
+  border-radius: 1px;
+  background: #e9e9ec;
+}
+.iqr {
+  position: absolute;
+  top: 7px;
+  min-width: 4px;
+  height: 10px;
+  margin-left: -2px;
+  border-radius: 3px;
+  background: var(--tf-gold-line);
+}
+.median {
+  position: absolute;
+  top: 3px;
+  width: 2px;
+  height: 18px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--tf-gold-text);
+}
+
+.rangeLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--tf-text-muted-aa);
+}
+
+.note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--tf-text-muted-aa);
+}
+
+.provided {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+}
+.provided b { font-weight: 400; color: var(--tf-text-1); }
+
+/* 底列貼齊卡片底部，三張卡的分隔線因此對齊；外層的 padding 保證與上方內容至少隔 12px。 */
+.footWrap {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tf-border-weak);
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--tf-text-muted-aa);
+}
+.footWide { gap: 14px; }
+
+.tri { margin-left: 2px; }
+.strong { font-weight: 600; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid > * { animation: none; }
+}

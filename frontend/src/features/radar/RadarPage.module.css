@@ -5,153 +5,30 @@
   min-height: 0;
 }
 
+/* 整頁唯一的捲動容器。清單與詳情切換時有橫向位移進場，橫向一律裁掉，免得撐出橫捲軸。 */
 .scroll {
   flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
-  /* 與下面 padding 的第一個值**必須相同**：`position: sticky` 的 top 是從 scrollport 的
-     內距邊算起的，所以 `top: 0` 會讓 RadarHeader 的吸頂列停在這圈內距**下方**，上面留一條
-     內容照常捲過去、完全看得見的縫。那條縫是 2026-08-07 回報的「標的頁頂部顯示」缺陷。
-     吸頂列靠這個變數把自己往上拉滿那圈內距（見 RadarHeader.module.css 的 .top）。
-     兩處都寫死同一個數字是刻意的：padding 那行被 RadarCssContracts 逐字釘住，不能改寫成 var()。 */
-  --radar-gutter-top: 28px;
-  padding: 28px 32px 40px;
 }
 
 .inner {
-  max-width: 1280px;
+  max-width: 1080px;
   margin: 0 auto;
-  width: 100%;
+  padding: 28px 24px 56px;
 }
 
-.section {
-  margin-top: 32px;
-}
-
-/* 章節標題列：h2 與該區的操作鈕並排。
-   操作鈕刻意放在 h2 **外面**——放進去的話它會被串進標題的可及名稱，螢幕閱讀器在標題
-   導覽時唸的是「近期關鍵變化 查看全部 20 項，標題 層級 2」，而且展開後同一個標題會變成
-   「近期關鍵變化 收合」，四個章節裡只有這個的名稱會隨狀態跳動。
-   （這個缺陷在測試裡是隱形的：getByText 只串接直接子文字節點，剛好避開巢狀按鈕。） */
-.sectionHead {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.sectionHead .sectionTitle { margin-bottom: 0; }
-
-.sectionTitle {
-  font-family: var(--tf-display);
-  font-weight: 600;
-  font-size: 19px;
-  color: var(--tf-text-1);
-  margin: 0 0 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  position: relative;
-  padding-left: 14px;
-}
-/* 固定高度、垂直置中，不再用 em 綁住容器高度。
-   舊寫法 top/bottom: 0.16em 讓色條高度跟著 h2 的行高走，於是塞了 44px 觸控目標的那個
-   章節，色條變成別區的兩倍長（約 38px vs 17px）——而它標示的重要性跟其他三區完全平行。
-   更糟的是那個差異是資料驅動的：事件數 ≤ 3 時按鈕不渲染、色條又縮回去，同一頁在不同標的
-   上長得不一樣。改成固定值後四條永遠等長。 */
-.sectionTitle::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 20px;
-  width: 4px;
-  border-radius: 2px;
-  background: var(--tf-gold-strong);
-}
-
-/* min-height: 44px 是觸控目標契約（RadarCssContracts 逐字比對），不能拿掉；
-   但它是 flex 項目，會直接決定標題列的高度。負的 margin-block 讓 44px 的命中區
-   往上下溢出到 .sectionHead 的 margin-bottom 與 .section 的 margin-top 空隙裡，
-   cross 軸貢獻變成 −11 + 44 + −11 = 22px（小於文字行的 26.6px），行高因此回到與
-   其他三個章節一致，而實體點擊區一點都沒縮水。 */
-.sectionMeta {
-  margin-left: auto;
-  font-family: var(--tf-sans);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--tf-graphite);
-  display: inline-flex;
-  align-items: center;
-  margin-block: -11px;
-  min-height: 44px;
-}
-
-/* 資料品質註記（overview 的 data.notes）。原本寫成 inline style。 */
-.notes {
-  margin-top: 16px;
-  padding-left: 18px;
-}
-
-.card {
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  box-shadow: var(--tf-shadow-xs);
-}
-
-.muted {
-  color: var(--tf-text-muted-aa);
-  font-size: 13px;
-}
-
-.coverageNotice {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 20px;
-  padding: 10px 14px;
-  border: 1px solid var(--tf-warn-border);
-  border-radius: var(--tf-radius-card);
-  background: var(--tf-warn-bg);
-  color: var(--tf-warn-text);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.coverageNotice strong { flex: none; }
-
-/* 常駐於 picker 與 overview 兩種狀態之下：免責不得依賴 overview 的 notes
-   （那是資料品質註記，單幣別＋EPS 單組時為空陣列，整區不渲染）。 */
 .disclaimer {
-  margin: 28px 0 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--tf-border);
-  font-family: var(--tf-sans);
+  margin: 28px 4px 0;
   font-size: 12px;
   line-height: 1.6;
   color: var(--tf-text-muted-aa);
 }
 
-.dash {
-  color: var(--tf-text-muted-aa);
-  font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 900px) {
-  /* 變數要跟著同一條規則裡 padding 的第一個值走（契約由 RadarCssContracts 釘住）。 */
-  .scroll {
-    --radar-gutter-top: 20px;
-    padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px));
+/* 手機底部導覽列 56px＋安全區。 */
+@media (max-width: 759px) {
+  .inner {
+    padding: 20px 16px calc(56px + 24px + env(safe-area-inset-bottom, 0px));
   }
-  .coverageNotice { align-items: flex-start; flex-direction: column; gap: 2px; }
-}
-
-/* 上面那 80px ＝ 56px 手機底部導覽 ＋ 24px 呼吸空間，但底部導覽是 AppShell 在 767px
-   才掛載的，不是 900px。768–900px（iPad 直向、Surface 分割視窗、桌機視窗縮到八百多）
-   有側欄、沒有底部導覽，卻仍留著那 80px，捲到底會看到一段解釋不了的空白。
-   刻意用 min-width 追加一條收窄規則、而不是去改上面那組值——那串 padding 是
-   RadarCssContracts.test.ts 的逐字比對目標，改一個字元就紅；而 mediaBlock 的 regex
-   找的是 `@media (max-width: 900px)`，`@media (min-width: …) and (…)` 不會被它命中。 */
-@media (min-width: 768px) and (max-width: 900px) {
-  .scroll { padding-bottom: 40px; }
 }

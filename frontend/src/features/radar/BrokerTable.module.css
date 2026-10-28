@@ -1,0 +1,147 @@
+.section { margin-top: 28px; }
+
+.headRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.heading {
+  flex: 1;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+
+.copy {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tf-text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.copy:hover { color: var(--tf-text-1); }
+.copy:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; border-radius: 4px; }
+
+.frame {
+  overflow: hidden;
+  overflow: clip;
+}
+
+/* 交接包定稿欄寬：券商、評等、目標價、EPS、近期變化、最新研報。 */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) 90px 100px 90px minmax(0, 1.3fr) 80px;
+  gap: 16px;
+  align-items: center;
+}
+
+.colHead {
+  padding: 10px 20px;
+  border-bottom: 1px solid #efeff1;
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item { border-top: 1px solid var(--tf-border-weak); }
+.item:first-child { border-top: none; }
+
+.row {
+  width: 100%;
+  padding: 13px 20px;
+  border: 0;
+  background: transparent;
+  color: var(--tf-text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.row:hover { background: #f7f7f8; }
+.row:active { background: var(--tf-border-weak); }
+.row:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.item[data-open] .row { background: var(--tf-fill-subtle); }
+
+.right { text-align: right; justify-self: end; }
+
+.broker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 550;
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chev {
+  flex: none;
+  color: var(--tf-text-muted-aa);
+  transition: transform 0.2s var(--tf-ease-out);
+}
+.item[data-open] .chev { transform: rotate(90deg); }
+
+.stale {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--tf-text-muted-aa);
+}
+
+.value { font-size: 13.5px; }
+.eps { color: var(--tf-text-2); }
+.eps,
+.value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.35;
+}
+.meta { font-size: 11px; color: var(--tf-text-muted-aa); }
+.na { color: var(--tf-text-muted-aa); }
+
+.change {
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.change[data-tone="up"] { color: var(--tf-up); }
+.change[data-tone="down"] { color: var(--tf-down); }
+.change[data-tone="flat"] { color: var(--tf-text-muted-aa); }
+
+/* 日期在連字號處不斷行；跨年的 YYYY-MM-DD 略寬於欄寬時往左邊的欄距溢出。 */
+.date {
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--tf-text-muted-aa);
+}
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr) 80px 90px; }
+  .grid > :nth-child(n + 4) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row, .chev, .copy { transition: none; }
+}

@@ -1,238 +1,170 @@
+/* 每日簡報（交接包「每日簡報」）：內容寬 1120，左欄內容、右欄 300px 月曆與來源（sticky）。
+   設計稿用到、tokens 還沒有的幾個值先放在頁面變數，之後若收進 tokens.css 只改這裡。 */
 .page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  --brief-tile-line: #e6e6e9;
+  --brief-row-hover: #f7f7f8;
+  --brief-press: #f0f0f2;
+  --brief-skel: #ececef;
+  --brief-body-text: #3a3a3e;
+  --brief-hover: rgba(0, 0, 0, 0.05);
+  --brief-faint: #c7c7cc;
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
 }
 
-.scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 28px 32px 40px;
+/* 整頁位移進場放在捲動容器本身（交接包坑 3：捲動區「內容」不做位移進場）。 */
+.scroll { flex: 1; min-height: 0; overflow-y: auto; animation: briefPageIn var(--tf-dur-enter) var(--tf-ease-apple) both; }
+.pad { max-width: 1120px; margin: 0 auto; padding: 28px 24px 56px; }
+.title { margin: 0; font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -0.02em; color: var(--tf-text-1); }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; margin-top: 18px; }
+.col { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.rail { position: sticky; top: 20px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+.tile { background: var(--tf-surface); border: 1px solid var(--brief-tile-line); border-radius: 16px; }
+
+/* ── 概況卡 ── */
+.overview { padding: 26px 28px 24px; }
+.ovHead { display: flex; align-items: flex-start; gap: 12px; }
+.ovDate { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.ovTitle {
+  margin: 0; font-size: 38px; line-height: 1.15; font-weight: 650; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; color: var(--tf-text-1);
+}
+.ovSub { font-size: 15px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; }
+.arr {
+  flex: none; width: 32px; height: 32px; padding: 0; border: 1px solid var(--tf-border); border-radius: 999px;
+  background: transparent; color: var(--tf-text-muted-aa); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.12s, color 0.12s, transform 0.12s;
+}
+.arr:hover { background: var(--brief-hover); color: var(--tf-text-1); }
+.arr:active:not(:disabled) { transform: scale(0.92); }
+.arr:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.arr:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 12px 36px; margin: 22px 0 0; }
+.stat { display: flex; flex-direction: column-reverse; gap: 4px; }
+.stat dt { font-size: 12.5px; color: var(--tf-text-muted-aa); }
+.stat dd { margin: 0; font-size: 26px; line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--tf-text-1); }
+
+.mixBar { display: flex; gap: 3px; height: 8px; margin-top: 20px; border-radius: 4px; overflow: hidden; }
+.mixSeg { min-width: 3px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--tf-text-2); }
+.legendItem { display: inline-flex; align-items: baseline; gap: 6px; }
+.swatch { align-self: center; width: 8px; height: 8px; border-radius: 2px; }
+.legendCount { color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
+
+/* ── 今日重點 ── */
+.cardTitle { margin: 0; font-size: 17px; font-weight: 600; color: var(--tf-text-1); }
+.highlights { padding: 22px 28px 10px; }
+.hlList { margin: 0; padding: 0; list-style: none; }
+.hl { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 4px; padding: 14px 0; border-bottom: 1px solid var(--tf-border-weak); }
+.hl:last-child { border-bottom: none; }
+.hlLead { padding: 18px 0 20px; }
+.hlNo { font-size: 17px; line-height: 1.55; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--tf-gold-strong); }
+.hlLead .hlNo { font-size: 30px; line-height: 1.1; }
+.hlBody { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.hlLead .hlBody { gap: 8px; }
+.hlText { margin: 0; font-size: 15.5px; line-height: 1.7; color: var(--tf-text-1); }
+.hlLead .hlText { font-size: 20px; line-height: 1.55; font-weight: 550; letter-spacing: -0.01em; }
+.hlBroker { font-size: 12.5px; color: var(--tf-text-4); }
+
+/* ── 市場焦點 ── */
+.focus { padding: 22px 28px 26px; }
+.focus .cardTitle { margin-bottom: 16px; }
+.focusGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 28px; }
+.focusHead { display: flex; align-items: baseline; gap: 8px; }
+.focusDot { align-self: center; flex: none; width: 8px; height: 8px; border-radius: 999px; }
+.focusName { margin: 0; font-size: 15px; font-weight: 600; color: var(--tf-text-1); }
+.focusCount { margin-left: auto; font-size: 12px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.share { display: block; height: 3px; margin-top: 10px; border-radius: 2px; background: var(--tf-border-weak); overflow: hidden; }
+.shareFill { display: block; height: 100%; border-radius: 2px; }
+.focusText { margin: 10px 0 0; font-size: 14.5px; line-height: 1.75; color: var(--brief-body-text); }
+.focusText + .focusText { margin-top: 8px; }
+
+/* ── 認不出段落時的原樣 markdown ── */
+.mdTile { padding: 22px 28px 24px; }
+.md { font-size: 14.5px; line-height: 1.75; color: var(--brief-body-text); }
+.md :global(.tf-md-h) { margin: 20px 0 8px; font-size: 15px; font-weight: 600; color: var(--tf-text-1); }
+.md :global(.tf-md-h):first-child { margin-top: 0; }
+.md p { margin: 0 0 10px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 20px; }
+.md li { margin: 4px 0; }
+.mdTile .cardTitle + .md { margin-top: 14px; }
+
+.disclaimer { margin: 0 6px; font-size: 12px; line-height: 1.6; color: var(--tf-text-4); }
+
+/* ── 載入、空白、錯誤 ── */
+.skel {
+  display: block; position: relative; overflow: hidden; border-radius: 6px; background: var(--brief-skel);
+}
+.skel::after {
+  content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: briefSkelSweep 1.5s var(--tf-ease-apple) infinite;
+}
+.skelOverview { display: flex; flex-direction: column; gap: 14px; padding: 26px 28px 24px; }
+.skelStats { display: flex; gap: 36px; margin-top: 8px; }
+.skelText { display: flex; flex-direction: column; gap: 14px; padding: 22px 28px 26px; }
+.skelRail { display: flex; flex-direction: column; gap: 12px; padding: 18px 18px 16px; }
+
+.stateBox { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 24px; margin-top: 18px; }
+.stateIc {
+  width: 44px; height: 44px; border-radius: 999px; background: var(--tf-border-weak); color: var(--tf-text-muted-aa);
+  display: flex; align-items: center; justify-content: center;
+}
+.stateT { margin: 14px 0 0; font-size: 16px; font-weight: 600; color: var(--tf-text-1); font-variant-numeric: tabular-nums; }
+.stateD { margin: 6px 0 0; max-width: 360px; font-size: 13.5px; line-height: 1.65; color: var(--tf-text-muted-aa); }
+.stateA { display: flex; gap: 8px; margin-top: 18px; }
+.btn {
+  height: 36px; padding: 0 16px; border: 1px solid var(--tf-border); border-radius: 10px; background: var(--tf-surface);
+  color: var(--tf-text-1); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background 0.12s, box-shadow 0.18s, transform 0.12s;
+}
+.btn:hover { background: var(--brief-row-hover); }
+.btn:active { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08); transform: scale(0.97); transition-duration: 0.08s; }
+.btn:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; }
+.btnPrimary, .btnPrimary:hover { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
+
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ── 進場：初次依序 stagger；切換日期時左欄整欄 0.5s 重播（交接包「每日簡報」） ── */
+.stagger > * { animation: briefRise 0.65s var(--tf-ease-apple) both; }
+.stagger > :nth-child(1) { animation-delay: 0.05s; }
+.stagger > :nth-child(2) { animation-delay: 0.12s; }
+.stagger > :nth-child(3) { animation-delay: 0.19s; }
+.stagger > :nth-child(4) { animation-delay: 0.26s; }
+.stagger > :nth-child(5) { animation-delay: 0.33s; }
+.swap > * { animation: briefSwap 0.5s var(--tf-ease-apple) both; }
+.fadeIn { animation: briefFade 0.32s ease both; }
+
+@keyframes briefPageIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes briefRise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes briefSwap { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes briefFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes briefSkelSweep { to { transform: translateX(100%); } }
+
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; }
 }
 
-/* 簡報是「讀完」的東西不是「掃過」的東西，欄寬刻意比檢索頁窄：
-   長文一行超過約 40 個中文字，視線回到行首時容易掉行。 */
-.inner {
-  max-width: 860px;
-  margin: 0 auto;
-  width: 100%;
+@media (max-width: 760px) {
+  .pad { padding: 20px 16px 40px; }
+  .overview { padding: 22px 20px 20px; }
+  .highlights, .focus, .mdTile { padding-left: 20px; padding-right: 20px; }
+  .ovTitle { font-size: 32px; }
+  .focusGrid { grid-template-columns: minmax(0, 1fr); }
+  .hl { grid-template-columns: 40px minmax(0, 1fr); }
 }
 
-.head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
+/* 手機底部導覽（AppShell 在 ≤767px 顯示，固定 56px＋safe area）會蓋住最後一段：留白要涵蓋它，
+   與券商共識頁同一個值。放在 760 那段之後，才不會被它的 padding 簡寫蓋回去。 */
+@media (max-width: 767px) {
+  .pad { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 }
 
-.title {
-  font-family: var(--tf-display);
-  font-weight: 600;
-  font-size: 26px;
-  color: var(--tf-text-1);
-  margin: 0 0 6px;
-}
-
-.lede {
-  margin: 0;
-  color: var(--tf-text-muted-aa);
-  font-size: 13.5px;
-  line-height: 1.6;
-}
-
-.pick {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.pickLabel {
-  font-size: 13px;
-  color: var(--tf-text-muted-aa);
-}
-
-.select {
-  min-height: 44px; /* 觸控目標；與雷達各控制項同一條規則 */
-  padding: 0 12px;
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  background: var(--tf-surface);
-  color: var(--tf-text-1);
-  font-size: 14px;
-}
-
-.state {
-  margin: 24px 0;
-  padding: 20px;
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  background: var(--tf-surface);
-  color: var(--tf-text-muted-aa);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.body {
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  background: var(--tf-surface);
-  padding: 24px 26px;
-}
-
-.meta {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--tf-divider);
-  margin-bottom: 18px;
-}
-
-.metaDate {
-  font-family: var(--tf-display);
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--tf-text-1);
-}
-
-.metaStat {
-  font-size: 13px;
-  color: var(--tf-text-muted-aa);
-}
-
-/* 複製鈕靠右。尺寸、relative 與 svg 的處理照問答那顆（AssistantMessage.module.css 的 .act，
-   理由都寫在那裡）：relative 是「複製→已複製」換圖時的包含塊，display:block 消掉基線落差。 */
-.copy {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  margin-left: auto;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--tf-text-muted-aa);
-  border-radius: 999px;
-  cursor: pointer;
-}
-.copy svg { display: block; width: 15px; height: 15px; stroke-width: 1.8; }
-.copy > span { display: flex; align-items: center; justify-content: center; }
-.copy:hover { background: var(--tf-border); color: var(--tf-graphite); }
-
-/* markdown 本文。renderAnswer 產出的是 h3/h4 + p/ul/ol/table，這裡只負責節奏。 */
-.md {
-  color: var(--tf-text-1);
-  font-size: 15px;
-  line-height: 1.85;
-}
-
-.md :global(.tf-md-h) {
-  font-family: var(--tf-display);
-  font-size: 16.5px;
-  font-weight: 600;
-  margin: 22px 0 10px;
-}
-
-.md :global(.tf-md-h):first-child {
-  margin-top: 0;
-}
-
-.md p {
-  margin: 0 0 12px;
-}
-
-.md ul,
-.md ol {
-  margin: 0 0 12px;
-  padding-left: 1.4em;
-}
-
-.md li {
-  margin-bottom: 6px;
-}
-
-/* 中文的 min-content 是「一個字」，只給 overflow-x 會讓表格壓成逐字直排而不是橫捲，
-   所以一定要配 min-width。 */
-.md :global(table) {
-  display: block;
-  overflow-x: auto;
-  min-width: 0;
-  border-collapse: collapse;
-  font-size: 13.5px;
-}
-
-.sources {
-  margin-top: 26px;
-  padding-top: 18px;
-  border-top: 1px solid var(--tf-divider);
-}
-
-.sourcesTitle {
-  font-family: var(--tf-display);
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--tf-text-1);
-  margin: 0 0 12px;
-}
-
-.srcList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.srcItem {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.srcLink {
-  color: var(--tf-text-1);
-  font-size: 14px;
-  text-decoration: none;
-  line-height: 1.5;
-}
-
-.srcLink:hover,
-.srcLink:focus-visible {
-  color: var(--tf-accent);
-  text-decoration: underline;
-}
-
-.srcMeta {
-  font-size: 12.5px;
-  color: var(--tf-text-muted-aa);
-}
-
-.srcMore {
-  margin: 12px 0 0;
-  font-size: 12.5px;
-  color: var(--tf-text-muted-aa);
-}
-
-.disclaimer {
-  margin: 24px 0 0;
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--tf-text-muted-aa);
-}
-
-@media (max-width: 900px) {
-  .scroll {
-    padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px));
-  }
-  .body {
-    padding: 18px 16px;
-  }
+@media (prefers-reduced-motion: reduce) {
+  .scroll, .stagger > *, .swap > *, .fadeIn, .skel::after { animation: none; }
+  .arr, .btn { transition: none; }
+  .arr:active:not(:disabled), .btn:active { transform: none; }
 }

@@ -539,6 +539,56 @@ async def fetch_reports_by_ids(
     ]
 
 
+@dataclass(frozen=True)
+class BriefWindowMix:
+    """簡報窗期內新進研報的市場分布與券商數（簡報頁概況卡用）。
+
+    `markets` 依篇數由多到少；`market` 為 None 是未標市場的研報，不是錯誤。
+    """
+
+    markets: list[tuple[Optional[str], int]]
+    broker_count: int
+
+
+# 與 _COUNT_WINDOW_REPORTS_SQL 同一條窗期規則（入庫時間、研究報告、對讀者可見），
+# 只是多分組：讀取時現算，不落庫、不呼叫 LLM。
+_WINDOW_MIX_SQL = text(
+    f"""
+    SELECT market, source, count(*) FROM research.research_report r
+    WHERE created_at >= :start AND created_at < :end AND is_research IS NOT FALSE
+      AND {visible_report_sql("r")}
+    GROUP BY market, source
+    """
+)
+
+
+def summarize_window_mix(rows: Sequence[tuple[Optional[str], Optional[str], int]]) -> BriefWindowMix:
+    """把 (market, source, 篇數) 分組結果收成市場分布與券商數（純函式）。"""
+    per_market: dict[Optional[str], int] = {}
+    brokers: set[str] = set()
+    for market, source, n in rows:
+        per_market[market] = per_market.get(market, 0) + int(n)
+        if source:
+            brokers.add(source)
+    # 篇數多的在前；同篇數依代碼排序讓輸出穩定，未標市場一律殿後。
+    ordered = sorted(per_market.items(), key=lambda kv: (kv[0] is None, -kv[1], kv[0] or ""))
+    return BriefWindowMix(markets=ordered, broker_count=len(brokers))
+
+
+async def fetch_window_mix(
+    session: AsyncSession, start: datetime, end: datetime
+) -> BriefWindowMix:
+    """窗期內新進研報的市場分布與券商數。
+
+    算的是整個窗期，不是 `report_ids`（那份清單有 prompt 上限，補跑歷史時會截斷）。
+    簡報產生後才被隱藏的研報在這裡不計入——與來源連結消失同一個規則。
+    """
+    rows = (
+        await session.execute(_WINDOW_MIX_SQL, {"start": start, "end": end})
+    ).all()
+    return summarize_window_mix([(r[0], r[1], r[2]) for r in rows])
+
+
 # ── 寫入 ──────────────────────────────────────────────────────────
 
 _UPSERT_SQL = text(

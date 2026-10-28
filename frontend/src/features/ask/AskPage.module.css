@@ -1,40 +1,69 @@
-.page { display: flex; height: 100%; overflow: hidden; }
-/* relative 是浮動輸入列的定位脈絡：輸入列改成疊在對話流之上，訊息會從它底下捲過去，
-   磨砂才有東西可透。原本兩者是 flex 上下相鄰，內容捲到輸入列上緣就停住、玻璃等於貼在空氣上。 */
-.column { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
-/* 底部留白 = 輸入列高度 + 呼吸空間，確保最後一則訊息不被浮動輸入列蓋住。
-   貼底捲動（AskPage.tsx 的 scrollHeight 判斷）把這段留白算在內，行為不變。 */
-/* 底部淡出。輸入列不再有底色（見 .composerBar），沒有這道遮罩的話訊息會一路捲到
-   畫面最底、與免責文字疊在一起——實測那行字直接變成不可讀。
-   兩個停點都是量出來的：124px 是輸入列頂端（上內距 12 ＋ 輸入框 46 ＋ 免責 25 ＋
-   下內距 16，再留餘裕），40px 是免責文字的上緣——**必須在那裡就已經全透明**，
-   淡到 100% 才透明的話那行字底下會拖著一層 15% 的殘影，實測就是糊掉。
-   中間那段刻意留著半透明：輸入框是磨砂玻璃，身後全空的話就沒有東西可以糊。
-   底部 padding 的 132px **必須大於 124px**，否則捲到底時最後一則訊息會被自己的遮罩削掉。 */
+/* relative：底部輸入列、抽屜都以這裡為定位脈絡。overflow 用 clip 而不只是 hidden：
+   hidden 的容器仍可被程式捲動，抽屜滑入期間的焦點捲動會把整個版面往旁邊拉（交接包坑 1）。 */
+.page { position: relative; height: 100%; display: flex; flex-direction: column; overflow: hidden; overflow: clip; }
+
+/* 頁首：對話標題。空白頁時沒有分隔線（標題是「新對話」，只是佔住同一個位置）。 */
+.header {
+  flex: none; height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 20px;
+  border-bottom: 1px solid transparent; transition: border-color 0.24s var(--tf-ease-out);
+}
+.headerLine { border-bottom-color: rgba(0, 0, 0, 0.06); }
+.title {
+  flex: 1; min-width: 0; margin: 0; font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 對話流：抽屜開著且視窗夠寬（≥1180px）時讓出右側空間，窄的時候抽屜直接疊在上面。 */
 .flow {
-  flex: 1; overflow-y: auto; padding: 20px 20px 132px;
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 124px), transparent calc(100% - 40px));
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 124px), transparent calc(100% - 40px));
+  flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px;
+  transition: padding-right 0.34s var(--tf-ease-out);
 }
-.flow > :first-child, .flow > div { max-width: 760px; margin-left: auto; margin-right: auto; }
-/* 空狀態（尚無對話）：起始畫面的引導文字與輸入框在可用空間內垂直置中。
-   此時不渲染浮動輸入列，故收回為它預留的底部留白。 */
-/* 空狀態不渲染輸入列，遮罩要收回——否則會把置中的 hero（連同它裡面的輸入框）
-   下緣一起淡掉。 */
-.flowCentered {
-  display: flex; flex-direction: column; justify-content: center; padding-bottom: 20px;
-  -webkit-mask-image: none; mask-image: none;
+/* 底部淡出：訊息從浮動輸入框底下捲過去，淡到免責文字上緣就全透明，那行字底下才不會拖著殘影。 */
+.flowMasked {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 150px), transparent calc(100% - 52px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 150px), transparent calc(100% - 52px));
 }
-/* flex 子項預設縮成內容寬；補 width:100% 讓 wrap 維持 760/composer 640 原寬 */
-.flowCentered > * { width: 100%; }
-/* 浮在對話流之上，但**自己不畫任何底**：玻璃改由輸入框本身承擔（Composer.module.css
-   的 .box）。原本這一層是整條磨砂帶＋上緣分隔線，視覺上等於在頁面底部橫切一刀；
-   拿掉之後訊息是從輸入框底下捲過去，磨砂只發生在輸入框那個形狀裡。
-   pointer-events:none 讓這層不吃點擊——它現在只是個定位容器，覆蓋住的那片對話
-   內容仍要能選取；輸入框與免責文字再各自收回互動。 */
-.composerBar {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 12px 20px 16px;
-  pointer-events: none;
+/* 底部 170px 的留白大於輸入列＋遮罩的高度：捲到底時最後一則不會被輸入列或遮罩蓋住。 */
+.turns { max-width: 720px; margin: 0 auto; padding: 28px 0 170px; }
+
+/* 浮動輸入列：這一層自己不畫底、也不吃點擊（被它蓋住的那片對話仍要能選取），只有輸入框收回互動。 */
+.dockLayer {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 0 24px 14px; pointer-events: none;
+  transition: padding-right 0.34s var(--tf-ease-out);
 }
-.composerBar > * { pointer-events: auto; }
+.dock { position: relative; max-width: 720px; margin: 0 auto; pointer-events: auto; will-change: transform; }
+
+@media (min-width: 1180px) {
+  .shift { padding-right: 392px; }
+}
+
+/* 回到最新／有新內容：置中用 left/right 0＋margin auto，不用 translateX(-50%)——
+   進出場的 transform 會把它蓋掉、按鈕就往右偏（交接包坑 2）。 */
+.toBottom {
+  position: absolute; left: 0; right: 0; top: -48px; width: max-content; margin: 0 auto;
+  height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 14px 0 12px;
+  border: none; border-radius: 999px; background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.1);
+  font: inherit; font-size: 12.5px; color: var(--tf-text-2); cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.24s var(--tf-ease-out);
+}
+.toBottom:hover { color: var(--tf-text-1); }
+.toBottomOff { opacity: 0; transform: translateY(8px); pointer-events: none; }
+
+@media (max-width: 640px) {
+  .flow { padding: 0 16px; }
+  .dockLayer { padding: 0 16px 12px; }
+  .header { padding: 0 16px; }
+}
+
+/* 手機：外殼的分頁列是 fixed、疊在內容上（56px＋安全區），不預留空間。輸入列與 AI 聲明
+   （法規揭露）要整個坐在它上方，遮罩與底部留白一起上移。767px 與 AppShell 切換手機版的斷點一致。 */
+@media (max-width: 767px) {
+  .page { --ask-tabbar: calc(56px + env(safe-area-inset-bottom)); }
+  .dockLayer { padding-bottom: calc(var(--ask-tabbar) + 10px); }
+  .turns { padding-bottom: calc(170px + var(--ask-tabbar)); }
+  .flowMasked {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 150px - var(--ask-tabbar)), transparent calc(100% - 52px - var(--ask-tabbar)));
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 150px - var(--ask-tabbar)), transparent calc(100% - 52px - var(--ask-tabbar)));
+  }
+}

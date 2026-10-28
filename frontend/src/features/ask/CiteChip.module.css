@@ -1,0 +1,30 @@
+/* 引用編號：淡金膠囊（交接包「回答」）。數字用介面字型的等寬數字，不換 monospace。 */
+.cite {
+  display: inline-block; min-width: 18px; height: 18px; margin: 0 1px; padding: 0 5px;
+  border: none; border-radius: 999px; background: var(--tf-gold-tint); color: var(--tf-gold-text);
+  font: 700 11px/18px var(--tf-display); font-variant-numeric: tabular-nums;
+  vertical-align: 1px; cursor: pointer;
+  transition: background var(--tf-dur-1) ease, color var(--tf-dur-1) ease, transform 0.18s var(--tf-ease-emphasized);
+}
+.cite:hover, .cite:focus-visible { background: var(--tf-gold-text); color: var(--tf-on-gold); transform: translateY(-1px); }
+.pop { animation: pop 0.34s var(--tf-ease-emphasized) both; }
+
+/* 預覽卡是浮層：只有浮層有陰影。 */
+.card {
+  position: fixed; z-index: 60; width: 300px; display: block;
+  padding: 12px 14px; border-radius: 14px; background: var(--tf-surface);
+  box-shadow: var(--tf-shadow-pop);
+  pointer-events: none; text-align: left; white-space: normal; cursor: default;
+  font-weight: 400;
+  animation: cardIn 0.18s var(--tf-ease-out) both;
+}
+.above { transform-origin: 50% 100%; }
+.below { transform-origin: 50% 0; }
+.top { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.mkt { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; flex: none; }
+.spacer { flex: 1; }
+.date { font-size: 11px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
+.title { display: block; font-size: 13px; font-weight: 600; line-height: 1.45; color: var(--tf-text-1); word-break: break-word; }
+
+@keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.14); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes cardIn { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }

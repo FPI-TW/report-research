@@ -1,174 +1,186 @@
-/* 水平內距與 ReportPage 的 .docBar 對齊到同一條 24px 基準線 ——
-   兩者上下相鄰，左緣不齊會在標題與工具列之間看出一道階梯。
-   （.disc 已改掛左欄底部、跟著 .intel 的 14px 走，不再是這條基準線上的第三者。） */
+/* 研報面板頁首（交接包「閱讀頁」第 1–2 點）。 */
 .hd {
-  border-bottom: 1px solid var(--tf-divider);
-  background: var(--tf-surface);
-  flex: none;
-  padding: 18px 24px 0;
+  padding: 14px 24px 22px;
 }
 
-/* 上一頁＋麵包屑同一列：上一頁回到剛才所在的頁面（檢索、問答、雷達、簡報、相似研報都可能是來處），
-   麵包屑則固定指向檢索。 */
-.top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
 .back {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: -8px;
-  padding: 4px 8px;
-  border: none;
-  border-radius: var(--tf-radius-md);
+  border: 0;
   background: none;
-  color: var(--tf-text-2);
+  padding: 0;
   font: inherit;
   font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
   cursor: pointer;
+  transition:
+    color var(--tf-dur-1) var(--tf-ease-standard),
+    gap var(--tf-dur-2) var(--tf-ease-out);
 }
-.back:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); }
-.back:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 1px; }
+.back:hover {
+  color: var(--tf-text-1);
+  gap: 7px;
+}
+.back:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
-.crumb {
+/* 市場、券商、日期、報告類型同一列：文字與數字混排一律對齊基線 */
+.metas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  margin-top: 18px;
   font-size: 12.5px;
-  color: var(--tf-text-3);
-  display: flex;
+  color: var(--tf-text-muted-aa);
+}
+
+.mkt {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-.crumb a {
-  color: var(--tf-text-3);
-  text-decoration: none;
-}
-.crumb a:hover {
-  color: var(--tf-graphite);
-  text-decoration: underline;
+  align-self: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--tf-radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  flex: none;
 }
 
-.row {
-  display: flex;
-  align-items: flex-start;
-  gap: 20px;
+.broker {
+  font-weight: 600;
+  color: var(--tf-text-1);
 }
 
-.main {
-  flex: 1;
-  min-width: 0;
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
 .title {
-  font-family: var(--tf-display);
-  font-size: 24px;
+  margin: 10px 0 0;
+  font-size: 21px;
+  line-height: 1.45;
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin: 0 0 9px;
-  line-height: 1.35;
   color: var(--tf-text-1);
+  overflow-wrap: anywhere;
 }
 
-.metas {
+.codes {
   display: flex;
-  align-items: center;
-  gap: 9px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  gap: 6px;
+  margin-top: 12px;
 }
 
-/* 市場 chip：淡底深字由 marketTint() 以 inline style 帶入 */
-.mkt {
-  font-family: var(--tf-mono);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: var(--tf-radius-pill);
-}
-
-.metaItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 13px;
-  color: var(--tf-text-2);
-}
-.metaItem b {
-  font-weight: 500;
-  color: var(--tf-text-1);
-}
-
-.dot {
-  color: var(--tf-text-4);
-}
-
+/* 標的代號：數字與字母都等寬（--tf-code），行高沿用父層 */
 .code {
-  font-family: var(--tf-mono);
-  font-size: 12px;
-  color: var(--tf-graphite);
-  background: var(--tf-graphite-tint);
-  border: 1px solid var(--tf-graphite-line);
-  padding: 1px 7px;
-  border-radius: var(--tf-radius-pill);
-}
-
-.tag {
-  font-size: 11.5px;
-  color: var(--tf-text-3);
+  height: 22px;
+  line-height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
   background: var(--tf-canvas);
-  border: 1px solid var(--tf-border);
-  padding: 2px 8px;
-  border-radius: var(--tf-radius-pill);
+  font-family: var(--tf-code);
+  font-size: 11.5px;
+  color: var(--tf-text-2);
 }
 
 .acts {
   display: flex;
   gap: 8px;
-  flex: none;
-  padding-top: 4px;
+  margin-top: 18px;
 }
 
-/* 位移/縮放歸 Motion（Pressable/MotionLink）；此處只留純色與邊框的 hover 態 */
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 13px;
-  border-radius: var(--tf-radius-md);
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--tf-border);
+  border-radius: 10px;
+  background: var(--tf-surface);
+  color: var(--tf-text-1);
+  font: inherit;
   font-size: 13px;
   font-weight: 500;
-  cursor: pointer;
-  border: 1px solid var(--tf-border);
-  background: var(--tf-surface);
-  color: var(--tf-text-2);
   white-space: nowrap;
   text-decoration: none;
-  transition: background var(--tf-dur-1) var(--tf-ease-standard),
-              border-color var(--tf-dur-1) var(--tf-ease-standard),
-              color var(--tf-dur-1) var(--tf-ease-standard);
+  cursor: pointer;
+  transition:
+    background var(--tf-dur-1) var(--tf-ease-standard),
+    transform var(--tf-dur-1) var(--tf-ease-standard);
 }
 .btn:hover {
-  border-color: var(--tf-graphite-line);
-  color: var(--tf-graphite);
-  background: var(--tf-graphite-tint);
+  background: #f7f7f8;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 2px;
 }
 
-.btnGold {
-  background: var(--tf-gold-strong);
-  border-color: var(--tf-gold-strong);
-  color: var(--tf-on-gold);
-}
-.btnGold:hover {
-  background: var(--tf-gold-hover);
-  border-color: var(--tf-gold-hover);
-  color: var(--tf-on-gold);
+/* 「就這篇提問」：主按鈕、撐滿剩餘寬度 */
+.btnPrimary,
+.btnPrimary:hover {
+  flex: 1;
+  min-width: 0;
+  background: var(--tf-graphite);
+  border-color: var(--tf-graphite);
+  color: var(--tf-on-graphite);
 }
 
-@media (max-width: 900px) {
-  .hd { padding: 14px 16px 0; }
-  .row { flex-direction: column; gap: 12px; }
-  .title { font-size: 20px; }
-  .acts { padding-top: 0; }
+.iconBtn {
+  width: 36px;
+  padding: 0;
+  flex: none;
+  color: var(--tf-text-muted-aa);
+}
+.iconBtn:hover {
+  color: var(--tf-text-1);
+}
+
+.copied {
+  color: var(--tf-success);
+  animation: hdSwapIn 0.18s var(--tf-ease-emphasized) both;
+}
+@keyframes hdSwapIn {
+  from {
+    opacity: 0;
+    transform: scale(0.5) rotate(-30deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  .hd {
+    padding: 14px 16px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .back,
+  .btn {
+    transition: none;
+  }
+  .back:hover {
+    gap: 4px;
+  }
+  .btn:active {
+    transform: none;
+  }
+  .copied {
+    animation: none;
+  }
 }

@@ -1,16 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  isValidHash,
-  matchedPct,
-  matchedText,
-  metaParts,
-  reportHref,
-  similarMeta,
-  stanceDisplay,
-  stanceTone,
-  targetSub,
-  fmtTargetPrice,
-} from './readingFormat'
+import { fmtDate, fmtRevisionPct, fmtTargetPrice, isValidHash, reportHref, thumbMarkLabel } from './readingFormat'
 
 const HASH = 'a'.repeat(64)
 
@@ -38,84 +27,41 @@ describe('reportHref', () => {
   })
 })
 
-describe('metaParts', () => {
-  it('source_display 優先於 source', () => {
-    expect(metaParts({ source: 'daiwa', source_display: '大和', report_date: '2026-07-14' }))
-      .toEqual(['大和', '2026-07-14'])
-  })
-  it('source 為 null 時不留多餘分隔', () => {
-    expect(metaParts({ source: null, source_display: null, report_date: '2026-07-14' }))
-      .toEqual(['2026-07-14'])
-  })
-  it('report_date 為 null 時不留多餘分隔', () => {
-    expect(metaParts({ source: 'daiwa', source_display: null, report_date: null })).toEqual(['daiwa'])
-  })
-  it('兩者皆 null 時為空陣列（報頭不渲染任何分隔點）', () => {
-    expect(metaParts({ source: null, source_display: null, report_date: null })).toEqual([])
-  })
-  it('日期只取 YYYY-MM-DD', () => {
-    expect(metaParts({ source: null, source_display: null, report_date: '2026-07-14T08:00:00Z' }))
-      .toEqual(['2026-07-14'])
+describe('fmtDate', () => {
+  it('只取 YYYY-MM-DD，缺值回 null', () => {
+    expect(fmtDate('2026-07-14T00:00:00')).toBe('2026-07-14')
+    expect(fmtDate(null)).toBeNull()
+    expect(fmtDate(undefined)).toBeNull()
   })
 })
 
-describe('similarMeta', () => {
-  it('缺券商或日期時不留下懸空的分隔點', () => {
-    expect(similarMeta({ source_display: '凱基', report_date: '2026-07-08' })).toBe('凱基 · 2026-07-08')
-    expect(similarMeta({ source: null, report_date: '2026-07-08' })).toBe('2026-07-08')
-    expect(similarMeta({ source_display: '凱基', report_date: null })).toBe('凱基')
-    expect(similarMeta({ source: null, report_date: null })).toBe('')
-  })
-})
-
-describe('matchedText / matchedPct', () => {
-  it('設計稿拍板說法「9/12 段相符」', () => {
-    expect(matchedText(9, 12)).toBe('9/12 段相符')
-  })
-  it('百分比四捨五入且夾在 0–100', () => {
-    expect(matchedPct(9, 12)).toBe(75)
-    expect(matchedPct(0, 12)).toBe(0)
-    expect(matchedPct(12, 12)).toBe(100)
-  })
-  it('total 為 0 不除以零', () => {
-    expect(matchedPct(0, 0)).toBe(0)
-  })
-})
-
-describe('stance 顯示與色調', () => {
-  it('依維度用各自的受控詞彙（風險用趨緩/持平/升高）', () => {
-    expect(stanceDisplay('outlook', 'positive')).toBe('正面')
-    expect(stanceDisplay('valuation', 'attractive')).toBe('偏低')
-    expect(stanceDisplay('risk', 'rising')).toBe('升高')
-    expect(stanceDisplay('risk', 'easing')).toBe('趨緩')
-  })
-  it('風險升高＝建設性下降（色調為負，不因字面 positive/negative 而反轉）', () => {
-    expect(stanceTone('risk', 'rising')).toBe('neg')
-    expect(stanceTone('risk', 'easing')).toBe('pos')
-    expect(stanceTone('valuation', 'stretched')).toBe('neg')
-  })
-  it('未映射的 stance 原樣顯示、色調退回中性', () => {
-    expect(stanceDisplay('outlook', 'weird')).toBe('weird')
-    expect(stanceTone('outlook', 'weird')).toBe('neu')
-  })
-  it('stance 為 null 時不給標籤', () => {
-    expect(stanceDisplay('outlook', null)).toBeNull()
-    expect(stanceTone('outlook', null)).toBe('neu')
-  })
-})
-
-describe('targetSub / fmtTargetPrice', () => {
-  it('幣別或期間缺一時不留分隔', () => {
-    expect(targetSub('TWD', '12 個月')).toBe('TWD · 12 個月')
-    expect(targetSub('TWD', null)).toBe('TWD')
-    expect(targetSub(null, '12 個月')).toBe('12 個月')
-    expect(targetSub(null, null)).toBe('')
-  })
+describe('fmtTargetPrice', () => {
   it('缺值回破折號', () => {
     expect(fmtTargetPrice(null)).toBe('—')
     expect(fmtTargetPrice(undefined)).toBe('—')
   })
   it('整數不補小數', () => {
     expect(fmtTargetPrice(2444)).toBe('2,444')
+  })
+})
+
+describe('fmtRevisionPct', () => {
+  it('取絕對值；整數不補小數，其餘留一位', () => {
+    expect(fmtRevisionPct(8)).toBe('8%')
+    expect(fmtRevisionPct(-5)).toBe('5%')
+    expect(fmtRevisionPct(12.5)).toBe('12.5%')
+    expect(fmtRevisionPct(3.04)).toBe('3%')
+  })
+})
+
+describe('thumbMarkLabel', () => {
+  it('兩個以內照列', () => {
+    expect(thumbMarkLabel([3])).toBe('3')
+    expect(thumbMarkLabel([1, 2])).toBe('1 2')
+  })
+  it('連號縮成區間、不連號縮成首號加其餘數', () => {
+    expect(thumbMarkLabel([1, 2, 3, 4, 5])).toBe('1–5')
+    expect(thumbMarkLabel([5, 3, 4])).toBe('3–5')
+    expect(thumbMarkLabel([1, 3, 6])).toBe('1 +2')
   })
 })

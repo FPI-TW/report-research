@@ -1,59 +1,125 @@
+/* 骨架與實頁共用同一組欄寬與斷點（ReportPage.module.css）。 */
 .page {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.hd {
-  border-bottom: 1px solid var(--tf-border);
   background: var(--tf-surface);
-  flex: none;
-  padding: 16px 28px 20px;
+  animation: skFade 0.18s ease both;
+}
+@keyframes skFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .main {
   flex: 1;
-  display: flex;
   min-height: 0;
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
 }
 
 .intel {
-  width: 400px;
-  flex: none;
-  border-right: 1px solid var(--tf-border);
-  background: var(--tf-surface);
-  padding: 22px 24px 40px;
+  min-height: 0;
   overflow: hidden;
+  border-right: 1px solid var(--tf-glass-border);
+}
+
+.hd {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 24px 22px;
+}
+
+.acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.grow {
+  flex: 1;
+  display: flex;
 }
 
 .sec {
-  margin-bottom: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--tf-border-weak);
 }
 
 .doc {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   min-width: 0;
-  background: var(--tf-canvas);
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  padding: 11px 20px;
-  border-bottom: 1px solid var(--tf-border);
-  background: var(--tf-surface);
-  flex: none;
-}
-
-.stage {
-  flex: 1;
   min-height: 0;
-  padding: 22px;
+  display: flex;
+  padding: 28px 32px 0;
+  background: #e9e9ec;
+}
+
+.paper {
+  display: block;
+  width: min(640px, 100%);
+  height: 100%;
+  margin: 0 auto;
+  background: #f4f4f6;
+}
+
+.sk {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #ececef;
+}
+.sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: skSweep 1.5s var(--tf-ease-apple) infinite;
+}
+@keyframes skSweep {
+  to { transform: translateX(100%); }
+}
+
+@media (max-width: 1279px) {
+  .main {
+    grid-template-columns: 360px minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1023px) {
-  .intel { display: none; }
+  .page {
+    overflow: hidden;
+  }
+  .main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .intel {
+    border-right: 0;
+  }
+  .hd {
+    padding: 14px 16px 20px;
+  }
+  .sec {
+    padding: 18px 16px;
+  }
+  .doc {
+    padding: 20px 16px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page {
+    animation: none;
+  }
+  .sk::after {
+    animation: none;
+    display: none;
+  }
 }

@@ -57,7 +57,7 @@ test('↑↓ 移動、Enter 開啟選取的項目', async () => {
 test('輸入時：對話走後端搜尋，前往依名稱比對', async () => {
   const { fetchMock } = wrap()
   fireEvent.change(screen.getByRole('combobox'), { target: { value: '共識' } })
-  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => new URL(u as string, 'http://x').searchParams.get('q') === '共識')).toBe(true))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => new URL(u as string, 'http://x').searchParams.get('q') === '共識')).toBe(true), { timeout: 4000 })
   expect(screen.getByRole('option', { name: '券商共識' })).toBeInTheDocument()
   expect(screen.queryByRole('option', { name: '研報庫' })).not.toBeInTheDocument()
 })
@@ -65,7 +65,8 @@ test('輸入時：對話走後端搜尋，前往依名稱比對', async () => {
 test('沒有結果時說出來', async () => {
   wrap()
   fireEvent.change(screen.getByRole('combobox'), { target: { value: 'zzz不存在' } })
-  expect(await screen.findByText('沒有符合的結果')).toBeInTheDocument()
+  // 要等 200ms 去抖動與對話搜尋回應；CI 機器慢，預設 1 秒會偶爾等不到。
+  expect(await screen.findByText('沒有符合的結果', {}, { timeout: 4000 })).toBeInTheDocument()
 })
 
 test('「設定」開設定彈窗', async () => {

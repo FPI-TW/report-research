@@ -63,10 +63,16 @@ test('輸入時：對話走後端搜尋，前往依名稱比對', async () => {
 })
 
 test('沒有結果時說出來', async () => {
-  wrap()
+  const { fetchMock } = wrap()
+  await screen.findByRole('option', { name: '台積電資本支出' })
   fireEvent.change(screen.getByRole('combobox'), { target: { value: 'zzz不存在' } })
-  // 要等 200ms 去抖動與對話搜尋回應；CI 機器慢，預設 1 秒會偶爾等不到。
-  expect(await screen.findByText('沒有符合的結果', {}, { timeout: 4000 })).toBeInTheDocument()
+  // 要等 200ms 去抖動後以這個關鍵字查過對話、而且結果套用了，才斷言。輸入後到查詢回來之間，
+  // 提示會先短暫出現又被上一輪的對話清單蓋掉；只用 findByText 會抓到那個瞬間（CI 上實際失敗過）。
+  await waitFor(() => {
+    expect(fetchMock.mock.calls.some(([u]) => new URL(u as string, 'http://x').searchParams.get('q') === 'zzz不存在')).toBe(true)
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
+    expect(screen.getByText('沒有符合的結果')).toBeInTheDocument()
+  }, { timeout: 4000 })
 })
 
 test('「設定」開設定彈窗', async () => {

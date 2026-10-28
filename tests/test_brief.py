@@ -24,11 +24,13 @@ from app.services.brief import (  # noqa: E402
     BriefReport,
     BriefRow,
     BriefSignalChange,
+    BriefWindowMix,
     build_material,
     build_prompt,
     market_zh,
     parse_brief,
     rating_zh,
+    summarize_window_mix,
     with_instrument_names,
 )
 from web import deps, server  # noqa: E402
@@ -84,6 +86,24 @@ class WindowTests(unittest.TestCase):
         previous_end = NOW - timedelta(days=90)
         start, _ = generate_brief.resolve_window(previous_end, NOW, max_lookback_days=7)
         self.assertEqual(start, NOW - timedelta(days=7))
+
+
+class WindowMixTests(unittest.TestCase):
+    """概況卡的市場分布與券商數：分組結果收斂錯了不會有任何錯誤訊息，只會畫出錯的長條。"""
+
+    def test_sums_per_market_and_counts_distinct_brokers(self):
+        mix = summarize_window_mix([
+            ("TW", "kgi", 3), ("TW", "yuanta", 2), ("US", "kgi", 4), ("HK", None, 1),
+        ])
+        self.assertEqual(mix.markets, [("TW", 5), ("US", 4), ("HK", 1)])
+        self.assertEqual(mix.broker_count, 2, "同一家券商跨市場只算一次；沒有來源的不算券商")
+
+    def test_unlabelled_market_goes_last_and_ties_are_stable(self):
+        mix = summarize_window_mix([(None, "kgi", 9), ("US", "kgi", 2), ("HK", "kgi", 2)])
+        self.assertEqual(mix.markets, [("HK", 2), ("US", 2), (None, 9)])
+
+    def test_empty_window(self):
+        self.assertEqual(summarize_window_mix([]), BriefWindowMix(markets=[], broker_count=0))
 
 
 class MaterialTests(unittest.TestCase):
@@ -312,11 +332,13 @@ class BriefApiTests(unittest.TestCase):
                 "fetch_brief_by_date",
                 "fetch_brief_dates",
                 "fetch_brief_reports",
+                "fetch_brief_window_mix",
             )
         }
         deps.SessionFactory = _FakeSession
         deps.fetch_brief_dates = self._dates
         deps.fetch_brief_reports = self._reports
+        deps.fetch_brief_window_mix = self._mix
         self.client = _authed_client()
 
     def tearDown(self):
@@ -329,6 +351,10 @@ class BriefApiTests(unittest.TestCase):
     async def _reports(self, session, ids):
         return [_report()] if ids else []
 
+    async def _mix(self, session, start, end):
+        self.mix_window = (start, end)
+        return BriefWindowMix(markets=[("TW", 3), (None, 1)], broker_count=2)
+
     def test_latest_returns_payload_with_sources(self):
         async def fetch(session):
             return _row()
@@ -339,6 +365,37 @@ class BriefApiTests(unittest.TestCase):
         self.assertEqual(body["brief"]["brief_date"], "2026-08-07")
         self.assertEqual(body["brief"]["reports"][0]["file_hash"], f"{1:064d}")
         self.assertEqual(body["available_dates"], ["2026-08-07", "2026-08-06"])
+
+    def test_payload_carries_market_mix_for_the_brief_window(self):
+        async def fetch(session, d):
+            return _row(brief_date=d)
+
+        deps.fetch_brief_by_date = fetch
+        body = self.client.get("/api/brief/2026-08-07").json()
+        self.assertEqual(
+            body["brief"]["markets"],
+            [{"market": "TW", "report_count": 3}, {"market": None, "report_count": 1}],
+        )
+        self.assertEqual(body["brief"]["broker_count"], 2)
+        self.assertEqual(self.mix_window, (NOW - timedelta(hours=24), NOW), "算的是這份簡報自己的窗期")
+
+    def test_market_mix_failure_degrades_without_breaking_the_brief(self):
+        """派生資料 fail-open：分布查不到，簡報本文與來源照常回。"""
+        async def fetch(session):
+            return _row()
+
+        async def broken(session, start, end):
+            raise RuntimeError("db hiccup")
+
+        deps.fetch_latest_brief = fetch
+        deps.fetch_brief_window_mix = broken
+        with self.assertLogs("web.routers.brief", level="WARNING"):
+            resp = self.client.get("/api/brief/latest")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()["brief"]
+        self.assertIsNone(body["markets"])
+        self.assertIsNone(body["broker_count"])
+        self.assertEqual(len(body["reports"]), 1)
 
     def test_latest_without_any_brief_is_pending_not_404(self):
         """空狀態不是錯誤：批次還沒跑是每天早上都會出現的正常狀態。"""

@@ -166,7 +166,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/conversations` | `limit`（1–200）、`offset`、`q`（≤200 字） | 對話串清單（裸陣列，無 total） | `q` 比對整串的有效提問（不只標題），`%`／`_` 為字面字元；前端以「回來的筆數等於 limit」判斷有無下一頁；只列自己的對話串 |
 | GET | `/api/conversations/{conversation_id}` | — | 該對話全部輪次（舊→新） | 看不到任何一列（不存在或別人的）回 404；前端遇 404 改當新對話 |
 | DELETE | `/api/conversations/{conversation_id}`；POST `/api/conversations/{conversation_id}/delete` | — | `{"ok"}` | 以 `COALESCE(conversation_id, id)` 整批刪自己的 `qa_log`；別人的或不存在的回 `{"ok": false}` |
-| GET | `/api/report/{report_id}/full` | — | `report_id`、`file_name`、`title`、`market`、`source`、`summary`、`report_date`、`report_type`、`has_file` | 研報原檔詳情（`web/routers/report_file.py`）；被隱藏或未發布的研報回 404 |
+| GET | `/api/report/{report_id}/full` | — | `report_id`、`file_hash`、`file_name`、`title`、`market`、`source`、`summary`、`report_date`、`report_type`、`has_file` | 研報原檔詳情（`web/routers/report_file.py`）；被隱藏或未發布的研報回 404 |
 | GET | `/api/report/{report_id}/file` | — | 原檔（PDF inline）或 302 到 presigned URL | `r2` 模式缺 key 回 503；被隱藏或未發布的研報回 404 |
 | GET | `/external/v1/search` | `q`（1–500 必填）、`limit`（每頁篇數 1–20，10）、`page`（從 1 起算，1）、`sort`（`relevance`／`date_desc`／`date_asc`）、選填 `market`／`source`／`report_type`／`instrument_type`（各一個值） | `{query, total, page, limit, results: [{report_id, title, file_name, market, source, source_name, report_date, report_type, instrument_types, summary, score}]}`（不回命中段落；超過最後一頁回空的 `results`）；金鑰有 `report.file` 時每筆另附 `file_url`、`file_url_expires_at`（ISO 8601 UTC，產生失敗的那筆為 null） | **對外 API**，`Authorization: Bearer <api_key>`、需 `search` scope。檢索與排序同 `/api/search`，結果限於該 API 用戶端的授權範圍；請求的過濾只能縮小、與授權範圍交集為空直接回空結果。不回目標價等雷達欄位 |
 | GET | `/external/v1/reports/{report_id}/file-url` | `report_id`（UUID） | `{report_id, file_url, expires_at}`（`Cache-Control: no-store`） | **對外 API**，需 `report.file` scope。每次重新查研報（可見性＋授權範圍）：查無、隱藏、草稿、授權外一律 404 `report_not_found`；HEAD 驗 sha256 後才簽，有效期 `EXTERNAL_FILE_URL_TTL_SECONDS`；沒有原檔 404 `original_not_found`、儲存或完整性錯誤 503 `original_unavailable` |
@@ -174,6 +174,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/reading/{file_hash}/text` | `chunk`（選填） | `ReadingText`（正典文字，超過 `READING_TEXT_MAX_CHARS` 截斷並標 `truncated`） | `text_sha256` 一律對完整文字算 |
 | GET | `/api/reading/{file_hash}/similar` | `limit`（1–20，6） | 相似研報清單 | dense 近鄰 |
 | GET | `/api/radar/instruments` | `market`、`q`、`limit`（1–100）、`offset`、`sort`（`latest`／`reports`／`brokers`／`code`）、`stance`、`with_consensus` | `{total, limit, offset, has_more, next_offset, items, facets, latest_report_date}` | 帶 `stance` 時 Python 端分頁；目標價只回方向 |
+| GET | `/api/radar/rating-changes` | `limit`（1–20，預設 4） | `{items: [{market, instrument_code, instrument_name, broker, broker_display, report_date, rating_from, rating_to, direction}]}` | 跨標的最新評等變動（研報庫首頁），與該券商對同一標的的前一份訊號相比；只回評等 |
 | GET | `/api/instrument/{code:path}/radar` | `market`（必填）、`window`（`30`／`90`／`180`／`all`，預設 `90`） | 共識、四維論點、近期事件、券商清單 | 未擷取回 200 `pending_extraction` |
 | GET | `/api/instrument/{code:path}/radar/events` | `market`、`window`、`limit`（1–50）、`offset` | 事件列 | |
 | GET | `/api/instrument/{code:path}/radar/brokers/{broker:path}` | `market`、`window` | 單一券商對該標的的歷史 | |

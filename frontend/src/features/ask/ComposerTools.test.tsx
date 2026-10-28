@@ -54,13 +54,22 @@ test('膠囊本身就是關閉鈕（不必再展開選單）', () => {
   expect(chip()).toBeNull()
 })
 
-test('膠囊排在「＋」右邊，中間隔一道分隔線', () => {
+test('膠囊緊接在「＋」右邊（原型不加分隔線）', () => {
   const { container } = render(<ComposerTools />)
   act(() => setWebSearch(true))
   const kids = Array.from(container.firstElementChild!.children)
   expect(kids[0]).toBe(trigger())
-  expect(kids[1]).toHaveClass(/divider/)
-  expect(kids[2]).toBe(chip())
+  expect(kids[1]).toBe(chip())
+})
+
+test('空白頁的中央輸入框選單往下開、底部輸入列往上開', () => {
+  const { unmount } = render(<ComposerTools variant="center" />)
+  fireEvent.click(trigger())
+  expect(screen.getByRole('menu', { name: '工具' }).className).toMatch(/popDown/)
+  unmount()
+  render(<ComposerTools />)
+  fireEvent.click(trigger())
+  expect(screen.getByRole('menu', { name: '工具' }).className).toMatch(/popUp/)
 })
 
 // 說明文字已移除（選單收成單行列）。網搜的代價與資料來源提醒仍在輸入框下方那行

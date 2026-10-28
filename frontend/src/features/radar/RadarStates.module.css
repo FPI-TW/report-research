@@ -1,50 +1,49 @@
 .box {
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  box-shadow: var(--tf-shadow-xs);
-  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 56px 24px;
   text-align: center;
-  margin-top: 8px;
+  animation: fadeIn 0.32s ease both;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--tf-border-weak);
+  color: var(--tf-text-muted-aa);
 }
 
 .title {
-  font-family: var(--tf-display);
+  margin: 14px 0 0;
+  font-size: 16px;
   font-weight: 600;
-  font-size: 18px;
   color: var(--tf-text-1);
-  margin: 0 0 8px;
 }
 
 .text {
+  max-width: 360px;
+  margin: 6px 0 0;
   font-size: 13.5px;
+  line-height: 1.65;
   color: var(--tf-text-muted-aa);
-  line-height: 1.55;
-  margin: 0 0 16px;
-  max-width: 420px;
-  margin-inline: auto;
 }
 
-.btn, .btnSecondary {
-  appearance: none;
-  border: 0;
-  border-radius: var(--tf-radius-pill);
-  font-family: var(--tf-sans);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 16px;
-  min-height: 44px;
-  cursor: pointer;
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
 }
 
-.btn {
-  background: var(--tf-graphite);
-  color: var(--tf-on-graphite);
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-.btn:hover { background: var(--tf-graphite-hover); }
 
-.btnSecondary {
-  background: var(--tf-graphite-tint);
-  color: var(--tf-graphite);
+@media (prefers-reduced-motion: reduce) {
+  .box { animation: none; }
 }
-.btnSecondary:hover { background: var(--tf-graphite-line); }

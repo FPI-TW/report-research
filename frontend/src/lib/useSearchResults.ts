@@ -32,6 +32,8 @@ export interface UseSearchResults {
   facets: MarketFacet[]
   isLoading: boolean
   isError: boolean
+  /** 有請求在途（含錯誤後的重試）；首次載入另看 isLoading。 */
+  isFetching: boolean
   refetch: () => void
   hasMore: boolean
   remaining: number
@@ -64,6 +66,7 @@ export function useSearchResults(s: SearchState): UseSearchResults {
     facets: pages[0]?.facets ?? [],
     isLoading: query.isLoading,
     isError: query.isError,
+    isFetching: query.isFetching,
     refetch: () => { void query.refetch() },
     hasMore: query.hasNextPage,
     remaining: Math.max(0, total - rows.length),

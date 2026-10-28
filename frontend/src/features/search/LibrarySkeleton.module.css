@@ -1,0 +1,21 @@
+.bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-top: 28px; }
+.headline { grid-column: span 3; grid-row: span 2; display: flex; flex-direction: column; gap: 12px; padding: 22px 24px; }
+.changes { grid-column: span 3; display: flex; flex-direction: column; gap: 16px; padding: 20px 22px; }
+.brief { grid-column: 4 / span 3; grid-row: 2; display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; }
+.latest { grid-column: 1 / -1; grid-row: 3; overflow: hidden; overflow: clip; }
+
+.row { display: flex; flex-direction: column; gap: 10px; padding: 18px 22px; border-top: 1px solid var(--tf-border-weak); }
+.row:first-child { border-top: none; }
+
+.list { margin-top: 26px; }
+.listHead { display: flex; gap: 10px; padding: 4px 4px 14px; }
+.listTile { overflow: hidden; overflow: clip; }
+
+.fade { animation: fadeIn 0.32s ease both; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+@media (max-width: 1100px) {
+  .bento { grid-template-columns: minmax(0, 1fr); }
+  .bento > * { grid-column: auto; grid-row: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .fade { animation: none; } }

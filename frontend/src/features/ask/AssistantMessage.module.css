@@ -1,31 +1,40 @@
-.msg { margin: 2px 0 20px; }
-.body { font-size: 15px; line-height: 1.75; color: var(--tf-text-2); }
-/* 引註 [n]：鎏金 pill — 引用與研報的語意色 */
-.body :global(.tf-cite) { display: inline-block; background: var(--tf-gold-tint); color: var(--tf-gold-text); border: none; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px; cursor: pointer; vertical-align: baseline; }
-.body :global(.tf-cite:hover) { background: var(--tf-gold-text); color: var(--tf-on-gold); }
-.body :global(.tf-md-h) { font-family: var(--tf-display); font-weight: 600; color: var(--tf-text-1); margin: 16px 0 8px; }
+.msg { position: relative; }
+
+/* 回答本文（交接包「回答」）：15.5px／1.8。數字與表格用等寬數字，不換 monospace。 */
+.body { margin-top: 14px; font-size: 15.5px; line-height: 1.8; color: #3a3a3e; overflow-wrap: anywhere; }
+.body :global(.tf-md-h) { font-weight: 600; color: var(--tf-text-1); margin: 22px 0 8px; line-height: 1.5; }
 .body h3 { font-size: 16px; }
-.body h4 { font-size: 14.5px; }
-.body p { margin: 0 0 12px; }
-.body ul, .body ol { margin: 0 0 12px; padding-left: 20px; }
-.body li { margin-bottom: 7px; }
+.body h4 { font-size: 15px; }
+.body p { margin: 0 0 14px; }
+.body ul, .body ol { margin: 0 0 14px; padding-left: 20px; }
+.body ul { list-style: none; padding-left: 17px; }
+/* 清單項目的圓點：金色 5px 小點（原型），取代瀏覽器預設的黑點。 */
+.body ul > li { position: relative; }
+.body ul > li::before {
+  content: ''; position: absolute; left: -17px; top: 0.78em;
+  width: 5px; height: 5px; border-radius: 999px; background: var(--tf-gold-strong);
+}
+.body ol > li::marker { color: var(--tf-gold-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
+.body li { margin-bottom: 8px; }
 .body li:last-child { margin-bottom: 0; }
-.body a { color: var(--tf-graphite); text-decoration: underline; text-underline-offset: 2px; }
-.body a:hover { color: var(--tf-graphite-hover); }
-.body strong { color: var(--tf-text-1); font-weight: 700; }
-.body code { font-family: var(--tf-mono); font-size: 0.9em; background: var(--tf-border-weak); border: 1px solid var(--tf-divider); border-radius: 5px; padding: 1px 5px; }
-.body pre { background: var(--tf-canvas); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 12px 14px; margin: 0 0 12px; overflow-x: auto; }
-.body pre code { background: none; border: none; padding: 0; font-size: 13px; line-height: 1.6; }
-.body blockquote { border-left: 3px solid var(--tf-graphite); background: var(--tf-graphite-tint); padding: 8px 14px; margin: 0 0 12px; border-radius: 0 var(--tf-radius-md) var(--tf-radius-md) 0; color: var(--tf-text-2); }
-.body :global(.tableWrap) { overflow-x: auto; margin: 0 0 12px; }
-.body table { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
-.body th, .body td { border: 1px solid var(--tf-border); padding: 6px 10px; text-align: left; vertical-align: top; }
-.body thead th { background: var(--tf-fill-subtle); color: var(--tf-text-1); font-weight: 700; }
+.body a { color: var(--tf-gold-text); text-decoration: underline; text-underline-offset: 2px; }
+.body a:hover { color: var(--tf-gold-hover); }
+.body strong { color: var(--tf-text-1); font-weight: 650; }
+.body code { font-family: var(--tf-mono); font-size: 0.88em; background: var(--tf-border-weak); border-radius: 5px; padding: 1px 5px; }
+.body pre { background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 12px 14px; margin: 0 0 14px; overflow-x: auto; }
+.body pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+.body blockquote { margin: 0 0 14px; padding: 2px 0 2px 14px; border-left: 2px solid var(--tf-border); color: var(--tf-text-2); }
+.body :global(.tableWrap) { overflow-x: auto; margin: 0 0 14px; }
+.body table { border-collapse: collapse; font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.body th, .body td { border-bottom: 1px solid var(--tf-border-weak); padding: 7px 12px 7px 0; text-align: left; vertical-align: top; }
+.body thead th { color: var(--tf-text-1); font-weight: 600; border-bottom-color: var(--tf-border); }
 .body > :last-child { margin-bottom: 0; }
-/* 串流游標貼在最後區塊的「行內葉節點」尾端。這是全站唯一保留 CSS @keyframes 的動效：
-   游標本質是接在任意 markdown 尾葉（p/li/td/pre code/blockquote）的 ::after 偽元素，
-   而 Motion 只驅動真實 DOM 元素、無法動偽元素；改注入真實 <Caret> 會讓游標掉到最後區塊下一行
-   （視覺退化）或需重寫已測試的答案渲染器。#78 此處亦為 CSS ::after，效果完全一致，故刻意留存。 */
+
+/* 串流中新出現的文字段：blur 3px → 0、0.24s（交接包「回答」）。只在掛載時播一次。 */
+.tok { animation: tokIn 0.24s var(--tf-ease-out) both; }
+
+/* 尾端金色游標，貼在最後區塊的「行內葉節點」尾端。游標是接在任意 markdown 尾葉
+   （p/li/td/pre code/blockquote）的 ::after 偽元素，Motion 動不了偽元素，所以留在 CSS。 */
 .body[data-streaming] > p:last-child::after,
 .body[data-streaming] > h3:last-child::after,
 .body[data-streaming] > h4:last-child::after,
@@ -36,52 +45,124 @@
 .body[data-streaming] > :global(.tableWrap):last-child tbody tr:last-child td:last-child::after {
   content: '';
   display: inline-block;
-  width: 7px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  background: var(--tf-gold-text);
-  animation: tf-pulse 1s steps(2) infinite;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 3px;
+  vertical-align: -3px;
+  border-radius: 1px;
+  background: var(--tf-gold-strong);
+  animation: caret 1s ease-in-out infinite;
 }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-/* 讚／倒讚／複製／重新生成四顆的尺寸一律由這裡決定，不靠各自的內距去湊：複製鈕來自
-   animate-ui（Tailwind 的 size-* 與 rounded-md），與其他三顆的 padding 算法不同，過去
-   因此大小不一。CSS Modules 不在 @layer 內，會贏過 utilities 層的工具類別，故在此把方框、
-   圓角與圖示尺寸全部釘死——四顆才會等大等圓。
-   無框無底（ChatGPT 式）：靜置只有圖示，hover 才浮出圓形填色；border/background 要明寫，
-   button 的瀏覽器預設框才消得掉。色票取捨與提問訊息的動作列相同（見 UserMessage.module.css）：
-   靜置 --tf-text-muted-aa（圖示是唯一說明，不用停在 AA 以下的 text-3），hover 填 --tf-border
-   （對話流底色是 canvas #f2f2f4，graphite-tint #f0f0f2 疊上去看不見）。 */
-.act { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: none; background: transparent; color: var(--tf-text-muted-aa); border-radius: 999px; cursor: pointer; }
-/* position: relative 不是為了定位自己，是為了當「複製→已複製」換圖時的包含塊。animate-ui 的
-   CopyButton 走 AnimatePresence mode="popLayout"，退場那顆圖示會被套上 position:absolute
-   ＋依 offsetParent 量到的 top/left。按鈕若是 static，offsetParent 會一路找到 AskPage 的
-   .column；而捲動容器是它裡面的 .flow，offsetTop 不扣 scrollTop——捲過的對話按下複製，
-   退場圖示就會飛到畫面外。加了 relative，offsetParent 就是按鈕本身，原地換圖。 */
-/* display: block 消掉基線落差：Pressable 的 svg 是 flex 直接子項（會被 blockify，垂直正中），
-   但 CopyButton 的 svg 包在一層 <span> 裡，是行內元素、坐在基線上，行框底下多出一段
-   descender，那顆圖示因此比其他三顆高約 2px——四顆並排就是看得出來的沒對齊。
-   stroke-width 一併統一：lucide 預設 2，本站 Icon 是 1.8，混在同一排會粗細不一。 */
-.act svg { display: block; width: 15px; height: 15px; stroke-width: 1.8; }
-.act > span { display: flex; align-items: center; justify-content: center; }
+
+/* 已停止生成：自成一行的灰色膠囊。width:max-content 讓它是區塊層級（自成一行）又不撐滿。 */
+.stopped {
+  display: flex; align-items: center; gap: 6px; width: max-content;
+  margin-top: 6px; height: 26px; padding: 0 10px; border-radius: 999px;
+  background: var(--tf-border); font-size: 12.5px; color: var(--tf-text-2);
+  animation: fadeUp 0.24s var(--tf-ease-out) both;
+}
+.stoppedMark { width: 7px; height: 7px; border-radius: 2px; background: var(--tf-text-muted-aa); }
+
+/* 失敗列：淺灰底、紅色驚嘆、標題＋錯誤訊息、重試（交接包「失敗」）。 */
+.fail {
+  display: flex; align-items: center; gap: 12px; margin-top: 12px;
+  padding: 12px 12px 12px 16px; border-radius: 12px; background: #f7f7f8;
+  animation: fadeUp 0.24s var(--tf-ease-out) both;
+}
+.failIcon { flex: none; color: var(--tf-rating-buy); }
+.failText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.failTitle { font-size: 14px; font-weight: 600; color: var(--tf-text-1); }
+.failMsg { font-size: 13px; color: var(--tf-text-muted-aa); }
+.btn {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  border: 1px solid var(--tf-border); border-radius: 10px; background: var(--tf-surface);
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--tf-text-1); cursor: pointer;
+  transition: background var(--tf-dur-1) ease, transform var(--tf-dur-1) ease;
+}
+.btn:hover { background: var(--tf-fill-subtle); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+/* 來源卡片：前 3 篇平分寬度、最小 150px，與「全部 N 則來源」同一行（交接包「回答下方」）。 */
+.sources { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin-top: 18px; }
+.mini {
+  flex: 1 1 0; min-width: 150px; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; border: 1px solid var(--tf-border); border-radius: 10px; background: var(--tf-surface);
+  text-align: left; font: inherit; cursor: pointer;
+  transition: border-color var(--tf-dur-1) ease;
+  animation: fadeUp 0.24s var(--tf-ease-out) both;
+}
+.mini:hover { border-color: var(--tf-gold-text); }
+.miniTop { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.num {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; flex: none;
+  background: var(--tf-gold-tint); color: var(--tf-gold-text);
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.mkt { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; flex: none; }
+.webTag { background: var(--tf-border-weak); color: var(--tf-text-2); }
+.spacer { flex: 1; }
+/* 日期不截斷（「2026-10…」讀不出是哪天）：卡片窄到 150px 時讓市場標籤讓位。網址可以截。 */
+.miniDate { flex: none; margin-left: auto; font-size: 11px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.miniHost { min-width: 0; margin-left: auto; font-size: 11px; color: var(--tf-text-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.miniTop .mkt { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.miniTitle {
+  font-size: 12.5px; line-height: 1.45; font-weight: 500; color: var(--tf-text-1);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.allSrc {
+  flex: none; white-space: nowrap; display: flex; align-items: center; gap: 6px; padding: 0 14px;
+  min-height: 36px; /* 窄的時候被擠到下一行，不再被卡片撐高，至少要有按鈕的高度 */
+  border: 1px solid var(--tf-border); border-radius: 10px; background: transparent;
+  font: inherit; font-size: 12.5px; color: var(--tf-text-2); cursor: pointer; font-variant-numeric: tabular-nums;
+  transition: background var(--tf-dur-1) ease, color var(--tf-dur-1) ease, border-color var(--tf-dur-1) ease;
+  animation: fadeUp 0.24s var(--tf-ease-out) 0.16s both;
+}
+.allSrc:hover { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
+
+/* 動作列：讚、倒讚、複製、重新生成、版本切換。無框無底，hover 才浮出圓形底色。
+   position: relative 是複製鈕換圖時的包含塊（舊測試守著，換圖不再用 popLayout 也無妨）。 */
+.actions { display: flex; align-items: center; gap: 2px; margin-top: 12px; margin-left: -6px; animation: fadeUp 0.24s var(--tf-ease-out) both; }
+.act {
+  position: relative; width: 30px; height: 30px; flex: none; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; background: transparent; color: var(--tf-text-muted-aa); cursor: pointer;
+  transition: background var(--tf-dur-1) ease, color var(--tf-dur-1) ease, transform var(--tf-dur-1) ease;
+}
 .act:hover { background: var(--tf-border); color: var(--tf-graphite); }
-.act:disabled { opacity: 0.4; cursor: default; }
-/* 讚／倒讚亮起態：改成實心石墨（tokens.css 把「選取態」歸給石墨）。無框之後若沿用淡填色，
-   亮起與 hover 幾乎同色，切換鈕就看不出自己按過哪一顆——aria-pressed 有，但那只給輔助技術。 */
+.act:active { transform: scale(0.92); }
+.act:disabled { opacity: 0.4; cursor: default; transform: none; }
+.act:disabled:hover { background: transparent; color: var(--tf-text-muted-aa); }
+/* 讚／倒讚亮起態：實心石墨。淡填色會與 hover 幾乎同色，看不出自己按過哪一顆。 */
 .on, .on:hover { background: var(--tf-graphite); color: var(--tf-on-graphite); }
-.divider { width: 1px; height: 16px; background: var(--tf-border); margin: 0 2px; }
-.srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
-.srcBtn:hover { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
-/* 唯一保留的 @keyframes（供上方串流游標 ::after 用）；CSS Modules 會在地化雜湊 animation 名，須就地定義。 */
-@keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-/* 已停止生成：自成一行的弱化說明（比照 ChatGPT）。block 是必要的——思考卡是
-   inline-block，用行內元素會黏到卡片右側同一行漂著。 */
-.stopped { display: block; margin: 2px 0 0; font-size: 13px; color: var(--tf-text-3); }
-.pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.pagerBtn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 14px; line-height: 1; cursor: pointer; }
-.pagerBtn:hover:not(:disabled) { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
-.pagerBtn:disabled { opacity: 0.4; cursor: default; }
-.pagerText { font-size: 12px; color: var(--tf-text-3); }
-.followups { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.chip { border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12.5px; padding: 6px 12px; cursor: pointer; }
-.chip:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+.copied { color: var(--tf-success); animation: pop 0.34s var(--tf-ease-emphasized) both; }
+.pager { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding-left: 8px; border-left: 1px solid var(--tf-border); }
+.pagerBtn { width: 26px; height: 26px; }
+.pagerText { min-width: 28px; text-align: center; font-size: 12px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; }
+
+/* 延伸提問：分隔線列，hover 時右側箭頭滑入。 */
+.followups { margin-top: 22px; }
+.fuHead { font-size: 12px; font-weight: 600; color: var(--tf-text-4); margin-bottom: 4px; animation: fadeUp 0.24s var(--tf-ease-out) 0.08s both; }
+.fu {
+  width: calc(100% + 8px); display: flex; align-items: center; gap: 12px; margin-left: -8px;
+  padding: 10px 10px 10px 8px; border: none; border-top: 1px solid rgba(0, 0, 0, 0.06); border-radius: 0;
+  background: transparent; text-align: left; font: inherit; cursor: pointer;
+  transition: background var(--tf-dur-1) ease;
+  animation: fadeUp 0.24s var(--tf-ease-out) both;
+}
+.fu:hover { background: var(--tf-hover); }
+.fu:disabled { opacity: 0.5; cursor: default; }
+.fuIcon { flex: none; color: var(--tf-gold-strong); }
+.fuText { flex: 1; font-size: 14px; line-height: 1.5; color: var(--tf-text-2); }
+.fuArrow { flex: none; color: var(--tf-text-1); opacity: 0; transform: translateX(-6px); transition: opacity 0.16s ease, transform 0.2s var(--tf-ease-out); }
+.fu:hover .fuArrow, .fu:focus-visible .fuArrow { opacity: 1; transform: none; }
+
+/* CSS Modules 會把 animation 名稱在地化，keyframes 必須就地定義。 */
+@keyframes tokIn { from { opacity: 0; filter: blur(3px); } to { opacity: 1; filter: blur(0); } }
+@keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.14); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .fuArrow { transform: none; }
+}

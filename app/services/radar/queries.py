@@ -55,6 +55,19 @@ class RadarInstrumentRow:
 
 
 @dataclass(frozen=True)
+class RatingChangeRow:
+    """某券商對某標的的一次評等變動（與該券商對同一標的的前一份訊號相比）。"""
+
+    market: str
+    instrument_code: str
+    instrument_name: Optional[str]
+    broker: str
+    report_date: date
+    rating_from: str
+    rating_to: str
+
+
+@dataclass(frozen=True)
 class RadarCatalogPage:
     """目錄一頁 ＋ 該頁所屬篩選結果的兩個整體數字。
 
@@ -417,3 +430,87 @@ async def fetch_catalog_facets(
         )
     ).mappings().all()
     return {r["market"]: int(r["n"] or 0) for r in rows}
+
+
+# 五級評等（radar.scale.RATING_SCALE 的鍵）。unknown 與任何未知字樣都不算「有評等」。
+FIVE_LEVEL_RATINGS = ["buy", "overweight", "neutral", "underweight", "sell"]
+
+# 跨標的的最新評等變動（研報庫首頁「最新評等變動」）。比對語意與總覽的近期事件
+# （`compute.diff_signals` 對 `_prev_signal`）一致，同一筆變動在券商共識頁看得到：
+#
+# - 「前一份」是同一家券商（`EFFECTIVE_BROKER_SQL`）對同一標的**緊鄰的上一份**有效訊號，
+#   排序鍵與 `compute._signal_sort_key` 相同；上一份是 unknown 就不算變動（不跳過它往前找）。
+# - lag() 開在全表上、最後才挑變動列，理由同 brief._SIGNAL_CHANGES_SQL：真正的變動一定跨報告比。
+# - 被隱藏研報的訊號在 ranked **之內**就排除：它既不能是「這次」，也不能是下一份的「上次」。
+# - 「這次」那份研報必須真的列在該標的底下（同市場、stock_targets 含代號），否則點過去的
+#   券商共識頁會因為 `fetch_coverage_counts` 找不到研報而 404。
+# - report_date 為 NULL 的不列：排不出先後，寧可漏也不要把舊變動排到最上面。
+_RECENT_RATING_CHANGES_SQL = text(
+    f"""
+    WITH ranked AS (
+        SELECT s.id, s.market, s.instrument_code, s.report_date, s.created_at,
+               {EFFECTIVE_BROKER_SQL} AS broker,
+               s.rating_normalized,
+               lag(s.rating_normalized) OVER w AS prev_rating,
+               (r.market = s.market
+                AND r.stock_targets @> ARRAY[s.instrument_code]::text[]
+                AND r.is_research IS NOT FALSE) AS listed
+        FROM research.report_signal s
+        JOIN research.research_report r ON r.id = s.report_id
+        WHERE s.extraction_status = ANY(CAST(:statuses AS text[]))
+          AND s.market = ANY(CAST(:markets AS text[]))
+          AND {EFFECTIVE_BROKER_SQL} IS NOT NULL
+          AND {visible_report_sql("r")}
+        WINDOW w AS (
+            PARTITION BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL}
+            ORDER BY s.report_date NULLS FIRST, s.created_at, s.id
+        )
+    ), changes AS (
+        SELECT id, market, instrument_code, report_date, created_at, broker,
+               prev_rating, rating_normalized
+        FROM ranked
+        WHERE listed
+          AND report_date IS NOT NULL
+          AND prev_rating = ANY(CAST(:levels AS text[]))
+          AND rating_normalized = ANY(CAST(:levels AS text[]))
+          AND prev_rating <> rating_normalized
+        ORDER BY report_date DESC, created_at DESC, id DESC
+        LIMIT :limit
+    )
+    SELECT c.market, c.instrument_code,
+           (SELECT rn.company_name FROM research.research_report rn
+             WHERE rn.market = c.market AND rn.stock_code = c.instrument_code
+               AND rn.company_name IS NOT NULL
+               AND rn.is_research IS NOT FALSE
+               AND {visible_report_sql("rn")}
+             ORDER BY rn.report_date DESC NULLS LAST, rn.created_at DESC, rn.id
+             LIMIT 1) AS instrument_name,
+           c.broker, c.report_date, c.prev_rating, c.rating_normalized
+    FROM changes c
+    ORDER BY c.report_date DESC, c.created_at DESC, c.id DESC
+    """
+)
+
+
+async def fetch_recent_rating_changes(
+    session: AsyncSession, *, limit: int = 4
+) -> list[RatingChangeRow]:
+    """全部標的中最新的幾筆評等變動（新到舊）。空清單是常態：多數日子沒有券商改評等。"""
+    rows = (
+        await session.execute(
+            _RECENT_RATING_CHANGES_SQL,
+            {
+                "statuses": VALID_STATUSES,
+                "markets": list(MARKETS),
+                "levels": FIVE_LEVEL_RATINGS,
+                "limit": limit,
+            },
+        )
+    ).all()
+    return [
+        RatingChangeRow(
+            market=r[0], instrument_code=r[1], instrument_name=r[2], broker=r[3],
+            report_date=r[4], rating_from=r[5], rating_to=r[6],
+        )
+        for r in rows
+    ]

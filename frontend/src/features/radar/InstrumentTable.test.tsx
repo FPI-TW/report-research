@@ -1,7 +1,9 @@
-import { render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { describe, expect, it } from 'vitest'
-import type { RadarInstrumentItem } from '../../lib/radarSchemas'
+import type { CatalogSort, RadarInstrumentItem } from '../../lib/radarSchemas'
+import { changeParts } from './catalogState'
+import catalogSource from './catalogState.ts?raw'
 import { InstrumentTable } from './InstrumentTable'
 import tableSource from './InstrumentTable.tsx?raw'
 import tableCss from './InstrumentTable.module.css?raw'
@@ -37,14 +39,30 @@ function item(partial?: Partial<RadarInstrumentItem>): RadarInstrumentItem {
   }
 }
 
-function renderTable(items: RadarInstrumentItem[]) {
+function Probe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}{location.search}</div>
+}
+
+function renderTable(items: RadarInstrumentItem[], opts: { sort?: CatalogSort; loading?: boolean } = {}) {
   return render(
-    <MemoryRouter>
-      <InstrumentTable
-        items={items}
-        sort="latest"
-        hrefFor={(m, c) => `/consensus?market=${m}&code=${c}`}
-      />
+    <MemoryRouter initialEntries={['/consensus']}>
+      <Routes>
+        <Route
+          path="/consensus"
+          element={(
+            <>
+              <InstrumentTable
+                items={items}
+                sort={opts.sort ?? 'latest'}
+                loading={opts.loading}
+                hrefFor={(m, c) => `/consensus?market=${m}&code=${c}`}
+              />
+              <Probe />
+            </>
+          )}
+        />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -54,191 +72,112 @@ function firstRow() {
 }
 
 describe('InstrumentTable', () => {
-  it('七欄表頭齊全、順序固定，且皆為 column header', () => {
+  it('六欄表頭依交接包順序', () => {
     renderTable([item()])
-    // 用 textContent 開頭比對而不是可及名稱正則：幾個欄名帶 sr-only 的口徑說明，
-    // 而那段說明裡也出現「標的」二字，用 /標的/ 會同時命中兩欄。
-    const heads = screen.getAllByRole('columnheader').map(th => th.textContent ?? '')
-    const labels = ['標的', '共識評等', '近期變化', '評等分布', '資料涵蓋', '最新研報', '查看']
-    expect(heads).toHaveLength(labels.length)
-    heads.forEach((text, i) => expect(text.startsWith(labels[i]), text).toBe(true))
+    expect(screen.getAllByRole('columnheader').map(h => h.textContent)).toEqual([
+      '標的', '共識評等', '評等分布', '近期變化', '資料涵蓋', '最新研報',
+    ])
   })
 
-  it('標的欄是列標題，含名稱、代碼與市場', () => {
+  it('標的欄是列標題：名稱是連結，下方是代號與市場', () => {
     renderTable([item()])
-    const rowHeader = screen.getByRole('rowheader')
-    expect(within(rowHeader).getByText('台積電')).toBeInTheDocument()
-    expect(within(rowHeader).getByText('2330')).toBeInTheDocument()
-    expect(within(rowHeader).getByText('台股')).toBeInTheDocument()
+    const head = within(firstRow()).getByRole('rowheader')
+    expect(within(head).getByRole('link', { name: '台積電' })).toHaveAttribute('href', '/consensus?market=TW&code=2330')
+    expect(head).toHaveTextContent('2330')
+    expect(head).toHaveTextContent('台股')
   })
 
-  /*
-   * 這一欄的值是**中位立場**（後端 stance.rating ＝ median_rating），不是最新一份研報
-   * 的評等。欄名與 sr-only 前綴一起把差別說出來——差別看不出來，而它會被當成後者。
-   */
-  it('共識評等印中位立場並在可及名稱裡說明', () => {
-    renderTable([item()])
-    expect(within(firstRow()).getByText('買進')).toBeInTheDocument()
-    expect(within(firstRow()).getByText('中位立場：')).toBeInTheDocument()
-    expect(screen.getByRole('columnheader', { name: /共識評等/ })).toBeInTheDocument()
-  })
-
-  it('近期變化以評等淨變動優先，並附家數', () => {
-    renderTable([item()])
-    expect(within(firstRow()).getByText('評等上調')).toBeInTheDocument()
-    expect(within(firstRow()).getByText('2 家')).toBeInTheDocument()
-  })
-
-  it('評等分布給整條一個完整可及名稱，並含五級明細', () => {
-    renderTable([item()])
-    const bar = within(firstRow()).getByRole('img')
-    const label = bar.getAttribute('aria-label') ?? ''
-    expect(label).toContain('共 20 家已評等')
-    expect(label).toContain('偏多 60%，12 家')
-    expect(label).toContain('五級明細：買進 9 家、加碼 3 家、中立 7 家、賣出 1 家')
-  })
-
-  it('資料涵蓋印券商數與研報數', () => {
-    renderTable([item()])
-    // 整列比對會誤中日期（2026/08/07 也含「20」），所以只看那一格的完整文字。
-    const cells = within(firstRow()).getAllByRole('cell')
-    expect(cells.map(c => c.textContent?.replace(/\s+/g, ' ').trim()))
-      .toContain('20 家券商· 1772 份研報')
-  })
-
-  it('最新研報以 YYYY/MM/DD 呈現', () => {
-    renderTable([item()])
-    expect(within(firstRow()).getByText('2026/08/07')).toBeInTheDocument()
-  })
-
-  /*
-   * 硬性限制：清單頁不得出現目標價的中位數／平均／區間／百分比，唯一出口是連到總覽的
-   * 各家目標價。元件層只驗得到「這份 fixture 沒印」，所以另有一條靜態比對（下一個 it）。
-   */
-  it('不出現任何目標價聚合，只給「查看各家目標價」連結', () => {
+  it('共識評等是徽章，評等分布印出有家數的級別', () => {
     renderTable([item()])
     const row = firstRow()
-    for (const banned of ['中位數', '平均', '區間', 'NT\\$', 'US\\$']) {
-      expect(within(row).queryByText(new RegExp(banned)), banned).toBeNull()
-    }
-    expect(
-      within(row).getByRole('link', { name: /查看 台積電 2330 的各家目標價/ }),
-    ).toBeInTheDocument()
+    expect(within(row).getByText('買進', { selector: 'span[class*="badge"]' })).toBeInTheDocument()
+    // 減碼 0 家不印；全形空白分隔，不用「·」
+    // getByText 會把全形空白正規化成半形；原文仍要是全形空白
+    expect(within(row).getByText('買進 9 加碼 3 中立 7 賣出 1').textContent).toBe('買進 9\u3000加碼 3\u3000中立 7\u3000賣出 1')
   })
 
-  it('原始碼不引用任何目標價聚合欄位', () => {
-    // 元件測試只覆蓋餵進去的 fixture；靜態比對覆蓋所有分支，包含日後有人「順手」加回來。
-    for (const banned of ['target.median', 'revision_pct', 'fmtPrice', 'fmtNum']) {
-      expect(tableSource, banned).not.toContain(banned)
+  it('近期變化：調升與調降各自列出家數', () => {
+    expect(changeParts(item())).toEqual([{ tone: 'up', text: '調升 2' }])
+    const both = item({
+      consensus: { ...item().consensus!, stance: { ...item().consensus!.stance, upgrades: 1, downgrades: 2 } },
+    })
+    expect(changeParts(both)).toEqual([
+      { tone: 'up', text: '調升 1' },
+      { tone: 'down', text: '調降 2' },
+    ])
+  })
+
+  it('評等沒有變動時才看目標價方向，而且只有方向', () => {
+    const flat = item({
+      consensus: {
+        ...item().consensus!,
+        stance: { ...item().consensus!.stance, upgrades: 0, downgrades: 0, net_rating: 0 },
+        target: { revision_direction: 'down' },
+      },
+    })
+    expect(changeParts(flat)).toEqual([{ tone: 'down', text: '目標價下修' }])
+    renderTable([{ ...flat, consensus: { ...flat.consensus!, target: { revision_direction: 'none' } } }])
+    expect(within(firstRow()).getByText('無變動')).toBeInTheDocument()
+  })
+
+  it('資料涵蓋印券商數與篇數，最新研報印短日期', () => {
+    renderTable([item({ latest_report_date: '2024-08-07' })])
+    const row = firstRow()
+    expect(row).toHaveTextContent('20 家券商')
+    expect(row).toHaveTextContent('1772 篇')
+    // 不是今年就留年份
+    expect(within(row).getByText('2024-08-07')).toBeInTheDocument()
+  })
+
+  it('清單不出現任何目標價數值，原始碼也不碰目標價聚合欄位', () => {
+    renderTable([item()])
+    expect(firstRow().textContent).not.toMatch(/NT\$|目標價\s*\d/)
+    for (const source of [tableSource, catalogSource]) {
+      for (const banned of ['target.median', 'revision_pct', 'fmtValue', 'fmtPrice']) {
+        expect(source, banned).not.toContain(banned)
+      }
     }
   })
 
-  it('未擷取共識的列走淡態', () => {
+  it('還沒擷取出共識的列：評等為破折號，分布寫資料擷取中', () => {
     renderTable([item({ consensus: null })])
     const row = firstRow()
-    expect(within(row).getByText('資料擷取中')).toBeInTheDocument()
-    expect(within(row).queryByRole('img')).toBeNull()
+    expect(row).toHaveTextContent('資料擷取中')
+    expect(within(row).queryByText('無變動')).not.toBeInTheDocument()
   })
 
-  /*
-   * 連結名稱是對目的地的承諾：一家都沒給目標價時仍寫「查看各家目標價」，
-   * 使用者點過去只會看到空的一區，而那不是錯誤狀態、沒有任何提示。
-   */
-  it('沒有任何目標價時連結不承諾各家目標價', () => {
-    renderTable([item({
-      consensus: { ...item().consensus!, target: null },
-    })])
-    expect(within(firstRow()).getByRole('link', { name: /查看 台積電 2330 的券商觀點/ }))
-      .toBeInTheDocument()
-  })
-
-  /*
-   * 每列只留一個 Tab 停點。列本身可點是滑鼠的便利，給它 tabindex 會讓 52 檔變成
-   * 104 個停點，而兩個停點做的是同一件事。
-   */
-  it('列本身不可聚焦，每列只有一個連結', () => {
+  it('每列只有一個連結（Tab 停點），整列可點進詳情', () => {
     renderTable([item(), item({ instrument_code: '2317', instrument_name: '鴻海' })])
-    for (const row of screen.getAllByRole('row').slice(1)) {
-      expect(row).not.toHaveAttribute('tabindex')
-      expect(within(row).getAllByRole('link')).toHaveLength(1)
-    }
+    const rows = screen.getAllByRole('row').slice(1)
+    for (const row of rows) expect(within(row).getAllByRole('link')).toHaveLength(1)
+    fireEvent.click(within(rows[1]).getByText(/08-07$/))
+    expect(screen.getByTestId('location')).toHaveTextContent('/consensus?market=TW&code=2317')
   })
 
-  it('三態之間表頭不消失', () => {
-    const { rerender } = renderTable([])
-    expect(screen.getAllByRole('columnheader')).toHaveLength(7)
-    rerender(
-      <MemoryRouter>
-        <InstrumentTable items={[]} sort="latest" hrefFor={() => '/consensus'} loading />
-      </MemoryRouter>,
-    )
-    expect(screen.getAllByRole('columnheader')).toHaveLength(7)
-    expect(screen.getAllByTestId('picker-skeleton').length).toBeGreaterThan(0)
+  it('載入中顯示骨架列，表頭留著', () => {
+    renderTable([], { loading: true })
+    expect(screen.getAllByTestId('picker-skeleton')).toHaveLength(5)
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
+    expect(screen.getByRole('table')).toHaveAttribute('aria-busy', 'true')
   })
 
-  it('目前排序反映在對應欄的 aria-sort', () => {
-    render(
-      <MemoryRouter>
-        <InstrumentTable items={[item()]} sort="reports" hrefFor={() => '/consensus'} />
-      </MemoryRouter>,
-    )
-    expect(screen.getByRole('columnheader', { name: /資料涵蓋/ }))
-      .toHaveAttribute('aria-sort', 'descending')
-    expect(screen.getByRole('columnheader', { name: /最新研報/ }))
-      .not.toHaveAttribute('aria-sort')
+  it('目前的排序反映在對應欄的 aria-sort', () => {
+    const { unmount } = renderTable([item()], { sort: 'reports' })
+    expect(screen.getByRole('columnheader', { name: '資料涵蓋' })).toHaveAttribute('aria-sort', 'descending')
+    expect(screen.getByRole('columnheader', { name: '最新研報' })).not.toHaveAttribute('aria-sort')
+    unmount()
+    renderTable([item()], { sort: 'code' })
+    expect(screen.getByRole('columnheader', { name: '標的' })).toHaveAttribute('aria-sort', 'ascending')
   })
 })
 
-/*
- * 契約解析刻意採 ReportCssContracts 那組（取「所有」匹配 ＋ only()），不用 RadarCssContracts
- * 的 blockAfter——後者只取第一個匹配，而 CSS 生效的是最後一次宣告：在檔尾追加一條
- * `.table { min-width: auto }` 可以讓斷言全綠而版面已毀。
- */
-function blocksFor(css: string, selector: string): string[] {
-  const clean = css.replace(/\/\*[\s\S]*?\*\//g, '')
-  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const out: string[] = []
-  for (const m of clean.matchAll(new RegExp(`(?:^|[}\\n])\\s*${esc}\\s*\\{`, 'g'))) {
-    const open = clean.indexOf('{', m.index)
-    let depth = 0
-    for (let j = open; j < clean.length; j += 1) {
-      if (clean[j] === '{') depth += 1
-      else if (clean[j] === '}') {
-        depth -= 1
-        if (depth === 0) { out.push(clean.slice(open + 1, j)); break }
-      }
-    }
-  }
-  return out
-}
-
-function onlyBlock(css: string, selector: string): string {
-  const blocks = blocksFor(css, selector)
-  expect(
-    blocks.length,
-    `${selector} 應恰好出現一次，實際 ${blocks.length} 次；CSS 以最後一次宣告為準，`
-    + '出現多次時本契約無法判定生效值。',
-  ).toBe(1)
-  return blocks[0]
-}
-
 describe('InstrumentTable 版面契約', () => {
-  /*
-   * 中文的 min-content 是**一個字**：只寫 overflow-x 而沒有 min-width，窄容器下表格
-   * 不會橫捲，會把每一欄壓成逐字直排，而 CSS 不為此報任何錯。兩者必須成對存在。
-   */
-  it('橫捲與最小寬度成對存在', () => {
-    expect(onlyBlock(tableCss, '.frame')).toMatch(/overflow-x:\s*auto/)
-    expect(onlyBlock(tableCss, '.table')).toMatch(/min-width:\s*\d+px/)
+  it('欄寬是交接包定稿值', () => {
+    expect(tableCss).toContain('grid-template-columns: minmax(0, 1.6fr) 90px minmax(0, 1.4fr) 130px 150px 80px;')
   })
 
-  it('表頭樣式只套 thead，不會蓋到列標題', () => {
-    // `.table th` 會把表頭的淡底與 12px 小字一併套到每一列的第一格（它是 th scope=row）。
-    expect(blocksFor(tableCss, '.table th')).toHaveLength(0)
-    expect(blocksFor(tableCss, '.table thead th')).toHaveLength(1)
-  })
-
-  it('唯一的可點控制項套 44px 觸控目標', () => {
-    expect(onlyBlock(tableCss, '.go')).toMatch(/min-height:\s*44px/)
+  it('列的進場動畫與按壓回饋尊重減少動態', () => {
+    const reduced = tableCss.slice(tableCss.indexOf('@media (prefers-reduced-motion: reduce)'))
+    expect(reduced).toMatch(/\.row\s*\{[^}]*animation:\s*none/)
   })
 })

@@ -178,6 +178,7 @@ from app.services.radar import (  # noqa: E402
     fetch_catalog_facets,
     fetch_coverage_counts,
     fetch_instrument_signals,
+    fetch_recent_rating_changes,
     fetch_signals_for_instruments,
     list_radar_instruments,
 )
@@ -233,6 +234,7 @@ __all__ = [
     "fetch_instrument_names",
     "fetch_instrument_signals",
     "fetch_latest_brief",
+    "fetch_recent_rating_changes",
     "fetch_signals",
     "fetch_signals_for_instruments",
     "fetch_similar",

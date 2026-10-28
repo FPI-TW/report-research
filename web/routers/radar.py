@@ -1,7 +1,7 @@
 # web/routers/radar.py
-"""觀點雷達 API：選標的目錄、個股總覽、事件時間軸、單券商歷程。
+"""觀點雷達 API：選標的目錄、跨標的最新評等變動、個股總覽、事件時間軸、單券商歷程。
 
-從 web/server.py 拆出（第三步）。4 條路由都是純讀取、零 LLM，依賴的服務函式
+從 web/server.py 拆出（第三步）。路由都是純讀取、零 LLM，依賴的服務函式
 （SessionFactory、fetch_*、list_radar_instruments）一律走 web.deps，故測試 patch
 web.deps.X 即可涵蓋本模組——不需改測試。純 builder（build_*）與 schema 由來源
 模組直接匯入（不經 mock）。
@@ -18,6 +18,7 @@ from app.services.radar import (
     build_events_page,
     build_instrument_slim,
     build_overview,
+    build_rating_changes,
 )
 from app.services.radar.scale import rating_bucket
 from app.services.radar.schemas import (
@@ -29,6 +30,7 @@ from app.services.radar.schemas import (
     RadarInstrumentItem,
     RadarInstrumentsResponse,
     RadarOverviewResponse,
+    RatingChangesResponse,
     StanceFilter,
     Window,
 )
@@ -47,6 +49,11 @@ router = APIRouter()
 # 256 格：使用者在搜尋框逐字輸入時每個前綴各佔一格，上限讓它不會無止境長大。
 _CATALOG_CACHE = TTLCache(
     ttl=get_settings().radar_catalog_cache_ttl, max_entries=256, name="radar_catalog"
+)
+# 最新評等變動：每次要對整張 report_signal 開一次 window（devdb 一萬三千列約 60 ms），而研報庫
+# 首頁是預設落地頁。資料與目錄同一個更新頻率，所以共用同一個 TTL 旋鈕；鍵只有 limit。
+_RATING_CHANGES_CACHE = TTLCache(
+    ttl=get_settings().radar_catalog_cache_ttl, max_entries=20, name="radar_rating_changes"
 )
 
 
@@ -166,6 +173,28 @@ async def radar_instruments(
         latest_report_date=latest_overall.isoformat() if latest_overall else None,
     )
     _CATALOG_CACHE.put(cache_key, response)
+    return response
+
+
+@router.get("/api/radar/rating-changes", response_model=RatingChangesResponse)
+async def radar_rating_changes(limit: int = Query(4, ge=1, le=20)):
+    """跨標的的最新評等變動（研報庫首頁）：每筆是某券商對某標的、與它前一份訊號相比的調升或調降。
+
+    比對語意與個股總覽的近期事件相同（見 `queries._RECENT_RATING_CHANGES_SQL`），
+    回應只有評等，不含目標價。
+    """
+    t0 = time.monotonic()
+    cached = _RATING_CHANGES_CACHE.get(limit)
+    if cached is not None:
+        return cached
+    async with deps.SessionFactory() as session:
+        rows = await deps.fetch_recent_rating_changes(session, limit=limit)
+    response = build_rating_changes(rows)
+    logger.info(
+        "radar rating changes limit=%d items=%d elapsed_ms=%.1f",
+        limit, len(response.items), (time.monotonic() - t0) * 1000,
+    )
+    _RATING_CHANGES_CACHE.put(limit, response)
     return response
 
 

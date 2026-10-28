@@ -1,4 +1,15 @@
-.bar { display: flex; flex-wrap: wrap; gap: 7px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-graphite-line); background: var(--tf-graphite-tint); color: var(--tf-graphite-deep); border-radius: var(--tf-radius-pill); padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
-.chip:hover { border-color: var(--tf-graphite); }
-.x { font-size: 14px; line-height: 1; }
+.bar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px 0 12px;
+  border: none; border-radius: 999px; background: var(--tf-graphite-tint); color: var(--tf-text-2);
+  font-family: inherit; font-size: 12.5px; cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.chip:hover { background: var(--tf-graphite-line); color: var(--tf-text-1); }
+.chip:active { transform: scale(0.97); }
+.chip:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .chip { transition: none; }
+  .chip:active { transform: none; }
+}

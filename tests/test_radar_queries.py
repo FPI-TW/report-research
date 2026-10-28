@@ -542,3 +542,65 @@ class SignalRowAlignmentTests(unittest.TestCase):
         self.assertEqual(column_alias("s.market"), "market")
         self.assertEqual(column_alias("COALESCE(a, b) AS broker"), "broker")
         self.assertEqual(column_alias("  s.eps_estimates::text  "), "eps_estimates")
+
+
+class RecentRatingChangesSqlTests(unittest.TestCase):
+    """跨標的最新評等變動：比對語意要與總覽近期事件一致（同一筆變動在券商共識頁看得到）。"""
+
+    def _sql(self):
+        return str(queries._RECENT_RATING_CHANGES_SQL)
+
+    def test_partitions_by_effective_broker_with_radar_sort_key(self):
+        sql = self._sql()
+        self.assertIn(
+            f"PARTITION BY s.market, s.instrument_code, {queries.EFFECTIVE_BROKER_SQL}", sql
+        )
+        # 與 compute._signal_sort_key 相同：report_date（缺值最前）→ created_at → id
+        self.assertIn("ORDER BY s.report_date NULLS FIRST, s.created_at, s.id", sql)
+
+    def test_hidden_reports_are_excluded_inside_the_window(self):
+        sql = self._sql()
+        ranked = sql.split("), changes AS (")[0]
+        # 在 ranked 之內排除：被隱藏的研報不能當「上一份」
+        self.assertIn("rvis.file_hash = r.file_hash", ranked)
+        # 公司名的子查詢也帶可見性
+        self.assertIn("rvis.file_hash = rn.file_hash", sql)
+
+    def test_only_five_level_ratings_and_listed_current_report(self):
+        sql = self._sql()
+        self.assertIn("prev_rating = ANY(CAST(:levels AS text[]))", sql)
+        self.assertIn("rating_normalized = ANY(CAST(:levels AS text[]))", sql)
+        self.assertIn("prev_rating <> rating_normalized", sql)
+        self.assertIn("r.stock_targets @> ARRAY[s.instrument_code]::text[]", sql)
+        self.assertIn("report_date IS NOT NULL", sql)
+        self.assertEqual(
+            queries.FIVE_LEVEL_RATINGS, ["buy", "overweight", "neutral", "underweight", "sell"]
+        )
+
+    def test_binds_are_complete_names(self):
+        compiled = queries._RECENT_RATING_CHANGES_SQL.compile(dialect=pg_asyncpg.dialect())
+        self.assertEqual(set(compiled.params), {"statuses", "markets", "levels", "limit"})
+        self.assertNotRegex(str(compiled), r"(?<!:):\w+")
+
+
+class RecentRatingChangesFetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_packs_rows_and_binds(self):
+        session = _QueuedSession([_FakeResult([
+            ("TW", "8046", "南電", "fubon", date(2026, 10, 5), "neutral", "buy"),
+            ("US", "NVDA", None, "kgi", date(2026, 9, 9), "buy", "overweight"),
+        ])])
+        rows = await queries.fetch_recent_rating_changes(session, limit=2)
+
+        self.assertEqual(
+            rows[0],
+            queries.RatingChangeRow(
+                market="TW", instrument_code="8046", instrument_name="南電", broker="fubon",
+                report_date=date(2026, 10, 5), rating_from="neutral", rating_to="buy",
+            ),
+        )
+        self.assertIsNone(rows[1].instrument_name)
+        params = session.calls[0][0][1]
+        self.assertEqual(params["limit"], 2)
+        self.assertEqual(params["statuses"], queries.VALID_STATUSES)
+        self.assertEqual(params["markets"], MARKETS)
+        self.assertEqual(params["levels"], queries.FIVE_LEVEL_RATINGS)

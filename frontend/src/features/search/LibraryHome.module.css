@@ -1,0 +1,15 @@
+.bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-top: 28px; }
+.headline { grid-column: span 3; grid-row: span 2; }
+.changes { grid-column: span 3; }
+.brief { grid-column: 4 / span 3; grid-row: 2; }
+.latest { grid-column: 1 / -1; grid-row: 3; }
+
+/* 卡片 stagger 進場：0.65s 由下 18px、間隔 0.07s（交接包「動畫」） */
+.cell { animation: rise 0.65s var(--tf-ease-apple) both; animation-delay: calc(0.05s + var(--i, 0) * 0.07s); }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 1100px) {
+  .bento { grid-template-columns: minmax(0, 1fr); }
+  .bento > * { grid-column: auto; grid-row: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .cell { animation: none; } }

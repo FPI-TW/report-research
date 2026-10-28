@@ -260,7 +260,10 @@ def _is_model_missing(message: str) -> bool:
 def _normalize_usage(usage: dict) -> dict:
     """補上 DeepSeek 的 cache 計數鍵。OpenCode Go 回的是 OpenAI 格式（`prompt_tokens`＋
     `prompt_tokens_details.cached_tokens`，10/28 探測），沒有 `prompt_cache_hit_tokens`／`miss`；不補的話
-    usage log 與 observer 的 hit／miss 都是 None，費用歸因就掉了 input token。DeepSeek 原本就有這兩個鍵，不動。"""
+    usage log 與 observer 的 hit／miss 都是 None，費用歸因就掉了 input token。只在 Go 模式下換算：DeepSeek 原本就有
+    這兩個鍵，它的 usage 一律原樣保留（judge 的 `evaluation.usage` 會落庫）。"""
+    if _provider() != PROVIDER_OPENCODE_GO:
+        return usage
     if "prompt_cache_hit_tokens" in usage or "prompt_cache_miss_tokens" in usage:
         return usage
     prompt = usage.get("prompt_tokens")

@@ -92,3 +92,37 @@ test('相鄰兩表格（中間無空行）各自成表，不互相吞併', () =>
   expect(tables[1].querySelectorAll('th')).toHaveLength(2)
   expect(container.textContent).not.toContain('---')
 })
+
+// ── 串流選項（研究助理的逐段淡入、自訂引用膠囊）──────────────────────────────
+
+test('streamChunkClass：CJK 一字一段、英數一詞一段，套指定 class；行內 code 不切', () => {
+  const { container } = render(<div>{renderAnswer('台積 TSMC rocks `x`', 0, () => {}, undefined, { streamChunkClass: 'tok' })}</div>)
+  const chunks = Array.from(container.querySelectorAll('span.tok'), s => s.textContent)
+  expect(chunks).toEqual(['台', '積', ' ', 'TSMC ', 'rocks '])
+  expect(container.querySelector('code')!.textContent).toBe('x')
+})
+
+test('streamChunkClass：文字變長時已出現的段落是同一個節點（新段落才掛載）', () => {
+  const { container, rerender } = render(<div>{renderAnswer('台積', 0, () => {}, undefined, { streamChunkClass: 'tok' })}</div>)
+  const first = container.querySelector('span.tok')
+  rerender(<div>{renderAnswer('台積電成長', 0, () => {}, undefined, { streamChunkClass: 'tok' })}</div>)
+  expect(container.querySelector('span.tok')).toBe(first)
+  expect(container.querySelectorAll('span.tok')).toHaveLength(5)
+})
+
+test('不給選項時行為不變：純文字不切段（每日簡報等呼叫端）', () => {
+  const { container } = render(<div>{renderAnswer('台積電', 0, () => {})}</div>)
+  expect(container.querySelector('span')).toBeNull()
+  expect(container.textContent).toBe('台積電')
+})
+
+test('renderCite：界內的 [n] 交給呼叫端畫，帶出對應來源與 onCite', () => {
+  const onCite = vi.fn()
+  const sources = [{ n: 1, report_id: 'r1', file_name: 'a.pdf', market: 'TW', report_date: null, is_latest: false }]
+  render(<div>{renderAnswer('看 [1] 與 [9]', 1, onCite, sources, {
+    renderCite: (n, source, cite) => <button type="button" onClick={() => cite(n)}>{`來源${n}-${source?.report_id}`}</button>,
+  })}</div>)
+  fireEvent.click(screen.getByRole('button', { name: '來源1-r1' }))
+  expect(onCite).toHaveBeenCalledWith(1)
+  expect(screen.getByText(/\[9\]/)).toBeInTheDocument()
+})

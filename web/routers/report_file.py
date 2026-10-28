@@ -77,8 +77,12 @@ async def report_full(report_id: str):
         row = await _fetch_report(session, report_id)
         fn, m, src, rdate, rtype, fpath, _full_text, summary, title = row[:9]
         object_key = row[9] if len(row) > 9 else None
+        file_hash = row[10] if len(row) > 10 else None
     return {
         "report_id": report_id,
+        # 閱讀頁以 file_hash 定址（/app/report/:hash）；問答來源只帶 report_id，
+        # 研究助理的「在閱讀頁開啟」靠這一欄換到閱讀頁網址。
+        "file_hash": file_hash,
         "file_name": fn,
         # 報告內部標題（顯示用）；None＝尚未產生，前端回退 file_name
         "title": title,

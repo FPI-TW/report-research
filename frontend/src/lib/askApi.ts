@@ -39,6 +39,20 @@ export function getQaVersions(rootId: string): Promise<QaVersion[]> {
   return getJSON(`/api/qa/${encodeURIComponent(rootId)}/versions`, z.array(qaVersionSchema), { cache: 'no-store' })
 }
 
+// 只取閱讀頁要的那一欄。nullish：舊後端沒回這欄時解析照樣成功，呼叫端再當成「開不了」。
+const reportHashSchema = z.object({ file_hash: z.string().nullish() })
+
+/**
+ * 問答來源 → 閱讀頁網址要的 `file_hash`。
+ *
+ * SSE 的 `sources` 只帶 `report_id`（閱讀頁以 file_hash 定址），所以「在閱讀頁開啟」在點下去
+ * 那一刻才問 `/api/report/{report_id}/full`。被隱藏的研報在那裡回 404，與閱讀頁本身的語意一致。
+ */
+export async function getReportHash(reportId: string): Promise<string | null> {
+  const r = await getJSON(`/api/report/${encodeURIComponent(reportId)}/full`, reportHashSchema, { cache: 'no-store' })
+  return r.file_hash ?? null
+}
+
 export function getConversation(id: string): Promise<ConversationTurn[]> {
   return getJSON(`/api/conversations/${encodeURIComponent(id)}`, z.array(conversationTurnSchema), { cache: 'no-store' })
 }

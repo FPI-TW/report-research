@@ -1,28 +1,74 @@
-/* 右側滑入/滑出（translate/opacity）由 Motion（SourcesDrawer.tsx）驅動；
-   離場時整片移出右緣，由 AskPage .page overflow:hidden 裁切、不生水平捲軸。 */
+/* 右側浮層（只有浮層有陰影）。常駐 DOM，關閉時移到右緣外並 visibility:hidden——
+   visibility 在滑出動畫結束後才切（delay＝滑出時長），否則抽屜會直接消失。
+   離場時整片在 .page 的 overflow:clip 之外，不生水平捲軸。 */
 .panel {
-  width: 340px; flex: none; background: var(--tf-surface); border-left: 1px solid var(--tf-border);
-  display: flex; flex-direction: column; height: 100%;
+  position: absolute; top: 64px; right: 12px; bottom: 12px; z-index: 20;
+  width: 372px; max-width: calc(100% - 24px);
+  display: flex; flex-direction: column;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(255, 255, 255, 0.93));
+  border-radius: 20px;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 24px 64px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transform: translateX(calc(100% + 24px)); opacity: 0.4; visibility: hidden;
+  transition: transform 0.5s var(--tf-ease-apple), opacity 0.3s ease, visibility 0s linear 0.5s;
 }
-.header { display: flex; align-items: center; gap: 8px; padding: 16px 18px; border-bottom: 1px solid var(--tf-border-weak); flex: none; }
-.title { font-family: var(--tf-display); font-weight: 600; font-size: 16px; color: var(--tf-text-1); }
-.count { background: var(--tf-gold-tint); color: var(--tf-gold-text); border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 1px 8px; font-variant-numeric: tabular-nums; }
-.headSpacer { flex: 1; }
-.close { border: none; background: var(--tf-border-weak); border-radius: 999px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); }
+.panelOn { transform: none; opacity: 1; visibility: visible; transition: transform 0.5s var(--tf-ease-apple), opacity 0.3s ease, visibility 0s; }
+
+.header { flex: none; display: flex; align-items: center; gap: 8px; padding: 16px 14px 12px 18px; }
+.title { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.count {
+  min-width: 22px; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--tf-gold-tint); color: var(--tf-gold-text);
+  font-size: 11.5px; font-weight: 700; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.spacer { flex: 1; }
+.close {
+  width: 30px; height: 30px; flex: none; padding: 0; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 999px; background: var(--tf-border-weak); color: var(--tf-text-2); cursor: pointer;
+  transition: background var(--tf-dur-1) ease, transform var(--tf-dur-1) ease;
+}
 .close:hover { background: var(--tf-border); }
-.body { flex: 1; overflow-y: auto; padding: 14px 16px; }
-.subhead { font-size: 11px; font-weight: 700; color: var(--tf-text-4); letter-spacing: 0.05em; margin-bottom: 8px; }
-.list { display: flex; flex-direction: column; gap: 8px; }
-.srcCard { text-align: left; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-card); padding: 10px 12px; cursor: pointer; font-family: inherit; }
-.srcCard:hover { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite); }
-.srcTop { display: flex; align-items: center; gap: 8px; }
-.numGold { background: var(--tf-gold-tint); color: var(--tf-gold-text); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none; }
-.mkt { border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 500; }
-.srcSpacer { flex: 1; }
-.srcDate { font-size: 11.5px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
-.srcTitle { font-family: var(--tf-display); font-weight: 600; font-size: 13.5px; color: var(--tf-text-1); line-height: 1.45; margin-top: 6px; word-break: break-all; }
-.extCard { border: 1px dashed var(--tf-border); background: var(--tf-fill-subtle); border-radius: var(--tf-radius-card); padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; text-decoration: none; }
-.extCard:hover { border-color: var(--tf-graphite); }
-.numOrange { border: 1px solid var(--tf-warn); color: var(--tf-gold-text); border-radius: 999px; font-size: 11px; font-weight: 600; padding: 0 7px; flex: none; margin-top: 2px; }
-.extTitle { font-size: 13px; color: var(--tf-text-1); font-weight: 500; }
-.extMeta { font-size: 11.5px; color: var(--tf-text-4); margin-top: 2px; }
+.close:active { transform: scale(0.92); }
+
+.body { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+.card {
+  flex: none; padding: 12px 14px; border-radius: 10px; background: var(--tf-surface);
+  box-shadow: 0 0 0 1px #e9e9ec;
+  transition: box-shadow 0.18s ease, background 0.18s ease;
+  animation: fadeUp 0.24s var(--tf-ease-out) both;
+}
+.card:hover { box-shadow: 0 0 0 1px var(--tf-graphite); }
+/* 點引用後閃一下金框。兩個同內容的 class 交替：同一則再點一次 class 會換，動畫才會重播。 */
+.flashA { animation: flashA 0.9s var(--tf-ease-out) both; background: #fffdf7; }
+.flashB { animation: flashB 0.9s var(--tf-ease-out) both; background: #fffdf7; }
+
+.top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.num {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; flex: none;
+  background: var(--tf-gold-tint); color: var(--tf-gold-text);
+  font-size: 11px; font-weight: 700; line-height: 20px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.mkt { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; flex: none; }
+.webTag { background: var(--tf-border-weak); color: var(--tf-text-2); }
+.host { min-width: 0; font-size: 12px; color: var(--tf-text-muted-aa); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.date { font-size: 11.5px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; flex: none; }
+.cardTitle { margin: 8px 0 0; font-size: 14px; line-height: 1.45; font-weight: 600; color: var(--tf-text-1); word-break: break-word; }
+
+.lk {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; padding: 0;
+  border: none; background: none; font: inherit; font-size: 13px; font-weight: 500;
+  color: var(--tf-gold-text); text-decoration: none; cursor: pointer;
+  transition: color var(--tf-dur-1) ease, gap 0.18s var(--tf-ease-out), opacity var(--tf-dur-1) ease;
+}
+.lk:hover { color: var(--tf-gold-hover); gap: 7px; }
+.lk[aria-busy='true'] { opacity: 0.55; cursor: progress; }
+.lk:disabled { opacity: 0.4; cursor: default; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes flashA {
+  0% { box-shadow: 0 0 0 4px rgba(174, 116, 21, 0.4), 0 0 0 1px #ae7415; }
+  100% { box-shadow: 0 0 0 0 rgba(174, 116, 21, 0), 0 0 0 1px #ead9ae; }
+}
+@keyframes flashB {
+  0% { box-shadow: 0 0 0 4px rgba(174, 116, 21, 0.4), 0 0 0 1px #ae7415; }
+  100% { box-shadow: 0 0 0 0 rgba(174, 116, 21, 0), 0 0 0 1px #ead9ae; }
+}

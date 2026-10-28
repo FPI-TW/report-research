@@ -1,107 +1,75 @@
+/* 閱讀頁：左側研報面板（白底、右側髮絲線、可獨立捲動）＋右側全幅 PDF 畫布。 */
 .page {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: var(--tf-surface);
 }
 
 /* 兩欄 ＋ 左欄底部的免責。
-   刻意用 grid 而非 flex：免責原本是 .page 最後一格的全寬底帶，橫跨兩欄、把整整一條
-   高度從文件欄一起扣走（研報內文正是本頁的主體）。改成網格後文件欄跨滿兩列，免責
-   只佔左欄的高度 —— 版面上它是「側欄的頁腳」，不是「黏在視窗底的橫幅」。
+   刻意用 grid 而非 flex：文件欄跨滿兩列，免責只佔左欄的高度 —— 版面上它是「面板的
+   頁腳」，不是「黏在視窗底的橫幅」，也不從 PDF 畫布扣走一條高度。
    兩條 minmax(0, …) 都是必要的：格線項目預設 min-height/min-width: auto，內容撐得比
    軌道大時會把軌道頂開，於是 .intel/.doc 的 overflow-y 永遠捲不起來。 */
 .main {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-columns: 400px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas:
     'intel doc'
     'disc  doc';
 }
 
-/* 左欄 · 智慧：摘要 → 重點摘錄 → 觀點 → 相似研報（此順序為設計稿拍板）
-   欄本身退成畫布，內容收進一張卡 —— 四區原本各自帶一條尾線、讀起來是四個並列的
-   盒子；改為單卡之後摘要與其下各區才連成同一段敘事。
-   刻意不改玻璃：本欄自己就是捲動容器，內容捲在它「裡面」而不是從它「底下」經過，
-   玻璃疊在沒有東西可模糊的底上只會變髒（見 tokens.css 的材質說明）。 */
+/* 研報面板：頁首 → 本篇評等 → 摘要 → 重點摘錄 → 相似研報（交接包拍板的順序）。
+   各區以髮絲線分隔（panel.module.css），不是卡片。 */
 .intel {
   grid-area: intel;
   min-height: 0;
-  border-right: 1px solid var(--tf-divider);
-  background: var(--tf-canvas);
-  overflow-y: auto;
-  /* 側欄捲到底不再把整頁一起帶走 */
-  overscroll-behavior: contain;
-  /* 下內距從 40 收到 22：捲動流的尾端現在接著 .disc，原本那段留白會變成一道空隙 */
-  padding: 16px 14px 22px;
-}
-
-.card {
   background: var(--tf-surface);
-  border-radius: var(--tf-radius-card);
-  box-shadow: var(--tf-shadow-xs);
-  overflow: hidden;
+  border-right: 1px solid var(--tf-glass-border);
+  overflow-y: auto;
+  /* 面板捲到底不再把整頁一起帶走 */
+  overscroll-behavior: contain;
+  padding-bottom: 8px;
+  /* 細捲軸：平常透明，滑過面板才顯示 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
-/* 最貧乏態（無摘要、無摘錄、無訊號、無相似）四區全不渲染，卡片會是空的 ——
-   高度 0 的元素其陰影仍會畫出一條淡線，故整個收掉。 */
-.card:empty {
-  display: none;
+.intel:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
 }
-
-.sec {
-  padding: 14px 16px;
-  /* 長文頁：離開視窗的區塊省下排版成本（不引 virtualization 套件） */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 160px;
+.intel::-webkit-scrollbar {
+  width: 12px;
 }
-
-/* 相鄰的主體區塊不再各自留上內距，摘要與重點摘錄因此讀起來是連續的一段。
-   .foot 例外（它要靠自己的上邊界與主體分開）；區塊為條件渲染，故用相鄰選擇器
-   而非固定的 nth-child —— 沒有摘要時重點摘錄仍是首區、仍保有完整上內距。 */
-.card > .sec + .sec:not(.foot) {
-  padding-top: 0;
+.intel::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-/* 頁腳區：觀點與相似研報是「本篇之外」的延伸，以淡填色與髮絲上界退一階，
-   但仍在同一張卡內 —— 不是第二張卡。 */
-.foot {
-  background: var(--tf-fill-subtle);
-  border-top: 1px solid var(--tf-border-weak);
+.intel::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  background-color: transparent;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
 }
-
-/* 區塊小標：拿掉原本的尾線並縮小、調淡。標題文字不可從 DOM 移除
-   （測試以 getByText 逐一釘住四個標題的存在與不存在），故是「幾乎看不見」而非刪除。 */
-.secH {
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--tf-text-4);
-  font-family: var(--tf-mono);
-  margin: 0 0 7px;
+.intel:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+}
+.intel::-webkit-scrollbar-thumb:active {
+  background-color: rgba(138, 90, 15, 0.55);
 }
 
-/* 摘要是本欄的主體，字級與顏色提到內文級（不再是次要的灰字說明） */
+/* 摘要是面板的主體，字級提到內文級 */
 .sum {
-  font-size: 13px;
-  line-height: 1.9;
-  color: var(--tf-text-1);
-  margin: 0;
+  margin: 10px 0 0;
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--tf-graphite);
 }
 
-.signalNote {
-  font-size: 11px;
-  color: var(--tf-text-4);
-  margin: -2px 0 10px;
-  line-height: 1.55;
-}
-
-/* 右欄 · 文件：捲動容器本身
-   捲動刻意收在這一層（而非各 pane 的 .stage），文件才會從吸頂工具列底下捲過去 ——
-   那正是 --tf-glass 唯一成立的條件。各 pane 的 .stage 因此只負責置中與留白。 */
+/* 右欄：全幅 PDF 畫布。PDF 檢視器自己捲；文字後備（.docx）由這一層捲。 */
 .doc {
   /* 跨滿 intel/disc 兩列：免責那一列的高度不從這裡出 */
   grid-area: doc;
@@ -109,68 +77,64 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--tf-canvas);
+  background: #e9e9ec;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* 文字後備（.docx）由這一層捲：細捲軸，滑過才顯示 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.doc:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
+}
+.doc::-webkit-scrollbar {
+  width: 12px;
+}
+.doc::-webkit-scrollbar-track {
+  background: transparent;
+}
+.doc::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  background-color: transparent;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.doc:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
 }
 
-/* 吸頂工具列：磨砂玻璃 ＋ 髮絲底線 ＋ 內側高光，與側欄／輸入列同一種材質。
-   z-index 只需壓過紙張陰影，不與任何浮層競爭。 */
-.docBar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 24px;
-  background: var(--tf-glass);
-  -webkit-backdrop-filter: var(--tf-glass-filter);
-  backdrop-filter: var(--tf-glass-filter);
-  border-bottom: 1px solid var(--tf-glass-border);
-  box-shadow: var(--tf-glass-sheen);
-  flex: none;
-}
-
-/* 檔名靠左：檢視切換與命中導航移除後，docBar 只剩這一個元素，
-   再靠 margin-left:auto 推到右邊會讓整條看起來像一條空的吸頂條。 */
-.docFile {
-  font-family: var(--tf-mono);
-  font-size: 11.5px;
-  color: var(--tf-text-4);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 合規：免責恆常駐 —— 退為左欄的頁腳（寬版），底色與 border-right 都接著 .intel，
-   讀起來是同一欄的收尾而不是另一個區塊。它在 .intel 的捲動容器「之外」，所以側欄
-   捲多長它都在，不必捲到底才看得到。
-   顏色從 --tf-text-4 換成 --tf-text-muted-aa：前者對畫布只有 3.2:1，是 tokens.css
-   明文指定給「與鄰近資訊重複的裝飾性文字」的色，而免責是必須讀得到的合規文字。 */
+/* 合規：免責恆常駐 —— 釘在左欄底部，在面板的捲動容器「之外」，所以面板捲多長它都在，
+   不必捲到底才看得到。
+   顏色用 --tf-text-muted-aa：--tf-text-4 對畫布只有 3.2:1，是 tokens.css 明文指定給
+   「與鄰近資訊重複的裝飾性文字」的色，而免責是必須讀得到的合規文字。 */
 .disc {
   grid-area: disc;
-  padding: 10px 14px 12px;
-  font-size: 11px;
+  padding: 14px 24px 16px;
+  font-size: 12px;
+  line-height: 1.7;
   color: var(--tf-text-muted-aa);
-  line-height: 1.6;
+  background: var(--tf-surface);
   border-top: 1px solid var(--tf-border-weak);
-  border-right: 1px solid var(--tf-divider);
-  background: var(--tf-canvas);
+  border-right: 1px solid var(--tf-glass-border);
+}
+
+@media (max-width: 1279px) {
+  .main {
+    grid-template-columns: 360px minmax(0, 1fr);
+  }
 }
 
 /* 窄版：雙欄改為上下堆疊，整頁改為單一捲動容器。
-   兩欄各自的 overflow 必須一起收掉，否則巢狀捲動會在手機上互相搶手勢。
-   工具列仍 sticky，此時吸的是視窗頂緣。 */
+   兩欄各自的 overflow 必須一起收掉，否則巢狀捲動會在手機上互相搶手勢。 */
 @media (max-width: 1023px) {
   .page {
-    height: auto;
-    min-height: 100%;
     overflow-y: auto;
   }
-  /* 單欄堆疊：免責改排到 doc 之後 —— 它是全頁的收尾，夾在側欄與研報之間會變成
+  /* 單欄堆疊：免責改排到 doc 之後 —— 它是全頁的收尾，夾在面板與研報之間會變成
      一段擋路的法遵文字。同一個節點換一個 grid area，DOM 不動。 */
   .main {
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto auto;
     grid-template-areas:
@@ -180,19 +144,15 @@
   }
   .intel {
     border-right: 0;
-    border-bottom: 1px solid var(--tf-divider);
     overflow: visible;
-    padding: 14px 12px 20px;
   }
+  /* PDF 畫布要有確定高度才排得出頁面；文字後備則照內容長高 */
   .doc {
     overflow: visible;
-    min-height: 70vh;
-  }
-  .docBar {
-    padding: 9px 16px;
+    min-height: 680px;
   }
   .disc {
     border-right: 0;
-    padding: 11px 16px 14px;
+    padding: 14px 16px 18px;
   }
 }

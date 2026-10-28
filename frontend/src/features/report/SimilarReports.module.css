@@ -1,130 +1,51 @@
-/* 左側智慧欄的第 4 個區塊，位於卡片頁腳：與觀點同一階淡填色，
-   預設收合成一行（收合態高度約 42px，展開後由 content-visibility 的 auto 自行修正）。 */
-.sim {
-  background: var(--tf-fill-subtle);
-  border-top: 1px solid var(--tf-border-weak);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 42px;
-}
-
-/* 錯誤態不收合，故仍需自己的內距（成功態的內距在 .row／.body 上） */
-.simErr {
-  padding: 14px 16px;
-}
-
-/* h2 只承載標題語意，視覺與內距都在內層的 button 上 */
-.head {
-  margin: 0;
-  font: inherit;
-}
-
-/* 收合列：整條可點，是唯一的開合觸發點 */
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  padding: 12px 16px;
-  cursor: pointer;
-  text-align: left;
-  font-family: var(--tf-sans);
-  transition: background var(--tf-dur-1) var(--tf-ease-standard);
-}
-.row:hover {
-  background: color-mix(in srgb, var(--tf-text-1) 4%, transparent);
-}
-.row:focus-visible {
-  outline: 2px solid var(--tf-graphite);
-  outline-offset: -2px;
-}
-
-/* 與 ReportPage .secH 同款的區塊小標（無尾線版） */
-.title {
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--tf-text-4);
-  font-family: var(--tf-mono);
-}
-
-.errHead {
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--tf-text-4);
-  font-family: var(--tf-mono);
-  margin: 0 0 8px;
-}
-
-/* 篇數：收合態下唯一的資訊量，故用強調色而非灰字 */
-.count {
-  font-family: var(--tf-mono);
-  font-size: 10px;
-  color: var(--tf-gold-text);
-  background: var(--tf-gold-tint);
-  border-radius: var(--tf-radius-pill);
-  padding: 1px 7px;
-  line-height: 1.5;
-}
-
-.chev {
-  margin-left: auto;
-  display: inline-flex;
-  color: var(--tf-text-4);
-  transition: transform var(--tf-dur-2) var(--tf-ease-standard);
-}
-.chevOpen {
-  transform: rotate(180deg);
-}
-
-.body {
-  padding: 0 16px 12px;
-}
-
-/* 演算法說明：說法要對得上「均勻取樣」而非把全文「切成」N 段 */
-.note {
-  font-size: 11px;
-  color: var(--tf-text-4);
-  line-height: 1.55;
-  margin: 0 0 4px;
-}
-
 .list {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
 }
 
-/* 清單列：位移歸 Motion（MotionLink whileHover x），色彩態留 CSS。
-   細分隔線區隔各列；hover 以背景微差提示可點。 */
-.item {
-  display: block;
+.row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 9px 8px;
+  border-radius: 10px;
+  color: var(--tf-text-1);
   text-decoration: none;
-  padding: 10px 0;
-  border-top: 1px solid var(--tf-border-weak);
   transition: background var(--tf-dur-1) var(--tf-ease-standard);
 }
-.item:first-of-type {
-  border-top: 0;
+.row:hover {
+  background: #f7f7f8;
 }
-.item:hover {
-  background: color-mix(in srgb, var(--tf-text-1) 3%, transparent);
+.row:active {
+  background: var(--tf-border-weak);
 }
-.item:focus-visible {
-  outline: 2px solid var(--tf-graphite);
-  outline-offset: 2px;
+.row:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: -2px;
 }
 
-.itemTitle {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--tf-text-1);
-  line-height: 1.45;
-  margin-bottom: 5px;
+/* 市場：該市場色的文字（列內不用膠囊，免得與標題搶） */
+.mkt {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 21px;
+  white-space: nowrap;
+}
+
+.body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.title {
+  font-size: 13.5px;
+  line-height: 1.55;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -133,54 +54,53 @@
 
 .meta {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  font-size: 11px;
-  color: var(--tf-text-3);
-  font-family: var(--tf-mono);
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--tf-text-4);
 }
 
-/* 市場 chip：與報頭 .mkt 同語彙，清單尺度縮小 */
-.mkt {
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.4;
-  padding: 1px 6px;
-  border-radius: var(--tf-radius-pill);
-  font-family: var(--tf-sans);
-  white-space: nowrap;
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
-/* 相符數推到列尾（窄欄放不下時整段自然換行，不擠壞券商·日期） */
-.match {
-  margin-left: auto;
-  color: var(--tf-text-3);
-  white-space: nowrap;
-}
-
-/* 載入失敗：不靜默消失，給讀者一個可重試的落點 */
 .failed {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 12.5px;
-  color: var(--tf-text-3);
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--tf-text-muted-aa);
 }
 
 .retry {
   appearance: none;
-  border: 1px solid var(--tf-border);
-  background: var(--tf-surface);
-  color: var(--tf-graphite);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: var(--tf-sans);
-  padding: 3px 12px;
-  border-radius: var(--tf-radius-pill);
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--tf-gold-text);
   cursor: pointer;
-  transition: border-color var(--tf-dur-1) var(--tf-ease-standard),
-              background var(--tf-dur-1) var(--tf-ease-standard);
 }
-.retry:hover { border-color: var(--tf-graphite-line); background: var(--tf-canvas); }
-.retry:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; }
+.retry:hover {
+  color: var(--tf-gold-hover);
+}
+.retry:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (max-width: 1023px) {
+  .row {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    transition: none;
+  }
+}

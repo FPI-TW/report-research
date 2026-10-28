@@ -1,10 +1,24 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { useEffect } from 'react'
+import { MemoryRouter, Route, Routes, type InitialEntry } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as clipboard from '../../lib/clipboard'
+import * as radarApi from '../../lib/radarApi'
 import * as readingApi from '../../lib/readingApi'
+import * as toast from '../../lib/toast'
 import type { ReadingDoc, ReadingText, SimilarResponse } from '../../lib/readingSchemas'
 import ReportPage from './ReportPage'
+
+// 評等卡的「N 家券商共識」與目標價調幅走既有的券商共識 API；預設讓它們失敗，
+// 驗卡片在派生資訊拿不到時照常顯示（fail-open）。
+vi.mock('../../lib/radarApi', () => ({
+  getInstrumentRadar: vi.fn(),
+  getBrokerHistory: vi.fn(),
+}))
+
+vi.mock('../../lib/clipboard', () => ({ copyText: vi.fn() }))
+vi.mock('../../lib/toast', () => ({ showToast: vi.fn() }))
 
 vi.mock('../../lib/readingApi', async importOriginal => {
   const actual = await importOriginal<typeof readingApi>()
@@ -28,15 +42,26 @@ vi.mock('../../lib/readingApi', async importOriginal => {
 const viewer = {
   jumps: [] as { ordinal: number; quote: string; nonce: number }[],
   reply: null as { ok: boolean; page?: number; total?: number } | null,
+  /** 設了就在掛載後回報 PDF 檔的載入結果（模擬「PDF 載入失敗」） */
+  loadState: null as 'ready' | 'failed' | null,
+  marks: null as unknown,
 }
 vi.mock('./pdf/PdfViewer', () => ({
-  default: ({
+  default: function FakeViewer({
     jump,
+    marks,
     onJumpResult,
+    onLoadState,
   }: {
     jump?: { ordinal: number; quote: string; nonce: number } | null
+    marks?: unknown
     onJumpResult?: (r: { nonce: number; ok: boolean; page?: number; total?: number }) => void
-  }) => {
+    onLoadState?: (s: 'ready' | 'failed') => void
+  }) {
+    viewer.marks = marks
+    useEffect(() => {
+      if (viewer.loadState) onLoadState?.(viewer.loadState)
+    }, [onLoadState])
     if (jump && viewer.jumps.at(-1)?.nonce !== jump.nonce) {
       viewer.jumps.push(jump)
       if (viewer.reply) onJumpResult?.({ nonce: jump.nonce, ...viewer.reply })
@@ -48,7 +73,7 @@ vi.mock('./pdf/PdfViewer', () => ({
 const HASH = 'a'.repeat(64)
 const TEXT_SHA = 'b'.repeat(64)
 
-function wrap(entry: string | string[]) {
+function wrap(entry: InitialEntry | InitialEntry[]) {
   const entries = Array.isArray(entry) ? entry : [entry]
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -136,35 +161,67 @@ const SIGNAL: ReadingDoc['signals'][number] = {
   ],
 }
 
+/** 研報面板的頁首（市場、券商、日期、標的代號與動作列都在這裡） */
+function header() {
+  return within(screen.getByRole('heading', { level: 1 }).closest('header')!)
+}
+
+/** 「本篇評等」那一區 */
+function ratingSection() {
+  return within(screen.getByRole('heading', { name: '本篇評等' }).closest('section')!)
+}
+
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(readingApi.getSimilarReports).mockResolvedValue(similar())
   vi.mocked(readingApi.getReadingText).mockResolvedValue(text())
+  vi.mocked(radarApi.getInstrumentRadar).mockRejectedValue(new Error('radar down'))
+  vi.mocked(radarApi.getBrokerHistory).mockRejectedValue(new Error('radar down'))
   viewer.jumps = []
   viewer.reply = null
+  viewer.loadState = null
+  viewer.marks = null
 })
 
 describe('ReportPage', () => {
   it('非 64-hex 的 hash → 找不到頁面，且完全不打 API', async () => {
     wrap('/report/not-a-hash')
-    expect(screen.getByText('找不到這份研報')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '找不到這篇研報' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '回到研報庫' })).toHaveAttribute('href', '/library')
     expect(readingApi.getReadingDoc).not.toHaveBeenCalled()
     expect(readingApi.getSimilarReports).not.toHaveBeenCalled()
   })
 
-  it('上一頁：回到剛才所在的頁面（不是固定回檢索）', async () => {
+  it('返回：回到剛才所在的頁面（不是固定回研報庫）；不知道來源時寫「上一頁」', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(['/consensus', `/report/${HASH}`])
-    fireEvent.click(await screen.findByRole('button', { name: /上一頁/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '上一頁' }))
     expect(await screen.findByText('雷達頁')).toBeInTheDocument()
   })
 
-  it('上一頁：直接開啟研報（站內沒有上一頁）時退回研報庫，不離開本站', async () => {
+  it('返回：來源頁帶了 from → 文字是來源頁名', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(['/consensus', { pathname: `/report/${HASH}`, state: { from: 'consensus' } }])
+    fireEvent.click(await screen.findByRole('button', { name: '券商共識' }))
+    expect(await screen.findByText('雷達頁')).toBeInTheDocument()
+  })
+
+  // 原型的語意是「返回來源頁」，不是一篇一篇退回上一篇研報
+  it('返回：從相似研報一路點下去，一次退回來源頁', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap([
+      '/consensus',
+      { pathname: `/report/${'d'.repeat(64)}`, state: { from: 'consensus' } },
+      { pathname: `/report/${HASH}`, state: { from: 'consensus', depth: 2 } },
+    ])
+    fireEvent.click(await screen.findByRole('button', { name: '券商共識' }))
+    expect(await screen.findByText('雷達頁')).toBeInTheDocument()
+  })
+
+  it('返回：直接開啟研報（站內沒有上一頁）時退回研報庫，不離開本站', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
-    const back = await screen.findByRole('button', { name: /上一頁/ })
-    expect(back).toHaveAttribute('title', '回到研報庫')
-    fireEvent.click(back)
+    fireEvent.click(await screen.findByRole('button', { name: '研報庫' }))
     expect(await screen.findByText('研報庫頁')).toBeInTheDocument()
   })
 
@@ -174,8 +231,9 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: 'NYPCB：基板漲價超預期，重申買進' })).toBeInTheDocument())
-    // 檔名只留在文件列（等寬小字），不再當頁面標題
+    // 檔名只留在「原始 PDF」鈕的 title，不當頁面標題
     expect(screen.queryByRole('heading', { name: /6247269925/ })).toBeNull()
+    expect(screen.getByRole('link', { name: /原始 PDF/ })).toHaveAttribute('title', '6247269925_260714_dw_nypcb.pdf')
   })
 
   it('載入後顯示報頭：報告名、市場、券商、日期、標的代號', async () => {
@@ -183,11 +241,13 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
-    // 市場標籤在報頭與相似卡片都會出現（同為台股）：報頭斷言限縮到 banner 區才唯一
-    expect(within(screen.getByRole('banner')).getByText('台股')).toBeInTheDocument()
-    expect(screen.getByText('大和')).toBeInTheDocument()
-    expect(screen.getByText('2026-07-14')).toBeInTheDocument()
-    expect(screen.getByText('8046')).toBeInTheDocument()
+    // 市場標籤在頁首與相似研報都會出現（同為台股）：斷言限縮到頁首才唯一
+    expect(header().getByText('台股')).toBeInTheDocument()
+    expect(header().getByText('大和')).toBeInTheDocument()
+    expect(header().getByText('2026-07-14')).toBeInTheDocument()
+    expect(header().getByText('8046')).toBeInTheDocument()
+    // 產品 UI 規則：同列資訊靠間距區分，不用「·」
+    expect(screen.queryByText('·')).toBeNull()
     // PDF 由後端以 inline 提供 → 開新分頁直接看得到，不該強制下載
     const pdfLink = screen.getByRole('link', { name: /原始 PDF/ })
     expect(pdfLink).toHaveAttribute('target', '_blank')
@@ -211,15 +271,20 @@ describe('ReportPage', () => {
   it('報頭顯示 report_type（有值時）', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: '個股報告' }))
     wrap(`/report/${HASH}`)
-    await waitFor(() =>
-      expect(within(screen.getByRole('banner')).getByText('個股報告')).toBeInTheDocument())
+    await waitFor(() => expect(header().getByText('個股報告')).toBeInTheDocument())
+  })
+
+  it('報告類型的英文碼轉中文（snapshot → 快照）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: 'snapshot' }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(header().getByText('快照')).toBeInTheDocument())
   })
 
   it('report_type 為空 → 報頭不留空 chip', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: null }))
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
-    expect(within(screen.getByRole('banner')).queryByText('個股報告')).toBeNull()
+    expect(header().queryByText('個股報告')).toBeNull()
   })
 
   it('報頭把券商粗體', async () => {
@@ -243,77 +308,122 @@ describe('ReportPage', () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ stock_targets: ['2330'], futures_targets: ['2330'] }))
     wrap(`/report/${HASH}`)
-    await waitFor(() =>
-      expect(within(screen.getByRole('banner')).getAllByText('2330')).toHaveLength(2))
+    await waitFor(() => expect(header().getAllByText('2330')).toHaveLength(2))
     const logged = spy.mock.calls.map(c => String(c[0])).join('\n')
     expect(logged).not.toMatch(/same key|two children/)
     spy.mockRestore()
   })
 
   // 多數研報沒有訊號 —— 無訊號是常態不是錯誤，整區不得留下空框或骨架
-  it('signals_state 為 none → 觀點區完全不在 DOM', async () => {
+  it('signals_state 為 none → 本篇評等整區不在 DOM，也不查券商共識', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ signals_state: 'none', signals: [] }))
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('重點摘錄')).toBeInTheDocument())
-    expect(screen.queryByText('觀點')).toBeNull()
-    expect(screen.queryByText('評等')).toBeNull()
-    expect(screen.queryByText('目標價')).toBeNull()
-    expect(screen.queryByText(/並非每篇研報都有/)).toBeNull()
+    expect(screen.queryByText('本篇評等')).toBeNull()
+    // 摘要本身也提到目標價，所以只找評等卡的欄位標題
+    expect(screen.queryByText(/^目標價/)).toBeNull()
+    expect(radarApi.getInstrumentRadar).not.toHaveBeenCalled()
+    expect(radarApi.getBrokerHistory).not.toHaveBeenCalled()
   })
 
-  // 一份研報可能同時對多檔標的有訊號（一列＝一份研報 × 一個標的）。少了抬頭就只剩
-  // 一疊看不出在講誰的評等與目標價 —— 而報頭的標的 chip 也解不了，它不區分是哪一張卡。
-  it('觀點卡抬頭標出標的名稱與代號', async () => {
+  it('本篇評等：評等徽章、目標價（含幣別）、標的，整張連到該標的的券商共識', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ signals_state: 'available', signals: [SIGNAL] }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
-    // 報頭也有一個 8046 的標的 chip → 斷言限縮到觀點區才唯一
-    const sec = within(screen.getByText('觀點').closest('section')!)
-    expect(sec.getByRole('heading', { name: '南亞電路板' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('本篇評等')).toBeInTheDocument())
+    const sec = ratingSection()
+    expect(sec.getByText('買進')).toBeInTheDocument()
+    expect(sec.getByText('目標價（TWD）')).toBeInTheDocument()
+    expect(sec.getByText('2,444')).toBeInTheDocument()
+    expect(sec.getByText('南亞電路板')).toBeInTheDocument()
     expect(sec.getByText('8046')).toBeInTheDocument()
+    const card = sec.getByRole('link', { name: /買進/ })
+    expect(card).toHaveAttribute('href', '/consensus?market=TW&code=8046&window=90')
+    expect(card).toHaveAccessibleName(/前往券商共識/)
   })
 
-  it('名稱缺值 → 代號升為主標，不留空抬頭', async () => {
+  // 券商數與調幅是派生資訊：拿得到才顯示，拿不到卡片照常（fail-open）
+  it('本篇評等：查得到券商共識 → 標「N 家券商共識」與本篇目標價調幅', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ signals_state: 'available', signals: [SIGNAL] }))
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(
+      { coverage: { brokers_in_consensus: 9 } } as unknown as Awaited<ReturnType<typeof radarApi.getInstrumentRadar>>)
+    vi.mocked(radarApi.getBrokerHistory).mockResolvedValue({
+      // diffs[i] 對應 snapshots[i]（後端 build_broker_history 的相鄰差異）
+      snapshots: [{ report_id: 'r1' }, { report_id: 'r0' }],
+      diffs: [
+        { changes: [{ field: 'target_price', comparable: true, pct_change: 8, direction: 'up' }] },
+        { changes: [] },
+      ],
+    } as unknown as Awaited<ReturnType<typeof radarApi.getBrokerHistory>>)
+    wrap(`/report/${HASH}`)
+    const sec = await waitFor(() => {
+      const s = ratingSection()
+      expect(s.getByRole('link', { name: /9 家券商共識/ })).toBeInTheDocument()
+      return s
+    })
+    expect(sec.getByRole('link', { name: /9 家券商共識/ }))
+      .toHaveAttribute('href', '/consensus?market=TW&code=8046&window=90')
+    expect(await sec.findByText(/上調 8%/)).toBeInTheDocument()
+    expect(radarApi.getBrokerHistory).toHaveBeenCalledWith('8046', 'daiwa', 'TW', '90', expect.anything())
+  })
+
+  it('本篇評等：調幅不可比 → 不標調幅', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ signals_state: 'available', signals: [SIGNAL] }))
+    vi.mocked(radarApi.getBrokerHistory).mockResolvedValue({
+      snapshots: [{ report_id: 'r1' }],
+      diffs: [{ changes: [{ field: 'target_price', comparable: false, pct_change: null, direction: 'incomparable' }] }],
+    } as unknown as Awaited<ReturnType<typeof radarApi.getBrokerHistory>>)
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(radarApi.getBrokerHistory).toHaveBeenCalled())
+    await waitFor(() => expect(ratingSection().getByText('2,444')).toBeInTheDocument())
+    // 摘要裡也有「上調」，只看評等區
+    expect(ratingSection().queryByText(/上調|下修/)).toBeNull()
+  })
+
+  it('本篇評等：券商共識查不到 → 卡片照常顯示，標題列只寫「券商共識」', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ signals_state: 'available', signals: [SIGNAL] }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(radarApi.getInstrumentRadar).toHaveBeenCalled())
+    const sec = ratingSection()
+    expect(sec.getByRole('link', { name: '券商共識' })).toBeInTheDocument()
+    expect(sec.getByText('2,444')).toBeInTheDocument()
+  })
+
+  it('本篇評等：名稱缺值 → 只顯示代號一次', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ signals_state: 'available', signals: [{ ...SIGNAL, instrument_name: null }] }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
-    const sec = within(screen.getByText('觀點').closest('section')!)
-    expect(sec.getByRole('heading', { name: '8046' })).toBeInTheDocument()
-    // 代號只出現一次：主標已是它，旁邊不該再印一次副標
-    expect(sec.getAllByText('8046')).toHaveLength(1)
+    await waitFor(() => expect(screen.getByText('本篇評等')).toBeInTheDocument())
+    expect(ratingSection().getAllByText('8046')).toHaveLength(1)
   })
 
-  // 多標的研報：兩張卡各自標出自己的標的，否則兩組評等/目標價無從分辨
-  it('多檔標的 → 每張觀點卡各有自己的抬頭', async () => {
+  // 一份研報可能同時對多檔標的有訊號：每張卡各自標出在講誰、各自連往自己的共識
+  it('本篇評等：多檔標的 → 每張卡各有自己的標的與連結，標題列不放共識連結', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({
       signals_state: 'available',
-      signals: [SIGNAL, { ...SIGNAL, instrument_code: '2330', instrument_name: '台積電' }],
+      signals: [SIGNAL, { ...SIGNAL, instrument_code: '2330', instrument_name: '台積電', rating_normalized: 'neutral' }],
     }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
-    const sec = within(screen.getByText('觀點').closest('section')!)
-    expect(sec.getByRole('heading', { name: '南亞電路板' })).toBeInTheDocument()
-    expect(sec.getByRole('heading', { name: '台積電' })).toBeInTheDocument()
-    expect(sec.getByText('2330')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('本篇評等')).toBeInTheDocument())
+    const sec = ratingSection()
+    expect(sec.getByText('南亞電路板')).toBeInTheDocument()
+    expect(sec.getByText('台積電')).toBeInTheDocument()
+    expect(sec.getByRole('link', { name: /中立/ })).toHaveAttribute('href', '/consensus?market=TW&code=2330&window=90')
+    expect(sec.queryByRole('link', { name: /^(\d+ 家)?券商共識$/ })).toBeNull()
   })
 
-  it('signals_state 為 available → 渲染評等/目標價與四維論點', async () => {
+  // 券商共識只認 findb 的市場代碼；認不得的市場連過去只會 422
+  it('本篇評等：市場不在券商共識清單內 → 卡片照常顯示但不給連結', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
-      doc({ signals_state: 'available', signals: [SIGNAL] }))
+      doc({ signals_state: 'available', signals: [{ ...SIGNAL, market: 'JP' }] }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
-    expect(screen.getByText('評等')).toBeInTheDocument()
-    expect(screen.getByText('買進')).toBeInTheDocument()
-    expect(screen.getByText('Buy (1)')).toBeInTheDocument()
-    expect(screen.getByText('2,444')).toBeInTheDocument()
-    expect(screen.getByText('TWD · 12 個月')).toBeInTheDocument()
-    expect(screen.getByText('展望')).toBeInTheDocument()
-    // 單篇是靜態立場，不是跨報告變化：用「正面」而非雷達的「轉強」
-    expect(screen.getByText('正面')).toBeInTheDocument()
-    expect(screen.getByText('風險')).toBeInTheDocument()
-    expect(screen.getByText('持平')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('本篇評等')).toBeInTheDocument())
+    expect(ratingSection().getByText('買進')).toBeInTheDocument()
+    expect(ratingSection().queryByRole('link')).toBeNull()
+    expect(radarApi.getInstrumentRadar).not.toHaveBeenCalled()
   })
 
   it('takeaways 為空 → 重點摘錄整區不渲染', async () => {
@@ -372,7 +482,7 @@ describe('ReportPage', () => {
     expect(screen.queryByTestId('pdf-viewer')).toBeNull()
     expect(readingApi.getReadingText).toHaveBeenCalledWith(HASH)
     // 有原始檔可下載時才指路，且指的是真的存在的動作（頁首那顆下載鈕）
-    expect(screen.getByText(/需要原始版面請由頁首下載原始檔/)).toBeInTheDocument()
+    expect(screen.getByText(/需要原始版面請下載原始檔/)).toBeInTheDocument()
     // 那顆鈕在 .docx 上不得標成「原始 PDF」，否則與上面這句指路對不上；
     // 且不得開新分頁 —— 後端對非 PDF 回 attachment，target="_blank" 只會留下空白分頁。
     const dl = screen.getByRole('link', { name: /原始檔/ })
@@ -385,7 +495,7 @@ describe('ReportPage', () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ has_file: false, is_pdf: false }))
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
-    expect(screen.queryByText('找不到原始檔。')).toBeNull()
+    expect(screen.queryByText('找不到原始檔')).toBeNull()
     // 無檔時不得指路去下載一個不存在的東西，也不得叫讀者去切一個不存在的檢視
     expect(screen.getByText(/圖表與表格排版不會保留/)).toBeInTheDocument()
     expect(screen.queryByText(/下載原始檔/)).toBeNull()
@@ -409,7 +519,7 @@ describe('ReportPage', () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ file_name: 'x.docx', is_pdf: false, text_state: 'missing', text_chars: 0, text_sha256: null }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText(/無法內嵌預覽，請下載查看/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'DOCX 文件無法內嵌預覽' })).toBeInTheDocument())
     expect(screen.queryByTestId('text-skeleton')).toBeNull()
     expect(screen.getByRole('link', { name: '下載原始檔' })).toBeInTheDocument()
     expect(readingApi.getReadingText).not.toHaveBeenCalled()
@@ -419,7 +529,7 @@ describe('ReportPage', () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ has_file: false, is_pdf: false, text_state: 'missing', text_chars: 0, text_sha256: null }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('找不到原始檔。')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: '找不到原始檔' })).toBeInTheDocument())
     expect(screen.queryByTestId('text-skeleton')).toBeNull()
     expect(readingApi.getReadingText).not.toHaveBeenCalled()
   })
@@ -471,16 +581,15 @@ describe('ReportPage', () => {
     expect(viewer.jumps[1].nonce).toBeGreaterThan(viewer.jumps[0].nonce)
   })
 
-  it('找到 → 畫面只在多重命中時標處數；頁碼僅存在於報讀播報區', async () => {
+  it('找到 → 條目標第 N 頁，多重命中再標共 N 處；播報區同步說', async () => {
     viewer.reply = { ok: true, page: 12, total: 2 }
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
     fireEvent.click(await screen.findByRole('button', { name: /重申買進評級/ }))
-    // 可見標籤只在多重命中時出現，且只講處數（捲過去本身就是回饋，不必再標頁碼）
     expect(await screen.findByText('共 2 處')).toBeInTheDocument()
-    // 頁碼**只**存在於 live region：看得見畫面的人靠捲動得到回饋，看不見的人沒有，
-    // 所以那一份保留頁碼。全頁只此一處提到頁碼。
-    expect(screen.queryAllByText(/第 12 頁/)).toHaveLength(1)
+    const btn = screen.getByRole('button', { name: /重申買進評級/ })
+    expect(within(btn).getByText('第 12 頁')).toBeInTheDocument()
+    // 焦點停在按鈕上，按鈕內部的變動不會被播報 —— live region 那一份不可少
     expect(screen.getByRole('status').textContent).toContain('已在第 12 頁找到')
   })
 
@@ -511,42 +620,37 @@ describe('ReportPage', () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ is_pdf: false }))
     vi.mocked(readingApi.getReadingText).mockRejectedValueOnce(new ApiError(500, '壞了'))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('全文載入失敗。')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: '全文載入失敗' })).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '重試' }))
     // refetch → 落回 beforeEach 的成功回應
     await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
   })
 
-  // 相似研報改為卡片頁腳的收合列：預設只有一行（標題＋篇數），展開才掛清單。
-  // 收合時刻意整段不進 DOM —— 清單列是連結，只用 CSS 藏起來仍會進 Tab 序。
-  it('相似研報：預設收合，展開後顯示「9/12 段相符」且連往閱讀頁', async () => {
+  // 相似研報直接列出（交接包「閱讀頁」第 6 點）：市場、標題、券商、日期
+  it('相似研報：直接列出，連往閱讀頁', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('相似研報')).toBeInTheDocument())
-    expect(screen.queryByText('9/12 段相符')).toBeNull()
-    expect(screen.queryByRole('link', { name: /欣興/ })).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /相似研報/ }))
-
-    expect(screen.getByText('9/12 段相符')).toBeInTheDocument()
-    // 說法要對得上演算法：均勻「取樣」而非把全文「切成」N 段
-    expect(screen.getByText(/沿全文均勻取樣 12 個段落比對/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /欣興/ }))
-      .toHaveAttribute('href', `/report/${'c'.repeat(64)}`)
+    const link = await screen.findByRole('link', { name: /欣興/ })
+    expect(link).toHaveAttribute('href', `/report/${'c'.repeat(64)}`)
+    expect(within(link).getByText('元大')).toBeInTheDocument()
+    expect(within(link).getByText('2026-07-10')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /相似研報/ })).toBeNull()
   })
 
-  it('相似研報：收合列回報 aria-expanded，可再點收回', async () => {
+  it('相似研報：只抓版面要列的 3 篇', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
-    const row = await screen.findByRole('button', { name: /相似研報/ })
-    expect(row).toHaveAttribute('aria-expanded', 'false')
+    await screen.findByRole('link', { name: /欣興/ })
+    expect(readingApi.getSimilarReports).toHaveBeenCalledWith(HASH, 3)
+  })
 
-    fireEvent.click(row)
-    expect(row).toHaveAttribute('aria-expanded', 'true')
-
-    fireEvent.click(row)
-    expect(row).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('9/12 段相符')).toBeNull()
+  // 點進下一篇後，返回鈕要一次退回來源頁而不是上一篇（見 backNav.ts）
+  it('相似研報：點進下一篇後，返回仍是來源頁', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(['/consensus', { pathname: `/report/${HASH}`, state: { from: 'consensus' } }])
+    fireEvent.click(await screen.findByRole('link', { name: /欣興/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '券商共識' }))
+    expect(await screen.findByText('雷達頁')).toBeInTheDocument()
   })
 
   it('相似研報為空 → 整區不渲染', async () => {
@@ -572,7 +676,7 @@ describe('ReportPage', () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ signals_state: 'available', signals: [SIGNAL] }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('本篇評等')).toBeInTheDocument())
     expect(screen.getByText(/不構成任何投資建議或要約/)).toBeInTheDocument()
   })
 
@@ -596,15 +700,59 @@ describe('ReportPage', () => {
     const { ApiError } = await import('../../lib/api')
     vi.mocked(readingApi.getReadingDoc).mockRejectedValue(new ApiError(404, '查無此研報'))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('找不到這份研報')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: '找不到這篇研報' })).toBeInTheDocument())
   })
 
   it('非 404 的載入錯誤 → 可重試', async () => {
     const { ApiError } = await import('../../lib/api')
     vi.mocked(readingApi.getReadingDoc).mockRejectedValue(new ApiError(500, '壞了'))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('載入研報時發生問題')).toBeInTheDocument())
-    expect(screen.getByRole('button', { name: '重試' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('heading', { name: '研報載入失敗' })).toBeInTheDocument())
+    // 重試成功 → 回到正常頁面
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    fireEvent.click(screen.getByRole('button', { name: '重試' }))
+    expect(await screen.findByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument()
+  })
+
+  // PDF 檔本身開不起來：畫布給錯誤狀態，左側摘錄整批不可點（沒有文件可搜尋）
+  it('PDF 載入失敗 → 摘錄整批不可點，內容仍讀得到', async () => {
+    viewer.loadState = 'failed'
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    await screen.findByTestId('pdf-viewer')
+    await waitFor(() => expect(screen.queryByRole('button', { name: /重申買進評級/ })).toBeNull())
+    expect(screen.getByText('重申買進評級')).toBeInTheDocument()
+  })
+
+  it('PDF 載入成功 → 摘錄可點；縮圖列拿到有引文的摘錄', async () => {
+    viewer.loadState = 'ready'
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    expect(await screen.findByRole('button', { name: /重申買進評級/ })).toBeInTheDocument()
+    // 第 2 條沒有引文，沒有落點可找，不送進縮圖列
+    expect(viewer.marks).toEqual([{ ordinal: 1, quote: '視 NYPCB 為基板族群首選' }])
+  })
+
+  // 走 lib/clipboard（區網 HTTP 下 navigator.clipboard 不存在）；分享的是乾淨的閱讀頁網址
+  it('複製連結 → 綠勾與提示訊息', async () => {
+    const copy = vi.mocked(clipboard.copyText).mockResolvedValue(undefined)
+    const show = vi.mocked(toast.showToast)
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}?chunk=4`)
+    fireEvent.click(await screen.findByRole('button', { name: '複製連結' }))
+    expect(await screen.findByRole('button', { name: '已複製連結' })).toBeInTheDocument()
+    expect(copy).toHaveBeenCalledWith(`${window.location.origin}/report/${HASH}`)
+    expect(show).toHaveBeenCalledWith('已複製連結', { ok: true })
+  })
+
+  it('複製連結失敗 → 據實說，不顯示綠勾', async () => {
+    vi.mocked(clipboard.copyText).mockRejectedValue(new Error('copy failed'))
+    const show = vi.mocked(toast.showToast)
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    fireEvent.click(await screen.findByRole('button', { name: '複製連結' }))
+    await waitFor(() => expect(show).toHaveBeenCalledWith('複製失敗，請手動複製網址'))
+    expect(screen.queryByRole('button', { name: '已複製連結' })).toBeNull()
   })
 
   it('無原始檔 → 報頭不給原始 PDF 鈕', async () => {

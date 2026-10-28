@@ -1,4 +1,4 @@
-import type { ReadingDoc, ReadingRatingNorm, ThesisKey } from '../../lib/readingSchemas'
+import type { ReadingRatingNorm } from '../../lib/readingSchemas'
 
 /** file_hash 為 sha256 十六進位；非 64-hex 前端先擋一次（不打 API）。 */
 const HASH_RE = /^[0-9a-f]{64}$/i
@@ -25,100 +25,12 @@ export const RATING_DISPLAY: Record<ReadingRatingNorm, string> = {
   unknown: '未評等',
 }
 
-/** 評等 → 三桶語意（著色用）。 */
-export const RATING_BUCKET: Record<ReadingRatingNorm, 'bull' | 'neu' | 'bear'> = {
-  buy: 'bull',
-  overweight: 'bull',
-  neutral: 'neu',
-  underweight: 'bear',
-  sell: 'bear',
-  unknown: 'neu',
+/** 日期只取 YYYY-MM-DD（後端可能帶時間）。缺值回 null，呼叫端整格不渲染。 */
+export function fmtDate(iso: string | null | undefined): string | null {
+  return iso ? iso.slice(0, 10) : null
 }
 
-export const THESIS_LABEL: Record<ThesisKey, string> = {
-  outlook: '展望',
-  catalyst: '催化',
-  risk: '風險',
-  valuation: '估值',
-}
-
-/** 四維論點的顯示順序（對齊後端 signal_extract.THESIS_DIMENSIONS）。 */
-export const THESIS_ORDER: ThesisKey[] = ['outlook', 'catalyst', 'risk', 'valuation']
-
-/**
- * stance 受控詞彙 → 中文顯示，逐字鏡像後端 signal_extract.STANCE_CONSTRUCTIVENESS 的維度特定詞彙。
- *
- * 注意：這是「單篇報告的靜態立場」，不是雷達的「跨報告變化」。故用「正面/中性/負面」
- * 而非「轉強/轉弱」——單篇沒有前次可比，說「轉強」會是無中生有的比較敘述。
- * 風險維度以「升高＝建設性下降」表達，避免 positive/negative 對風險的符號歧義。
- */
-const STANCE_DISPLAY: Record<ThesisKey, Record<string, string>> = {
-  outlook: { positive: '正面', neutral: '中性', negative: '負面' },
-  catalyst: { positive: '正面', neutral: '中性', negative: '負面' },
-  valuation: { attractive: '偏低', fair: '合理', stretched: '偏高' },
-  risk: { easing: '趨緩', stable: '持平', rising: '升高' },
-}
-
-/** 建設性序位（+1/0/−1）→ 色調桶，鏡像後端同名對照表。 */
-const STANCE_TONE: Record<ThesisKey, Record<string, 'pos' | 'neu' | 'neg'>> = {
-  outlook: { positive: 'pos', neutral: 'neu', negative: 'neg' },
-  catalyst: { positive: 'pos', neutral: 'neu', negative: 'neg' },
-  valuation: { attractive: 'pos', fair: 'neu', stretched: 'neg' },
-  risk: { easing: 'pos', stable: 'neu', rising: 'neg' },
-}
-
-/** 未映射的 stance 原樣顯示（不猜、不丟），色調退回中性。 */
-export function stanceDisplay(key: ThesisKey, stance: string | null | undefined): string | null {
-  if (!stance) return null
-  return STANCE_DISPLAY[key]?.[stance] ?? stance
-}
-
-export function stanceTone(key: ThesisKey, stance: string | null | undefined): 'pos' | 'neu' | 'neg' {
-  if (!stance) return 'neu'
-  return STANCE_TONE[key]?.[stance] ?? 'neu'
-}
-
-/**
- * 報頭 meta 組字串：券商 · 日期。任一為 null 時不留多餘的分隔點。
- * source_display 優先於 source（顯示名 vs 內部代號）。
- */
-export function metaParts(doc: Pick<ReadingDoc, 'source' | 'source_display' | 'report_date'>): string[] {
-  const broker = doc.source_display || doc.source || null
-  const date = doc.report_date ? doc.report_date.slice(0, 10) : null
-  return [broker, date].filter((s): s is string => Boolean(s))
-}
-
-/** 相似研報卡的 meta：券商 · 日期（同樣不留空分隔）。 */
-export function similarMeta(item: {
-  source?: string | null
-  source_display?: string | null
-  report_date?: string | null
-}): string {
-  const broker = item.source_display || item.source || null
-  const date = item.report_date ? item.report_date.slice(0, 10) : null
-  return [broker, date].filter(Boolean).join(' · ')
-}
-
-/** 設計稿拍板的相似度說法：「9/12 段相符」。 */
-export function matchedText(matched: number, total: number): string {
-  return `${matched}/${total} 段相符`
-}
-
-/** 相似度條寬度百分比；total 為 0 時回 0（不除以零）。 */
-export function matchedPct(matched: number, total: number): number {
-  if (!total) return 0
-  return Math.max(0, Math.min(100, Math.round((matched / total) * 100)))
-}
-
-const CURRENCY_PREFIX: Record<string, string> = {
-  TWD: 'NT$',
-  USD: 'US$',
-  HKD: 'HK$',
-  CNY: 'CN¥',
-  JPY: '¥',
-}
-
-/** 目標價數值（不含幣別；幣別走 fig 副標）。 */
+/** 目標價數值（不含幣別；幣別另外標）。 */
 export function fmtTargetPrice(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—'
   return value.toLocaleString('zh-TW', {
@@ -127,15 +39,10 @@ export function fmtTargetPrice(value: number | null | undefined): string {
   })
 }
 
-/** 目標價副標：幣別 · 期間（缺值不留空分隔）。 */
-export function targetSub(
-  currency: string | null | undefined,
-  horizon: string | null | undefined,
-): string {
-  return [currency, horizon].filter(Boolean).join(' · ')
-}
-
-export function currencyPrefix(currency: string | null | undefined): string {
-  if (!currency) return ''
-  return CURRENCY_PREFIX[currency] ?? `${currency} `
+/**
+ * 目標價調幅（後端 `pct_change` 已是百分比單位，例 12.5）。取絕對值，方向另由箭頭與
+ * 「上調／下修」表達；整數不補小數（8 → 8%），其餘留一位（12.5 → 12.5%）。
+ */
+export function fmtRevisionPct(pct: number): string {
+  return `${Number(Math.abs(pct).toFixed(1))}%`
 }

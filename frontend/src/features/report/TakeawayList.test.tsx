@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { Takeaway } from '../../lib/readingSchemas'
 import { TakeawayList } from './TakeawayList'
@@ -51,7 +51,8 @@ describe('TakeawayList', () => {
     expect(screen.getAllByText('尋找中…')).toHaveLength(1)
   })
 
-  it('找到單一命中 → 畫面不標頁碼，但播報區要說', () => {
+  // 頁碼對得上 PDF 縮圖列的金色編號，看得見畫面的人也拿得到「落在哪一頁」
+  it('找到單一命中 → 條目標第 N 頁、選取中；播報區也說', () => {
     render(
       <TakeawayList
         takeaways={TK}
@@ -60,8 +61,21 @@ describe('TakeawayList', () => {
         onJump={() => {}}
       />,
     )
+    const btn = screen.getByRole('button', { name: /重申買進評級/ })
+    expect(within(btn).getByText('第 12 頁')).toBeInTheDocument()
     expect(screen.queryByText(/共 /)).toBeNull()
     expect(screen.getByRole('status').textContent).toBe('已在第 12 頁找到')
+  })
+
+  // 找不到不算「選取中」：底色與實心編號只給尋找中與找到的那一條
+  it('只有尋找中或找到的那一條是選取態', () => {
+    const { rerender } = render(<TakeawayList takeaways={TK} canJump pendingOrdinal={1} onJump={() => {}} />)
+    const btn = screen.getByRole('button', { name: /重申買進評級/ })
+    const selected = btn.className
+    rerender(
+      <TakeawayList takeaways={TK} canJump result={{ nonce: 1, ok: false, ordinal: 1 }} onJump={() => {}} />,
+    )
+    expect(screen.getByRole('button', { name: /重申買進評級/ }).className).not.toBe(selected)
   })
 
   it('多重命中 → 標「共 N 處」（跳到的是第一處，未必是引用的那一處）', () => {

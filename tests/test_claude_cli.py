@@ -826,7 +826,7 @@ class EscalationKeyTests(unittest.TestCase):
 
 USAGE_FIELDS = {
     "ts", "task", "file_hash", "report_id", "backend", "model_req", "model_resp", "prompt_sha256",
-    "tokens", "finish_reason", "kind", "attempts", "ttft_ms", "total_ms",
+    "tokens", "finish_reason", "kind", "attempts", "ttft_ms", "total_ms", "provider",
 }
 
 
@@ -887,6 +887,7 @@ class UsageLogTests(_HttpCase):
         (row,) = self.rows()
         self.assertEqual(set(row), USAGE_FIELDS)
         self.assertEqual(row["backend"], "http")
+        self.assertEqual(row["provider"], "deepseek")
         self.assertEqual((row["task"], row["file_hash"], row["report_id"]), ("summary", "h1", "r1"))
         self.assertEqual((row["model_req"], row["model_resp"]), ("deepseek-flash", "deepseek-v4.1-flash"))
         self.assertEqual(row["prompt_sha256"], __import__("hashlib").sha256("提示詞".encode()).hexdigest())

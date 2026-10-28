@@ -1,4 +1,4 @@
-"""DeepSeek Chat Completions 的 HTTP 客戶端（官方 OpenAI 相容端點）。
+"""DeepSeek Chat Completions 的 HTTP 客戶端（官方 OpenAI 相容端點；備援時改經 OpenCode Go）。
 
 本模組只負責「打一次 API、把結果與失敗原因說清楚」，不決定哪個任務用哪個模型、也不做
 呼叫端的重試策略——那兩件事分別在分派層（`llm.stream_completion`、`scripts/_claude_cli.
@@ -51,6 +51,14 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
   observer。web 在 lifespan 註冊 `app.services.usage_events.observe_llm_call`，把線上用量歸到人
   （`llm_usage_daily`）；批次行程不註冊，行為不變。observer 只能是同步、便宜的函式，例外一律吞掉
   （用量歸因不能讓 LLM 呼叫失敗）。註冊表只用標準庫，本模組仍是葉模組。
+- **provider（`LLM_PROVIDER`）在呼叫時才讀**，與金鑰同一個理由。`opencode_go` 是 402 時的手動備援
+  （`app/services/llm_models.py` docstring）：同一顆模型改送 OpenCode Go 的 OpenAI 相容端點。差異全收在
+  本模組，分派層與呼叫端不知道走哪一條——金鑰與端點換成 `OPENCODE_GO_*`；本體的 `model` 經
+  `llm_models.wire_model` 翻成 Go 的 ID、不送 DeepSeek 專屬的 `user_id`（thinking 兩個開關照送）；header
+  加上 Go 要求的自報 User-Agent 與穩定的 `x-opencode-session`；Go 沒有餘額端點，`fetch_balance` 改打
+  `/models` 只判斷端點與金鑰；Go 的用量上限可能以 429 回應，訊息看得出是額度時歸 `QUOTA`
+  （`_is_go_quota`），否則照舊是 `OVERLOADED`；Go 的 usage 是 OpenAI 格式，`_normalize_usage` 補成 DeepSeek 的
+  hit／miss 鍵（10/28 探測）。log 與 observer 的 metadata 都帶 `provider`，費用才分得出來。
 - **judge 走非串流 JSON 模式**（`complete_json`，遷移 PR-18）：judge 不需要串流，而非串流回應才帶
   `system_fingerprint`（9/24 探測）。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），呼叫端再依自己的
   預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
@@ -77,11 +85,23 @@ import httpx
 
 # 走 HTTP 的模型白名單搬到葉模組 llm_models（`app.config` 與批次預檢也要用它，留在這裡會
 # 形成 config ↔ llm_http 的 import 循環）。這裡以原名重新匯出，既有呼叫端與測試不必改。
-from app.services.llm_models import HTTP_MODELS, is_http_model  # noqa: F401
+from app.services.llm_models import (  # noqa: F401
+    HTTP_MODELS,
+    PROVIDER_DEEPSEEK,
+    PROVIDER_KEY_ENV,
+    PROVIDER_LABEL,
+    PROVIDER_OPENCODE_GO,
+    is_http_model,
+    wire_model,
+)
+from app.services.llm_models import provider as _configured_provider
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEFAULT_GO_BASE_URL = "https://opencode.ai/inference/go/v1"
+# Go 要求呼叫端自報身分（不要用 SDK／HTTP 函式庫的預設 UA），版本只是辨識用。
+GO_USER_AGENT = "report-mark/1 (+https://research.tingfong.com)"
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
 AUTH = "auth"                      # 缺金鑰或 401
@@ -119,7 +139,8 @@ _PHRASES = {
     OTHER: "未預期錯誤",
 }
 
-_KEY_LIKE = re.compile(r"sk-[A-Za-z0-9*]{4,}")
+# DeepSeek 金鑰是 `sk-…`，OpenCode Go 是 `oc_…`（10/28 探測）。
+_KEY_LIKE = re.compile(r"(?:sk-|oc_)[A-Za-z0-9_*-]{4,}")
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
 _USER_ID_BAD = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -137,7 +158,7 @@ def _one_line(text: str) -> str:
 
 def _redact(text: str) -> str:
     """伺服器的 401 訊息會回顯部分金鑰；寫進 log 前一律遮掉。"""
-    return _KEY_LIKE.sub("sk-***", text)
+    return _KEY_LIKE.sub(lambda m: m.group(0)[:3] + "***", text)
 
 
 def error_string(kind: str, detail: str = "") -> str:
@@ -178,18 +199,20 @@ def build_body(
     user_id: str | None = None,
     temperature: float | None = None,
     response_format: dict | None = None,
+    provider: str = PROVIDER_DEEPSEEK,
 ) -> dict:
     """組請求 body（純函式）。thinking 一律關：兩個開關都送，見模組 docstring。
 
     `temperature`／`response_format` 預設不送（沿用伺服器預設）；judge（`complete_json`）送
-    `temperature=0` 與 `{"type": "json_object"}`。
+    `temperature=0` 與 `{"type": "json_object"}`。`provider` 是 `opencode_go` 時模型名換成 Go 的 ID、
+    不送 DeepSeek 專屬的 `user_id`。
     """
     messages = []
     if system:
         messages.append({"role": "system", "content": sanitize(system)})
     messages.append({"role": "user", "content": sanitize(prompt)})
     body: dict = {
-        "model": model,
+        "model": wire_model(model, provider),
         "messages": messages,
         "max_tokens": int(max_tokens),
         "stream": stream,
@@ -203,7 +226,7 @@ def build_body(
     if response_format is not None:
         body["response_format"] = response_format
     uid = _user_id(user_id)
-    if uid:
+    if uid and provider == PROVIDER_DEEPSEEK:
         body["user_id"] = uid
     return body
 
@@ -229,11 +252,40 @@ def _is_content_risk(message: str) -> bool:
 
 def _is_model_missing(message: str) -> bool:
     low = message.lower()
-    return "model not exist" in low or "model_not_found" in low or "model does not exist" in low
+    # 最後一種是 OpenCode Go（400「Upstream request failed: Model is unavailable.」，10/28 探測）
+    return ("model not exist" in low or "model_not_found" in low or "model does not exist" in low
+            or "model is unavailable" in low)
 
 
-def classify_status(status: int, raw: bytes | str = b"") -> tuple[str, str]:
-    """非 200 回應 → (kind, 細節)。只有 400／422 會看訊息文字（理由見模組 docstring）。"""
+def _normalize_usage(usage: dict) -> dict:
+    """補上 DeepSeek 的 cache 計數鍵。OpenCode Go 回的是 OpenAI 格式（`prompt_tokens`＋
+    `prompt_tokens_details.cached_tokens`，10/28 探測），沒有 `prompt_cache_hit_tokens`／`miss`；不補的話
+    usage log 與 observer 的 hit／miss 都是 None，費用歸因就掉了 input token。DeepSeek 原本就有這兩個鍵，不動。"""
+    if "prompt_cache_hit_tokens" in usage or "prompt_cache_miss_tokens" in usage:
+        return usage
+    prompt = usage.get("prompt_tokens")
+    if not isinstance(prompt, int) or isinstance(prompt, bool):
+        return usage
+    details = usage.get("prompt_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    hit = cached if isinstance(cached, int) and not isinstance(cached, bool) and 0 <= cached <= prompt else 0
+    return {**usage, "prompt_cache_hit_tokens": hit, "prompt_cache_miss_tokens": prompt - hit}
+
+
+# Go 的用量上限（5 小時／每週／每月）沒有專屬狀態碼的文件，訊息比對是保守的猜測：比對到才歸 QUOTA
+# （整批中止、問答顯示額度不足），比對不到照舊歸 OVERLOADED（重試、計入斷路器）。第一次真的撞到上限時，
+# 照 usage log 的 detail 修正這組字串。
+_GO_QUOTA_RE = re.compile(r"usage limit|limit (?:reached|exceeded)|exceeded .*limit|quota|insufficient balance|"
+                          r"subscription|upgrade", re.IGNORECASE)
+
+
+def _is_go_quota(message: str) -> bool:
+    return bool(_GO_QUOTA_RE.search(message))
+
+
+def classify_status(status: int, raw: bytes | str = b"", provider: str | None = None) -> tuple[str, str]:
+    """非 200 回應 → (kind, 細節)。只有 400／422 會看訊息文字（理由見模組 docstring）；Go 的 429 例外
+    （`_is_go_quota`）。`provider` 省略＝目前的 `LLM_PROVIDER`。"""
     message = _error_message(raw) if raw else ""
     detail = _redact(f"HTTP {status}" + (f" {message}" if message else ""))
     if status == 401:
@@ -248,6 +300,8 @@ def classify_status(status: int, raw: bytes | str = b"") -> tuple[str, str]:
         if _is_model_missing(message):
             return CONFIG, detail
         return BAD_REQUEST, detail
+    if status == 429 and (provider or _provider()) == PROVIDER_OPENCODE_GO and _is_go_quota(message):
+        return QUOTA, detail
     if status == 429 or 500 <= status <= 599:
         return OVERLOADED, detail
     return OTHER, detail
@@ -361,7 +415,7 @@ class _Acc:
         if isinstance(obj.get("model"), str):
             self.model_resp = obj["model"]
         if isinstance(obj.get("usage"), dict):
-            self.usage = obj["usage"]
+            self.usage = _normalize_usage(obj["usage"])
         choices = obj.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
             return None
@@ -443,10 +497,17 @@ def _fail(kind: str, detail: str, t0: float, **kw) -> ChatOutcome:
 # 只記本行程：web 的問答碰到 402 立刻看得到；批次行程的 402 由它自己的整批 rc=2 → OnFailure 告警，
 # web 端等餘額查詢的快取到期才會知道（取捨見 llm_health 的模組 docstring）。
 _quota_seen_at: float = 0.0
+# 本行程最近一次成功呼叫的時刻（monotonic；0＝從未）。Go 沒有餘額端點，`/models` 回 200 說明不了額度回來了沒，
+# 所以 Go 模式下 402／額度閂鎖改由「之後有一次真實請求成功」解除（llm_health 的「OpenCode Go」一節）。
+_ok_seen_at: float = 0.0
 
 
 def last_quota_at() -> float:
     return _quota_seen_at
+
+
+def last_ok_at() -> float:
+    return _ok_seen_at
 
 
 # ── observer hook（模組 docstring「observer hook」）────────────────────────────
@@ -483,7 +544,7 @@ def call_metadata(task: str, model: str, out: ChatOutcome, attempts: int = 1) ->
     return {
         "task": task, "model": model, "model_resp": out.model_resp, "kind": out.kind,
         "finish_reason": out.finish_reason, "attempts": attempts, "ttft_ms": out.ttft_ms,
-        "total_ms": out.total_ms, "tokens": tokens,
+        "total_ms": out.total_ms, "tokens": tokens, "provider": _provider(),
     }
 
 
@@ -507,15 +568,17 @@ def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> Non
     放在這裡是因為它是線上（`astream_chat`）與批次（`complete_chat`）共同的收尾點，每次呼叫恰好一次。
     同一份 metadata 也交給已註冊的 observer（`add_observer`）。
     """
-    global _quota_seen_at
+    global _quota_seen_at, _ok_seen_at
     if out.kind == QUOTA:
         _quota_seen_at = time.monotonic()
+    elif out.kind is None:
+        _ok_seen_at = time.monotonic()
     usage = out.usage or {}
     details = usage.get("completion_tokens_details") or {}
     logger.info(
-        "llm_call task=%s model=%s model_resp=%s backend=http kind=%s finish=%s attempts=%d "
+        "llm_call task=%s model=%s model_resp=%s backend=http provider=%s kind=%s finish=%s attempts=%d "
         "ttft_ms=%s total_ms=%d hit=%s miss=%s out=%s reasoning=%s fp=%s",
-        task, model, out.model_resp, out.kind or "ok", out.finish_reason, attempts,
+        task, model, out.model_resp, _provider(), out.kind or "ok", out.finish_reason, attempts,
         out.ttft_ms, out.total_ms, usage.get("prompt_cache_hit_tokens"),
         usage.get("prompt_cache_miss_tokens"), usage.get("completion_tokens"),
         details.get("reasoning_tokens"), out.system_fingerprint,
@@ -545,12 +608,30 @@ _DRAIN_TIMEOUT = 2.0
 # 快取的單例——先快取到空值就一路空到底，手動執行時補設環境變數也不會生效。
 
 
+def _provider() -> str:
+    return _configured_provider()
+
+
+def provider_label() -> str:
+    """給人看的供應商名稱（錯誤提示、日誌）。"""
+    return PROVIDER_LABEL[_provider()]
+
+
+def _key_env() -> str:
+    return PROVIDER_KEY_ENV[_provider()]
+
+
+def _base_url_env() -> str:
+    return "OPENCODE_GO_BASE_URL" if _provider() == PROVIDER_OPENCODE_GO else "DEEPSEEK_BASE_URL"
+
+
 def _api_key() -> str:
-    return (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    return (os.getenv(_key_env()) or "").strip()
 
 
 def _base_url() -> str:
-    return ((os.getenv("DEEPSEEK_BASE_URL") or "").strip() or DEFAULT_BASE_URL).rstrip("/")
+    default = DEFAULT_GO_BASE_URL if _provider() == PROVIDER_OPENCODE_GO else DEFAULT_BASE_URL
+    return ((os.getenv(_base_url_env()) or "").strip() or default).rstrip("/")
 
 
 def _url() -> str:
@@ -558,7 +639,7 @@ def _url() -> str:
 
 
 def api_key_configured() -> bool:
-    """`DEEPSEEK_API_KEY` 有沒有值（不看內容；`/healthz/llm` 判 disabled 用）。"""
+    """目前 provider 的金鑰有沒有值（不看內容；`/healthz/llm` 判 auth_failed 用）。"""
     return bool(_api_key())
 
 
@@ -582,11 +663,20 @@ def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
     return httpx.Timeout(connect=connect, read=read, write=write, pool=_POOL_TIMEOUT)
 
 
-def _headers(key: str) -> dict:
+def _provider_headers(user_id: str | None) -> dict:
+    """Go 要求的自報 User-Agent 與每段對話穩定的 `x-opencode-session`。呼叫端傳的 `user_id` 本來就是
+    每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；DeepSeek 不送。"""
+    if _provider() != PROVIDER_OPENCODE_GO:
+        return {}
+    return {"User-Agent": GO_USER_AGENT, "x-opencode-session": _user_id(user_id) or "report-mark"}
+
+
+def _headers(key: str, user_id: str | None = None) -> dict:
     return {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
+        **_provider_headers(user_id),
     }
 
 
@@ -598,18 +688,18 @@ def _preflight(t0: float) -> tuple[str, str] | ChatOutcome:
     （httpx 拋 UnsupportedProtocol，那是 TransportError，會被當成網路錯誤重試——每篇都記
     「連線失敗」、批次卻不中止，正是四天停擺那種型態）。
     """
-    key = _api_key()
+    key, key_env, url_env = _api_key(), _key_env(), _base_url_env()
     if not key:
-        return _fail(AUTH, "缺 DEEPSEEK_API_KEY", t0)
+        return _fail(AUTH, f"缺 {key_env}", t0)
     if not (key.isascii() and key.isprintable()):
-        return _fail(AUTH, "DEEPSEEK_API_KEY 含非 ASCII 或不可列印字元（常見於貼上時帶入的全形引號、零寬空白）", t0)
+        return _fail(AUTH, f"{key_env} 含非 ASCII 或不可列印字元（常見於貼上時帶入的全形引號、零寬空白）", t0)
     url = _url()
     try:
         parsed = httpx.URL(url)
     except (httpx.InvalidURL, ValueError):
-        return _fail(CONFIG, "DEEPSEEK_BASE_URL 不是合法網址", t0)
+        return _fail(CONFIG, f"{url_env} 不是合法網址", t0)
     if parsed.scheme not in ("http", "https") or not parsed.host:
-        return _fail(CONFIG, "DEEPSEEK_BASE_URL 必須是 http(s):// 開頭的網址", t0)
+        return _fail(CONFIG, f"{url_env} 必須是 http(s):// 開頭的網址", t0)
     return key, url
 
 
@@ -741,10 +831,12 @@ async def astream_chat(
     out: ChatOutcome | None = None
     try:
         try:
-            body = build_body(model, prompt, max_tokens=max_tokens, system=system, user_id=user_id)
+            body = build_body(
+                model, prompt, max_tokens=max_tokens, system=system, user_id=user_id, provider=_provider(),
+            )
             client = _async_client()
             request = client.build_request(
-                "POST", url, json=body, headers=_headers(key), timeout=_timeout(_READ_TIMEOUT)
+                "POST", url, json=body, headers=_headers(key, user_id), timeout=_timeout(_READ_TIMEOUT)
             )
         except UnicodeError as exc:  # 先於 ValueError（它是子類）：單篇輸入的編碼問題，見 `_complete_once`
             out = _fail(BAD_REQUEST, _transport_detail(exc), t0)
@@ -850,10 +942,15 @@ class BalanceResult:
     detail: str = ""
     status: int | None = None
     body: dict | None = None
+    # `opencode_go`：Go 沒有餘額端點，查的是 `GET /models`；`kind is None` 只代表端點與金鑰可用、`body` 不是餘額。
+    provider: str = PROVIDER_DEEPSEEK
 
 
 async def fetch_balance(timeout: float = BALANCE_TIMEOUT) -> BalanceResult:
     """查一次帳戶餘額（官方 `GET /user/balance`；9/24 實測不扣費）。任何失敗都轉成結果，不往外拋。
+
+    `LLM_PROVIDER=opencode_go` 時改打 `GET /models`（Go 沒有餘額端點）：只回答「端點與金鑰能不能用」，
+    額度用完要等真實請求的 QUOTA（`_quota_seen_at` 閂鎖）才知道。
 
     `timeout` 是整次的牆鐘上限（連線、讀取、DNS 全算在內），呼叫端是每 2 分鐘一次的本機探針，
     它的 curl 只等 5 秒。不重試：下一輪探針就是重試，連續失敗的判定在呼叫端。
@@ -863,11 +960,13 @@ async def fetch_balance(timeout: float = BALANCE_TIMEOUT) -> BalanceResult:
     if isinstance(pre, ChatOutcome):
         return BalanceResult(pre.kind, pre.detail)
     key, _chat_url = pre
-    headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+    prov = _provider()
+    headers = {"Authorization": f"Bearer {key}", "Accept": "application/json", **_provider_headers("healthz")}
+    path = "/models" if prov == PROVIDER_OPENCODE_GO else "/user/balance"
     try:
         async with asyncio.timeout(timeout):
             response = await _async_client().get(
-                _base_url() + "/user/balance", headers=headers, timeout=_timeout(timeout, cap=timeout),
+                _base_url() + path, headers=headers, timeout=_timeout(timeout, cap=timeout),
             )
     except (TimeoutError, httpx.TimeoutException) as exc:
         return BalanceResult(TIMEOUT, f"餘額查詢 {timeout:g}s 內未完成（{type(exc).__name__}）")
@@ -876,15 +975,15 @@ async def fetch_balance(timeout: float = BALANCE_TIMEOUT) -> BalanceResult:
     except (httpx.InvalidURL, ValueError) as exc:
         return BalanceResult(CONFIG, _transport_detail(exc))
     if response.status_code != 200:
-        kind, detail = classify_status(response.status_code, response.content)
-        return BalanceResult(kind, detail, status=response.status_code)
+        kind, detail = classify_status(response.status_code, response.content, prov)
+        return BalanceResult(kind, detail, status=response.status_code, provider=prov)
     try:
         body = response.json()
     except ValueError:
-        return BalanceResult(OTHER, "餘額回應不是 JSON", status=200)
+        return BalanceResult(OTHER, "餘額回應不是 JSON", status=200, provider=prov)
     if not isinstance(body, dict):
-        return BalanceResult(OTHER, "餘額回應不是 JSON 物件", status=200)
-    return BalanceResult(None, "", status=200, body=body)
+        return BalanceResult(OTHER, "餘額回應不是 JSON 物件", status=200, provider=prov)
+    return BalanceResult(None, "", status=200, body=body, provider=prov)
 
 
 # ── 批次：同步呼叫 ───────────────────────────────────────────────────────────
@@ -938,13 +1037,15 @@ def _complete_once(
         return _fail(TIMEOUT, "總期限已過", t0), ""
 
     try:
-        body = build_body(model, prompt, max_tokens=max_tokens, system=system, user_id=user_id)
+        body = build_body(
+            model, prompt, max_tokens=max_tokens, system=system, user_id=user_id, provider=_provider(),
+        )
         client = _sync_client()
         # 各項逾時都不超過剩餘期限。逐 chunk 的期限檢查只在收到位元組時才執行，所以伺服器中途
         # 完全沉默時，最多會超出期限 min(60 秒, 剩餘期限)——這是刻意接受的上限：同步 httpx 無法
         # 從外部可靠地打斷阻塞中的讀取（另開執行緒關 socket 在 Linux 上不保證喚醒 recv）。
         request = client.build_request(
-            "POST", url, json=body, headers=_headers(key),
+            "POST", url, json=body, headers=_headers(key, user_id),
             timeout=_timeout(_READ_TIMEOUT, cap=remaining),
         )
     except UnicodeError as exc:
@@ -1114,8 +1215,11 @@ class JsonResult:
         return None if self.kind is None else error_string(self.kind, self.detail)
 
 
-def _json_headers(key: str) -> dict:
-    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json"}
+def _json_headers(key: str, user_id: str | None = None) -> dict:
+    return {
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json",
+        **_provider_headers(user_id),
+    }
 
 
 def _add_usage(total: dict, usage: dict | None) -> None:
@@ -1147,7 +1251,7 @@ def _parse_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
     fp = obj.get("system_fingerprint")
     meta = dict(
         status=200, finish_reason=finish,
-        usage=obj.get("usage") if isinstance(obj.get("usage"), dict) else None,
+        usage=_normalize_usage(obj["usage"]) if isinstance(obj.get("usage"), dict) else None,
         model_resp=obj.get("model") if isinstance(obj.get("model"), str) else None,
         reasoning_chars=len(reasoning) if isinstance(reasoning, str) else 0,
         system_fingerprint=fp if isinstance(fp, str) else None,
@@ -1187,11 +1291,11 @@ async def _json_once(
     try:
         body = build_body(
             model, prompt, max_tokens=max_tokens, system=system, stream=False, user_id=user_id,
-            temperature=0, response_format={"type": "json_object"},
+            temperature=0, response_format={"type": "json_object"}, provider=_provider(),
         )
         client = _async_client()
         request = client.build_request(
-            "POST", url, json=body, headers=_json_headers(key), timeout=_timeout(_READ_TIMEOUT, cap=remaining),
+            "POST", url, json=body, headers=_json_headers(key, user_id), timeout=_timeout(_READ_TIMEOUT, cap=remaining),
         )
     except UnicodeError as exc:  # 先於 ValueError（它是子類）：單篇輸入的編碼問題，見 `_complete_once`
         return _fail(BAD_REQUEST, _transport_detail(exc), t0), None

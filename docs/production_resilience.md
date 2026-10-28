@@ -818,7 +818,7 @@ systemctl list-timers report-mark-audit.timer                   # 應排在每�
 
 ## LLM（DeepSeek）：金鑰、批次失敗與帳號告警
 
-LLM 只有 DeepSeek 一個後端，**沒有備援**：402、401、DeepSeek 停機時，問答與 sync 的 LLM 段（行內標註、摘要、標題、摘錄、訊號、簡報）全部停擺，直到儲值、換金鑰或服務恢復；檢索、閱讀頁、雷達、既有簡報的讀取不受影響。`LLM_PROVIDER` 預設 `deepseek`（未設、空值都是）；`claude_cli`／`claude_only` 是退役值，行為見「刻意讓 LLM 停下來」。
+LLM 的主要後端是 DeepSeek：402、401、DeepSeek 停機時，問答與 sync 的 LLM 段（行內標註、摘要、標題、摘錄、訊號、簡報）全部停擺，直到儲值、換金鑰或服務恢復；檢索、閱讀頁、雷達、既有簡報的讀取不受影響。402 等不及儲值時，可以**手動**切到 OpenCode Go（同一顆模型、不同的送達路徑；見「切換到 OpenCode Go」），沒有自動 failover。`LLM_PROVIDER` 預設 `deepseek`（未設、空值都是），另一個合法值是 `opencode_go`；`claude_cli`／`claude_only` 是退役值，行為見「刻意讓 LLM 停下來」。
 
 ### DeepSeek 金鑰落點與輪替
 
@@ -947,12 +947,43 @@ P5 對退出碼 8 只有一則措辭（「LLM 帳號不可用…」），是哪�
 
 402／401 之後的完整步驟：
 
-1. 排除原因（儲值，或換金鑰並核對兩份指紋）。
+1. 排除原因（儲值，或換金鑰並核對兩份指紋）。等不及儲值的 402，改照「切換到 OpenCode Go」切過去，再從第 2 步接著做。
 2. 確認 `curl -s http://127.0.0.1:8097/healthz/llm` 回 `{"llm":"ok"}`。web 自己的請求收過 402 時，要等一次在那之後開始的成功餘額查詢才會解除（最多 60 秒）；急的話重啟 web 也會清掉。
 3. 停排程：`sudo systemctl stop report-mark-sync.timer`。
 4. 依「整批中止後的重放」逐份重放 sync 殼保留的 delta（`--delta … --hashes-out …`），每份接著用它自己的 hashes 補跑摘要、標題、摘錄（`--hashes-file`）；下游中止保留的 `data/sync_hashes_retained_<時間>.txt` 同樣補跑。**不能**用 `failures_to_delta.py` 或 `--all-local`（整批中止不留逐篇失敗紀錄）。
 5. 缺的簡報日子補 `uv run python scripts/generate_brief.py --date YYYY-MM-DD`。
 6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
+
+### 切換到 OpenCode Go（402 時的手動備援）
+
+`LLM_PROVIDER=opencode_go` 讓問答與批次的同一顆模型（`deepseek-flash`＝V4.1-Flash）改經 OpenCode Go 訂閱的 OpenAI 相容端點送出。**換的是送達路徑、不是模型**：任務旋鈕、白名單、預設表、judge 系譜都照舊寫 DeepSeek 名稱，送出時才翻成 Go 的模型 ID（`app/services/llm_models.py` 的 `GO_MODEL_IDS`）。實作的差異全在 `app/services/llm_http.py`（模組 docstring 的 provider 那一條）。
+
+**風險與限制（切之前要接受的）**：
+
+- 條款：OpenCode Go 是給 coding agent 用的個人訂閱（單人 workspace），官方要求流量「typical coding agent traffic」並監控濫用。拿它跑研報平台的批次與多人問答不符合這個前提，有被限制或停權的風險，所以只當短期備援，DeepSeek 儲值後就切回來。
+- 資料：Go 上 DeepSeek 模型的零保留協議逐月續約，切之前到 OpenCode Go 文件的 Privacy 表確認還在有效期內；研報全文會多經過 OpenCode 這個中間商。
+- 額度：每個模型每 5 小時最多用掉月額度的 20%、每週 50%、每月 100%。批次一次衝量容易撞到 5 小時上限。
+- 監控：Go 沒有餘額端點，`/healthz/llm` 改打 `/models`，只能判斷端點與金鑰能不能用，`low` 不會出現。額度用完要等真實請求被拒才知道：批次整批 rc=2（`API[quota]`，提示「Go 額度用完」）；問答的請求被拒時 `/healthz/llm` 翻成 `exhausted`，要等之後有一次請求成功才解除（`app/services/llm_health.py` 的「OpenCode Go」一節）。Go 用量上限的錯誤格式沒有文件，`llm_http._GO_QUOTA_RE` 是依訊息文字的保守猜測：第一次真的撞到上限時，照 web 日誌或 `data/llm_usage.jsonl` 的 detail 修正。
+- 費用歸因：`data/llm_usage.jsonl` 每列與 web 的 `llm_call` 日誌都有 `provider` 欄位；沒有這個欄位的舊列是 DeepSeek。
+
+**前置（一次性）**：在 OpenCode console 訂閱 Go、建立 API key；workspace 的 Regions 要選 **Global**（DeepSeek 模型預設不開放）。
+
+**切過去**（每台主機各做一次；正式環境 EC2 的環境檔路徑見 `deploy/aws/README.md`）：
+
+1. 兩份環境檔各加兩行，**值逐字相同**：repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次與上傳 worker；`sudoedit`，不要 echo／tee）。
+
+   ```
+   LLM_PROVIDER=opencode_go
+   OPENCODE_GO_API_KEY=<Go 的金鑰>
+   ```
+
+   `DEEPSEEK_API_KEY` 不用刪，切回來時直接用。
+2. 核對兩份一致：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`。它會逐份印出兩個金鑰的指紋與 `LLM_PROVIDER`；兩份的 provider 不同（web 走 Go、批次走 DeepSeek，或反過來）一樣回 rc=1。
+3. 重啟 web：`sudo systemctl restart report-mark-web.service`。啟動日誌那行「LLM 模型：provider=opencode_go」就是生效了。
+4. 確認 `curl -s http://127.0.0.1:8097/healthz/llm` 回 `{"llm":"ok"}`，問一題確認問答正常。
+5. 照「402／401 之後的完整步驟」的第 3 步起，重放停擺期間保留的 delta。批次每輪重新讀環境檔，不需要另外重啟。
+
+**切回 DeepSeek**（儲值後）：兩份環境檔的 `LLM_PROVIDER` 改回 `deepseek`（或刪掉那一行），`OPENCODE_GO_API_KEY` 可以留著；再核對（第 2 步）、重啟 web、確認 `/healthz/llm` 回 ok。切回之後的請求照常按量計費。
 
 ### 忠實度 judge
 

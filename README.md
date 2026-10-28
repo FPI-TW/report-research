@@ -81,7 +81,7 @@ make serve-preview            # DEV_NO_AUTH=1 免登入看版面，另開 8098
 make search Q="AI 伺服器散熱" MARKET=TW   # CLI 檢索
 ```
 
-DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`）。沒設 `REPORT_MARK_DB_URL` 時連的是 `localhost:5436/research`——在辦公室主機上那是有真實資料的庫，worktree 開發請指到別的庫。
+DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`）。DeepSeek 餘額不足（402）等不及儲值時，可以手動設 `LLM_PROVIDER=opencode_go` 並在兩份檔填 `OPENCODE_GO_API_KEY`（選填 `OPENCODE_GO_BASE_URL`，預設 `https://opencode.ai/inference/go/v1`），同一顆模型改經 OpenCode Go 送出；風險與步驟見 `docs/production_resilience.md`「切換到 OpenCode Go」。沒設 `REPORT_MARK_DB_URL` 時連的是 `localhost:5436/research`——在辦公室主機上那是有真實資料的庫，worktree 開發請指到別的庫。
 
 ## 專案結構
 

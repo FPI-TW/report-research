@@ -444,6 +444,7 @@ def config_section() -> dict:
         },
         "secrets_present": {
             "deepseek_api_key": _present("DEEPSEEK_API_KEY"),
+            "opencode_go_api_key": _present("OPENCODE_GO_API_KEY"),
             "session_secret": _present("REPORT_MARK_SESSION_SECRET"),
             "edge_secret": _present("REPORT_MARK_EDGE_SECRET"),
             "r2_credentials": _present("R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"),

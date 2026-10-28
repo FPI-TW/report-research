@@ -100,9 +100,9 @@ class ResolveTests(unittest.TestCase):
         for task, expected in EXPECTED_DEFAULTS.items():
             self.assertEqual(lm.resolve_model(task, env=_env()), expected, task)
 
-    def test_default_provider_is_the_only_provider(self):
+    def test_default_provider_is_deepseek(self):
         self.assertEqual(lm.DEFAULT_PROVIDER, "deepseek")
-        self.assertEqual(lm.PROVIDERS, ("deepseek",))
+        self.assertEqual(lm.PROVIDERS, ("deepseek", "opencode_go"))
         for env in (dict(EMPTY_KNOBS), {**EMPTY_KNOBS, "LLM_PROVIDER": ""}, {**EMPTY_KNOBS, "LLM_PROVIDER": "  "}):
             with self.subTest(env=env.get("LLM_PROVIDER")):
                 self.assertEqual(lm.provider(env), "deepseek")

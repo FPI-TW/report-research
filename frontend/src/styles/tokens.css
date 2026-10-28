@@ -36,6 +36,23 @@
   --tf-gold-tint: #f8f1e0;
   --tf-gold-line: #ead9ae;
   --tf-gold-panel: #fbf7ec;
+  /* 介面改版：側欄底、清單 hover／選取底（Fluid 的 4%／7% 黑） */
+  --tf-sidebar: #f7f7f7;
+  --tf-hover: rgba(0, 0, 0, 0.04);
+  --tf-selected: rgba(0, 0, 0, 0.07);
+  /* 評等（台股慣例紅漲綠跌）：分布條色＋徽章底／字；調升、上修用 up，調降、下修用 down */
+  --tf-rating-buy: #c23b32;
+  --tf-rating-overweight: #e8908a;
+  --tf-rating-neutral: #c7c7cc;
+  --tf-rating-underweight: #7fb89a;
+  --tf-rating-sell: #1d7a45;
+  --tf-badge-buy-bg: #fbe7e5; --tf-badge-buy-fg: #b4322a;
+  --tf-badge-overweight-bg: #fdf2f1; --tf-badge-overweight-fg: #c4544b;
+  --tf-badge-neutral-bg: #f0f0f2; --tf-badge-neutral-fg: #48484d;
+  --tf-badge-underweight-bg: #eef6f1; --tf-badge-underweight-fg: #3f8a5f;
+  --tf-badge-sell-bg: #e2f1e8; --tf-badge-sell-fg: #1d7a45;
+  --tf-up: #b4322a;
+  --tf-down: #1d7a45;
   --tf-on-gold: #ffffff;
   --tf-on-gold-muted: rgba(255, 255, 255, 0.75);
 
@@ -69,11 +86,18 @@
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.5);
 
   /* ── 字型（全無襯線；標題與內文同一家族，靠字重與字級拉層級） ── */
-  --tf-display: -apple-system, BlinkMacSystemFont, 'SF Pro TC', 'PingFang TC',
+  /* Inter（自架，@fontsource-variable/inter 的 opsz＋wght 可變字型）只涵蓋拉丁字母與數字，
+     中文字落到後面的系統字。 */
+  --tf-display: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'SF Pro TC', 'PingFang TC',
     'Noto Sans TC', 'Microsoft JhengHei', system-ui, sans-serif;
   --tf-sans: var(--tf-display);
   /* 資料字體：標的代號／日期／計數是券商研報的母語，用等寬呈現 */
   --tf-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Noto Sans Mono CJK TC', monospace;
+  /* 介面改版（docs/design_handoff_ui_redesign）：日期、篇數、價格改用介面字型的等寬數字
+     （font-variant-numeric: tabular-nums），不換字型——換成 monospace 會與旁邊文字的行高、基線錯開。
+     只有標的代號（2330、NVDA、市場代碼）要數字與字母都等寬，用 --tf-code，並設 line-height: inherit。
+     --tf-mono 留給尚未改版的頁面，各頁改版時改用這兩個。 */
+  --tf-code: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* ── 圓角：控制項 10 · 卡片 14 · 磚 18 · 面板 20 ── */
   --tf-radius-card: 14px;
@@ -97,6 +121,13 @@
      （幅度壓在 ~1.26 維持克制感）。--tf-ease-out 保留為 --tf-ease-entrance 相容別名。
      進出場主體已由 Motion 驅動，這些 token 供殘留的 CSS 微互動/hover/press 使用。 */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 介面改版的 Apple 式節奏：進場 0.45–0.65s 走長減速曲線、離場 0.26s；滑動高亮 0.3s、側欄收合 0.42s。 */
+  --tf-ease-apple: cubic-bezier(0.32, 0.72, 0, 1);
+  --tf-ease-apple-exit: cubic-bezier(0.4, 0, 0.2, 1);
+  --tf-dur-enter: 550ms;
+  --tf-dur-exit: 260ms;
+  --tf-dur-glide: 300ms;
+  --tf-dur-collapse: 420ms;
   --tf-ease-entrance: var(--tf-ease-out);
   --tf-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --tf-ease-exit: cubic-bezier(0.4, 0, 1, 1);

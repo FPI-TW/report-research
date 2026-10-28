@@ -27,7 +27,7 @@ interface Props {
 
 /**
  * 瀏覽態的 Bento 簡報牆：頭條大磚（2×2）＋數據磚＋語料庫組成磚＋更多清單磚。
- * 首頁＝每日簡報面，不是行銷招牌——品牌已在左欄 SideRail，此處不重複。
+ * 首頁＝每日簡報面，不是行銷招牌——品牌已在左側欄，此處不重複。
  */
 export function BentoWall({
   rows, latestId, totalReports, composition, monthLabel, onSeeAll,

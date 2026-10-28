@@ -42,7 +42,7 @@ test('頁面 render 丟例外：內容區換成錯誤畫面，外殼仍在', () 
   expect(screen.getByRole('alert')).toHaveTextContent('這一頁發生問題')
   expect(screen.getByText('Cannot read properties of undefined')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '重新載入' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '回到檢索' })).toHaveAttribute('href', '/search')
+  expect(screen.getByRole('link', { name: '回到研報庫' })).toHaveAttribute('href', '/library')
   // 這是掛兩層的理由：只有外層的話，側欄會跟著一起消失。
   expect(screen.getByText('側欄')).toBeInTheDocument()
 })
@@ -52,7 +52,7 @@ test('部署後舊分頁抓不到 chunk：說明是版本更新而不是壞掉�
   expect(screen.getByRole('alert')).toHaveTextContent('站台已更新')
   expect(screen.getByRole('button', { name: '重新載入' })).toBeInTheDocument()
   // 切去別頁一樣會撞同一個問題（別頁的 chunk 檔名也換了），所以不給那條出口。
-  expect(screen.queryByRole('link', { name: '回到檢索' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: '回到研報庫' })).not.toBeInTheDocument()
 })
 
 test('App 的路由表兩層都掛了錯誤邊界', () => {
@@ -60,5 +60,5 @@ test('App 的路由表兩層都掛了錯誤邊界', () => {
   expect(shell.errorElement).toBeTruthy()
   expect(shell.children).toHaveLength(1)
   expect(shell.children[0].errorElement).toBeTruthy()
-  expect(shell.children[0].children.some((r) => r.path === '/search')).toBe(true)
+  expect(shell.children[0].children.some((r) => r.path === '/library')).toBe(true)
 })

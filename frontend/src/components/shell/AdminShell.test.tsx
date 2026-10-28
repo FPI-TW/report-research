@@ -36,7 +36,7 @@ function mount(
             <Route path="reviews" element={<div>待複核內容</div>} />
             <Route path="*" element={<div>其他管理頁</div>} />
           </Route>
-          <Route path="/search" element={<div>研報平台</div>} />
+          <Route path="/library" element={<div>研報平台</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -56,7 +56,7 @@ test('管理員：圖示軌七個領域、次級面板列該領域的頁面，�
   expect(rail().getByRole('link', { name: '維運' })).toHaveAttribute('href', '/admin/operations/services')
   expect(panel().getAllByRole('link').map(a => a.getAttribute('href'))).toEqual(['/admin/reviews', '/admin/reports', '/admin/uploads'])
   expect(panel().getByRole('link', { name: /待複核/ })).toHaveAttribute('aria-current', 'page')
-  expect(screen.getByRole('link', { name: /回到研報平台/ })).toHaveAttribute('href', '/search')
+  expect(screen.getByRole('link', { name: /回到研報平台/ })).toHaveAttribute('href', '/library')
   expect(screen.getByRole('button', { name: '登出' }).closest('form')).toHaveAttribute('action', '/logout')
   // 研報平台的導覽與歷史對話不在這裡
   expect(screen.queryByRole('link', { name: /^檢索$/ })).not.toBeInTheDocument()

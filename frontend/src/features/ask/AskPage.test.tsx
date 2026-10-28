@@ -43,7 +43,7 @@ function LocationProbe() {
   return <div data-testid="search-params">{useLocation().search}</div>
 }
 
-function wrap(entry = '/ask') {
+function wrap(entry = '/assistant') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
@@ -91,7 +91,7 @@ test('資料來源鈕可切換開／關來源側欄', async () => {
 // 閱讀頁的「就這篇提問」靠 ?q= 把報告名帶過來
 test('?q= 預填 composer、不自動送出，並把 q 從網址清掉', async () => {
   const q = '關於《南亞電路板 — 基板價格漲幅持續超預期.pdf》：'
-  wrap(`/ask?q=${encodeURIComponent(q)}`)
+  wrap(`/assistant?q=${encodeURIComponent(q)}`)
   expect(await screen.findByDisplayValue(q)).toBeInTheDocument()
   // 刻意不自動送出：讓使用者先看過、改過再按
   expect(streamAsk).not.toHaveBeenCalled()
@@ -110,7 +110,7 @@ test('重生非最後一輪時 Composer 變成停止鈕（busy 要掃全部輪�
   })
   getConversation.mockResolvedValue([turn('qa1', '第一題'), turn('qa2', '第二題')])
   streamAsk.mockImplementation(() => live([{ event: 'status', data: { stage: 'understanding' } }]))
-  wrap('/ask?c=123e4567-e89b-12d3-a456-426614174000')
+  wrap('/assistant?c=123e4567-e89b-12d3-a456-426614174000')
   expect(await screen.findByText('第二題')).toBeInTheDocument()
 
   fireEvent.click(screen.getAllByRole('button', { name: '重新生成' })[0])

@@ -24,7 +24,7 @@
 }
 .barInner { max-width: 1000px; margin: 0 auto; padding: 0 32px; }
 
-/* 檢索台：不放置中招牌——品牌已在左欄 SideRail，同一畫面不重複第二次 */
+/* 檢索台：不放置中招牌——品牌已在左側欄，同一畫面不重複第二次 */
 .inner { max-width: 1000px; margin: 0 auto; padding: 6px 32px 88px; }
 
 .controls { display: flex; flex-direction: column; gap: 16px; }

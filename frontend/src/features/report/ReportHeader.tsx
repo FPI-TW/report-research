@@ -22,20 +22,20 @@ export function ReportHeader({ doc }: Props) {
   const title = displayTitle(doc)
   const navigate = useNavigate()
   // key 為 'default' ＝ 這是本分頁進站的第一筆（直接貼網址、從外部開新分頁），
-  // 站內沒有上一頁可回：history.back() 會離開本站或什麼都不做，改退到檢索頁。
+  // 站內沒有上一頁可回：history.back() 會離開本站或什麼都不做，改退到研報庫。
   const hasHistory = useLocation().key !== 'default'
-  const goBack = () => (hasHistory ? navigate(-1) : navigate('/search'))
+  const goBack = () => (hasHistory ? navigate(-1) : navigate('/library'))
 
   return (
     <header className={styles.hd}>
       <div className={styles.top}>
         <button type="button" className={styles.back} onClick={goBack}
-          title={hasHistory ? '回到上一頁' : '回到檢索'}>
+          title={hasHistory ? '回到上一頁' : '回到研報庫'}>
           <Icon name="arrowLeft" size={14} />
           上一頁
         </button>
         <nav className={styles.crumb} aria-label="麵包屑">
-          <Link to="/search">檢索</Link>
+          <Link to="/library">研報庫</Link>
           <span aria-hidden="true">›</span>
           <span>研報</span>
         </nav>
@@ -103,7 +103,7 @@ export function ReportHeader({ doc }: Props) {
               hybrid_search 參數 → /api/ask filters → answer prompt），另案處理。 */}
           <MotionLink
             className={`${styles.btn} ${styles.btnGold}`}
-            to={`/ask?q=${encodeURIComponent(`關於《${title}》：`)}`}
+            to={`/assistant?q=${encodeURIComponent(`關於《${title}》：`)}`}
             aria-label="就這篇提問：帶著這篇的標題到問答頁預填題目（檢索仍涵蓋全語料）"
             title="帶著這篇的標題到問答頁預填題目；問答的檢索範圍仍是全語料"
             whileHover={{ scale: 1.02 }}

@@ -13,10 +13,10 @@ test('200 回 parsed 物件', async () => {
 
 test('401 導向登入並丟 ApiError', async () => {
   const assign = vi.fn()
-  vi.stubGlobal('location', { pathname: '/app/search', search: '', assign } as unknown as Location)
+  vi.stubGlobal('location', { pathname: '/app/library', search: '', assign } as unknown as Location)
   vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })))
   await expect(getJSON('/x', schema)).rejects.toBeInstanceOf(ApiError)
-  expect(assign).toHaveBeenCalledWith('/login?next=' + encodeURIComponent('/app/search'))
+  expect(assign).toHaveBeenCalledWith('/login?next=' + encodeURIComponent('/app/library'))
 })
 
 test('500 丟 ApiError 帶 status', async () => {

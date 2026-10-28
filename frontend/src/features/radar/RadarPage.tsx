@@ -49,7 +49,7 @@ export default function RadarPage() {
 
   const onBrowseReports = useCallback(() => {
     const search = new URLSearchParams({ q: code, market })
-    navigate(`/search?${search}`)
+    navigate(`/library?${search}`)
   }, [code, market, navigate])
 
   // 清單狀態一律走同一支 patch（replace，不堆歷史）：搜尋是逐字打出來的，每一次

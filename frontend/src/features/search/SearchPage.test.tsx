@@ -22,12 +22,12 @@ function listResp(ids: string[], total: number) {
   }
 }
 
-function wrap(node: ReactNode, entry = '/search') {
+function wrap(node: ReactNode, entry = '/library') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
-        <Routes><Route path="/search" element={node} /></Routes>
+        <Routes><Route path="/library" element={node} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -65,7 +65,7 @@ describe('SearchPage 整合', () => {
 
   it('查看全部（?all=1）→ 完整清單與 meta，跳過 Bento', async () => {
     vi.mocked(searchApi.browseReports).mockResolvedValue(listResp(['a', 'b'], 2))
-    wrap(<SearchPage />, '/search?all=1')
+    wrap(<SearchPage />, '/library?all=1')
     await waitFor(() => expect(screen.getByText('a.pdf')).toBeTruthy())
     expect(screen.getByText(/共 2 篇/)).toBeTruthy()
     expect(screen.queryByText('篇研報 · DOCS')).toBeNull()
@@ -75,7 +75,7 @@ describe('SearchPage 整合', () => {
     vi.mocked(searchApi.searchReports).mockResolvedValue(
       searchResp(['a', 'b'], 8, [{ market: 'TW', count: 6 }, { market: 'US', count: 2 }]),
     )
-    wrap(<SearchPage />, '/search?q=散熱')
+    wrap(<SearchPage />, '/library?q=散熱')
     await waitFor(() => expect(screen.getByText('a.pdf')).toBeTruthy())
     // 找到 8 篇 · 台股佔 75%（6/8）——色譜描述的是命中集合，不是全語料庫
     expect(screen.getByText(/找到/)).toHaveTextContent('找到 8 篇 · 台股佔 75%')
@@ -89,7 +89,7 @@ describe('SearchPage 整合', () => {
     vi.mocked(searchApi.searchReports).mockResolvedValue(
       searchResp(['a'], 6, [{ market: 'TW', count: 6 }]),
     )
-    wrap(<SearchPage />, '/search?q=散熱&market=TW')
+    wrap(<SearchPage />, '/library?q=散熱&market=TW')
     await waitFor(() => expect(screen.getByText('a.pdf')).toBeTruthy())
     expect(screen.getByRole('button', { name: '台股' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /台股 \d/ })).toBeNull()
@@ -98,7 +98,7 @@ describe('SearchPage 整合', () => {
   it('切表格檢視不重抓（browseReports 次數不變）', async () => {
     vi.mocked(searchApi.browseReports).mockResolvedValue(listResp(['a'], 1))
     // 1a 重設計：工具列（含檢視切換）只在非 hero 態顯示；帶 market 篩選以離開 hero 但仍為 browse
-    wrap(<SearchPage />, '/search?market=TW')
+    wrap(<SearchPage />, '/library?market=TW')
     await waitFor(() => expect(screen.getByText('a.pdf')).toBeTruthy())
     expect(searchApi.browseReports).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('tab', { name: '表格檢視' }))

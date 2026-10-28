@@ -4,7 +4,10 @@
   isolation: isolate;
   display: flex;
   height: 100vh;
+  /* clip 而不是只有 hidden：hidden 的容器仍可被程式捲動，scrollIntoView 會把整個版面往旁邊拉
+     （交接包「實測抓到的坑」第 1 條）。不支援 clip 的瀏覽器退回 hidden。 */
   overflow: hidden;
+  overflow: clip;
   background: var(--tf-canvas);
 }
 

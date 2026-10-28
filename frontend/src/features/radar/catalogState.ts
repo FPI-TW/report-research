@@ -84,5 +84,5 @@ export function instrumentHref(
   // broker（展開哪家券商）是「這一檔」的狀態：帶去另一檔只會指到一家可能根本沒覆蓋它的券商。
   sp.delete('broker')
   if (!sp.get('window')) sp.set('window', '90')
-  return `/radar?${sp}`
+  return `/consensus?${sp}`
 }

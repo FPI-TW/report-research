@@ -1,34 +1,30 @@
-.wrap { position: relative; }
-.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-glass-border); background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
-.avatarBtn:hover { background: rgba(0, 0, 0, 0.09); }
-.rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: var(--tf-radius-md); font-family: inherit; }
-.rowTrigger:hover { background: rgba(0, 0, 0, 0.045); }
-.avatar { position: relative; width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-glass-border); background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); display: flex; align-items: center; justify-content: center; flex: none; }
-/* 系統狀態 degraded 時頭像右上角的紅點（燈號本體在 SystemStatus.module.css） */
-.alertDot { position: absolute; top: -1px; right: -1px; box-shadow: 0 0 0 2px var(--tf-surface); }
-.rowText { flex: 1; text-align: left; min-width: 0; }
-.name { display: block; font-size: 13px; font-weight: 600; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sub { display: block; font-size: 11.5px; color: var(--tf-text-4); }
-/* 帳號選單向上開：定位在觸發點上方（進場方向/縮放原點由 Popover openUp 控制）。只給 row（展開側欄）用：
-   寬度跟著側欄。mini／mobile 的外層太窄又會裁切，改用 .popFloat＋portal，座標由 AccountMenu 算。 */
-.pop { left: 10px; right: 10px; bottom: calc(100% - 4px); }
-.popFloat { box-sizing: border-box; max-height: calc(100vh - 16px); overflow-y: auto; }
-/* 名稱與職稱在窄選單裡也只佔一行，過長截斷，不讓整個版面被撐開。 */
-.popHead .name, .popHead .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-glass-border); margin-bottom: 4px; }
-.menuItem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); text-decoration: none; box-sizing: border-box; }
-.menuItem:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
-button.menuItem { border: none; background: none; cursor: pointer; font-family: inherit; }
-button.menuItem:hover { background: rgba(0, 0, 0, 0.06); }
-.logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); cursor: pointer; font-family: inherit; }
-.logout:hover { background: rgba(0, 0, 0, 0.06); }
-/* M10b 語言切換：popover 內的分段控制 */
-.localeRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 8px; }
-.localeLabel { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-2); }
-.localeSeg { display: inline-flex; border: 1px solid var(--tf-glass-border); border-radius: var(--tf-radius-md); overflow: hidden; }
-.localeBtn { border: none; background: none; font-family: inherit; font-size: 12px; color: var(--tf-text-3); padding: 4px 10px; cursor: pointer; }
-.localeBtn:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
-/* 選取態用鎏金——語言切換是「已選擇」而非「操作」，屬強調色的職責。
-   原本寫的 var(--tf-gold, #ae7415) 是死回退：--tf-gold 從未定義過，永遠落在後面那個寫死值。 */
-.localeBtnActive { background: var(--tf-gold-strong); color: var(--tf-on-gold); }
-.localeBtnActive:hover { background: var(--tf-gold-strong); color: var(--tf-on-gold); }
+/* 側欄底部的個人列：頭像、名稱、角色、上下箭頭。收合成 52px 時只剩頭像（文字被側欄的寬度裁掉）。 */
+.row {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  width: 240px; height: 48px; padding: 0 10px 0 6px; border: none; border-radius: 8px;
+  background: transparent; font: inherit; text-align: left; cursor: pointer;
+  transition: background 0.12s, transform 0.12s;
+}
+.row:hover, .row[data-open] { background: var(--tf-hover); }
+.row:active { transform: scale(0.985); }
+.row:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.avatar {
+  position: relative; flex: none; width: 28px; height: 28px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--tf-graphite); color: #ffffff; font-size: 12px; font-weight: 600;
+}
+.text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.name { font-size: 13px; font-weight: 550; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.role { font-size: 12px; color: var(--tf-text-3); }
+.chev { flex: none; color: var(--tf-text-4); }
+
+/* 手機分頁列：只有頭像。 */
+.avatarBtn {
+  width: 36px; height: 36px; border: none; border-radius: 999px; background: transparent;
+  display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer;
+}
+.avatarBtn:hover { background: var(--tf-hover); }
+
+.menu { min-width: 240px; }
+/* 系統狀態異常時頭像右上角的紅點（燈號本體在 SystemStatus.module.css） */
+.alertDot { position: absolute; top: -1px; right: -1px; box-shadow: 0 0 0 2px var(--tf-sidebar); }

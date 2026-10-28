@@ -106,7 +106,7 @@ export const routes = [
   },
   {
     // 管理後台：與研報平台完全分開的另一組 layout route（自己的外殼與導覽，沒有研報側欄、
-    // 歷史對話）。同一套 SPA、同一個 build；主平台只在帳號選單留管理員入口。
+    // 歷史對話）。同一套 SPA、同一個 build；一般介面不放入口，管理員直接輸入 /app/admin。
     path: '/admin',
     element: <Suspense><AdminShell /></Suspense>,
     errorElement: <RouteError standalone />,

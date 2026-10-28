@@ -7,7 +7,7 @@ const deleteConversation = vi.fn(async (id: string) => { void id })
 vi.mock('../../lib/askApi', () => ({ deleteConversation: (id: string) => deleteConversation(id) }))
 import { ConversationList } from './ConversationList'
 
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
+afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); localStorage.clear() })
 
 function wrap(entries = ['/assistant']) {
   vi.stubGlobal('fetch', vi.fn(async () =>
@@ -15,12 +15,12 @@ function wrap(entries = ['/assistant']) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={entries}><ConversationList searchOpen={false} onSearchClose={() => {}} /></MemoryRouter>
+      <MemoryRouter initialEntries={entries}><ConversationList /></MemoryRouter>
     </QueryClientProvider>,
   )
 }
 
-test('渲染新對話鈕與清單', async () => {
+test('「最近」標題列的 ＋ 開新對話，下方是清單', async () => {
   wrap()
   expect(screen.getByRole('link', { name: '新對話' })).toHaveAttribute('href', '/assistant')
   expect(await screen.findByText('AI 伺服器供應鏈')).toBeInTheDocument()
@@ -107,7 +107,7 @@ test('刪除成功：不顯示錯誤訊息', async () => {
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-function wrapWith(handler: (url: URL) => unknown[], searchOpen = true) {
+function wrapWith(handler: (url: URL) => unknown[]) {
   const fetchMock = vi.fn(async (input: string) =>
     new Response(JSON.stringify(handler(new URL(input, 'http://x'))), { status: 200 }))
   vi.stubGlobal('fetch', fetchMock)
@@ -115,7 +115,7 @@ function wrapWith(handler: (url: URL) => unknown[], searchOpen = true) {
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/assistant']}>
-        <ConversationList searchOpen={searchOpen} onSearchClose={onSearchClose} />
+        <ConversationList />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -123,39 +123,22 @@ function wrapWith(handler: (url: URL) => unknown[], searchOpen = true) {
 }
 
 const conv = (i: number) => ({ conversation_id: `c${i}`, title: `對話 ${i}` })
-const onSearchClose = vi.fn()
 
-test('搜尋框平時收起（由側欄標頭的搜尋 icon 展開）', async () => {
-  wrapWith(() => [conv(1)], false)
+test('「最近」標題可收合清單，並記住選擇', async () => {
+  wrapWith(() => [conv(1)])
+  await screen.findByText('對話 1')
+  const heading = screen.getByRole('button', { name: /最近/ })
+  expect(heading).toHaveAttribute('aria-expanded', 'true')
+  fireEvent.click(heading)
+  expect(heading).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByText('對話 1')).not.toBeInTheDocument()
+  expect(localStorage.getItem('tf.sidebar.recents')).toBe('0')
+})
+
+test('側欄不再放搜尋框（搜尋對話改在 ⌘K 搜尋彈窗）', async () => {
+  wrapWith(() => [conv(1)])
   await screen.findByText('對話 1')
   expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
-})
-
-test('搜尋框按 Escape 請側欄收起搜尋', async () => {
-  wrapWith(() => [conv(1)])
-  fireEvent.keyDown(screen.getByRole('searchbox', { name: '搜尋歷史對話' }), { key: 'Escape' })
-  expect(onSearchClose).toHaveBeenCalled()
-})
-
-test('搜尋：停止輸入後才帶 q 查詢，且從第一頁開始', async () => {
-  const fetchMock = wrapWith(url => (url.searchParams.get('q') === '先進封裝' ? [conv(7)] : [conv(1)]))
-  await screen.findByText('對話 1')
-  fireEvent.change(screen.getByRole('searchbox', { name: '搜尋歷史對話' }), { target: { value: '先進封裝' } })
-  expect(await screen.findByText('對話 7')).toBeInTheDocument()
-  // 舊的那一列由 AnimatePresence 播完退場才離開 DOM，所以要等。
-  await waitFor(() => expect(screen.queryByText('對話 1')).not.toBeInTheDocument())
-  const last = new URL(fetchMock.mock.calls.at(-1)![0] as string, 'http://x')
-  expect(last.searchParams.get('q')).toBe('先進封裝')
-  expect(last.searchParams.get('offset')).toBe('0')
-  // debounce：逐字輸入不該每個字各打一次——這裡只有「初次載入」與「搜尋」兩次。
-  expect(fetchMock).toHaveBeenCalledTimes(2)
-})
-
-test('搜尋沒有結果要說出來，而不是一片空白', async () => {
-  wrapWith(url => (url.searchParams.get('q') ? [] : [conv(1)]))
-  await screen.findByText('對話 1')
-  fireEvent.change(screen.getByRole('searchbox', { name: '搜尋歷史對話' }), { target: { value: '不存在的詞' } })
-  expect(await screen.findByRole('status')).toHaveTextContent('沒有提問包含「不存在的詞」的對話')
 })
 
 test('這一頁是滿的才出現「載入更多」，按下後以 offset 接續並累加', async () => {

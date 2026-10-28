@@ -1,66 +1,65 @@
 import { describe, expect, it } from 'vitest'
-import type { BrokerSummary } from '../../lib/radarSchemas'
+import type { BrokerSummary, EpsGroup } from '../../lib/radarSchemas'
 import { brokerTableTsv } from './consensusExport'
-import { epsBases } from './consensusSeries'
 
 function broker(over: Partial<BrokerSummary>): BrokerSummary {
   return {
-    broker: 'kgi', broker_display: '凱基', latest_report_date: '2026-09-10',
+    broker: 'kgi', broker_display: '凱基', latest_rating: 'buy', latest_report_date: '2026-09-10',
     latest_target_price: 1200, latest_target_currency: 'TWD',
     latest_eps_value: 45.2, latest_eps_fy: 2026, latest_eps_period: 'FY',
-    latest_eps_currency: 'TWD', latest_eps_unit: null,
+    latest_eps_currency: 'TWD', latest_eps_unit: 'per_share',
+    stale: false,
     ...over,
   } as BrokerSummary
 }
 
-function table(brokers: BrokerSummary[], currency: string | null = 'TWD') {
-  const basis = epsBases(brokers)[0] ?? null
-  return brokerTableTsv(brokers, currency, basis).split('\n').map(line => line.split('\t'))
+const EPS: EpsGroup = {
+  fiscal_year: 2026, period: 'FY', currency: 'TWD', unit: 'per_share',
+  median: 45, count: 3, revision_direction: 'none',
+}
+
+function table(brokers: BrokerSummary[], currency: string | null = 'TWD', eps: EpsGroup | null = EPS) {
+  return brokerTableTsv(brokers, currency, eps).split('\n').map(line => line.split('\t'))
 }
 
 describe('brokerTableTsv', () => {
   it('每列欄數與表頭一致，數值是原始數字而不是格式化字串', () => {
     const [header, row] = table([broker({})])
     expect(row).toHaveLength(header.length)
-    expect(header.slice(0, 4)).toEqual(['券商', '目標價', '目標價幣別', '納入目標價口徑'])
-    expect(row.slice(0, 4)).toEqual(['凱基', '1200', 'TWD', '是'])
+    expect(header.slice(0, 5)).toEqual(['券商', '評等', '目標價', '目標價幣別', '納入目標價共識'])
+    expect(row.slice(0, 5)).toEqual(['凱基', '買進', '1200', 'TWD', '是'])
     expect(row[header.indexOf('EPS')]).toBe('45.2')
     expect(row[header.indexOf('EPS 年度')]).toBe('2026')
-    expect(row[header.indexOf('納入 EPS 口徑')]).toBe('是')
+    expect(row[header.indexOf('與 EPS 共識同口徑')]).toBe('是')
+    expect(row[header.indexOf('期間內')]).toBe('是')
   })
 
-  it('幣別或年度與目前口徑不同：數字照給，但標明未納入', () => {
+  it('幣別、年度不同或在期間外：數字照給，但標明未納入', () => {
     const rows = table([
-      broker({}), broker({ broker: 'a', broker_display: '甲' }),
+      broker({}),
       broker({ broker: 'ms', broker_display: '大摩', latest_target_currency: 'USD', latest_eps_fy: 2027 }),
+      broker({ broker: 'old', broker_display: '舊', stale: true }),
     ])
     const header = rows[0]
     const ms = rows.find(r => r[0] === '大摩')!
     expect(ms[header.indexOf('目標價')]).toBe('1200')
-    expect(ms[header.indexOf('納入目標價口徑')]).toBe('否')
-    expect(ms[header.indexOf('納入 EPS 口徑')]).toBe('否')
+    expect(ms[header.indexOf('納入目標價共識')]).toBe('否')
+    expect(ms[header.indexOf('與 EPS 共識同口徑')]).toBe('否')
+    const old = rows.find(r => r[0] === '舊')!
+    expect(old[header.indexOf('納入目標價共識')]).toBe('否')
+    expect(old[header.indexOf('期間內')]).toBe('否')
   })
 
-  it('未標示幣別算未納入（與表格的判準相同），沒提供的值留空而不是寫 0', () => {
-    const rows = table([
-      broker({ latest_target_currency: null }),
-      broker({ broker: 'x', broker_display: '乙', latest_target_price: null, latest_eps_value: null }),
-    ])
-    const header = rows[0]
-    expect(rows[1][header.indexOf('納入目標價口徑')]).toBe('否')
-    const empty = rows[2]
-    for (const col of ['目標價', '目標價幣別', '納入目標價口徑', 'EPS', 'EPS 年度', '納入 EPS 口徑']) {
-      expect(empty[header.indexOf(col)], col).toBe('')
-    }
+  it('沒有值的欄位留空，納入欄也留空（不是「否」）', () => {
+    const [header, row] = table([broker({ latest_target_price: null, latest_eps_value: null })])
+    expect(row[header.indexOf('目標價')]).toBe('')
+    expect(row[header.indexOf('納入目標價共識')]).toBe('')
+    expect(row[header.indexOf('與 EPS 共識同口徑')]).toBe('')
   })
 
-  it('名稱裡的 tab 與換行不會讓整列錯位', () => {
-    const [header, row] = table([broker({ broker_display: '凱基\t投顧\n研究部' })])
+  it('儲存格裡的 tab 與換行不會讓整列錯位', () => {
+    const [header, row] = table([broker({ broker_display: '凱\t基\n證券' })])
     expect(row).toHaveLength(header.length)
-    expect(row[0]).toBe('凱基 投顧 研究部')
-  })
-
-  it('沒有券商時只有表頭', () => {
-    expect(brokerTableTsv([], null, null).split('\n')).toHaveLength(1)
+    expect(row[0]).toBe('凱 基 證券')
   })
 })

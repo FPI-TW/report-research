@@ -1,0 +1,90 @@
+.section { margin-top: 28px; }
+
+.heading {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.grid > * { animation: rise 0.65s var(--tf-ease-apple) both; }
+.grid > :nth-child(1) { animation-delay: 0.05s; }
+.grid > :nth-child(2) { animation-delay: 0.12s; }
+.grid > :nth-child(3) { animation-delay: 0.19s; }
+.grid > :nth-child(4) { animation-delay: 0.26s; }
+
+.card { padding: 16px 18px; }
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dim {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.strengthen { background: var(--tf-badge-buy-bg); color: var(--tf-badge-buy-fg); }
+.weaken { background: var(--tf-badge-sell-bg); color: var(--tf-badge-sell-fg); }
+.diverging {
+  background: repeating-linear-gradient(135deg, var(--tf-badge-buy-bg) 0 5px, var(--tf-badge-sell-bg) 5px 10px);
+  color: var(--tf-text-2);
+}
+.stable { background: var(--tf-border-weak); color: var(--tf-text-muted-aa); }
+.insufficient {
+  background: transparent;
+  color: var(--tf-text-muted-aa);
+  box-shadow: inset 0 0 0 1px var(--tf-border);
+}
+
+.counts {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}
+.counts b { font-weight: 400; color: var(--tf-text-1); }
+
+.summary {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: #3a3a3e;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid > * { animation: none; }
+}

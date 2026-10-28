@@ -1,317 +1,311 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router'
+import { ArrowRight, BarChart3, Check, Copy, FileText, Library, Lightbulb, MessageSquare, type LucideIcon } from 'lucide-react'
+import { useFluidHover, useRegisterFluidHoverItem } from '@/hooks/use-fluid-hover'
+import { FluidHoverHighlight } from '@/components/fluid-hover-highlight'
+import { useStableRect } from '@/lib/useStableRect'
 import { copyText } from '../../lib/clipboard'
-import { marketLabel, marketTint, ptypeColor, MARKET_ORDER } from '../../lib/meta'
-import { Icon } from '../../components/primitives/Icon'
-import browseImg from '../../assets/help/browse.png'
-import resultsImg from '../../assets/help/results.png'
-import askImg from '../../assets/help/ask.png'
+import { useFeatures } from '../../lib/useFeatures'
+import { useIsMac } from '../../lib/useIsMac'
+import { MARKET_ORDER, marketColor, marketLabel } from '../../lib/meta'
+import { preloadRoute, type RouteKey } from '../../lib/routePreload'
+import { showToast } from '../../lib/toast'
+import { useWebSearchPaused } from '../../lib/useWebSearch'
+import { HELP_KEYS, HELP_TOC, MARKET_SCOPE, MOD, sectionDomId, type HelpSectionId } from './helpData'
+import { AssistantDemo, BriefDemo, ConsensusDemo, LibraryDemo, ReaderDemo } from './HelpDemos'
+import { useScrollSpy } from './useScrollSpy'
 import styles from './HelpPage.module.css'
 
-const ACCESS_URL = 'http://192.168.1.128:8097/'
+/** 滑動高亮的過渡：與側欄、設定彈窗相同（交接包 0.3s 主曲線）。 */
+const GLIDE = { duration: 0.3, ease: [0.32, 0.72, 0, 1] as const }
 
-const MARKET_DESC: Record<string, string> = {
-  TW: '台灣上市櫃個股／產業',
-  US: '美國個股／市場（多為外資英文報告）',
-  HK: '香港掛牌個股／市場',
-  CN: '中國 A 股、陸股策略',
-  WTX: '台指期、選擇權、部位策略',
-  FX: '匯率、外匯',
-  MACRO: '總經、利率、跨市場策略；債券／固收也歸這',
-  GLOBAL: '全球資產配置；原物料／商品／能源也歸這',
-  CRYPTO: '加密貨幣',
-}
+const TOC_IDS = HELP_TOC.map(t => t.id)
 
-const PTYPES: [string, string][] = [
-  ['股票', '個股'],
-  ['指數', '指數／大盤'],
-  ['期貨', '期貨'],
-  ['選擇權', '選擇權'],
-  ['ETF', 'ETF'],
-  ['債券', '債券／固定收益'],
-  ['外匯', '外匯'],
-  ['原物料', '原物料、商品、能源、金屬'],
-  ['加密', '加密貨幣'],
+const CARDS: { to: string; title: string; desc: string; icon: LucideIcon; preload: RouteKey }[] = [
+  { to: '/library', title: '研報庫', desc: '搜尋與瀏覽券商研報', icon: Library, preload: 'search' },
+  { to: '/assistant', title: '研究助理', desc: '提問並取得附來源的回答', icon: MessageSquare, preload: 'ask' },
+  { to: '/consensus', title: '券商共識', desc: '各家評等與目標價的共識', icon: BarChart3, preload: 'radar' },
+  { to: '/brief', title: '每日簡報', desc: '前一日研報的重點彙整', icon: FileText, preload: 'brief' },
 ]
 
-const TOC: [string, string][] = [
-  ['start', '開始使用（網址）'],
-  ['search', '檢索研報：瀏覽與搜尋'],
-  ['filter', '篩選、排序與檢視'],
-  ['result', '看懂一筆結果'],
-  ['full', '查看完整報告（閱讀頁）'],
-  ['ask', '智能問答（向 AI 提問）'],
-  ['radar', '券商觀點'],
-  ['ai', 'AI 生成內容與資料處理'],
-]
+type Register = (index: number, element: HTMLElement | null) => void
 
-function CopyUrlButton({ url }: { url: string }) {
-  const [label, setLabel] = useState('複製')
-  const [done, setDone] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function onClick() {
-    copyText(url)
-      .then(() => {
-        setDone(true)
-        setLabel('已複製')
-      })
-      .catch(() => setLabel('請手動複製'))
-      .finally(() => {
-        if (timer.current) clearTimeout(timer.current)
-        timer.current = setTimeout(() => {
-          setDone(false)
-          setLabel('複製')
-        }, 1600)
-      })
-  }
-
+/** 一列只登錄一次（行內 ref callback 每次重繪都會解除再登錄，滑動高亮量不到位置）。 */
+function TocRow({ register, index, label, on, onPick }: { register: Register; index: number; label: string; on: boolean; onPick: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null)
+  useRegisterFluidHoverItem(register, index, ref)
   return (
     <button
+      ref={ref}
       type="button"
-      className={`${styles.copyBtn} ${done ? styles.copyDone : ''}`}
-      onClick={onClick}
+      className={styles.tocRow}
+      data-on={on || undefined}
+      aria-current={on ? 'location' : undefined}
+      onClick={onPick}
     >
-      <Icon name={done ? 'check' : 'copy'} size={14} />
       {label}
     </button>
   )
 }
 
-function Figure({ src, alt, caption }: { src: string; alt: string; caption: string }) {
+function Toc({ active, onPick }: { active: HelpSectionId; onPick: (id: HelpSectionId) => void }) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const hover = useFluidHover(listRef)
+  const activeRect = useStableRect(hover, TOC_IDS.indexOf(active))
   return (
-    <figure className={styles.figure}>
-      <img src={src} alt={alt} loading="lazy" />
-      <figcaption className={styles.figcaption}>{caption}</figcaption>
-    </figure>
+    <nav className={styles.toc} aria-label="說明目錄">
+      <div ref={listRef} className={styles.tocList} {...hover.handlers}>
+        <FluidHoverHighlight rect={activeRect} session={0} fadeIn={false} transition={GLIDE} className={styles.hlActive} />
+        <FluidHoverHighlight hover={hover} transition={GLIDE} className={styles.hlHover} />
+        {HELP_TOC.map((t, i) => (
+          <TocRow key={t.id} register={hover.registerItem} index={i} label={t.label} on={t.id === active} onPick={() => onPick(t.id)} />
+        ))}
+      </div>
+    </nav>
   )
 }
 
-export default function HelpPage() {
+/** 平台網址＋複製。網址取目前這個站：正式與測試環境各自顯示自己的網址，不寫死主機。 */
+function PlatformUrl() {
+  const url = window.location.origin
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function onCopy() {
+    copyText(url)
+      .then(() => {
+        setCopied(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => {
+        // 非安全情境又沒有 execCommand：選起來讓人自己按複製。
+        inputRef.current?.select()
+        showToast('複製失敗，請手動複製')
+      })
+  }
+
   return (
-    <div className={`${styles.scroll} tf-scroll`}>
-      <div className={styles.wrap}>
-        <header className={styles.head}>
-          <h1 className={styles.title}>
-            廷豐智能<span className={styles.accent}>研報</span> 使用說明
-          </h1>
-          <p className={styles.lede}>
-            廷豐智能研報把券商研報集中起來，用「語意 ＋ 關鍵字」混合搜尋，幾秒內找到相關報告與段落，
-            並可直接閱讀原始 PDF、向 AI 提問、或用「券商觀點」追蹤各家評等變化。本說明帶你快速上手。
-          </p>
-        </header>
+    <div className={styles.urlField}>
+      <label htmlFor="help-url" className={styles.srOnly}>平台網址</label>
+      <input ref={inputRef} id="help-url" className={styles.urlInput} type="text" readOnly value={url} onFocus={e => e.currentTarget.select()} />
+      <button type="button" className={styles.copyBtn} onClick={onCopy}>
+        {copied
+          ? <><Check size={14} strokeWidth={2.2} className={styles.copiedIcon} aria-hidden />已複製</>
+          : <><Copy size={14} strokeWidth={1.8} aria-hidden />複製</>}
+      </button>
+    </div>
+  )
+}
 
-        <nav className={styles.toc} aria-label="目錄">
-          <div className={styles.tocLabel}>目錄</div>
-          <ol className={styles.tocList}>
-            {TOC.map(([id, label]) => (
-              <li key={id}><a href={`#${id}`}>{label}</a></li>
-            ))}
-          </ol>
-        </nav>
+function Section({ id, title, children }: { id: HelpSectionId; title: string; children: ReactNode }) {
+  const dom = sectionDomId(id)
+  return (
+    <section id={dom} className={styles.sec} aria-labelledby={`${dom}-title`}>
+      <h2 id={`${dom}-title`} className={styles.h2} tabIndex={-1}>{title}</h2>
+      {children}
+    </section>
+  )
+}
 
-        <section id="start" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>1</span>開始使用</h2>
-          <p>在<strong>公司網路</strong>內，用瀏覽器（建議 Chrome 或 Edge，手機也可以）打開：</p>
-          <p className={styles.urlRow}>
-            <span className={styles.url}>{ACCESS_URL}</span>
-            <CopyUrlButton url={ACCESS_URL} />
-          </p>
-          <p>首次進入請以管理者配發的個人帳號登入，之後整個操作都在瀏覽器完成，不需要安裝任何東西。</p>
-        </section>
+function Steps({ items }: { items: ReactNode[] }) {
+  return (
+    <ol className={styles.steps}>
+      {items.map((it, i) => (
+        <li key={i}><span className={styles.stepNo} aria-hidden>{i + 1}</span><span>{it}</span></li>
+      ))}
+    </ol>
+  )
+}
 
-        <section id="search" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>2</span>檢索研報：瀏覽與搜尋</h2>
-          <p>
-            進入後預設是<strong>檢索研報</strong>。還沒輸入查詢時，畫面下方會以<strong>最新入庫</strong>
-            （日期新到舊）列出目前所有已導入的報告，可直接瀏覽。
-          </p>
-          <Figure
-            src={browseImg}
-            alt="檢索起始畫面"
-            caption="起始畫面：品牌起始＋「檢索／問答」切換＋搜尋框；下方為「最新入庫」，左側為導覽與歷史對話"
-          />
-          <p>在<strong>搜尋框</strong>輸入主題後按 <strong>Enter</strong> 即可搜尋：</p>
-          <ul className={styles.bul}>
-            <li>可輸入主題、公司、事件，例如：「AI 伺服器散熱」、「台積電 先進封裝」、「美國 升息」。</li>
-            <li>採<strong>語意 ＋ 關鍵字混合檢索</strong>：用字不必和報告完全相同，也能找到語意相關的報告。</li>
-            <li>
-              結果依<strong>相關度</strong>排序，每筆右側的<strong>百分比</strong>是「該篇
-              <strong>最相關片段</strong>與查詢的相似度」；列表會列出<strong>命中片段</strong>，關鍵詞以
-              <mark>底色</mark>標示。
-            </li>
-          </ul>
-          <div className={styles.note}>
-            搜尋回傳的是<strong>最相關的前幾篇</strong>研報（非整個資料庫）；想更精準就多加關鍵字縮小範圍。
-            百分比是「最相關<strong>片段</strong>的相似度」，不是整篇報告的相關度。
-          </div>
-          <Figure
-            src={resultsImg}
-            alt="搜尋結果畫面"
-            caption="搜尋「AI 伺服器散熱」的結果：依月份分組，每筆列出命中片段（關鍵詞黃底高亮），右側為相似度 %"
-          />
-        </section>
+function Tip({ children }: { children: ReactNode }) {
+  return (
+    <div className={styles.tip}>
+      <Lightbulb size={16} strokeWidth={1.8} aria-hidden className={styles.tipIcon} />
+      <span>{children}</span>
+    </div>
+  )
+}
 
-        <section id="filter" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>3</span>篩選、排序與檢視</h2>
-          <p>工具列的篩選可單獨使用，也可與搜尋並用。每個項目後的數字是該分類的報告數：</p>
-          <ul className={styles.bul}>
-            <li><strong>市場</strong>：台股、美股、總經、全球… 點一下只看該市場（完整 9 種見下一節）。</li>
-            <li><strong>商品類型</strong>：股票、指數、債券、原物料、ETF… 報告實際提到的金融商品。</li>
-            <li><strong>標的</strong>：可切換「對選股有參考」或「對期貨／指數部位有參考」的報告。</li>
-            <li><strong>報告類型</strong>：速報、週報、策略… 報告的類別（依檔名判定）。</li>
-          </ul>
-          <div className={styles.note}>想取消篩選，再點一次同一個項目，或點「全部」即可回到不限。</div>
+function Kbd({ children }: { children: ReactNode }) {
+  return <kbd className={styles.kbd}>{children}</kbd>
+}
 
-          <h3 className={styles.h3}>排序</h3>
-          <ul className={styles.bul}>
-            <li><strong>搜尋時</strong>：<span className={styles.tagInline}>相關度</span>（預設）、日期新→舊、日期舊→新。</li>
-            <li><strong>瀏覽時</strong>：<span className={styles.tagInline}>日期新→舊</span>（預設）、日期舊→新。</li>
-          </ul>
+function Cite({ n }: { n: number }) {
+  return <span className={styles.cite}>{n}</span>
+}
 
-          <h3 className={styles.h3}>檢視方式</h3>
-          <p>工具列的<strong>檢視切換</strong>可改變報告呈現方式（瀏覽與搜尋皆適用），切換時<strong>不會重新查詢</strong>：</p>
-          <ul className={styles.bul}>
-            <li><span className={styles.tagInline}>列表</span>：一列一篇、密度高，可依<strong>日期(月)</strong>或<strong>市場</strong>分組。</li>
-            <li><span className={styles.tagInline}>表格</span>：以欄位排列（名稱／市場／類型／日期／來源／標的），點欄位標題可排序。</li>
-          </ul>
-          <div className={styles.note}>
-            分組與表格的欄位排序只作用於<strong>目前已載入</strong>的報告；瀏覽很多篇時，先點「載入更多」再排序。
-            系統會<strong>記住</strong>你慣用的檢視方式。
-          </div>
-        </section>
+/**
+ * 使用說明（交接包「使用說明」）：左側目錄（scroll-spy、滑動高亮；<900px 隱藏）＋右側內容。
+ * 頂部四張捷徑卡；研報庫、閱讀頁、研究助理、券商共識、每日簡報各有一段操作示範動畫（`HelpDemos`）。
+ *
+ * 文案描述的是**現在的**頁面：改了某一頁的動線，這裡的步驟、示範與快捷鍵表（`helpData.ts`）要一起改。
+ */
+export default function HelpPage() {
+  useFeatures()
+  const webPaused = useWebSearchPaused()
+  const mac = useIsMac()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { active, jump } = useScrollSpy(TOC_IDS, sectionDomId, scrollRef)
+  const mod = mac ? '⌘' : 'Ctrl'
 
-        <section id="result" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>4</span>看懂一筆結果</h2>
-          <p>一筆搜尋結果（列表檢視）由這些部位組成：</p>
-          <ol className={styles.anatomy}>
-            <li><span className={styles.n}>1</span><span><strong>市場徽章</strong>：報告涵蓋的主要市場（每篇一個，見下方 9 種）。</span></li>
-            <li><span className={styles.n}>2</span><span><strong>報告名／檔名</strong>：原始研報標題。</span></li>
-            <li><span className={styles.n}>3</span><span><strong>來源／日期</strong>：券商來源與報告日期。</span></li>
-            <li><span className={styles.n}>4</span><span><strong>商品類型標籤</strong>：報告提到的金融商品（可 0～多個）。</span></li>
-            <li><span className={styles.n}>5</span><span><strong>標的標籤</strong>：對選股／期貨是否有參考，常附<strong>代碼</strong>（如「個股 · 2330」）。</span></li>
-            <li><span className={styles.n}>6</span><span><strong>命中片段</strong>：搜尋時列出最相關段落，關鍵詞以底色高亮；瀏覽時改顯示 2-3 句中文摘要。</span></li>
-            <li><span className={styles.n}>7</span><span><strong>相關度</strong>：最右側百分比＝該篇最相關片段與查詢的相似度。</span></li>
-          </ol>
+  return (
+    <div className={styles.page}>
+      <div ref={scrollRef} className={`${styles.scroll} tf-scroll`}>
+        <div className={styles.wrap}>
+          <Toc active={active} onPick={jump} />
 
-          <h3 className={styles.h3}>市場徽章（每篇一個）</h3>
-          <div className={styles.legend}>
-            {MARKET_ORDER.map((code) => {
-              const tint = marketTint(code)
-              return (
-                <div key={code} className={styles.lrow}>
-                  <span className={styles.chip} style={tint}>
-                    <span className={styles.dot} style={{ background: tint.color }} />
-                    {marketLabel(code)}
-                  </span>
-                  <span className={styles.m}>{MARKET_DESC[code]}</span>
-                </div>
-              )
-            })}
-          </div>
-
-          <h3 className={styles.h3}>商品類型標籤（可 0～多個）</h3>
-          <div className={styles.legend}>
-            {PTYPES.map(([label, desc]) => {
-              const c = ptypeColor(label)
-              return (
-                <div key={label} className={styles.lrow}>
-                  <span
-                    className={styles.chip}
-                    style={{ background: `color-mix(in srgb, ${c} 12%, white)`, color: c }}
-                  >
-                    {label}
-                  </span>
-                  <span className={styles.m}>{desc}</span>
-                </div>
-              )
-            })}
-          </div>
-
-          <h3 className={styles.h3}>標的標籤</h3>
-          <div className={styles.subjBlock}>
-            <div className={styles.sbHead}>
-              <span className={styles.subjChip}>個股</span>
-              <span>對<strong>選股／個股交易</strong>有參考價值</span>
+          <article className={styles.article}>
+            <h1 className={styles.title}>使用說明</h1>
+            <div className={styles.cards}>
+              {CARDS.map(c => {
+                const Icon = c.icon
+                return (
+                  <Link key={c.to} to={c.to} className={styles.card} onPointerEnter={() => preloadRoute(c.preload)}>
+                    <span className={styles.cardIcon}><Icon size={17} strokeWidth={1.6} aria-hidden /></span>
+                    <span className={styles.cardText}>
+                      <span className={styles.cardTitle}>{c.title}</span>
+                      <span className={styles.cardDesc}>{c.desc}</span>
+                    </span>
+                    <ArrowRight size={15} strokeWidth={1.8} aria-hidden className={styles.cardArrow} />
+                  </Link>
+                )
+              })}
             </div>
-            <div className={styles.sbEg}>常附個股代碼，例如「個股 · 2330」；多檔時顯示「個股 · 2330 等 5 檔」。</div>
-          </div>
-          <div className={styles.subjBlock}>
-            <div className={styles.sbHead}>
-              <span className={styles.subjChip}>期貨</span>
-              <span>對<strong>期貨／指數部位</strong>有參考價值</span>
-            </div>
-            <div className={styles.sbEg}>常附期貨商品，例如「期貨 · 台指期」。詞表：台指期／小型台指／電子期／金融期／個股期貨。</div>
-          </div>
-          <div className={styles.note}>
-            商品類型與標的若報告沒明確提及就不會出現；一筆結果可能同時有市場徽章 ＋ 多個商品類型 ＋ 標的標籤。
-          </div>
-        </section>
 
-        <section id="full" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>5</span>查看完整報告（研報閱讀頁）</h2>
-          <p>點<strong>任一筆結果</strong>（列表或表格的整列；問答則點回答下方的來源），會開啟該篇的<strong>研報閱讀頁</strong>。那是一個獨立網址，可以直接複製給同事：</p>
-          <ul className={styles.bul}>
-            <li><strong>右側</strong>內嵌原始券商 PDF：可捲動閱讀，工具列有縮圖列、搜尋、放大／縮小／符合寬度、旋轉、跳頁與下載。</li>
-            <li><strong>左側</strong>是這篇的摘要與<strong>重點摘錄</strong>（每條一句論點＋一句原文逐字引文），若這篇有結構化訊號還會多一區「觀點」，最下方是<strong>相似研報</strong>。</li>
-            <li>可以<strong>直接在頁面上拖曳選字</strong>，再按工具列的複製鈕或 <strong>Ctrl/⌘+C</strong>，把券商原句貼進自己的報告。跨頁選取也可以。</li>
-            <li>鍵盤：<strong>Ctrl/⌘+F</strong> 或 <strong>/</strong> 開搜尋、<strong>PageUp／PageDown</strong> 翻頁、<strong>Home／End</strong> 跳首末頁、<strong>Esc</strong> 關搜尋。</li>
-            <li>右上<strong>「就這篇提問」</strong>會帶著這篇的標題到問答頁預填題目（檢索範圍仍是全語料）。</li>
-          </ul>
-          <div className={styles.note}>
-            極少數研報的原始檔是 Word（.docx）而非 PDF，無法內嵌 —— 那些會改為顯示文字抽取結果（圖表與表格排版不會保留），並可從頁首下載原始檔。
-          </div>
-        </section>
+            <Section id="start" title="開始使用">
+              <p className={styles.p}>
+                用瀏覽器開啟平台網址，以管理者配發的個人帳號登入。不需要安裝任何軟體，手機也能使用，建議使用 Chrome 或 Edge。
+              </p>
+              <PlatformUrl />
+            </Section>
 
-        <section id="ask" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>6</span>智能問答（向 AI 提問）</h2>
-          <p>畫面上方有<strong>「檢索／問答」切換</strong>。切到<strong>問答</strong>後，可用自然語言提問，系統會檢索相關研報、由 AI 整理出帶<strong>引用來源</strong>的回答：</p>
-          <ul className={styles.bul}>
-            <li>在輸入框打字、按 <strong>Enter</strong> 送出，回答會逐字串流出現。</li>
-            <li>回答中的引註（如 <strong>[1]</strong>）可點開對應來源；下方可展開完整<strong>資料來源</strong>清單。</li>
-            <li>可對回答按<strong>讚／倒讚</strong>或<strong>複製</strong>，也可<strong>追問</strong>延續同一段對話。</li>
-            <li>左側會列出<strong>歷史問答</strong>，點一下可重看；該筆右側的垃圾桶圖示可刪除（會再確認）。</li>
-          </ul>
-          <div className={styles.note}>
-            問答以<strong>整個語料庫</strong>為範圍（不受檢索篩選影響）。若問題與研報內容無關，系統會婉拒並說明原因。
-          </div>
-          <Figure
-            src={askImg}
-            alt="智能問答畫面"
-            caption="問答模式：上方思考步驟、主區為帶引註來源（鎏金 [n]）的回答與表格，下方為提問輸入框"
-          />
-        </section>
+            <Section id="library" title="研報庫">
+              <p className={styles.p}>瀏覽與搜尋所有已入庫的券商研報。還沒搜尋時，首頁列出頭條、最新評等變動、今日簡報與最新入庫的研報。</p>
+              <LibraryDemo />
+              <Steps items={[
+                <>在搜尋框輸入主題、公司或事件後按 <Kbd>Enter</Kbd>，例如「AI 伺服器散熱」「台積電 先進封裝」。</>,
+                <>用市場篩選縮小範圍，每個市場後面的數字是研報篇數；「更多篩選」可再依商品類型、報告類型與標的篩選。</>,
+                <>點任一篇開啟預覽，再按「開啟閱讀頁」看原始 PDF，或按「就這篇提問」到研究助理。</>,
+              ]} />
+              <Tip>搜尋同時比對語意與關鍵字，用字不必和報告完全相同。</Tip>
+            </Section>
 
-        <section id="radar" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>7</span>券商觀點</h2>
-          <p><strong>券商觀點</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
-          <ul className={styles.bul}>
-            <li>先選一個標的，即可看到<strong>評等共識</strong>，以及<strong>各家目標價／EPS 點圖</strong>——一個點就是一家券商，點下去右側會顯示該券商的數字與報告日期。</li>
-            <li>點圖<strong>不算中位數也不平均</strong>；EPS 需先選定同一個財年才比較，不同財年的會標示「未納入目前期間」。</li>
-            <li><strong>近期關鍵變化</strong>列出各券商的上修／下修事件，可點開原始研報佐證。</li>
-            <li><strong>各券商最新觀點</strong>可展開單一券商的歷程；上方可切換 30／90／180 天等<strong>時間窗</strong>。</li>
-          </ul>
-        </section>
+            <Section id="reader" title="閱讀頁">
+              <p className={styles.p}>左側是摘要、重點摘錄與相似研報，右側是原始券商 PDF。</p>
+              <ReaderDemo />
+              <ul className={styles.list}>
+                <li>點重點摘錄，PDF 會捲到原文並標出位置，摘錄下方顯示在第幾頁；找不到時會顯示「原文中找不到這段文字」。</li>
+                <li>縮圖右上的金色編號是摘錄所在的頁面，一頁有三條以上時顯示區間，例如「1–5」。</li>
+                <li>可以直接在 PDF 上拖曳選字，再按底部工具列的複製鈕或 <Kbd>{mod}</Kbd> <Kbd>C</Kbd>，跨頁也可以。</li>
+                <li>底部工具列可以開關縮圖、翻頁、縮放，以及在文件內搜尋。</li>
+                <li>有評等資料的研報會顯示「本篇評等」，點擊即前往券商共識看各家看法。</li>
+                <li>「就這篇提問」會帶著報告標題到研究助理；閱讀頁有獨立網址，可以直接分享給同事。</li>
+              </ul>
+              <Tip>少數研報的原始檔是 Word，無法內嵌顯示，閱讀頁改列出抽取的文字，原始檔可以下載。</Tip>
+            </Section>
 
-        {/* AI 生成揭露（DeepSeek 遷移 PR-U）：DeepSeek 條款要求向終端使用者揭露並標示 AI 生成。
-            只寫確定的事實：哪些功能由它生成、資料會送去哪裡；供應商怎麼處理以其條款為準，這裡不代為承諾。
-            供應商寫成「目前為」：既有的摘要、標題、摘錄與標註多半是遷移前由 Claude 產出，不能說全部出自 DeepSeek。 */}
-        <section id="ai" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>8</span>AI 生成內容與資料處理</h2>
-          <p>本站以下內容由<strong>大型語言模型</strong>（目前為 DeepSeek）<strong>自動生成</strong>，不是人工撰寫：</p>
-          <ul className={styles.bul}>
-            <li><strong>智能問答</strong>的回答。</li>
-            <li>研報的<strong>摘要</strong>、<strong>標題</strong>與<strong>重點摘錄</strong>的論點。</li>
-            <li>研報的<strong>標註</strong>（市場、商品類型、標的標籤）。</li>
-            <li><strong>券商觀點</strong>的評等、目標價、EPS 與論點擷取。</li>
-            <li><strong>每日簡報</strong>。</li>
-          </ul>
-          <p>生成時，你的<strong>提問</strong>、<strong>回答</strong>與相關的<strong>研報內容</strong>會送往模型供應商（目前為 DeepSeek）處理，並依其服務條款處理。</p>
-          <div className={styles.note}>
-            AI 生成的內容<strong>可能有誤</strong>（包括數字與引用），投資決策請以<strong>原始研報</strong>與公開資訊為準。重點摘錄的<strong>引文</strong>由 AI 從原文摘出，可在閱讀頁用「在原文中尋找」對照原始 PDF 核對。
-          </div>
-        </section>
+            <Section id="assistant" title="研究助理">
+              <p className={styles.p}>用自然語言提問，系統會先檢索研報，再由 AI 整理成附引用來源的回答。</p>
+              <AssistantDemo />
+              <Steps items={[
+                <>輸入問題後按 <Kbd>Enter</Kbd> 送出，回答會逐步出現，生成中可以按停止。</>,
+                <>回答中的編號如 <Cite n={1} /> 是引用來源，滑過可預覽，點擊在右側展開全部來源。</>,
+                <>回答下方可讚、倒讚、複製、重新生成，或點延伸提問繼續追問。</>,
+              ]} />
+              <ul className={styles.list}>
+                <li>研究助理以全部研報為範圍，不受研報庫的篩選影響。</li>
+                <li>側欄「最近」保存過去的對話，「搜尋」可以找回舊對話。</li>
+                {!webPaused && <li>輸入框的「＋」可以開啟網路搜尋，回答會納入網路公開資訊。</li>}
+              </ul>
+              <Link to="/assistant" className={styles.more}>開啟研究助理<ArrowRight size={14} strokeWidth={1.8} aria-hidden /></Link>
+            </Section>
 
-        <footer className={styles.foot}>廷豐金融科技 · 廷豐智能研報</footer>
+            <Section id="consensus" title="券商共識">
+              <p className={styles.p}>每檔標的彙整各家券商的評等、目標價與 EPS，以及觀點的變化。</p>
+              <ConsensusDemo />
+              <ul className={styles.list}>
+                <li>清單可以用標的名稱或代號搜尋，依立場（偏多、中立、偏空）與市場篩選。</li>
+                <li>共識評等取各家最新評等的中位數，目標價與 EPS 同樣取中位數。</li>
+                <li>切換期間（30 天、90 天、180 天、全部）會重新計算共識與變化幅度。</li>
+                <li>各券商目標價圖上一個點是一家券商，滑過可看券商與價位，虛線是中位數。</li>
+                <li>四向觀點依展望、催化劑、風險、估值，標示各家看法轉強、轉弱、分歧擴大或無顯著變化。</li>
+                <li>點券商那一列可以展開該券商歷次的觀點。</li>
+              </ul>
+            </Section>
+
+            <Section id="brief" title="每日簡報">
+              <p className={styles.p}>每天上午彙整前一日入庫的研報，整理成今日重點與各市場焦點。</p>
+              <BriefDemo />
+              <ul className={styles.list}>
+                <li>右側月曆有金色圓點的日期都有簡報，點選即可切換；日期旁的箭頭可以切到前一份或後一份。</li>
+                <li>月曆下方列出本期來源研報，點擊可開啟閱讀頁。</li>
+              </ul>
+            </Section>
+
+            <Section id="markets" title="市場代碼">
+              <p className={styles.p}>每篇研報會標上一個市場，篩選與共識都依此分類。</p>
+              <div className={styles.tile}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr><th scope="col">代碼</th><th scope="col">市場</th><th scope="col">範圍</th></tr>
+                  </thead>
+                  <tbody>
+                    {MARKET_ORDER.map(code => (
+                      <tr key={code}>
+                        <td className={styles.mktCode} style={{ color: marketColor(code) }}>{code}</td>
+                        <td>{marketLabel(code)}</td>
+                        <td className={styles.scope}>{MARKET_SCOPE[code]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            <Section id="keys" title="快捷鍵">
+              <div className={styles.tile}>
+                <table className={`${styles.table} ${styles.keys}`}>
+                  <thead className={styles.srOnly}>
+                    <tr><th scope="col">動作</th><th scope="col">位置</th><th scope="col">按鍵</th></tr>
+                  </thead>
+                  <tbody>
+                    {HELP_KEYS.map(k => (
+                      <tr key={`${k.where}-${k.what}`}>
+                        <td>{k.what}</td>
+                        <td className={styles.where}>{k.where}</td>
+                        <td className={styles.keyCell}>
+                          <span className={styles.keyList}>{k.keys.map(x => <Kbd key={x}>{x === MOD ? mod : x}</Kbd>)}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+
+            {/* AI 生成揭露（DeepSeek 遷移 PR-U）：DeepSeek 條款要求向終端使用者揭露並標示 AI 生成。
+                只寫確定的事實：哪些功能由它生成、資料會送去哪裡；供應商怎麼處理以其條款為準，這裡不代為承諾。
+                供應商寫成「目前為」：既有的摘要、標題、摘錄與標註多半是遷移前由 Claude 產出，不能說全部出自 DeepSeek。 */}
+            <Section id="ai" title="AI 生成內容">
+              <p className={styles.p}>本站以下內容由大型語言模型（目前為 DeepSeek）自動生成，不是人工撰寫：</p>
+              <ul className={styles.list}>
+                <li>研究助理的回答。</li>
+                <li>研報的摘要、標題與重點摘錄的論點。</li>
+                <li>研報的標註（市場、商品類型、標的）。</li>
+                <li>券商共識的評等、目標價、EPS 與觀點擷取。</li>
+                <li>每日簡報。</li>
+              </ul>
+              <p className={styles.p}>生成時，提問、回答與相關的研報內容會送往模型供應商（目前為 DeepSeek）處理，並依其服務條款處理。</p>
+              <p className={styles.p}>
+                AI 生成的內容可能有誤（包括數字與引用），投資決策請以原始研報與公開資訊為準。重點摘錄的引文由 AI 從原文逐字摘出，可在閱讀頁點擊摘錄，對照原始 PDF 核對。
+              </p>
+              {!webPaused && <p className={styles.p}>開啟網路搜尋時，回答會納入網路公開資訊，這類資訊並非受信任的行情來源。</p>}
+              <p className={styles.p}>提問紀錄保存在個人帳號下，可以在側欄「最近」刪除對話。</p>
+            </Section>
+          </article>
+        </div>
       </div>
     </div>
   )

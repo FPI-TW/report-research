@@ -42,15 +42,15 @@ class _ImmutableStatic(StaticFiles):
 
 @router.get("/")
 async def index():
-    # 舊 vanilla 首頁已退場，根路徑導向 SPA 檢索頁
-    return RedirectResponse("/app/search", status_code=302)
+    # 舊 vanilla 首頁已退場，根路徑導向 SPA 研報庫
+    return RedirectResponse("/app/library", status_code=302)
 
 
 @router.get("/monitor")
 async def monitor():
     # 導入監控已搬進管理後台（/app/admin/operations/pipeline，限管理員）；舊書籤多半來自
-    # 一般使用者，一律回檢索頁，與 SPA 的 /app/monitor 同一個落點
-    return RedirectResponse("/app/search", status_code=302)
+    # 一般使用者，一律回研報庫，與 SPA 的 /app/monitor 同一個落點
+    return RedirectResponse("/app/library", status_code=302)
 
 
 @router.get("/help")

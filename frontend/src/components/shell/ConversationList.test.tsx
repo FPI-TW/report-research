@@ -9,7 +9,7 @@ import { ConversationList } from './ConversationList'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
 
-function wrap(entries = ['/ask']) {
+function wrap(entries = ['/assistant']) {
   vi.stubGlobal('fetch', vi.fn(async () =>
     new Response(JSON.stringify([{ conversation_id: 'c1', title: 'AI 伺服器供應鏈' }]), { status: 200 })))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -22,12 +22,12 @@ function wrap(entries = ['/ask']) {
 
 test('渲染新對話鈕與清單', async () => {
   wrap()
-  expect(screen.getByRole('link', { name: '新對話' })).toHaveAttribute('href', '/ask')
+  expect(screen.getByRole('link', { name: '新對話' })).toHaveAttribute('href', '/assistant')
   expect(await screen.findByText('AI 伺服器供應鏈')).toBeInTheDocument()
 })
 
 test('目前 ?c 對話標示 aria-current', async () => {
-  wrap(['/ask?c=c1'])
+  wrap(['/assistant?c=c1'])
   const link = await screen.findByRole('link', { name: 'AI 伺服器供應鏈' })
   expect(link).toHaveAttribute('aria-current', 'page')
 })
@@ -38,7 +38,7 @@ test('目前 ?c 對話標示 aria-current', async () => {
 // 自帶底色，故這裡斷言的是「該列有底色、兩個子元素都沒有」。
 // （jsdom 不算版面，但 getComputedStyle 對 CSS Modules 的 background 是解析得出來的。）
 test('選取的對話：底色畫在整列上，標題與刪除鈕都不自帶底色', async () => {
-  wrap(['/ask?c=c1'])
+  wrap(['/assistant?c=c1'])
   const link = await screen.findByRole('link', { name: 'AI 伺服器供應鏈' })
   const row = link.parentElement!
   const del = screen.getByRole('button', { name: '刪除對話' })
@@ -66,7 +66,7 @@ test('刪除：確認→呼叫 deleteConversation；取消→不呼叫', async (
 
 // ── 刪除失敗的整條鏈 ────────────────────────────────────────────────────────
 // 缺陷原本是：deleteConversation 從不讀回應、從不 reject ⇒ useMutation 的 onSuccess
-// 照樣觸發 ⇒ 快取失效、重取後對話還在，而本元件的 onSuccess 還會 navigate('/ask')。
+// 照樣觸發 ⇒ 快取失效、重取後對話還在，而本元件的 onSuccess 還會 navigate('/assistant')。
 // 使用者被送離當前對話、清單裡那一列還在、沒有任何錯誤訊息——下一步當然是再按一次。
 //
 // 這幾條刻意在**元件層**驗而不是單測 hook：要證明的是「API throw 之後，畫面確實
@@ -87,13 +87,13 @@ test('刪除失敗：顯示錯誤訊息，且該列仍在清單裡', async () =>
 
 test('刪除失敗：不得導航離開當前對話', async () => {
   deleteConversation.mockRejectedValueOnce(new Error('boom'))
-  wrap(['/ask?c=c1'])
+  wrap(['/assistant?c=c1'])
   const link = await screen.findByRole('link', { name: 'AI 伺服器供應鏈' })
   expect(link).toHaveAttribute('aria-current', 'page')
   fireEvent.click(screen.getByRole('button', { name: '刪除對話' }))
   fireEvent.click(screen.getByRole('button', { name: '刪除' }))
   await screen.findByRole('alert')
-  // 仍停在 ?c=c1（若被 navigate('/ask') 帶走，aria-current 會消失）
+  // 仍停在 ?c=c1（若被 navigate('/assistant') 帶走，aria-current 會消失）
   expect(screen.getByRole('link', { name: 'AI 伺服器供應鏈' }))
     .toHaveAttribute('aria-current', 'page')
 })
@@ -114,7 +114,7 @@ function wrapWith(handler: (url: URL) => unknown[], searchOpen = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/ask']}>
+      <MemoryRouter initialEntries={['/assistant']}>
         <ConversationList searchOpen={searchOpen} onSearchClose={onSearchClose} />
       </MemoryRouter>
     </QueryClientProvider>,

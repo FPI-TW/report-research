@@ -43,7 +43,7 @@ function renderTable(items: RadarInstrumentItem[]) {
       <InstrumentTable
         items={items}
         sort="latest"
-        hrefFor={(m, c) => `/radar?market=${m}&code=${c}`}
+        hrefFor={(m, c) => `/consensus?market=${m}&code=${c}`}
       />
     </MemoryRouter>,
   )
@@ -169,7 +169,7 @@ describe('InstrumentTable', () => {
     expect(screen.getAllByRole('columnheader')).toHaveLength(7)
     rerender(
       <MemoryRouter>
-        <InstrumentTable items={[]} sort="latest" hrefFor={() => '/radar'} loading />
+        <InstrumentTable items={[]} sort="latest" hrefFor={() => '/consensus'} loading />
       </MemoryRouter>,
     )
     expect(screen.getAllByRole('columnheader')).toHaveLength(7)
@@ -179,7 +179,7 @@ describe('InstrumentTable', () => {
   it('目前排序反映在對應欄的 aria-sort', () => {
     render(
       <MemoryRouter>
-        <InstrumentTable items={[item()]} sort="reports" hrefFor={() => '/radar'} />
+        <InstrumentTable items={[item()]} sort="reports" hrefFor={() => '/consensus'} />
       </MemoryRouter>,
     )
     expect(screen.getByRole('columnheader', { name: /資料涵蓋/ }))

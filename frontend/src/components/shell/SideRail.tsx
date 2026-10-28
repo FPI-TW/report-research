@@ -55,9 +55,9 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
           <span className={styles.brandStatic}><BrandLogo size={30} alt="" /></span>
         )}
         <nav className={styles.nav}>
-          <NavItem to="/search" icon="search" label="檢索" variant="mini" />
-          <NavItem to="/ask" icon="messages" label="問答" variant="mini" />
-          <NavItem to="/radar" icon="compass" label="觀點" variant="mini" />
+          <NavItem to="/library" icon="search" label="檢索" variant="mini" />
+          <NavItem to="/assistant" icon="messages" label="問答" variant="mini" />
+          <NavItem to="/consensus" icon="compass" label="觀點" variant="mini" />
           <NavItem to="/brief" icon="fileText" label="簡報" variant="mini" />
         </nav>
         <div className={styles.spacer} />

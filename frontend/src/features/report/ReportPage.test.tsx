@@ -56,8 +56,8 @@ function wrap(entry: string | string[]) {
       <MemoryRouter initialEntries={entries} initialIndex={entries.length - 1}>
         <Routes>
           <Route path="/report/:hash" element={<ReportPage />} />
-          <Route path="/search" element={<div>檢索頁</div>} />
-          <Route path="/radar" element={<div>雷達頁</div>} />
+          <Route path="/library" element={<div>研報庫頁</div>} />
+          <Route path="/consensus" element={<div>雷達頁</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -154,18 +154,18 @@ describe('ReportPage', () => {
 
   it('上一頁：回到剛才所在的頁面（不是固定回檢索）', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    wrap(['/radar', `/report/${HASH}`])
+    wrap(['/consensus', `/report/${HASH}`])
     fireEvent.click(await screen.findByRole('button', { name: /上一頁/ }))
     expect(await screen.findByText('雷達頁')).toBeInTheDocument()
   })
 
-  it('上一頁：直接開啟研報（站內沒有上一頁）時退回檢索頁，不離開本站', async () => {
+  it('上一頁：直接開啟研報（站內沒有上一頁）時退回研報庫，不離開本站', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
     const back = await screen.findByRole('button', { name: /上一頁/ })
-    expect(back).toHaveAttribute('title', '回到檢索')
+    expect(back).toHaveAttribute('title', '回到研報庫')
     fireEvent.click(back)
-    expect(await screen.findByText('檢索頁')).toBeInTheDocument()
+    expect(await screen.findByText('研報庫頁')).toBeInTheDocument()
   })
 
   it('報頭標題用報告內部標題，不是檔名', async () => {
@@ -202,7 +202,7 @@ describe('ReportPage', () => {
     const link = await screen.findByRole('link', { name: /就這篇提問/ })
     expect(link).toHaveAttribute(
       'href',
-      `/ask?q=${encodeURIComponent('關於《南亞電路板 — 基板價格漲幅持續超預期.pdf》：')}`,
+      `/assistant?q=${encodeURIComponent('關於《南亞電路板 — 基板價格漲幅持續超預期.pdf》：')}`,
     )
     expect(link).toHaveAccessibleName(/全語料/)
   })

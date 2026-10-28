@@ -13,7 +13,7 @@ test('五格導覽含觀點與帳號', () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/search']}><MobileTabBar /></MemoryRouter>
+      <MemoryRouter initialEntries={['/library']}><MobileTabBar /></MemoryRouter>
     </QueryClientProvider>,
   )
   expect(screen.getByRole('link', { name: /檢索/ })).toBeInTheDocument()

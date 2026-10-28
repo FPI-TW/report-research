@@ -5,7 +5,7 @@ import { AskEmptyState } from './AskEmptyState'
 
 function renderEmpty() {
   return render(
-    <MemoryRouter initialEntries={['/ask']}>
+    <MemoryRouter initialEntries={['/assistant']}>
       <AskEmptyState value="" onChange={() => {}} onSubmit={() => {}} />
     </MemoryRouter>,
   )

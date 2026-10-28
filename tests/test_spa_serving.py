@@ -52,7 +52,7 @@ def _first_hashed_asset() -> Path:
 
 def test_unauthed_app_redirects_to_login():
     client = TestClient(app)
-    resp = client.get("/app/search", follow_redirects=False)
+    resp = client.get("/app/library", follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"] == "/login"
 
@@ -60,7 +60,7 @@ def test_unauthed_app_redirects_to_login():
 def test_authed_app_deeplink_serves_shell():
     _require_dist()
     client = TestClient(app, cookies=_auth_cookies())
-    resp = client.get("/app/ask", follow_redirects=False)
+    resp = client.get("/app/assistant", follow_redirects=False)
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     # 殼一律 no-cache：資產名帶雜湊可以長快取，index.html 不行——快取住的殼會

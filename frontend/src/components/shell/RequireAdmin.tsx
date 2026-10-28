@@ -37,7 +37,7 @@ export function AdminForbidden() {
         <Icon name="shield" size={28} />
         <h1 className={styles.title}>需要管理員權限</h1>
         <p className={styles.body}>這一頁只開放給管理員。若你需要帳號或審核相關的協助，請聯絡管理員。</p>
-        <Link to="/search" className={styles.back}>回到檢索</Link>
+        <Link to="/library" className={styles.back}>回到研報庫</Link>
       </div>
     </div>
   )

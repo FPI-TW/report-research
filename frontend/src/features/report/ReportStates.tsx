@@ -9,7 +9,7 @@ export function ReportNotFound() {
       <div className={styles.box} role="status">
         <h2 className={styles.title}>找不到這份研報</h2>
         <p className={styles.text}>連結可能已失效，或這份研報不在語料庫中。</p>
-        <Link className={styles.btn} to="/search">回到檢索</Link>
+        <Link className={styles.btn} to="/library">回到研報庫</Link>
       </div>
     </div>
   )

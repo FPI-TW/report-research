@@ -17,7 +17,7 @@ function renderRail(collapsed: boolean) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/search']}>
+      <MemoryRouter initialEntries={['/library']}>
         <SideRail collapsed={collapsed} onToggle={() => {}} />
       </MemoryRouter>
     </QueryClientProvider>,

@@ -48,7 +48,7 @@ export function getConversation(id: string): Promise<ConversationTurn[]> {
  *
  * 舊版只看 404/405 決定要不要走 POST fallback，其餘一律當成功：回應主體從不讀，
  * 500 也直接忽略。後果不只是「列還在」——`ConversationList` 在 `onSuccess` 裡會
- * `navigate('/ask')`，所以刪除失敗時使用者**還會被送離當前對話**，而且沒有任何
+ * `navigate('/assistant')`，所以刪除失敗時使用者**還會被送離當前對話**，而且沒有任何
  * 錯誤訊息。而後端在「什麼都沒刪到」時回的是 200 `{"ok": false}`，不是錯誤碼。
  *
  * 404/405 → POST fallback 是刻意保留的（某些代理/邊緣對 DELETE 不穩）。但 404 也

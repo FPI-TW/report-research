@@ -27,12 +27,12 @@
 
 | 頁面 | 路徑 | 做什麼 |
 |---|---|---|
-| 檢索 | `/app/search` | 混合檢索（dense ＋ lexical），市場、商品類型、報告類型篩選，卡片／表格／Bento 三種檢視 |
-| 問答 | `/app/ask` | RAG 串流問答，多輪對話，五類路由（離題、總覽、語料問答、時效、投資建議），追問建議；網搜未開放（沒有後端，見下） |
+| 研報庫 | `/app/library`（舊網址 `/app/search` 轉址） | 混合檢索（dense ＋ lexical），市場、商品類型、報告類型篩選，卡片／表格／Bento 三種檢視 |
+| 研究助理 | `/app/assistant`（舊網址 `/app/ask` 轉址） | RAG 串流問答，多輪對話，五類路由（離題、總覽、語料問答、時效、投資建議），追問建議；網搜未開放（沒有後端，見下） |
 | 閱讀頁 | `/app/report/:hash` | 原檔 PDF 內嵌檢視（EmbedPDF）、重點摘錄、券商訊號卡、相似研報 |
-| 觀點雷達 | `/app/radar` | 標的目錄、多券商評等與目標價共識、四維論點、券商時間軸，讀取零 LLM |
+| 券商共識 | `/app/consensus`（舊網址 `/app/radar` 轉址） | 標的目錄、多券商評等與目標價共識、四維論點、券商時間軸，讀取零 LLM |
 | 每日簡報 | `/app/brief` | 窗期內新研報與評等變動的日報 |
-| 管理後台 | `/app/admin` | 限管理員，各頁依 scope 顯示。主控台版面：圖示軌分七個領域（總覽、內容、存取、維運、安全、洞察、設定）＋次級面板＋頂列（⌘K 頁面搜尋、深淺色主題）。內容：待複核、研報管理、上傳研報；存取：帳號、配額、API 用戶端（含對外 API 說明文件與試打）；維運（`/app/admin/operations/*`）：服務、依賴圖、來源主機、事件、管線、資料健康、資料庫、排程工作、日誌、主機、診斷、LLM 用量；安全與操作紀錄；使用分析；功能旗標。主機、排程工作、事件三頁要靠監控匯入器（`load-observations`）才有資料，沒裝的主機（正式環境）不列。舊入口 `/app/monitor` 導回檢索頁 |
+| 管理後台 | `/app/admin` | 限管理員，各頁依 scope 顯示。主控台版面：圖示軌分七個領域（總覽、內容、存取、維運、安全、洞察、設定）＋次級面板＋頂列（⌘K 頁面搜尋、深淺色主題）。內容：待複核、研報管理、上傳研報；存取：帳號、配額、API 用戶端（含對外 API 說明文件與試打）；維運（`/app/admin/operations/*`）：服務、依賴圖、來源主機、事件、管線、資料健康、資料庫、排程工作、日誌、主機、診斷、LLM 用量；安全與操作紀錄；使用分析；功能旗標。主機、排程工作、事件三頁要靠監控匯入器（`load-observations`）才有資料，沒裝的主機（正式環境）不列。舊入口 `/app/monitor` 導回研報庫 |
 
 ## 系統架構
 
@@ -150,7 +150,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | POST | `/api/me/totp/disable` | — | `{enabled, pending}` | 關閉自己的兩步驟驗證；需近 10 分鐘內重新驗證過（403 `elevation_required`）。管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟時管理員一律 403 `mfa_policy_locked`（遺失驗證器由 super admin 或 `scripts/create_admin.py --reset-totp` 重設）。寫稽核 |
 | GET | `/api/me/quota` | — | `{day, timezone, resets_in_seconds, enforced, items: [{kind, used, over, limit, remaining}]}` | 任何登入的使用者看**自己**今天（台北時間）的次數與上限（只有次數、沒有主題）。一般使用者只有 `ask`，管理員另有 `export`、`upload`；`limit` null＝不限；`over`＝超出上限的次數（影子模式照常放行）；`enforced`＝對本人正式阻擋是否生效。查詢失敗 503 `quota_unavailable` |
 | GET | `/api/features` | — | `{features: {<key>: bool}}` | 任何登入的使用者；回**自己的**功能旗標實際值（環境變數上限 AND DB 覆寫，套用角色／使用者作用域），不含上限、覆寫與作用域名單。DB 讀不到時退回 registry 預設、照常 200。前端 `frontend/src/lib/useFeatures.ts`（手寫 zod，不在產生的 admin client 裡）；問答的網搜開關讀 `ask.web_search` |
-| GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/search`、`/app/help` | 舊入口相容 |
+| GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/library`、`/app/library`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 任何登入者可用。與 `/api/progress`、`/api/review/judge-scale` 共用 15 秒 DB 快取（`web/stats_snapshot.py`）；`username` 是目前登入者 |
 | GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 限管理員並要 `ops.read`（一般使用者 403；缺 scope 403 `missing_scope`）。管理後台管線分頁每 15 秒輪詢；待複核頁的判定尺走 `/api/review/judge-scale`。`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `total`／`checked`／`latest` 計所有 judge（覆蓋率語意，換 judge 不會驟降）；分數類 `judge_checked`／`degraded`／`below_min`／`avg_score`／`avg_n`（平均的樣本數，不含 degraded）只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |

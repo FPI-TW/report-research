@@ -25,9 +25,9 @@ function Here() {
 
 function wrap(ui: ReactElement) {
   return render(
-    <MemoryRouter initialEntries={['/search']}>
+    <MemoryRouter initialEntries={['/library']}>
       <Routes>
-        <Route path="/search" element={ui} />
+        <Route path="/library" element={ui} />
         <Route path="/report/:hash" element={<Here />} />
       </Routes>
     </MemoryRouter>,

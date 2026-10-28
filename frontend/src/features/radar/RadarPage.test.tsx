@@ -14,8 +14,8 @@ function wrap(entry: string) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
         <Routes>
-          <Route path="/radar" element={<RadarPage />} />
-          <Route path="/search" element={<LocationProbe />} />
+          <Route path="/consensus" element={<RadarPage />} />
+          <Route path="/library" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -152,7 +152,7 @@ function wrapWithProbe(entry: string) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
         <Routes>
-          <Route path="/radar" element={<><RadarPage /><SearchProbe /></>} />
+          <Route path="/consensus" element={<><RadarPage /><SearchProbe /></>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -163,7 +163,7 @@ describe('展開的券商進網址', () => {
   it('網址帶 broker：進頁就展開那一家（貼連結給別人看得到同一個畫面）', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
-    wrapWithProbe('/radar?market=TW&code=8046&window=90&broker=daiwa')
+    wrapWithProbe('/consensus?market=TW&code=8046&window=90&broker=daiwa')
     const toggle = await screen.findByTestId('broker-row-daiwa')
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
   })
@@ -171,7 +171,7 @@ describe('展開的券商進網址', () => {
   it('展開與收合都寫回網址，且用 replace 不堆歷史', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
-    wrapWithProbe('/radar?market=TW&code=8046&window=90')
+    wrapWithProbe('/consensus?market=TW&code=8046&window=90')
     const toggle = await screen.findByTestId('broker-row-daiwa')
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(toggle)
@@ -193,7 +193,7 @@ describe('RadarPage', () => {
         latest_report_date: '2026-07-11', coverage_state: 'partial',
       }],
     })
-    wrap('/radar')
+    wrap('/consensus')
     expect(screen.getByRole('heading', { name: '券商觀點' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
     expect(radarApi.getRadarInstruments).toHaveBeenCalled()
@@ -205,13 +205,13 @@ describe('RadarPage', () => {
     vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
       total: 0, offset: 0, items: [],
     })
-    wrap('/radar')
+    wrap('/consensus')
     expect(screen.getByText(/非系統預測或投資建議/)).toBeInTheDocument()
   })
 
   it('picker 顯示完整九市場並標記目前選擇', async () => {
     vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
-    wrap('/radar?market=FX')
+    wrap('/consensus?market=FX')
 
     for (const label of ['台股', '美股', '港股', '陸股', '台指期', '外匯', '總經', '全球', '加密']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
@@ -225,7 +225,7 @@ describe('RadarPage', () => {
       total: 0, limit: 50, offset: 0, has_more: false, next_offset: null, items: [],
     })
 
-    wrap('/radar?market=ZZ&code=8046')
+    wrap('/consensus?market=ZZ&code=8046')
 
     expect(screen.getByRole('heading', { name: '券商觀點' })).toBeInTheDocument()
     await waitFor(() => expect(radarApi.getRadarInstruments).toHaveBeenCalled())
@@ -234,7 +234,7 @@ describe('RadarPage', () => {
 
   it('overview 狀態顯示免責（即使 notes 為空）', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({ notes: [] }))
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
     expect(screen.getByText(/非系統預測或投資建議/)).toBeInTheDocument()
   })
@@ -249,7 +249,7 @@ describe('RadarPage', () => {
         latest_report_date: '2026-07-11', coverage_state: 'partial' as const,
       })),
     })
-    wrap('/radar')
+    wrap('/consensus')
     await waitFor(() => expect(screen.getByText('顯示 50 / 200 檔')).toBeInTheDocument())
   })
 
@@ -269,7 +269,7 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar')
+    wrap('/consensus')
     const more = await screen.findByRole('button', { name: '載入更多（尚有 25 檔）' })
     fireEvent.click(more)
 
@@ -298,7 +298,7 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar')
+    wrap('/consensus')
     fireEvent.click(await screen.findByRole('button', { name: '載入更多（尚有 25 檔）' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('載入更多標的失敗')
@@ -321,13 +321,13 @@ describe('RadarPage', () => {
         latest_report_date: '2026-07-11', coverage_state: 'partial',
       }],
     })
-    wrap('/radar')
+    wrap('/consensus')
     await waitFor(() => expect(screen.getByText('顯示 1 檔')).toBeInTheDocument())
   })
 
   it('有 market+code 時載入總覽', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
     expect(screen.getByRole('heading', { name: '市場共識摘要' })).toBeInTheDocument()
     expect(screen.getByText('四向觀點')).toBeInTheDocument()
@@ -351,7 +351,7 @@ describe('RadarPage', () => {
       },
     }))
 
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
 
     const notice = await screen.findByRole('status', { name: '部分資料' })
     expect(notice).toHaveTextContent('歷史研報仍有部分欄位尚待整理。')
@@ -370,15 +370,15 @@ describe('RadarPage', () => {
       thesis: overview().thesis.map(t => ({ ...t, label: 'insufficient', label_display: '資料不足' })),
       recent_events: [], recent_events_total: 0, brokers: [],
     }))
-    wrap('/radar?market=TW&code=8046')
+    wrap('/consensus?market=TW&code=8046')
     await waitFor(() => expect(screen.getByText('尚未完成觀點資料整理')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '查看相關研報' }))
-    expect(screen.getByTestId('location')).toHaveTextContent('/search?q=8046&market=TW')
+    expect(screen.getByTestId('location')).toHaveTextContent('/library?q=8046&market=TW')
   })
 
   it('切窗期呼叫 API 並不重掛載 header', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('radio', { name: '30 天' }))
     await waitFor(() => {
@@ -406,7 +406,7 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     const expand = await screen.findByRole('button', { name: '查看全部 20 項' })
     expect(expand).toHaveAttribute('aria-expanded', 'false')
     expect(expand).toHaveAttribute('aria-controls', 'radar-recent-events')
@@ -448,7 +448,7 @@ describe('RadarPage', () => {
       items: Array.from({ length: 12 }, (_, i) => radarEvent(i)),
     })
 
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
 
     await waitFor(() => expect(radarApi.getRadarEvents).toHaveBeenCalledWith(
@@ -473,7 +473,7 @@ describe('RadarPage', () => {
         items: Array.from({ length: 12 }, (_, i) => radarEvent(i)),
       })
 
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('載入完整事件失敗')
@@ -503,7 +503,7 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
     fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
     await waitFor(() => expect(screen.getByText('event-11')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '載入更多（尚有 8 項）' }))
@@ -541,7 +541,7 @@ describe('RadarPage', () => {
       }],
       coverage_state: 'partial',
     })
-    wrap('/radar?market=TW&code=8046')
+    wrap('/consensus?market=TW&code=8046')
     await waitFor(() => expect(screen.getByTestId('broker-row-daiwa')).toBeInTheDocument())
     expect(radarApi.getBrokerHistory).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('broker-row-daiwa'))

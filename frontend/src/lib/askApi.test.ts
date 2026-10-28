@@ -31,7 +31,7 @@ test('deleteConversation：ok=true 正常結束', async () => {
 
 // 以下四條是同一個缺陷的四種形狀：舊版**從不讀回應、從不 reject**，於是
 // useMutation 的 onSuccess 照樣觸發 ⇒ 快取失效、重取後對話還在，而
-// ConversationList 的 onSuccess 還會 navigate('/ask')——使用者被送離當前對話，
+// ConversationList 的 onSuccess 還會 navigate('/assistant')——使用者被送離當前對話，
 // 且沒有任何錯誤訊息。下一步當然是再按一次刪除。
 test('deleteConversation：ok=false 必須 throw（後端「一列都沒刪到」回的是 200）', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: false }), { status: 200 })))

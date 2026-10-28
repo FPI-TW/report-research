@@ -54,6 +54,12 @@ function OpsAliasRedirect() {
   return <Navigate to={{ pathname: `/admin/operations${rest ? `/${rest}` : ''}`, search, hash }} replace />
 }
 
+/** 改名前的頁面網址 → 新網址：只換路徑，查詢字串（對話的 `?c=`、券商共識的篩選）與 hash 原樣保留。 */
+function LegacyRedirect({ to }: { to: string }) {
+  const { search, hash } = useLocation()
+  return <Navigate to={{ pathname: to, search, hash }} replace />
+}
+
 /**
  * 舊的詳情頁路徑 → 清單頁＋query：詳情改成抽屜之後，舊連結導到清單頁並把 id 放進 query
  * （例如 `/admin/uploads/:uploadId` → `/admin/uploads?upload=…`）。其他 query 與 hash 原樣保留。
@@ -79,12 +85,16 @@ export const routes = [
         // 兩層缺一不可——只掛外層的話，任何一頁出錯都會連導覽一起消失。
         errorElement: <RouteError />,
         children: [
-          { path: '/', element: <Navigate to="/search" replace /> },
-          { path: '/search', element: <Suspense><SearchPage /></Suspense> },
-          { path: '/ask', element: <Suspense><AskPage /></Suspense> },
-          // 導入監控已搬進管理後台（/admin/operations/pipeline）；舊書籤多半來自一般使用者，一律回檢索頁。
-          { path: '/monitor', element: <Navigate to="/search" replace /> },
-          { path: '/radar', element: <Suspense><RadarPage /></Suspense> },
+          { path: '/', element: <Navigate to="/library" replace /> },
+          { path: '/library', element: <Suspense><SearchPage /></Suspense> },
+          { path: '/assistant', element: <Suspense><AskPage /></Suspense> },
+          { path: '/consensus', element: <Suspense><RadarPage /></Suspense> },
+          // 改名前的網址（檢索／問答／觀點雷達）：舊書籤、分享連結、登入的 next 仍可用，查詢字串與 hash 原樣帶過去。
+          { path: '/search', element: <LegacyRedirect to="/library" /> },
+          { path: '/ask', element: <LegacyRedirect to="/assistant" /> },
+          { path: '/radar', element: <LegacyRedirect to="/consensus" /> },
+          // 導入監控已搬進管理後台（/admin/operations/pipeline）；舊書籤多半來自一般使用者，一律回研報庫。
+          { path: '/monitor', element: <Navigate to="/library" replace /> },
           { path: '/brief', element: <Suspense><BriefPage /></Suspense> },
           { path: '/help', element: <Suspense><HelpPage /></Suspense> },
           // 研報閱讀頁：從檢索進入的詳情頁，不進導覽列（照 /help 慣例）。須排在 '*' 之前。

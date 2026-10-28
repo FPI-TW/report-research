@@ -45,7 +45,7 @@ export function ConversationList({ searchOpen, onSearchClose }: ConversationList
     const id = pending
     if (!id) return
     setPending(null)
-    del.mutate(id, { onSuccess: () => { if (id === activeC) navigate('/ask') } })
+    del.mutate(id, { onSuccess: () => { if (id === activeC) navigate('/assistant') } })
   }
 
   return (
@@ -67,7 +67,7 @@ export function ConversationList({ searchOpen, onSearchClose }: ConversationList
         </div>
       )}
       <div className={styles.newWrap}>
-        <MotionLink to="/ask" className={styles.newBtn} whileTap={{ scale: 0.98 }}><Icon name="compose" size={18} />新對話</MotionLink>
+        <MotionLink to="/assistant" className={styles.newBtn} whileTap={{ scale: 0.98 }}><Icon name="compose" size={18} />新對話</MotionLink>
       </div>
       <div className={styles.heading}>歷史對話</div>
       {del.isError && (
@@ -91,7 +91,7 @@ export function ConversationList({ searchOpen, onSearchClose }: ConversationList
             exit={{ opacity: 0, x: -12, transition: { duration: 0.18 } }}
           >
             <MotionLink
-              to={`/ask?c=${encodeURIComponent(cv.conversation_id)}`}
+              to={`/assistant?c=${encodeURIComponent(cv.conversation_id)}`}
               className={`${styles.item} ${cv.conversation_id === activeC ? styles.active : ''}`}
               aria-current={cv.conversation_id === activeC ? 'page' : undefined}
               title={cv.title}

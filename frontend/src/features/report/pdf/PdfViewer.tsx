@@ -44,6 +44,7 @@ import { showToast } from '../../../lib/toast'
 import { useIsMac } from '../../../lib/useIsMac'
 import { StateBox } from '../ReportStates'
 import stateStyles from '../ReportStates.module.css'
+import { thumbMarkLabel } from '../readingFormat'
 import { CJK_FONT_FALLBACK } from './fontFallback'
 import { needleLadder } from './quoteNeedle'
 import { scrollToSearchResult } from './searchScroll'
@@ -1064,7 +1065,7 @@ function ViewerBody({
               >
                 <span className={styles.thumbImg} style={{ width: meta.width, height: meta.height }}>
                   <ThumbImg documentId={documentId} meta={meta} />
-                  {mk.length > 0 && <span className={styles.thumbMark} aria-hidden="true">{mk.join(' ')}</span>}
+                  {mk.length > 0 && <span className={styles.thumbMark} aria-hidden="true">{thumbMarkLabel(mk)}</span>}
                 </span>
                 <span className={styles.thumbNo} aria-hidden="true">{n}</span>
               </button>

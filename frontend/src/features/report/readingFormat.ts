@@ -46,3 +46,16 @@ export function fmtTargetPrice(value: number | null | undefined): string {
 export function fmtRevisionPct(pct: number): string {
   return `${Number(Math.abs(pct).toFixed(1))}%`
 }
+
+/**
+ * 縮圖角標的文字：一頁最多列兩個摘錄編號，再多就縮成區間或「首號 +其餘數」。
+ * 角標只有 16px 高、貼在 74px 寬的縮圖右上角，五條全列（「1 2 3 4 5」）會蓋過整張縮圖。
+ * 完整編號仍在按鈕的 aria-label。
+ */
+export function thumbMarkLabel(ordinals: readonly number[]): string {
+  if (ordinals.length <= 2) return ordinals.join(' ')
+  const sorted = [...ordinals].sort((a, b) => a - b)
+  const first = sorted[0]
+  const last = sorted[sorted.length - 1]
+  return last - first === sorted.length - 1 ? `${first}–${last}` : `${first} +${sorted.length - 1}`
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fmtDate, fmtRevisionPct, fmtTargetPrice, isValidHash, reportHref } from './readingFormat'
+import { fmtDate, fmtRevisionPct, fmtTargetPrice, isValidHash, reportHref, thumbMarkLabel } from './readingFormat'
 
 const HASH = 'a'.repeat(64)
 
@@ -51,5 +51,17 @@ describe('fmtRevisionPct', () => {
     expect(fmtRevisionPct(-5)).toBe('5%')
     expect(fmtRevisionPct(12.5)).toBe('12.5%')
     expect(fmtRevisionPct(3.04)).toBe('3%')
+  })
+})
+
+describe('thumbMarkLabel', () => {
+  it('兩個以內照列', () => {
+    expect(thumbMarkLabel([3])).toBe('3')
+    expect(thumbMarkLabel([1, 2])).toBe('1 2')
+  })
+  it('連號縮成區間、不連號縮成首號加其餘數', () => {
+    expect(thumbMarkLabel([1, 2, 3, 4, 5])).toBe('1–5')
+    expect(thumbMarkLabel([5, 3, 4])).toBe('3–5')
+    expect(thumbMarkLabel([1, 3, 6])).toBe('1 +2')
   })
 })

@@ -93,6 +93,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `clamd.py` | 上傳掃描的 clamd 客戶端（標準庫 socket：`PING`、`VERSION`、`zINSTREAM`；不引入 PyPI 套件）。安全閘門 fail-closed：`scan()` 先以 `VERSION` 檢查病毒碼年齡，只有 `stream: OK` 才 `passed`；錯誤分暫時性（連不上、逾時、病毒碼過舊／不明）與決定性（超限、其他 ERROR），超限一律未通過。容器在 `deploy/clamav/`，web 不直接連它 |
 | `extract.py`、`extraction/` | 抽取層，見 `docs/EXTRACTION.md` |
 | `boilerplate.py` | 跨文件樣板字典（由 `make boilerplate` 建）與 `strip_boilerplate`：入庫切塊前剔除，`full_text` 不動；全部 fail-open（見 `docs/EXTRACTION.md`） |
+| `rating_index.py` | `strip_rating_index`：剔除晨報、日報封面的近期報告／評等異動索引表，只用在送 LLM 的標註與訊號擷取輸入（否則舊評等被當成本篇標的與評等）；`full_text` 與切塊不動，fail-open |
 
 ### 2.4 `web/`
 

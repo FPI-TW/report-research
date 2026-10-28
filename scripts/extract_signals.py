@@ -42,6 +42,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.rating_index import strip_rating_index  # noqa: E402
 from app.services.signal_extract import (  # noqa: E402
     EXTRACTION_VERSION,
     SIGNAL_MODEL_DEFAULT,
@@ -373,7 +374,8 @@ async def extract_one(
     date_str = item.report_date.isoformat() if item.report_date else None
     prompt = build_signal_prompt(
         item.file_name, date_str, item.broker, item.requested_codes,
-        (item.full_text or "")[:excerpt],
+        # 索引表裡的舊評等會被當成本篇評等（app/services/rating_index.py）
+        strip_rating_index(item.full_text)[:excerpt],
     )
     parsed: Optional[ParsedReportSignals] = None
     used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）

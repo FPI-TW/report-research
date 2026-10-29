@@ -340,10 +340,10 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/")
         self.assertIn(auth.COOKIE_NAME, r.cookies)
-        # 授權後根路徑導向 SPA 檢索頁（舊 vanilla 首頁已退場）
+        # 授權後根路徑導向 SPA 研報庫（舊 vanilla 首頁已退場）
         r2 = client.get("/")
         self.assertEqual(r2.status_code, 302)
-        self.assertEqual(r2.headers["location"], "/app/search")
+        self.assertEqual(r2.headers["location"], "/app/library")
 
     def test_logout_clears_session(self):
         client = _client()
@@ -595,7 +595,7 @@ class SlidingRenewalWiringTests(unittest.TestCase):
             finally:
                 auth.set_session_cookie = orig
         self.assertEqual(r.status_code, 302)
-        self.assertEqual(r.headers["location"], "/app/search")
+        self.assertEqual(r.headers["location"], "/app/library")
         self.assertEqual(seen.get("issued_at"), iat)
         self.assertEqual(seen.get("session_id"), sid)
 

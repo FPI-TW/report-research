@@ -6,14 +6,14 @@ import { routes } from './App'
 
 afterEach(() => vi.unstubAllGlobals())
 
-test('/search 落在檢索頁且側欄可見', async () => {
+test('/library 落在研報庫且側欄可見', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) =>
     url.includes('/api/conversations')
       ? new Response(JSON.stringify([]), { status: 200 })
       : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
   ))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const router = createMemoryRouter(routes, { initialEntries: ['/search'] })
+  const router = createMemoryRouter(routes, { initialEntries: ['/library'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   // SearchPage 為 lazy chunk（今引入完整檢索元件樹），首次動態載入可能超過預設 1000ms timeout。
   // 放寬到 15s 而非 5s：本測試驗的是「路由有掛上」而非載入效能，而動態 import 的耗時
@@ -26,8 +26,8 @@ test('/search 落在檢索頁且側欄可見', async () => {
   // 「Test timed out in 5000ms」而不是找不到元素，看起來還很像是產品壞了。
   expect(await screen.findByLabelText('搜尋研報', {}, { timeout: 15000 })).toBeInTheDocument()
   expect(screen.getByRole('heading', { level: 1, name: '廷豐智能研報' })).toBeInTheDocument()
-  // 側欄預設收合：只有圖示軌，展開鈕可按
-  expect(screen.getByRole('button', { name: '展開側欄' })).toBeInTheDocument()
+  // 側欄預設展開（256px），收合鈕可按
+  expect(screen.getByRole('button', { name: '收合側欄' })).toBeInTheDocument()
 }, 15000)
 
 function stubAs(role: 'admin' | 'user') {
@@ -158,13 +158,27 @@ test('維運 → 資料庫分頁', async () => {
   expect(await screen.findByRole('heading', { level: 1, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
 }, 15000)
 
-test('舊書籤 /monitor 導回檢索頁（導入監控已搬進管理後台）', async () => {
+test('舊書籤 /monitor 導回研報庫（導入監控已搬進管理後台）', async () => {
   stubAs('user')
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(routes, { initialEntries: ['/monitor'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByLabelText('搜尋研報', {}, { timeout: 15000 })).toBeInTheDocument()
-  expect(router.state.location.pathname).toBe('/search')
+  expect(router.state.location.pathname).toBe('/library')
+}, 15000)
+
+test.each([
+  ['/search?q=%E6%95%A3%E7%86%B1&market=TW#top', '/library', '?q=%E6%95%A3%E7%86%B1&market=TW', '#top'],
+  ['/ask?c=123e4567-e89b-12d3-a456-426614174000', '/assistant', '?c=123e4567-e89b-12d3-a456-426614174000', ''],
+  ['/radar?market=TW&code=2330&window=90', '/consensus', '?market=TW&code=2330&window=90', ''],
+])('改名前的網址 %s 轉到 %s，查詢字串與 hash 原樣保留', async (from, pathname, search, hash) => {
+  stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: [from] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  await waitFor(() => expect(router.state.location.pathname).toBe(pathname), { timeout: 15000 })
+  expect(router.state.location.search).toBe(search)
+  expect(router.state.location.hash).toBe(hash)
 }, 15000)
 
 test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常（頁面本身只讀 /api/progress）', async () => {

@@ -11,7 +11,7 @@ export function streamAsk(
   return readSSE('/api/ask', body, signal)
 }
 
-export async function stopAsk(body: {
+export interface StopBody {
   question: string
   conversation_id?: string | null
   partial_answer: string
@@ -21,15 +21,36 @@ export async function stopAsk(body: {
   regenerate_of?: string
   edit_of?: string
   request_id?: string
-}): Promise<{ qa_id: string }> {
+}
+
+// keepalive 請求的本體有 64 KiB 上限（瀏覽器規定，超過就整個送不出去），留一點餘裕。
+const KEEPALIVE_MAX_BYTES = 60_000
+
+function byteLength(body: StopBody): number {
+  return new TextEncoder().encode(JSON.stringify(body)).length
+}
+
+/** 關頁時送的停止請求要塞進 keepalive 的上限：先捨來源，再截短已生成的文字，問題本身一定留著。 */
+export function fitKeepalive(body: StopBody): StopBody {
+  if (byteLength(body) <= KEEPALIVE_MAX_BYTES) return body
+  let slim: StopBody = { ...body, sources: [], ext_sources: [] }
+  while (byteLength(slim) > KEEPALIVE_MAX_BYTES && slim.partial_answer) {
+    slim = { ...slim, partial_answer: slim.partial_answer.slice(0, Math.floor(slim.partial_answer.length / 2)) }
+  }
+  return slim
+}
+
+export async function stopAsk(body: StopBody, opts: { keepalive?: boolean } = {}): Promise<{ qa_id: string }> {
   // 帶逾時：呼叫端已先把 UI 標成 stopped、事後才補 qaId（fail-open），這個請求
   // 掛住十幾秒只會讓晚到的回應更容易撞上世代檢查被丟棄，不如早點放棄。
+  // keepalive：重整或關頁時送出，請求要活過頁面卸載（useAskController 的 pagehide）。
   const resp = await fetch('/api/ask/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(opts.keepalive ? fitKeepalive(body) : body),
     credentials: 'same-origin',
     signal: AbortSignal.timeout(10_000),
+    ...(opts.keepalive ? { keepalive: true } : {}),
   })
   if (!resp.ok) throw new Error(`stop failed: ${resp.status}`)
   return resp.json()
@@ -37,6 +58,20 @@ export async function stopAsk(body: {
 
 export function getQaVersions(rootId: string): Promise<QaVersion[]> {
   return getJSON(`/api/qa/${encodeURIComponent(rootId)}/versions`, z.array(qaVersionSchema), { cache: 'no-store' })
+}
+
+// 只取閱讀頁要的那一欄。nullish：舊後端沒回這欄時解析照樣成功，呼叫端再當成「開不了」。
+const reportHashSchema = z.object({ file_hash: z.string().nullish() })
+
+/**
+ * 問答來源 → 閱讀頁網址要的 `file_hash`。
+ *
+ * SSE 的 `sources` 只帶 `report_id`（閱讀頁以 file_hash 定址），所以「在閱讀頁開啟」在點下去
+ * 那一刻才問 `/api/report/{report_id}/full`。被隱藏的研報在那裡回 404，與閱讀頁本身的語意一致。
+ */
+export async function getReportHash(reportId: string): Promise<string | null> {
+  const r = await getJSON(`/api/report/${encodeURIComponent(reportId)}/full`, reportHashSchema, { cache: 'no-store' })
+  return r.file_hash ?? null
 }
 
 export function getConversation(id: string): Promise<ConversationTurn[]> {
@@ -48,7 +83,7 @@ export function getConversation(id: string): Promise<ConversationTurn[]> {
  *
  * 舊版只看 404/405 決定要不要走 POST fallback，其餘一律當成功：回應主體從不讀，
  * 500 也直接忽略。後果不只是「列還在」——`ConversationList` 在 `onSuccess` 裡會
- * `navigate('/ask')`，所以刪除失敗時使用者**還會被送離當前對話**，而且沒有任何
+ * `navigate('/assistant')`，所以刪除失敗時使用者**還會被送離當前對話**，而且沒有任何
  * 錯誤訊息。而後端在「什麼都沒刪到」時回的是 200 `{"ok": false}`，不是錯誤碼。
  *
  * 404/405 → POST fallback 是刻意保留的（某些代理/邊緣對 DELETE 不穩）。但 404 也

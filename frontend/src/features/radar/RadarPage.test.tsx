@@ -1,9 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../../lib/api'
 import * as radarApi from '../../lib/radarApi'
-import { radarOverviewSchema, type EventCard, type RadarOverview } from '../../lib/radarSchemas'
+import {
+  radarOverviewSchema, type BrokerHistory, type EventCard, type RadarOverview,
+} from '../../lib/radarSchemas'
 import RadarPage from './RadarPage'
 
 vi.mock('../../lib/radarApi')
@@ -14,8 +17,8 @@ function wrap(entry: string) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
         <Routes>
-          <Route path="/radar" element={<RadarPage />} />
-          <Route path="/search" element={<LocationProbe />} />
+          <Route path="/consensus" element={<RadarPage />} />
+          <Route path="/library" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -152,7 +155,7 @@ function wrapWithProbe(entry: string) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[entry]}>
         <Routes>
-          <Route path="/radar" element={<><RadarPage /><SearchProbe /></>} />
+          <Route path="/consensus" element={<><RadarPage /><SearchProbe /></>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -163,7 +166,7 @@ describe('展開的券商進網址', () => {
   it('網址帶 broker：進頁就展開那一家（貼連結給別人看得到同一個畫面）', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
-    wrapWithProbe('/radar?market=TW&code=8046&window=90&broker=daiwa')
+    wrapWithProbe('/consensus?market=TW&code=8046&window=90&broker=daiwa')
     const toggle = await screen.findByTestId('broker-row-daiwa')
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
   })
@@ -171,7 +174,7 @@ describe('展開的券商進網址', () => {
   it('展開與收合都寫回網址，且用 replace 不堆歷史', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
-    wrapWithProbe('/radar?market=TW&code=8046&window=90')
+    wrapWithProbe('/consensus?market=TW&code=8046&window=90')
     const toggle = await screen.findByTestId('broker-row-daiwa')
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(toggle)
@@ -183,7 +186,7 @@ describe('展開的券商進網址', () => {
 })
 
 describe('RadarPage', () => {
-  it('無 code 時顯示選標的清單', async () => {
+  it('無 code 時顯示標的清單，標題是「券商共識」', async () => {
     vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
       total: 1, offset: 0,
       items: [{
@@ -193,64 +196,102 @@ describe('RadarPage', () => {
         latest_report_date: '2026-07-11', coverage_state: 'partial',
       }],
     })
-    wrap('/radar')
-    expect(screen.getByRole('heading', { name: '券商觀點' })).toBeInTheDocument()
+    wrap('/consensus')
+    expect(screen.getByRole('heading', { level: 1, name: '券商共識' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
+    expect(screen.getByText('檔標的')).toHaveTextContent('1 檔標的')
     expect(radarApi.getRadarInstruments).toHaveBeenCalled()
   })
 
-  // 免責曾在改版中從 picker 副標與 RadarHeader info 泡泡雙雙消失而無人察覺
-  // （plan 誤以為「已改置底 notes」，但 notes 只放資料品質註記）。這兩條把它釘住。
-  it('picker 狀態顯示免責', async () => {
-    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
-      total: 0, offset: 0, items: [],
-    })
-    wrap('/radar')
-    expect(screen.getByText(/非系統預測或投資建議/)).toBeInTheDocument()
+  it('載入中與載入失敗都不顯示標的數', async () => {
+    let reject: (e: Error) => void = () => {}
+    vi.mocked(radarApi.getRadarInstruments).mockReturnValue(new Promise((_, r) => { reject = r }))
+    wrap('/consensus')
+    expect(screen.getAllByTestId('picker-skeleton').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/檔標的/)).not.toBeInTheDocument()
+    reject(new Error('down'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('券商共識載入失敗')
+    expect(screen.queryByText(/檔標的/)).not.toBeInTheDocument()
   })
 
-  it('picker 顯示完整九市場並標記目前選擇', async () => {
-    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
-    wrap('/radar?market=FX')
+  it('載入失敗可重試', async () => {
+    vi.mocked(radarApi.getRadarInstruments)
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValueOnce({ total: 0, offset: 0, items: [] })
+    wrap('/consensus')
+    fireEvent.click(await screen.findByRole('button', { name: '重試' }))
+    await waitFor(() => expect(radarApi.getRadarInstruments).toHaveBeenCalledTimes(2))
+  })
 
-    for (const label of ['台股', '美股', '港股', '陸股', '台指期', '外匯', '總經', '全球', '加密']) {
+  it('有篩選但沒有結果：顯示「沒有符合的標的」，清除篩選會清掉網址條件', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrapWithProbe('/consensus?q=zzz&market=US&stance=bearish')
+    expect(await screen.findByRole('heading', { name: '沒有符合的標的' })).toBeInTheDocument()
+    expect(screen.getByText('找不到「zzz」，換個名稱或代號再試一次。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清除篩選' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toBe(''))
+  })
+
+  it('清單與詳情都顯示免責與 AI 聲明', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrap('/consensus')
+    expect(screen.getByText(/由 AI 整理.*非投資建議/)).toBeInTheDocument()
+  })
+
+  it('顯示完整九市場並標記目前選擇', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrap('/consensus?market=FX')
+
+    for (const label of ['全部', '台股', '美股', '港股', '陸股', '台指期', '外匯', '總經', '全球', '加密']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     }
     expect(screen.getByRole('button', { name: '外匯' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByLabelText('搜尋標的')).toHaveAttribute('maxlength', '64')
   })
 
-  it('無效市場不進入 overview，改回選標的狀態', async () => {
+  it('立場分段寫進網址的 stance，「全部」會刪掉它', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrapWithProbe('/consensus')
+    const group = screen.getByRole('radiogroup', { name: '立場' })
+    expect(within(group).getByRole('radio', { name: '全部' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(group).getByRole('radio', { name: '偏空' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toBe('?stance=bearish'))
+    fireEvent.click(within(group).getByRole('radio', { name: '全部' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toBe(''))
+  })
+
+  it('排序下拉寫進網址的 sort（預設值不寫）', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrapWithProbe('/consensus')
+    fireEvent.change(screen.getByRole('combobox', { name: '排序' }), { target: { value: 'reports' } })
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toBe('?sort=reports'))
+    fireEvent.change(screen.getByRole('combobox', { name: '排序' }), { target: { value: 'latest' } })
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toBe(''))
+  })
+
+  it('搜尋框按 Enter 立即寫進網址，清除鈕清空', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrapWithProbe('/consensus')
+    const input = screen.getByLabelText('搜尋標的')
+    fireEvent.change(input, { target: { value: '台積' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent)
+      .toBe(`?q=${encodeURIComponent('台積')}`))
+    fireEvent.click(screen.getByRole('button', { name: '清除搜尋' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toBe(''))
+    expect(input).toHaveValue('')
+  })
+
+  it('無效市場不進入詳情，改回標的清單', async () => {
     vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
       total: 0, limit: 50, offset: 0, has_more: false, next_offset: null, items: [],
     })
 
-    wrap('/radar?market=ZZ&code=8046')
+    wrap('/consensus?market=ZZ&code=8046')
 
-    expect(screen.getByRole('heading', { name: '券商觀點' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: '券商共識' })).toBeInTheDocument()
     await waitFor(() => expect(radarApi.getRadarInstruments).toHaveBeenCalled())
     expect(radarApi.getInstrumentRadar).not.toHaveBeenCalled()
-  })
-
-  it('overview 狀態顯示免責（即使 notes 為空）', async () => {
-    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({ notes: [] }))
-    wrap('/radar?market=TW&code=8046&window=90')
-    await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
-    expect(screen.getByText(/非系統預測或投資建議/)).toBeInTheDocument()
-  })
-
-  it('標的數超出 limit 時筆數標籤如實顯示已載入/總數', async () => {
-    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
-      total: 200, offset: 0,
-      items: Array.from({ length: 50 }, (_, i) => ({
-        market: 'TW', market_display: '台股',
-        instrument_code: String(1000 + i), instrument_name: `標的${i}`,
-        broker_count: 3, report_count: 5,
-        latest_report_date: '2026-07-11', coverage_state: 'partial' as const,
-      })),
-    })
-    wrap('/radar')
-    await waitFor(() => expect(screen.getByText('顯示 50 / 200 檔')).toBeInTheDocument())
   })
 
   it('標的目錄可依 offset 載入全部結果', async () => {
@@ -269,18 +310,19 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar')
-    const more = await screen.findByRole('button', { name: '載入更多（尚有 25 檔）' })
+    wrap('/consensus')
+    const more = await screen.findByRole('button', { name: '載入更多（還有 25 檔）' })
     fireEvent.click(more)
 
-    await waitFor(() => expect(screen.getByText('顯示 75 檔')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('標的74')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /載入更多/ })).not.toBeInTheDocument()
     expect(radarApi.getRadarInstruments).toHaveBeenLastCalledWith(
       { market: undefined, q: undefined, limit: 50, offset: 50 },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 
-  it('標的目錄下一頁失敗時保留既有卡片，並可重試失敗頁', async () => {
+  it('標的目錄下一頁失敗時保留既有列，並可重試失敗頁', async () => {
     let nextAttempts = 0
     vi.mocked(radarApi.getRadarInstruments).mockImplementation(async params => {
       const offset = params.offset ?? 0
@@ -298,48 +340,50 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar')
-    fireEvent.click(await screen.findByRole('button', { name: '載入更多（尚有 25 檔）' }))
+    wrap('/consensus')
+    fireEvent.click(await screen.findByRole('button', { name: '載入更多（還有 25 檔）' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('載入更多標的失敗')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('載入更多標的失敗')
     expect(screen.getByText('標的0')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '載入更多（尚有 25 檔）' })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '重試載入更多' }))
+    fireEvent.click(within(alert).getByRole('button', { name: '重試' }))
     await waitFor(() => expect(screen.getByText('標的74')).toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(nextAttempts).toBe(2)
   })
 
-  it('標的數未超出 limit 時筆數標籤只顯示總數', async () => {
-    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
-      total: 1, offset: 0,
-      items: [{
-        market: 'TW', market_display: '台股',
-        instrument_code: '8046', instrument_name: '南電',
-        broker_count: 12, report_count: 91,
-        latest_report_date: '2026-07-11', coverage_state: 'partial',
-      }],
-    })
-    wrap('/radar')
-    await waitFor(() => expect(screen.getByText('顯示 1 檔')).toBeInTheDocument())
-  })
-
-  it('有 market+code 時載入總覽', async () => {
-    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
-    wrap('/radar?market=TW&code=8046&window=90')
-    await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
-    expect(screen.getByRole('heading', { name: '市場共識摘要' })).toBeInTheDocument()
-    expect(screen.getByText('四向觀點')).toBeInTheDocument()
-    expect(screen.getByText('轉強')).toBeInTheDocument()
-    expect(screen.getByText('近期關鍵變化')).toBeInTheDocument()
-    expect(screen.getByText('各券商最新觀點')).toBeInTheDocument()
+  it('有 market+code 時載入詳情的各區塊', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
+      coverage: {
+        state: 'ok', brokers_total: 12, brokers_extracted: 1,
+        brokers_in_consensus: 1, reports_available: 91, note: '',
+      },
+    }))
+    wrap('/consensus?market=TW&code=8046&window=90')
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '南電' })).toBeInTheDocument())
+    for (const name of ['共識評等', '目標價中位數', 'EPS 中位數', '各券商目標價', '四向觀點', '各券商最新觀點', '近期變化']) {
+      expect(screen.getByRole('heading', { name })).toBeInTheDocument()
+    }
+    expect(screen.getAllByText('轉強').length).toBeGreaterThan(0)
+    expect(screen.getByText(
+      (_, el) => el?.tagName === 'P' && (el.textContent ?? '').startsWith('12 家券商，1 家納入共識，91 篇研報'),
+    )).toBeInTheDocument()
     expect(radarApi.getInstrumentRadar).toHaveBeenCalledWith(
       '8046', 'TW', '90', expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 
-  it('partial 即使全部券商已擷取，仍在正常總覽明示部分資料註記', async () => {
+  it('返回鈕回到清單並保留清單的篩選', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({ total: 0, offset: 0, items: [] })
+    wrapWithProbe('/consensus?q=%E5%8D%97&market=TW&code=8046&window=90')
+    fireEvent.click(await screen.findByRole('button', { name: '券商共識' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).not.toContain('code='))
+    expect(screen.getByTestId('radar-search').textContent).toContain('q=')
+  })
+
+  it('partial 在頁首說明列下方附上資料註記', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
       coverage: {
         state: 'partial',
@@ -351,14 +395,13 @@ describe('RadarPage', () => {
       },
     }))
 
-    wrap('/radar?market=TW&code=8046&window=90')
+    wrap('/consensus?market=TW&code=8046&window=90')
 
-    const notice = await screen.findByRole('status', { name: '部分資料' })
-    expect(notice).toHaveTextContent('歷史研報仍有部分欄位尚待整理。')
-    expect(screen.getByRole('heading', { name: '市場共識摘要' })).toBeInTheDocument()
+    expect(await screen.findByText('歷史研報仍有部分欄位尚待整理。')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '共識評等' })).toBeInTheDocument()
   })
 
-  it('pending_extraction 顯示尚未整理狀態', async () => {
+  it('pending_extraction 顯示整理中狀態，「相關研報」帶代號與市場到研報庫', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
       coverage: {
         state: 'pending_extraction',
@@ -370,17 +413,37 @@ describe('RadarPage', () => {
       thesis: overview().thesis.map(t => ({ ...t, label: 'insufficient', label_display: '資料不足' })),
       recent_events: [], recent_events_total: 0, brokers: [],
     }))
-    wrap('/radar?market=TW&code=8046')
-    await waitFor(() => expect(screen.getByText('尚未完成觀點資料整理')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '查看相關研報' }))
-    expect(screen.getByTestId('location')).toHaveTextContent('/search?q=8046&market=TW')
+    wrap('/consensus?market=TW&code=8046')
+    expect(await screen.findByRole('heading', { name: '觀點資料整理中' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '相關研報' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/library?q=8046&market=TW')
   })
 
-  it('切窗期呼叫 API 並不重掛載 header', async () => {
+  it('window_empty 提供「看全部期間」', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
+      coverage: {
+        state: 'window_empty', brokers_total: 3, brokers_extracted: 3,
+        brokers_in_consensus: 0, reports_available: 5, note: '',
+      },
+    }))
+    wrapWithProbe('/consensus?market=TW&code=8046&window=30')
+    fireEvent.click(await screen.findByRole('button', { name: '看全部期間' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toContain('window=all'))
+  })
+
+  it('404 顯示找不到這檔標的', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockRejectedValue(new ApiError(404, 'HTTP 404'))
+    wrap('/consensus?market=TW&code=0000')
+    expect(await screen.findByRole('heading', { name: '找不到這檔標的' })).toBeInTheDocument()
+  })
+
+  it('切期間呼叫 API', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
-    wrap('/radar?market=TW&code=8046&window=90')
-    await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: '30 天' }))
+    wrap('/consensus?market=TW&code=8046&window=90')
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '南電' })).toBeInTheDocument())
+    const group = screen.getByRole('radiogroup', { name: '期間' })
+    expect(within(group).getByRole('radio', { name: '90 天' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(group).getByRole('radio', { name: '30 天' }))
     await waitFor(() => {
       expect(radarApi.getInstrumentRadar).toHaveBeenCalledWith(
         '8046', 'TW', '30', expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -406,20 +469,17 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar?market=TW&code=8046&window=90')
-    const expand = await screen.findByRole('button', { name: '查看全部 20 項' })
+    wrap('/consensus?market=TW&code=8046&window=90')
+    const expand = await screen.findByRole('button', { name: '查看全部 20 則' })
     expect(expand).toHaveAttribute('aria-expanded', 'false')
-    expect(expand).toHaveAttribute('aria-controls', 'radar-recent-events')
-    // 按鈕必須是 h2 的兄弟而非子節點。巢狀時標題的可及名稱會被串成
-    //「近期關鍵變化 查看全部 20 項」，展開後又變「近期關鍵變化 收合」——四個章節裡
-    // 只有這個的名稱會隨狀態跳動。這個缺陷用 getByText 是看不到的（它只串接直接子文字節點），
-    // 所以這裡刻意用 getByRole 的可及名稱去釘。
-    expect(screen.getByRole('heading', { name: '近期關鍵變化' })).toBeInTheDocument()
+    expect(document.getElementById(expand.getAttribute('aria-controls')!)).not.toBeNull()
+    // 按鈕是 h2 的兄弟而不是子節點，標題的可及名稱才不會隨展開狀態改變。
+    expect(screen.getByRole('heading', { name: '近期變化' })).toBeInTheDocument()
     fireEvent.click(expand)
     await waitFor(() => expect(screen.getByText('event-11')).toBeInTheDocument())
 
     expect(screen.getByRole('button', { name: '收合' })).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.click(screen.getByRole('button', { name: '載入更多（尚有 8 項）' }))
+    fireEvent.click(screen.getByRole('button', { name: '載入更多（還有 8 則）' }))
     await waitFor(() => expect(screen.getByText('event-19')).toBeInTheDocument())
     expect(radarApi.getRadarEvents).toHaveBeenLastCalledWith(
       '8046',
@@ -448,8 +508,8 @@ describe('RadarPage', () => {
       items: Array.from({ length: 12 }, (_, i) => radarEvent(i)),
     })
 
-    wrap('/radar?market=TW&code=8046&window=90')
-    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
+    wrap('/consensus?market=TW&code=8046&window=90')
+    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 則' }))
 
     await waitFor(() => expect(radarApi.getRadarEvents).toHaveBeenCalledWith(
       '8046',
@@ -458,7 +518,7 @@ describe('RadarPage', () => {
     ))
   })
 
-  it('完整事件首次請求失敗時保留 preview，重試後恢復', async () => {
+  it('完整事件首次請求失敗時保留預覽，重試後恢復', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
       recent_events: [radarEvent(0), radarEvent(1), radarEvent(2)],
       recent_events_total: 20,
@@ -473,12 +533,13 @@ describe('RadarPage', () => {
         items: Array.from({ length: 12 }, (_, i) => radarEvent(i)),
       })
 
-    wrap('/radar?market=TW&code=8046&window=90')
-    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
+    wrap('/consensus?market=TW&code=8046&window=90')
+    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 則' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('載入完整事件失敗')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('載入完整事件失敗')
     expect(screen.getByText('event-0')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '重試載入事件' }))
+    fireEvent.click(within(alert).getByRole('button', { name: '重試' }))
     await waitFor(() => expect(screen.getByText('event-11')).toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -503,22 +564,23 @@ describe('RadarPage', () => {
       }
     })
 
-    wrap('/radar?market=TW&code=8046&window=90')
-    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
+    wrap('/consensus?market=TW&code=8046&window=90')
+    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 則' }))
     await waitFor(() => expect(screen.getByText('event-11')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '載入更多（尚有 8 項）' }))
+    fireEvent.click(screen.getByRole('button', { name: '載入更多（還有 8 則）' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('載入完整事件失敗')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('載入完整事件失敗')
     expect(screen.getByText('event-11')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '載入更多（尚有 8 項）' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '載入更多（還有 8 則）' })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '重試載入事件' }))
+    fireEvent.click(within(alert).getByRole('button', { name: '重試' }))
     await waitFor(() => expect(screen.getByText('event-19')).toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(nextAttempts).toBe(2)
   })
 
-  it('展開券商列才請求歷程', async () => {
+  it('展開券商列才請求歷程，歷程列出日期、評等、目標價與備註', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     vi.mocked(radarApi.getBrokerHistory).mockResolvedValue({
       market: 'TW', instrument_code: '8046',
@@ -534,14 +596,14 @@ describe('RadarPage', () => {
           report_id: 'r1', file_name: 'daiwa.pdf',
           report_date: '2026-07-11', broker: 'daiwa', broker_display: '大和',
         },
-      }],
+      }] as unknown as BrokerHistory['snapshots'],
       diffs: [{
         from_report_date: null, to_report_date: '2026-07-11',
-        changes: [], has_prior_comparable: false, note: '無前次',
+        changes: [], has_prior_report: false, has_prior_comparable: false, note: '沒有更早研報',
       }],
       coverage_state: 'partial',
     })
-    wrap('/radar?market=TW&code=8046')
+    wrap('/consensus?market=TW&code=8046')
     await waitFor(() => expect(screen.getByTestId('broker-row-daiwa')).toBeInTheDocument())
     expect(radarApi.getBrokerHistory).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('broker-row-daiwa'))
@@ -551,10 +613,15 @@ describe('RadarPage', () => {
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       )
     })
-    await waitFor(() => {
-      // 面板標題隨方案 1 從「大和觀點歷程」改成「大和最新觀點」——展開後最先呈現的
-      // 就是最新那一份，歷史研報退到底下的「歷史報告」並預設收合。
-      expect(screen.getAllByText(/最新觀點/).length).toBeGreaterThan(0)
-    })
+    expect(await screen.findByText('首次納入')).toBeInTheDocument()
+  })
+
+  it('點目標價點圖上的點會展開那家券商', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
+    vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
+    wrapWithProbe('/consensus?market=TW&code=8046&window=90')
+    fireEvent.click(await screen.findByRole('button', { name: '大和，目標價 2,444' }))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toContain('broker=daiwa'))
+    expect(screen.getByTestId('broker-row-daiwa')).toHaveAttribute('aria-expanded', 'true')
   })
 })

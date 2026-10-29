@@ -1,0 +1,140 @@
+.tile {
+  margin-top: 14px;
+  padding: 18px 20px 22px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+
+.ccy {
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+}
+
+.plot {
+  position: relative;
+  margin: 18px 8px 0;
+}
+
+.axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--axis-y);
+  height: 1px;
+  background: var(--tf-border);
+}
+
+.medianLine {
+  position: absolute;
+  top: 18px;
+  height: calc(var(--axis-y) - 18px + 8px);
+  width: 0;
+  border-left: 1.5px dashed var(--tf-gold-strong);
+}
+
+/* 標籤以 left 定位、用 translate 置中；靠近兩端時改成靠左或靠右對齊，免得超出卡片。 */
+.medianLabel {
+  position: absolute;
+  top: 0;
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+  color: var(--tf-gold-text);
+  transform: translateX(-50%);
+}
+.medianLabel[data-align="start"] { transform: translateX(-4px); }
+.medianLabel[data-align="end"] { transform: translateX(calc(-100% + 4px)); }
+
+/* 按鈕本身透明，視覺上的點畫在 ::after，放大時提示不跟著縮放。 */
+.dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--tf-graphite);
+  box-shadow: 0 0 0 2px var(--tf-surface);
+  transition: transform 0.16s var(--tf-ease-apple), background 0.12s;
+}
+/* 命中區放大到 24px，視覺上的點維持 14px。 */
+.dot::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
+}
+.dot:hover,
+.dot:focus-visible { z-index: 2; }
+.dot:hover::after,
+.dot:focus-visible::after { transform: scale(1.25); }
+.dot:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 3px; }
+.dot[data-on] { z-index: 1; }
+.dot[data-on]::after { background: var(--tf-gold-strong); }
+
+/* 深色提示：滑過或鍵盤聚焦時浮出。 */
+.tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--tf-graphite-deep);
+  color: var(--tf-on-graphite);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.12s, transform 0.16s var(--tf-ease-apple);
+}
+.dot[data-edge="start"] .tip { left: -4px; transform: translate(0, 4px); }
+.dot[data-edge="end"] .tip { left: auto; right: -4px; transform: translate(0, 4px); }
+.dot:hover .tip,
+.dot:focus-visible .tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.dot[data-edge="start"]:hover .tip,
+.dot[data-edge="start"]:focus-visible .tip,
+.dot[data-edge="end"]:hover .tip,
+.dot[data-edge="end"]:focus-visible .tip { transform: none; }
+
+.tipValue { font-weight: 500; }
+
+.end {
+  position: absolute;
+  bottom: 4px;
+  font-size: 11px;
+  color: var(--tf-text-muted-aa);
+}
+.endStart { left: 0; }
+.endEnd { right: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot::after, .tip { transition: none; }
+}

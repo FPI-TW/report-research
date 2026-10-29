@@ -173,7 +173,7 @@ class MiddlewareBypassTests(unittest.TestCase):
 
     def test_flag_off_still_redirects_to_login(self):
         with _with_flag(False):
-            r = self._client().get("/app/ask")
+            r = self._client().get("/app/assistant")
         self.assertEqual(r.status_code, 302)
         self.assertEqual(r.headers["location"], "/login")
 

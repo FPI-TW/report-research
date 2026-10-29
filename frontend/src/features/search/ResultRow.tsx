@@ -1,62 +1,44 @@
-import { useReducedMotion } from 'motion/react'
 import type { CSSProperties } from 'react'
-import { MotionLink } from '../../components/primitives/MotionLink'
 import { displayTitle } from '../../lib/displayTitle'
 import { highlight } from '../../lib/highlight'
 import { marketColor, marketLabel } from '../../lib/meta'
-import { revealTransition, revealVariantsFor } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
-import { reportHref } from '../report/readingFormat'
+import { fullDate } from './libraryFormat'
+import { PreviewLink } from './PreviewLink'
+import atoms from './atoms.module.css'
 import styles from './ResultRow.module.css'
 
 interface Props {
   row: ReportRow
-  isLatest: boolean
+  /** 搜尋時第一篇標「最相關」。 */
+  isTop: boolean
   terms: string[]
-  index?: number
+  index: number
+  onPreview: (row: ReportRow) => void
 }
 
-/** 搜尋結果列：市場代碼｜標題＋來源摘要｜相關度。依相關度排序，時間不是主軸故不分月。 */
-export function ResultRow({ row, isLatest, terms, index = 0 }: Props) {
-  const reduced = useReducedMotion()
+/** 結果清單的一列：市場、券商、日期、（最相關），標題，兩行摘要。點一下開預覽。 */
+export function ResultRow({ row, isTop, terms, index, onPreview }: Props) {
   const market = row.market ?? ''
-  const targets = [...(row.stock_targets ?? []), ...(row.futures_targets ?? [])]
-  const date = (row.report_date ?? '').slice(0, 10)
-  const meta = [...targets, row.source, date.slice(5)].filter(Boolean).join(' · ')
-  const pct = Math.max(4, Math.min(100, Math.round((row.best_score ?? 0) * 100)))
-  const snippet = row.passages?.[0]?.content ?? ''
-
+  const title = displayTitle(row)
+  // 摘要缺值時退回命中段落，至少讓讀者看得到這篇為什麼被找出來
+  const text = row.summary || row.passages?.[0]?.content || ''
   return (
-    // 真連結：cmd+click／中鍵／複製連結都拿得回來。
-    <MotionLink
-      className={styles.rrow}
-      to={reportHref(row.file_hash)}
-      style={{ '--c': marketColor(market) } as CSSProperties}
-      variants={revealVariantsFor('up')}
-      initial="hidden"
-      animate="visible"
-      transition={revealTransition(reduced, index)}
-      aria-label={displayTitle(row)}
+    <PreviewLink
+      row={row}
+      onPreview={onPreview}
+      className={styles.row}
+      style={{ '--i': Math.min(index, 6) } as CSSProperties}
+      aria-label={title}
     >
-      <span className={styles.code}>{marketLabel(market)}</span>
-
-      <div className={styles.main}>
-        <div className={styles.titleRow}>
-          <span className={styles.rtitle}>{displayTitle(row)}</span>
-          {isLatest && <span className={styles.new}>最新</span>}
-        </div>
-        {meta && <div className={styles.meta}>{meta}</div>}
-        {snippet && (
-          <div className={styles.sum}>
-            {highlight(snippet.slice(0, 160), terms)}{snippet.length > 160 ? '…' : ''}
-          </div>
-        )}
-      </div>
-
-      <div className={styles.score}>
-        <span className={styles.pct}>{pct}%</span>
-        <span className={styles.hits}>{row.match_count ?? 0} 段命中</span>
-      </div>
-    </MotionLink>
+      <span className={styles.meta}>
+        <span className={styles.market} style={{ color: marketColor(market) }}>{marketLabel(market)}</span>
+        {row.source && <span className={styles.broker}>{row.source}</span>}
+        {row.report_date && <span className={`${atoms.num} ${styles.date}`}>{fullDate(row.report_date)}</span>}
+        {isTop && <span className={styles.top}>最相關</span>}
+      </span>
+      <span className={styles.title}>{title}</span>
+      {text && <span className={styles.summary}>{highlight(text, terms)}</span>}
+    </PreviewLink>
   )
 }

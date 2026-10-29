@@ -1,0 +1,93 @@
+/* 側欄（交接包「側欄」）：256px，收合時同一個元件縮成 52px 圖示列。
+   收合只動寬度，內容固定 256px 寬、靠 overflow 裁掉，所以圖示不位移、文字淡出。 */
+.sidebar {
+  position: relative; flex: none; height: 100%; width: 256px;
+  display: flex; flex-direction: column;
+  /* clip 不是 hidden：hidden 的容器仍可被捲動。收合時有焦點的收合鈕還在 left:214，瀏覽器會把
+     整個側欄橫向捲到它看得見，圖示全部被推出 52px 之外（實測）。clip 讓它捲不動。 */
+  overflow: hidden;
+  overflow: clip;
+  background: var(--tf-sidebar);
+  border-right: 1px solid rgba(0, 0, 0, 0.07);
+  transition: width var(--tf-dur-collapse) var(--tf-ease-apple);
+}
+.sidebar[data-collapsed='true'] { width: 52px; }
+.sidebar > * { width: 256px; }
+
+/* 標頭：logo＋站名，收合鈕在右上；收合後鈕移到左上（與圖示同一欄）。 */
+.head { position: relative; flex: none; height: 52px; display: flex; align-items: center; padding: 0 8px 0 15px; }
+.brand { display: flex; align-items: center; gap: 8px; white-space: nowrap; transition: opacity 0.24s var(--tf-ease-apple); }
+.brandName { font-size: 14px; font-weight: 550; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.sidebar[data-collapsed='true'] .brand { opacity: 0; pointer-events: none; }
+.toggle {
+  position: absolute; top: 10px; left: 214px; width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px; background: transparent; color: var(--tf-text-3); cursor: pointer; padding: 0;
+  transition: left var(--tf-dur-collapse) var(--tf-ease-apple), background 0.12s, color 0.12s, transform 0.12s;
+}
+.toggle:hover { background: var(--tf-hover); color: var(--tf-text-1); }
+.toggle:active { transform: scale(0.92); }
+.sidebar[data-collapsed='true'] .toggle { left: 10px; }
+
+/* 主導覽：列高 36、列間 2；選取是一塊滑動底色（FluidHoverHighlight），hover 是每列自己的底色。 */
+.nav { position: relative; flex: none; display: flex; flex-direction: column; gap: 2px; margin: 2px 8px 0; width: 240px; }
+.hlActive { z-index: 0; border-radius: 8px; background: var(--tf-selected); }
+/* 收合時高亮縮成 36px 方塊（寬度由 Motion 寫在 inline style，用 max-width 壓，不和它搶 width）。 */
+.hlActive { transition: max-width var(--tf-dur-collapse) var(--tf-ease-apple); max-width: 240px; }
+.sidebar[data-collapsed='true'] .hlActive { max-width: 36px; }
+.row {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 36px; padding: 0 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--tf-text-2); font: inherit; font-size: 13px; text-align: left; text-decoration: none;
+  white-space: nowrap; overflow: hidden; cursor: pointer;
+  transition: color 0.12s, background 0.12s, transform 0.12s, width var(--tf-dur-collapse) var(--tf-ease-apple);
+}
+/* 收合時列也縮成 36px：提示框以整列為錨點，列維持 240 寬的話提示會浮在 200px 外。 */
+.sidebar[data-collapsed='true'] .row { width: 36px; }
+/* 個人列收合後只剩頭像：名稱旁的箭頭要裁在 36px 內，否則側欄縮寬途中會單獨露出來。 */
+.sidebar[data-collapsed='true'] .foot button { flex: none; width: 36px; padding: 0 4px; overflow: hidden; }
+.row:hover, .row[data-active] { color: var(--tf-text-1); }
+/* 與「最近」對話一致：hover 整列上底色；選取的那列底色由滑動高亮畫，不再疊一層。 */
+.row:hover:not([data-active]) { background: var(--tf-hover); }
+.row[data-active] { font-weight: 550; }
+.row:active { transform: scale(0.985); }
+.row:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.icon { flex: none; stroke-width: 1.5; transition: stroke-width 0.08s ease-out; }
+.row:hover .icon, .row[data-active] .icon { stroke-width: 2; }
+.label { transition: opacity 0.24s var(--tf-ease-apple); }
+.sidebar[data-collapsed='true'] .label { opacity: 0; }
+.kbdHint {
+  margin-left: auto; font-size: 11px; color: var(--tf-text-4); font-variant-numeric: tabular-nums;
+  opacity: 0; transition: opacity 0.12s;
+}
+.row:hover .kbdHint { opacity: 1; }
+.sidebar[data-collapsed='true'] .kbdHint { display: none; }
+.tipKbd { display: inline-flex; align-items: center; gap: 4px; }
+.tipKbd kbd {
+  min-width: 18px; height: 18px; padding: 0 4px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14); font: 500 10.5px/18px var(--tf-display); text-align: center;
+}
+
+/* 最近對話：收合時淡出並移出無障礙樹（inert）。 */
+.recents {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  transition: opacity 0.28s var(--tf-ease-apple);
+}
+.sidebar[data-collapsed='true'] .recents { opacity: 0; transition-duration: 0.16s; }
+
+.foot { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px; border-top: 1px solid rgba(0, 0, 0, 0.06); }
+/* 個人列最右邊的使用說明鈕；收合時淡出（並 inert），只剩頭像。 */
+.help {
+  flex: none; width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; color: var(--tf-text-3); text-decoration: none;
+  transition: background 0.12s, color 0.12s, transform 0.12s, opacity 0.24s var(--tf-ease-apple);
+}
+.help:hover { background: var(--tf-hover); color: var(--tf-text-1); }
+.help:active { transform: scale(0.92); }
+.help:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.sidebar[data-collapsed='true'] .help { opacity: 0; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .toggle, .brand, .label, .recents, .row, .icon, .help { transition: none; }
+}

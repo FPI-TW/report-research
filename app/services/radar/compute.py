@@ -13,7 +13,7 @@ from typing import Optional
 
 from app.services.filename import source_display
 from app.services.radar import scale
-from app.services.radar.queries import CoverageCounts
+from app.services.radar.queries import CoverageCounts, RatingChangeRow
 from app.services.radar.scale import DIM_DISPLAY, DIMLABEL_DISPLAY
 from app.services.radar.schemas import (
     BrokerHistoryResponse,
@@ -30,6 +30,8 @@ from app.services.radar.schemas import (
     RadarEventsResponse,
     RadarOverviewResponse,
     RatingBucketCount,
+    RatingChangeItem,
+    RatingChangesResponse,
     RatingConsensus,
     ReportLink,
     SnapshotDiff,
@@ -730,3 +732,27 @@ def build_broker_history(
         report_count=len(signals), snapshots=snapshots, diffs=diffs,
         coverage_state=coverage_state,
     )
+
+
+def build_rating_changes(rows: list[RatingChangeRow]) -> RatingChangesResponse:
+    """最新評等變動（`queries.fetch_recent_rating_changes`）→ API 回應；方向沿用 `scale.rating_direction`。"""
+    items = []
+    for row in rows:
+        direction = scale.rating_direction(row.rating_from, row.rating_to)
+        if direction not in ("up", "down"):
+            continue
+        items.append(
+            RatingChangeItem(
+                market=row.market,
+                market_display=MARKET_DISPLAY.get(row.market),
+                instrument_code=row.instrument_code,
+                instrument_name=row.instrument_name,
+                broker=row.broker,
+                broker_display=_broker_display(row.broker),
+                report_date=row.report_date.isoformat(),
+                rating_from=row.rating_from,
+                rating_to=row.rating_to,
+                direction=direction,
+            )
+        )
+    return RatingChangesResponse(items=items)

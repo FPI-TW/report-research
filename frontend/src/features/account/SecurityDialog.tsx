@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { renderSVG } from 'uqr'
 import { Modal } from '../../components/primitives/Modal'
 import { meSecurityApi, type TotpSetup } from '../../lib/accountSecurityApi'
@@ -23,7 +23,20 @@ function TotpQr({ uri }: { uri: string }) {
 }
 
 /**
- * 帳號安全設定（帳號選單 →「帳號安全」）：每位使用者自己開關兩步驟驗證（TOTP）。
+ * 帳號安全的對話框殼：給還沒有設定彈窗可用的地方（管理後台的 MFA 強制頁）。
+ * 一般介面改從設定彈窗的「安全」分頁進入（`SecurityPanel`），兩邊是同一份內容。
+ */
+export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [elevating, setElevating] = useState(false)
+  return (
+    <Modal open={open} onClose={() => { if (!elevating) onClose() }} title="帳號安全" className={styles.modal}>
+      <SecurityPanel active={open} onElevatingChange={setElevating} />
+    </Modal>
+  )
+}
+
+/**
+ * 帳號安全設定（設定彈窗 →「安全」）：每位使用者自己開關兩步驟驗證（TOTP）。
  *
  * 開啟：產生 secret → 顯示 QR code 給驗證器 App 掃描（在本機以 `uqr` 產生 SVG，otpauth URI 不送到任何外部服務；
  * 掃不了時可展開手動輸入金鑰）→ 輸入一次正確的驗證碼才真的啟用。關閉要先重新驗證（密碼＋驗證碼）。
@@ -32,16 +45,22 @@ function TotpQr({ uri }: { uri: string }) {
  * 管理員 TOTP 強制政策開啟時（`/api/me` 的 `mfa_policy_locked`），管理員看不到「關閉」按鈕、改顯示一行說明；
  * 擋人的是後端（403 `mfa_policy_locked`），這裡只是不讓人按一個注定失敗的按鈕。
  */
-export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SecurityPanel({ active, onElevatingChange }: {
+  /** 面板看得見時才查狀態。 */
+  active: boolean
+  /** 重新驗證的對話框開著時，外層彈窗不能被 Esc 或點遮罩關掉（Esc 會同時送到兩層）。 */
+  onElevatingChange?: (elevating: boolean) => void
+}) {
   const client = useQueryClient()
   const me = useMe()
-  const status = useQuery({ queryKey: TOTP_KEY, queryFn: meSecurityApi.totpStatus, enabled: open, retry: false })
+  const status = useQuery({ queryKey: TOTP_KEY, queryFn: meSecurityApi.totpStatus, enabled: active, retry: false })
   const [setup, setSetup] = useState<TotpSetup | null>(null)
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const { guard, dialog, open: elevating } = useElevationGate(meSecurityApi.elevate, true)
+  useEffect(() => { onElevatingChange?.(elevating) }, [elevating, onElevatingChange])
 
   const refresh = async () => {
     await Promise.all([
@@ -49,7 +68,6 @@ export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () =
       client.invalidateQueries({ queryKey: ['me'] }),
     ])
   }
-  const close = () => { setSetup(null); setCode(''); setError(null); setNotice(null); onClose() }
 
   const run = async (fn: () => Promise<void>) => {
     setError(null)
@@ -89,7 +107,6 @@ export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () =
 
   return (
     <>
-      <Modal open={open} onClose={() => { if (!elevating) close() }} title="帳號安全" className={styles.modal}>
         <div className={styles.form}>
           <p className={styles.status}>
             兩步驟驗證
@@ -150,7 +167,6 @@ export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () =
             </>
           )}
         </div>
-      </Modal>
       {dialog}
     </>
   )

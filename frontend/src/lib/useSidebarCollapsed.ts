@@ -1,11 +1,13 @@
 import { useCallback, useState } from 'react'
 
-const KEY = 'tf.sidebar.collapsed'
+// 改版後的側欄（256／52px）用新的鍵：舊鍵記的是舊版「圖示軌＋對話面板」的預設收合，
+// 沿用會讓大多數人一進新版就是收合狀態。
+const KEY = 'tf.sidebar.v2.collapsed'
 
-/** 預設收合（只留圖示軌）；使用者展開或收合過就記住，之後照他的選擇。 */
+/** 預設展開；使用者收合或展開過就記住，之後照他的選擇。 */
 export function useSidebarCollapsed() {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(KEY) !== '0' } catch { return true }
+    try { return localStorage.getItem(KEY) === '1' } catch { return false }
   })
   const toggle = useCallback(() => {
     setCollapsed((c) => {

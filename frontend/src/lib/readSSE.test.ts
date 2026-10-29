@@ -86,7 +86,7 @@ test('壞幀被丟棄時留下痕跡，心跳幀不留', async () => {
 
 test('401 導向登入並拋 ApiError', async () => {
   const assign = vi.fn()
-  vi.stubGlobal('location', { pathname: '/ask', search: '', assign })
+  vi.stubGlobal('location', { pathname: '/assistant', search: '', assign })
   vi.stubGlobal('fetch', vi.fn(async () => sseResponse([], 401)))
   await expect(collect('/api/ask', {})).rejects.toMatchObject({ status: 401 })
   expect(assign).toHaveBeenCalledWith(expect.stringContaining('/login?next='))

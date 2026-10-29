@@ -17,6 +17,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 const state = {
   activeDocumentId: undefined as string | undefined,
   isLoaded: false,
+  /** 文件本身載入失敗（DocumentContent 的 isError） */
+  isError: false,
   /** 每頁的內建 /Rotate；預設全部未旋轉 */
   pages: [{ rotation: 0 }, { rotation: 0 }, { rotation: 0 }] as { rotation: number }[],
 }
@@ -120,20 +122,46 @@ const searchApi = {
 
 const scrollApi = { scrollToPage: vi.fn(), scrollToNextPage: vi.fn() }
 
+/**
+ * 引擎替身：縮圖列的金色編號直接呼叫引擎的 searchAllPages（不經搜尋外掛），
+ * 這裡記錄呼叫並依 needle 回命中頁。
+ */
+const engine = {
+  hits: {} as Record<string, number[]>,
+  queries: [] as string[],
+  searchAllPages: (_doc: unknown, keyword: string) => {
+    engine.queries.push(keyword)
+    const pages = engine.hits[keyword] ?? []
+    return {
+      toPromise: async () => ({ total: pages.length, results: pages.map(pageIndex => ({ pageIndex })) }),
+      abort: () => {},
+    }
+  },
+}
+
+/** useDocumentState 的回傳要穩定：真的 hook 只在狀態變時換物件，替身每次給新的會讓依賴它的 effect 每輪重跑 */
+let docCache: { pages: unknown; value: unknown } | null = null
+function docState() {
+  if (docCache?.pages !== state.pages) {
+    docCache = { pages: state.pages, value: { document: { pages: state.pages }, scale: 1 } }
+  }
+  return docCache.value
+}
+
 vi.mock('@embedpdf/core', () => ({ createPluginRegistration: () => ({}) }))
 vi.mock('@embedpdf/core/react', () => ({
   EmbedPDF: ({ children }: { children: (s: { activeDocumentId?: string }) => ReactNode }) =>
     children({ activeDocumentId: state.activeDocumentId }),
   // 頁面的**內建**旋轉由這裡來；捲動時要據此決定給不給 pageCoordinates
-  useDocumentState: () => ({ document: { pages: state.pages }, scale: 1 }),
+  useDocumentState: () => docState(),
 }))
 vi.mock('@embedpdf/engines/react', () => ({
-  usePdfiumEngine: () => ({ engine: {}, isLoading: false, error: null }),
+  usePdfiumEngine: () => ({ engine, isLoading: false, error: null }),
 }))
 vi.mock('@embedpdf/plugin-document-manager/react', () => ({
   DocumentManagerPluginPackage: {},
-  DocumentContent: ({ children }: { children: (s: { isLoaded: boolean }) => ReactNode }) =>
-    children({ isLoaded: state.isLoaded }),
+  DocumentContent: ({ children }: { children: (s: { isLoaded: boolean; isError: boolean }) => ReactNode }) =>
+    children({ isLoaded: state.isLoaded, isError: state.isError }),
 }))
 vi.mock('@embedpdf/plugin-render/react', () => ({
   RenderLayer: () => null,
@@ -150,20 +178,27 @@ vi.mock('@embedpdf/plugin-scroll/react', () => ({
   ScrollPluginPackage: {},
   useScroll: () => ({ provides: scrollApi, state: { currentPage: 1, totalPages: 3 } }),
 }))
+// 縮圖列：照真的 ThumbnailsPane 對每一頁呼叫 children(meta)
 vi.mock('@embedpdf/plugin-thumbnail/react', () => ({
   ThumbImg: () => null,
-  ThumbnailsPane: () => null,
+  ThumbnailsPane: ({ children }: { children: (m: unknown) => ReactNode }) => (
+    <div>
+      {[0, 1, 2].map(i => children({ pageIndex: i, top: i * 120, wrapperHeight: 110, width: 74, height: 86 }))}
+    </div>
+  ),
   ThumbnailPluginPackage: {},
 }))
 vi.mock('@embedpdf/plugin-viewport/react', () => ({
-  Viewport: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Viewport: ({ children, documentId: _d, ...rest }: { children: ReactNode; documentId: string }) => (
+    <div {...rest}>{children}</div>
+  ),
   ViewportPluginPackage: {},
-  useViewportScrollActivity: () => ({ isScrolling: false }),
 }))
+const zoomApi = { zoomIn: vi.fn(), zoomOut: vi.fn(), requestZoom: vi.fn() }
 vi.mock('@embedpdf/plugin-zoom/react', () => ({
-  ZoomMode: { FitWidth: 'fit-width' },
+  ZoomMode: { Automatic: 'automatic', FitWidth: 'fit-width' },
   ZoomPluginPackage: {},
-  useZoom: () => ({ provides: null, state: { currentZoomLevel: 1 } }),
+  useZoom: () => ({ provides: zoomApi, state: { currentZoomLevel: 1 } }),
 }))
 vi.mock('@embedpdf/plugin-rotate/react', () => ({
   Rotate: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -206,8 +241,13 @@ vi.mock('@embedpdf/plugin-selection/react', () => ({
 const copySpy = vi.fn<(t: string) => Promise<void>>(async () => {})
 vi.mock('../../../lib/clipboard', () => ({ copyText: (t: string) => copySpy(t) }))
 
+/** 複製、搜尋的結果走全站提示訊息 */
+const toastSpy = vi.fn()
+vi.mock('../../../lib/toast', () => ({ showToast: (...a: unknown[]) => toastSpy(...a) }))
+
 vi.mock('@embedpdf/plugin-search/react', () => ({
-  SearchLayer: () => null,
+  // 掛不掛外掛的搜尋高亮由本元件決定（只在文件內搜尋列開著時掛），所以替身要看得見
+  SearchLayer: () => <div data-testid="search-layer" />,
   SearchPluginPackage: {},
   useSearch: () => {
     // 訂閱狀態變更並強制重繪，比照真的 useSearch（onStateChange → setState）
@@ -251,6 +291,12 @@ class Catch extends Component<{ children: ReactNode }, { msg: string | null }> {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  state.isError = false
+  engine.hits = {}
+  engine.queries = []
+  toastSpy.mockReset()
+  zoomApi.requestZoom.mockReset()
+  localStorage.clear()
   // 邊界接住例外時 React 會 console.error，測試輸出留乾淨
   vi.spyOn(console, 'error').mockImplementation(() => {})
   selection.listeners = []
@@ -373,10 +419,9 @@ test('跨頁選取：逐頁抽出的段落以換行接起來', async () => {
   expect(copySpy).toHaveBeenCalledWith('第一頁結尾\n第二頁開頭')
 })
 
-test('工具列複製鈕：無選取時停用，有選取才可按', async () => {
+test('工具列複製鈕：無選取時不出現，有選取才出現', async () => {
   await renderLoaded()
-  const btn = screen.getByLabelText('複製選取的文字')
-  expect(btn).toBeDisabled()
+  expect(screen.queryByLabelText('複製選取的文字')).toBeNull()
 
   await act(async () => {
     emitSelection(true)
@@ -396,10 +441,11 @@ test('複製失敗 → 據實回報，不假裝成功', async () => {
     screen.getByLabelText('複製選取的文字').click()
   })
 
-  expect(screen.getByRole('status').textContent).toContain('複製失敗')
+  expect(toastSpy).toHaveBeenCalledWith('複製失敗，請手動複製')
+  expect(toastSpy).not.toHaveBeenCalledWith('已複製', expect.anything())
 })
 
-test('複製成功 → 播報已複製', async () => {
+test('複製成功 → 提示已複製', async () => {
   await renderLoaded()
   await act(async () => {
     emitSelection(true)
@@ -409,7 +455,8 @@ test('複製成功 → 播報已複製', async () => {
     screen.getByLabelText('複製選取的文字').click()
   })
 
-  expect(screen.getByRole('status').textContent).toContain('已複製')
+  expect(copySpy).toHaveBeenCalledWith('台積電第三季營收創高')
+  expect(toastSpy).toHaveBeenCalledWith('已複製', { ok: true })
 })
 
 // 實測回報：選字時整頁 PDF 的殘影會跟著游標跑。原因是 RenderLayer 渲染的是 <img>，
@@ -541,22 +588,54 @@ test('跳轉：內建旋轉的頁只捲到頁首，不給座標', async () => {
   expect(scrollApi.scrollToPage.mock.calls[0][0].pageCoordinates).toBeUndefined()
 })
 
-test('跳轉時把搜尋列打開並同步關鍵字（計數與「無相符」才不會對著別組字說話）', async () => {
-  search.hits['視 NYPCB 為首選'] = [HIT]
-  await renderWithJump('視 NYPCB 為首選')
+// 原型的語意：跳到原文不打開文件內搜尋列，只在頁面上標出引文與頁緣金點。
+// 外掛的搜尋高亮只在搜尋列開著時掛（跳轉的高亮由本元件自己畫）。
+test('跳轉：不打開文件內搜尋列；命中頁畫出引文高亮與同號頁緣金點', async () => {
+  search.hits['視 NYPCB 為首選'] = [
+    { pageIndex: 0, rects: [{ origin: { x: 72, y: 430 }, size: { width: 120, height: 14 } } as Hit['rects'][number]] },
+  ]
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  render(
+    <PdfViewer url="/api/report/r1/file" title="研報" jump={{ ordinal: 7, quote: '視 NYPCB 為首選', nonce: 1 }} />,
+  )
+  await act(async () => {})
 
-  expect(screen.getByLabelText('搜尋研報原文')).toHaveValue('視 NYPCB 為首選')
+  expect(screen.queryByRole('search')).toBeNull()
+  expect(screen.queryByTestId('search-layer')).toBeNull()
+  const dot = screen.getByText('7')
+  // 金點在引文左側（72 − 20 − 10 ＝ 42），垂直置中於第一行
+  expect(dot).toHaveStyle({ left: '42px', top: '427px' })
 })
 
-// 工具列的上/下一個命中本來就不捲動（既有缺陷），與跳轉共用同一支捲動。
-// **走真實流程而不是直接塞 search.results**：掛載時 searchOpen 為 false 會呼叫
-// stopSearch，而那會把 query/results 一併重設——預設狀態的測試會被自己的元件清掉。
-// 順帶把先前結構性不可達的兩件事一起蓋掉：搜尋框的 Enter 分流、以及「無相符」。
-async function runSearchViaUI(keyword: string) {
-  await act(async () => { screen.getByLabelText('搜尋原文').click() })
-  const input = screen.getByLabelText('搜尋研報原文')
+test('跳轉開始時收起已開著的文件內搜尋列', async () => {
+  search.hits['第一次'] = [HIT]
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  const { rerender } = render(<PdfViewer url="/api/report/r1/file" title="研報" />)
+  await act(async () => {})
+  await act(async () => { screen.getByRole('button', { name: '在文件中搜尋' }).click() })
+  expect(screen.getByRole('search')).toBeInTheDocument()
+
+  await act(async () => {
+    rerender(<PdfViewer url="/api/report/r1/file" title="研報" jump={{ ordinal: 1, quote: '第一次', nonce: 1 }} />)
+  })
+  expect(screen.queryByRole('search')).toBeNull()
+  // 只收起、不 stopSearch：stop 會把跳轉自己的搜尋中止成「找不到」
+  expect(searchApi.stopSearch).not.toHaveBeenCalled()
+})
+
+// 文件內搜尋：工具列開啟，邊打邊搜（停手 250ms 才送出），Enter 下一個、Shift Enter 上一個。
+async function openFind() {
+  await act(async () => { screen.getByRole('button', { name: '在文件中搜尋' }).click() })
+  return screen.getByRole('searchbox', { name: '在文件中搜尋' })
+}
+
+async function typeAndEnter(keyword: string) {
+  const input = await openFind()
   await act(async () => { fireEvent.change(input, { target: { value: keyword } }) })
   await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+  return input
 }
 
 async function renderViewer() {
@@ -566,34 +645,51 @@ async function renderViewer() {
   await act(async () => {})
 }
 
-test('搜尋框 Enter：換了關鍵字＝重新全文搜尋', async () => {
-  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+const SECOND = { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }
+
+test('文件內搜尋：邊打邊搜，停手後才送出，並捲到第一個命中', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
   await renderViewer()
-  await runSearchViaUI('AI 伺服器')
+  const input = await openFind()
+  await act(async () => { fireEvent.change(input, { target: { value: 'AI 伺服器' } }) })
+  expect(search.queries).toEqual([])
+
+  await act(async () => { vi.advanceTimersByTime(250) })
+
+  expect(search.queries).toEqual(['AI 伺服器'])
+  expect(screen.getByText('1 / 2')).toBeInTheDocument()
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(expect.objectContaining({ pageNumber: 12 }))
+  // 搜尋列開著時才掛外掛的搜尋高亮
+  expect(screen.getByTestId('search-layer')).toBeInTheDocument()
+})
+
+test('文件內搜尋：Enter 立即送出，延遲計時器到點不重送', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
+  await renderViewer()
+  await typeAndEnter('AI 伺服器')
+  await act(async () => { vi.advanceTimersByTime(1000) })
 
   expect(search.queries).toEqual(['AI 伺服器'])
   expect(screen.getByText('1 / 2')).toBeInTheDocument()
 })
 
-// 這個狀態先前不可達：替身把 query 寫死 '' ⇒ `searchState.query === query` 永遠為假
-test('搜尋無命中 → 工具列顯示「無相符」', async () => {
+test('文件內搜尋：無命中 → 計數顯示 0 / 0，上下一個停用', async () => {
   await renderViewer()
-  await runSearchViaUI('不存在的字串')
+  await typeAndEnter('不存在的字串')
 
-  expect(screen.getByText('無相符')).toBeInTheDocument()
+  expect(screen.getByText('0 / 0')).toBeInTheDocument()
+  expect(screen.getByLabelText('下一個命中')).toBeDisabled()
+  expect(screen.getByLabelText('上一個命中')).toBeDisabled()
 })
 
-test('搜尋框 Enter：同一組關鍵字再按＝跳下一個命中（不重搜）', async () => {
-  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+test('文件內搜尋：同一組關鍵字再按 Enter＝跳下一個命中（不重搜）', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
   await renderViewer()
-  await runSearchViaUI('AI 伺服器')
+  const input = await typeAndEnter('AI 伺服器')
   scrollApi.scrollToPage.mockClear()
 
-  await act(async () => {
-    fireEvent.keyDown(screen.getByLabelText('搜尋研報原文'), { key: 'Enter' })
-  })
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
 
-  // 沒有再發一次搜尋，而是換到第二個命中並捲過去
   expect(search.queries).toEqual(['AI 伺服器'])
   expect(screen.getByText('2 / 2')).toBeInTheDocument()
   expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
@@ -601,10 +697,31 @@ test('搜尋框 Enter：同一組關鍵字再按＝跳下一個命中（不重�
   )
 })
 
-test('工具列「下一個命中」會捲動', async () => {
-  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+test('文件內搜尋：Shift Enter＝上一個命中（從第一個往回捲到最後一個）', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
   await renderViewer()
-  await runSearchViaUI('AI 伺服器')
+  const input = await typeAndEnter('AI 伺服器')
+  scrollApi.scrollToPage.mockClear()
+
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter', shiftKey: true }) })
+
+  expect(screen.getByText('2 / 2')).toBeInTheDocument()
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(expect.objectContaining({ pageNumber: 21 }))
+})
+
+test('文件內搜尋：輸入法組字中的 Enter 不處理', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
+  await renderViewer()
+  const input = await typeAndEnter('AI 伺服器')
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter', isComposing: true }) })
+
+  expect(screen.getByText('1 / 2')).toBeInTheDocument()
+})
+
+test('文件內搜尋：「下一個命中」鈕會捲動', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
+  await renderViewer()
+  await typeAndEnter('AI 伺服器')
   scrollApi.scrollToPage.mockClear()
 
   await act(async () => { screen.getByLabelText('下一個命中').click() })
@@ -614,15 +731,138 @@ test('工具列「下一個命中」會捲動', async () => {
   )
 })
 
-test('工具列「上一個命中」會捲動（從第一個往回捲到最後一個）', async () => {
-  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+test('文件內搜尋：「上一個命中」鈕會捲動', async () => {
+  search.hits['AI 伺服器'] = [HIT, SECOND]
   await renderViewer()
-  await runSearchViaUI('AI 伺服器')
+  await typeAndEnter('AI 伺服器')
   scrollApi.scrollToPage.mockClear()
 
   await act(async () => { screen.getByLabelText('上一個命中').click() })
 
-  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
-    expect.objectContaining({ pageNumber: 21, pageCoordinates: { x: 10, y: 20 } }),
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(expect.objectContaining({ pageNumber: 21 }))
+})
+
+// 關掉時若不 stopSearch，高亮會留在頁面上
+test('文件內搜尋：Esc 關閉並結束搜尋 session', async () => {
+  await renderViewer()
+  const input = await openFind()
+  await act(async () => { fireEvent.keyDown(input, { key: 'Escape' }) })
+
+  expect(screen.queryByRole('search')).toBeNull()
+  expect(searchApi.stopSearch).toHaveBeenCalled()
+})
+
+test('Ctrl/⌘ F 打開文件內搜尋（PDF 內容不在 DOM 裡，瀏覽器原生尋找對它無效）', async () => {
+  await renderViewer()
+  const e = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, cancelable: true })
+  await act(async () => { window.dispatchEvent(e) })
+
+  expect(e.defaultPrevented).toBe(true)
+  expect(screen.getByRole('searchbox', { name: '在文件中搜尋' })).toBeInTheDocument()
+})
+
+// 彈窗（搜尋、設定）開在閱讀頁上面時，鍵盤讓給最上層
+test('有彈窗開著時，閱讀頁的快捷鍵一律不處理', async () => {
+  await renderViewer()
+  const modal = document.createElement('div')
+  modal.setAttribute('aria-modal', 'true')
+  document.body.appendChild(modal)
+  try {
+    const e = new KeyboardEvent('keydown', { key: 'PageDown', cancelable: true })
+    await act(async () => { window.dispatchEvent(e) })
+    expect(e.defaultPrevented).toBe(false)
+    expect(scrollApi.scrollToPage).not.toHaveBeenCalled()
+  } finally {
+    modal.remove()
+  }
+})
+
+/**
+ * ── 工具列 ──
+ */
+test('工具列：翻頁鈕到頭停用；點百分比＝重設縮放（頁寬，但不超過 100%）', async () => {
+  await renderViewer()
+  expect(screen.getByRole('button', { name: '上一頁' })).toBeDisabled()
+  await act(async () => { screen.getByRole('button', { name: '下一頁' }).click() })
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith({ pageNumber: 2 })
+
+  await act(async () => { screen.getByRole('button', { name: /重設縮放/ }).click() })
+  expect(zoomApi.requestZoom).toHaveBeenCalledWith('automatic')
+})
+
+test('縮圖列：預設展開；開關是個人偏好，記在這台瀏覽器', async () => {
+  await renderViewer()
+  const btn = screen.getByRole('button', { name: '頁面縮圖' })
+  expect(btn).toHaveAttribute('aria-pressed', 'true')
+
+  await act(async () => { btn.click() })
+  expect(btn).toHaveAttribute('aria-pressed', 'false')
+  expect(localStorage.getItem('tf.reader.thumbs')).toBe('0')
+  // 收起時整列 inert，縮圖按鈕不進 Tab 序
+  expect(screen.getByRole('navigation', { name: '頁面縮圖', hidden: true })).toHaveAttribute('inert')
+})
+
+// 縮圖上的金色編號與點摘錄跳到的頁必須是同一頁：同一條關鍵字階梯、取第一個命中
+test('縮圖列：含重點摘錄的頁標出金色編號（找不到的那條不標）', async () => {
+  engine.hits['甲乙丙丁戊己庚'] = [1]
+  const marks = [
+    { ordinal: 1, quote: '甲乙丙丁戊己庚' },
+    { ordinal: 2, quote: '這句不在文件裡' },
+  ]
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  render(<PdfViewer url="/api/report/r1/file" title="研報" marks={marks} />)
+  await act(async () => {})
+  expect(screen.getByRole('button', { name: '第 2 頁' })).toBeInTheDocument()
+
+  await act(async () => { vi.advanceTimersByTime(400) })
+  // 逐條、逐階 await 引擎搜尋：多排空幾輪 microtask
+  for (let i = 0; i < 5; i += 1) await act(async () => {})
+
+  expect(screen.getByRole('button', { name: '第 2 頁，含重點摘錄 1' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /含重點摘錄 2/ })).toBeNull()
+  // 背景找頁不碰工具列共用的搜尋 session
+  expect(search.queries).toEqual([])
+})
+
+/**
+ * ── PDF 載入失敗 ──
+ *
+ * 引擎好好的、但這份檔開不起來：不是降級（內建檢視一樣開不起來），畫布中央給錯誤
+ * 狀態與重試。**錯誤狀態算是「有結果」**：15 秒後不得再被逾時改判成降級。
+ */
+test('文件載入失敗 → 畫布中央錯誤狀態，回報 failed，逾時不再改判降級', async () => {
+  state.activeDocumentId = 'doc-1'
+  state.isError = true
+  const onLoadState = vi.fn()
+  render(
+    <Catch>
+      <PdfViewer url="/api/report/r1/file" title="研報" onLoadState={onLoadState} />
+    </Catch>,
   )
+  await act(async () => {})
+
+  expect(screen.getByRole('heading', { name: 'PDF 載入失敗' })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: '下載原始檔' })).toHaveAttribute('href', '/api/report/r1/file')
+  // 沒有文件可操作：縮圖列與工具列都不在
+  expect(screen.queryByRole('toolbar')).toBeNull()
+  expect(onLoadState).toHaveBeenCalledWith('failed')
+
+  await act(async () => { vi.advanceTimersByTime(60_000) })
+  expect(screen.queryByTestId('fallback')).toBeNull()
+})
+
+test('文件載入失敗 → 重試成功後回報 ready', async () => {
+  state.activeDocumentId = 'doc-1'
+  state.isError = true
+  const onLoadState = vi.fn()
+  render(<PdfViewer url="/api/report/r1/file" title="研報" onLoadState={onLoadState} />)
+  await act(async () => {})
+
+  state.isError = false
+  state.isLoaded = true
+  await act(async () => { screen.getByRole('button', { name: '重試' }).click() })
+
+  expect(screen.getByRole('toolbar', { name: '文件工具' })).toBeInTheDocument()
+  expect(onLoadState).toHaveBeenLastCalledWith('ready')
 })

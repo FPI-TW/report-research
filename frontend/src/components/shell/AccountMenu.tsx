@@ -1,139 +1,96 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Link } from 'react-router'
-import { Popover } from '../primitives/Popover'
-import { Pressable } from '../primitives/Pressable'
-import { Icon } from '../primitives/Icon'
-import { SecurityDialog } from '../../features/account/SecurityDialog'
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { ChevronsUpDown, CircleHelp, LogOut, Settings } from 'lucide-react'
+import { DropdownContent, DropdownLabel, DropdownMenu, DropdownSeparator, DropdownTrigger } from '@/components/ui/dropdown'
+import { MenuItem } from '@/components/ui/menu-item'
+import { Tooltip } from '@/components/ui/tooltip'
 import { preloadRoute } from '../../lib/routePreload'
-import { useIsAdmin } from '../../lib/useMe'
+import { useMe } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
 import { STATUS_LABELS, useSystemStatus } from '../../lib/useSystemStatus'
-import { StatusDot, SystemStatusRow } from './SystemStatus'
-import { useLocale, setLocale, type Locale } from '../../lib/useLocale'
-import { floatingPlacement, type AccountMenuVariant } from './accountMenuPlacement'
+import { StatusDot } from './SystemStatus'
+import { useShell } from './shellContext'
 import styles from './AccountMenu.module.css'
 
-const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
-  { value: 'zh-Hant', label: '中文' },
-  { value: 'en', label: 'English' },
-]
+const ROLE_LABEL: Record<string, string> = { admin: '管理員', user: '使用者' }
 
-export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
-  const { data } = useStats()
-  const name = data?.username ?? '分析師'
+/**
+ * 帳號選單（交接包「帳號選單」）：側欄底部的個人列往上開，只有設定與登出。
+ * 使用說明在側欄是個人列最右邊的獨立按鈕（`Sidebar`）；手機分頁列只有頭像、沒有放它的位置，
+ * 所以手機版的選單仍列使用說明。
+ *
+ * - **不放「管理後台」入口**（含管理員帳號）：避免資安疑慮，管理員直接輸入 `/app/admin`。
+ *   授權只在後端 `web/authz.py`，這裡本來就只是顯示層。
+ * - 系統狀態、語言、帳號安全都移到設定彈窗（「關於」「偏好」「安全」分頁）。正常時不顯示任何狀態；
+ *   只有異常時在頭像角落亮紅點、title 寫一句，細節在設定的「關於」。
+ */
+export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar' | 'mobile'; collapsed?: boolean }) {
+  const { data: stats } = useStats()
+  const me = useMe()
+  const name = me.data?.username ?? stats?.username ?? '使用者'
+  const role = ROLE_LABEL[me.data?.role ?? 'user'] ?? '使用者'
+  const initial = name.slice(0, 1).toUpperCase()
   const [open, setOpen] = useState(false)
-  const [securityOpen, setSecurityOpen] = useState(false)
-  const locale = useLocale()
-  // 管理後台的唯一入口：與研報平台分開的外殼（/admin/*），主導覽刻意不放。只是顯示層，授權在後端。
-  const isAdmin = useIsAdmin()
-  // 一般使用者也看得到的粗粒度系統狀態：只有異常時在頭像角落亮紅點，細節在選單裡一句話。
-  const status = useSystemStatus()
-  const degraded = status.status === 'degraded'
-  const wrapRef = useRef<HTMLDivElement>(null)
-  const floating = variant !== 'row'
-  const [placement, setPlacement] = useState<CSSProperties | undefined>(undefined)
+  const { openSettings } = useShell()
+  const navigate = useNavigate()
+  const logoutRef = useRef<HTMLFormElement>(null)
+  const degraded = useSystemStatus().status === 'degraded'
+  const title = degraded ? `${name}（系統狀態：${STATUS_LABELS.degraded}）` : undefined
+  const avatar = (
+    <span className={styles.avatar} aria-hidden>
+      {initial}
+      {degraded && <StatusDot level="degraded" className={styles.alertDot} />}
+    </span>
+  )
 
-  // 開啟期間逐幀追蹤觸發點的位置（只有 mini／mobile 需要；row 走 CSS）。不能只在開啟那一刻算一次：
-  // 剛收合側欄、頁面還在載入時版面仍在位移，量到的是舊位置，選單會浮在半空中。位置沒變就不 setState。
-  useEffect(() => {
-    if (!open || !floating) return
-    let frame = 0
-    let last = ''
-    const track = () => {
-      const el = wrapRef.current
-      if (el) {
-        const r = el.getBoundingClientRect()
-        const key = `${r.top},${r.right},${r.bottom},${window.innerWidth},${window.innerHeight}`
-        if (key !== last) {
-          last = key
-          setPlacement(floatingPlacement(variant, r, window.innerWidth, window.innerHeight))
-        }
-      }
-      frame = requestAnimationFrame(track)
-    }
-    track()
-    return () => cancelAnimationFrame(frame)
-  }, [open, floating, variant])
+  const trigger = variant === 'sidebar' ? (
+    <button type="button" className={styles.row} data-open={open || undefined} title={title} aria-label={collapsed ? `帳號選單：${name}` : undefined}>
+      {avatar}
+      <span className={styles.text}>
+        <span className={styles.name}>{name}</span>
+        <span className={styles.role}>{role}</span>
+      </span>
+      <ChevronsUpDown size={14} strokeWidth={1.5} aria-hidden className={styles.chev} />
+    </button>
+  ) : (
+    <button type="button" className={styles.avatarBtn} title={title} aria-label={`帳號選單：${name}`}>
+      {avatar}
+    </button>
+  )
 
   return (
-    <div className={styles.wrap} ref={wrapRef}>
-      <Pressable
-        aria-expanded={open}
-        title={degraded ? `${name}（系統狀態：${STATUS_LABELS.degraded}）` : name}
-        onClick={() => setOpen((o) => !o)}
-        className={variant === 'row' ? styles.rowTrigger : styles.avatarBtn}
-      >
-        <span className={styles.avatar}>
-          <Icon name="user" size={17} />
-          {degraded && <StatusDot level="degraded" className={styles.alertDot} />}
-        </span>
-        {variant === 'row' && (
-          <span className={styles.rowText}>
-            <span className={styles.name}>{name}</span>
-            <span className={styles.sub}>研究部 · 分析師</span>
-          </span>
+    <>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        {collapsed ? (
+          <Tooltip content={name} side="right" sideOffset={10}>
+            <DropdownTrigger render={trigger} />
+          </Tooltip>
+        ) : (
+          <DropdownTrigger render={trigger} />
         )}
-      </Pressable>
-      <Popover
-        open={open}
-        onClose={() => setOpen(false)}
-        className={floating ? styles.popFloat : styles.pop}
-        openUp
-        portal={floating}
-        style={floating ? placement : undefined}
-      >
-        <div className={styles.popHead}>
-          <div className={styles.name}>{name}</div>
-          <div className={styles.sub}>研究部 · 分析師</div>
-        </div>
-        <SystemStatusRow status={status} />
-        <div className={styles.localeRow} role="radiogroup" aria-label="語言 / Language">
-          <span className={styles.localeLabel}>語言</span>
-          <div className={styles.localeSeg}>
-            {LOCALE_OPTIONS.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                role="radio"
-                aria-checked={locale === o.value}
-                className={locale === o.value ? `${styles.localeBtn} ${styles.localeBtnActive}` : styles.localeBtn}
-                onClick={() => setLocale(o.value)}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <Link
-          to="/help"
-          className={styles.menuItem}
-          onClick={() => setOpen(false)}
-          onPointerEnter={() => preloadRoute('help')}
-        >
-          <Icon name="info" size={16} />使用說明
-        </Link>
-        <button
-          type="button"
-          className={styles.menuItem}
-          onClick={() => { setOpen(false); setSecurityOpen(true) }}
-        >
-          <Icon name="shield" size={16} />帳號安全
-        </button>
-        {isAdmin && (
-          <Link
-            to="/admin"
-            className={styles.menuItem}
-            onClick={() => setOpen(false)}
-            onPointerEnter={() => { preloadRoute('adminShell'); preloadRoute('adminOverview') }}
-          >
-            <Icon name="shield" size={16} />管理後台
-          </Link>
-        )}
-        <form method="post" action="/logout">
-          <Pressable type="submit" className={styles.logout}>登出</Pressable>
-        </form>
-      </Popover>
-      <SecurityDialog open={securityOpen} onClose={() => setSecurityOpen(false)} />
-    </div>
+        <DropdownContent side="top" align="start" sideOffset={6} className={styles.menu}>
+          <DropdownLabel>{me.data?.username ?? name}</DropdownLabel>
+          <MenuItem index={0} icon={Settings} label="設定" onSelect={() => openSettings('account')} />
+          {variant === 'mobile' && (
+            <MenuItem
+              index={1}
+              icon={CircleHelp}
+              label="使用說明"
+              onSelect={() => navigate('/help')}
+              onPointerEnter={() => preloadRoute('help')}
+            />
+          )}
+          <DropdownSeparator />
+          <MenuItem
+            index={variant === 'mobile' ? 2 : 1}
+            icon={LogOut}
+            label="登出"
+            onSelect={() => logoutRef.current?.requestSubmit()}
+          />
+        </DropdownContent>
+      </DropdownMenu>
+      {/* 登出要 POST（CSRF 守門在後端）；選單項目觸發這張隱藏表單。 */}
+      <form ref={logoutRef} method="post" action="/logout" hidden aria-hidden />
+    </>
   )
 }

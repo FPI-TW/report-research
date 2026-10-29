@@ -1,113 +1,68 @@
-/* 舞台：只負責置中與留白（捲動已收在 ReportPage 的 .doc，見該檔說明）
-   原文與文字兩個 pane 共用這個版型契約。 */
+/* 非檢視器的終態（無檔、非 PDF）：置中在畫布上 */
 .stage {
   flex: 1;
   min-height: 0;
-  padding: 24px 22px 44px;
   display: flex;
-  justify-content: center;
+  padding: 24px;
 }
 
-/* 自訂檢視器要撐滿舞台（內建檢視則走 .pdfWrap 的 max-width 置中）。
-   高度給在這一層而不是檢視器內部：外層 .doc 是捲動容器，其中沒有可分配的剩餘高度，
-   檢視器自己用 flex:1 會塌成 0。 */
-.stageViewer {
-  height: clamp(560px, calc(100vh - 232px), 1400px);
-  padding: 20px 20px 28px;
-  align-items: stretch;
-}
-/* 降級成內建檢視時，iframe 改為填滿已由 .stageViewer 決定的高度 */
-.stageViewer .frame {
+/* 自訂檢視器撐滿右欄（畫布、縮圖列、浮動工具列都在檢視器內部） */
+.viewerStage {
   flex: 1;
-  height: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .booting {
-  align-self: center;
   margin: auto;
   font-size: 12px;
-  color: var(--tf-text-4);
+  color: var(--tf-text-muted-aa);
 }
 
-/* PDF 內嵌容器：上方逃生列 + 紙張 */
+/* ── 降級：瀏覽器內建檢視 ── */
 .pdfWrap {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: 900px;
-  min-height: 0;
-  gap: 9px;
 }
 
-/* 逃生列：手機讀者第一眼看得到（iframe 在下方多半空白） */
+/* 逃生口列：同列資訊靠間距區分，不用分隔點 */
 .pdfBar {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  flex: none;
-  font-size: 11.5px;
-  color: var(--tf-text-4);
-  padding-left: 2px;
+  align-items: baseline;
+  gap: 16px;
+  padding: 10px 20px;
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+  background: var(--tf-surface);
+  border-bottom: 1px solid var(--tf-glass-border);
 }
-.pdfHint { color: var(--tf-text-4); }
-.pdfDot { color: var(--tf-border); }
+
+.pdfHint {
+  margin-right: auto;
+}
+
 .pdfLink {
-  color: var(--tf-graphite);
-  font-weight: 600;
+  color: var(--tf-gold-text);
+  font-weight: 500;
   text-decoration: none;
 }
-.pdfLink:hover { text-decoration: underline; }
-.pdfLink:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; border-radius: 2px; }
+.pdfLink:hover {
+  color: var(--tf-gold-hover);
+  text-decoration: underline;
+}
+.pdfLink:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
-/* PDF 內嵌：紙張感。
-   刻意不再加 1px 實線邊 —— --tf-shadow-float 的第一層本身就是 0.5px 髮絲環，
-   疊上實線就成了雙重邊框（tokens.css：髮絲環＋柔影「取代」1px 實線邊）。
-   高度改為視窗相對值而不是 flex:1：外層 .doc 已改成捲動容器，其中沒有可分配的
-   剩餘高度，繼續用 flex:1 只會退回 min-height，長 PDF 被壓成一小格。 */
 .frame {
-  flex: none;
+  flex: 1;
   width: 100%;
-  height: clamp(520px, calc(100vh - 232px), 1400px);
+  min-height: 0;
   border: 0;
-  border-radius: 8px;
-  box-shadow: var(--tf-shadow-float);
   background: var(--tf-surface);
-}
-
-.state {
-  align-self: flex-start;
-  background: var(--tf-surface);
-  border-radius: var(--tf-radius-card);
-  box-shadow: var(--tf-shadow-xs);
-  padding: 30px 26px;
-  text-align: center;
-  max-width: 420px;
-  width: 100%;
-}
-
-.stateText {
-  font-size: 13.5px;
-  color: var(--tf-text-3);
-  line-height: 1.55;
-  margin: 0 0 16px;
-}
-
-.download {
-  display: inline-block;
-  background: var(--tf-graphite);
-  color: var(--tf-on-graphite);
-  border-radius: var(--tf-radius-pill);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 16px;
-  text-decoration: none;
-  transition: background var(--tf-dur-1) var(--tf-ease-standard);
-}
-.download:hover { background: var(--tf-graphite-hover); }
-
-@media (max-width: 900px) {
-  .stage { padding: 14px 14px 32px; }
-  .stageViewer { height: 78vh; padding: 12px 12px 24px; }
-  .frame { height: 76vh; border-radius: 6px; }
 }

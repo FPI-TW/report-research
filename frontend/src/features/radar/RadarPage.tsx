@@ -12,6 +12,11 @@ function parseWindow(raw: string | null): Window {
   return r.success ? r.data : '90'
 }
 
+/**
+ * 券商共識（`/app/consensus`）：沒有 `market`＋`code` 時是標的清單，有就是該標的的詳情。
+ * 兩者的狀態都在網址裡（清單的 q／sort／stance／market，詳情的 window／broker），
+ * 所以從詳情按返回會回到原本的篩選，貼出去的連結也是同一個畫面。
+ */
 export default function RadarPage() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
@@ -40,8 +45,7 @@ export default function RadarPage() {
     patch({ code: null, broker: null })
   }, [patch])
 
-  // 展開哪家券商進網址（replace，不堆歷史）。其餘檢視偏好（卡片／表格、口徑切換）刻意
-  // 不放：那些是看的人自己的偏好，放進連結只會蓋掉對方的。
+  // 展開哪家券商進網址（replace，不堆歷史），貼出去的連結才看得到同一家的歷程。
   const openBroker = params.get('broker')
   const onOpenBrokerChange = useCallback((brokerKey: string | null) => {
     patch({ broker: brokerKey })
@@ -49,11 +53,11 @@ export default function RadarPage() {
 
   const onBrowseReports = useCallback(() => {
     const search = new URLSearchParams({ q: code, market })
-    navigate(`/search?${search}`)
+    navigate(`/library?${search}`)
   }, [code, market, navigate])
 
-  // 清單狀態一律走同一支 patch（replace，不堆歷史）：搜尋是逐字打出來的，每一次
-  // debounce 都 push 一筆會讓上一頁按十幾次才離得開。
+  // 清單狀態一律走同一支 patch（replace）：搜尋是逐字打出來的，每次 debounce 都 push 一筆
+  // 會讓上一頁按十幾次才離得開。
   const onQueryChange = useCallback((q: string) => {
     patch(catalogPatch({ q }))
   }, [patch])
@@ -64,8 +68,7 @@ export default function RadarPage() {
     patch(catalogPatch({ stance }))
   }, [patch])
 
-  // 詳情頁連結以當前網址為基底，所以 q／sort／stance 一路帶著；從詳情按返回
-  // （`patch({ code: null })`）就自動回到原本的篩選，不必另外記一份狀態。
+  // 詳情連結以目前網址為基底，q／sort／stance 一路帶著；返回（刪掉 code）就回到原本的篩選。
   const hrefFor = useCallback(
     (mkt: Market, c: string) => instrumentHref(params, mkt, c),
     [params],
@@ -73,10 +76,11 @@ export default function RadarPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.scroll}>
+      <div className={styles.scroll} data-radar-scroll>
         <div className={styles.inner}>
           {market && code ? (
             <RadarOverview
+              key={`${market}:${code}`}
               market={market}
               code={code}
               window={window}
@@ -96,11 +100,12 @@ export default function RadarPage() {
               onSortChange={onSortChange}
               onStanceChange={onStanceChange}
               onMarketChange={m => patch({ market: m || null })}
+              onClearFilters={() => patch({ ...catalogPatch({ q: '', stance: null }), market: null })}
               hrefFor={hrefFor}
             />
           )}
           <p className={styles.disclaimer}>
-            本區整理券商研報中的已擷取觀點與數值變化，非系統預測或投資建議。
+            內容由 AI 整理自券商研報的已擷取觀點與數值，可能有誤，非投資建議。
           </p>
         </div>
       </div>

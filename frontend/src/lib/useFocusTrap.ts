@@ -8,6 +8,8 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean
     if (!active) return
     const el = ref.current
     if (!el) return
+    // 關閉後把焦點還給打開它的元素（若它還在頁面上）；打開它的若是已卸載的選單項目就不處理。
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const nodes = () => Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE))
     nodes()[0]?.focus()
     const onKey = (e: KeyboardEvent) => {
@@ -23,6 +25,9 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean
       }
     }
     el.addEventListener('keydown', onKey)
-    return () => el.removeEventListener('keydown', onKey)
+    return () => {
+      el.removeEventListener('keydown', onKey)
+      if (opener?.isConnected && !el.contains(opener)) opener.focus()
+    }
   }, [ref, active])
 }

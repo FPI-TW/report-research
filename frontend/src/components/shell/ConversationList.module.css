@@ -1,56 +1,63 @@
-/* 「新對話」仿 ChatGPT：與清單列同一套無框列（icon＋文字、hover 才有底色），
-   不再用實白填色的卡片鈕——那顆鈕在玻璃側欄上太跳，像是另一個元件掉進來。 */
-.newWrap { padding: 0 8px 4px; }
+/* 「最近」標題列：左邊是可收合的標題，右邊是開新對話的 ＋。 */
+.head { position: relative; flex: none; display: flex; align-items: center; margin: 18px 8px 4px; }
+.heading {
+  display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px;
+  border: none; background: transparent; font: inherit; font-size: 12px; font-weight: 500;
+  color: var(--tf-text-4); cursor: pointer; transition: color 0.12s;
+}
+.heading:hover { color: var(--tf-text-2); }
+.chev { opacity: 0; transition: opacity 0.12s, transform 0.16s var(--tf-ease-apple); transform: rotate(-90deg); }
+.chev[data-open='true'] { transform: none; }
+.heading:hover .chev, .heading:focus-visible .chev { opacity: 1; }
 .newBtn {
-  width: 100%; display: flex; align-items: center; gap: 10px;
-  border-radius: var(--tf-radius-md); padding: 8px 10px;
-  color: var(--tf-text-1); font-size: 14px; text-decoration: none;
+  margin-left: auto; margin-right: 4px; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; color: var(--tf-text-3); text-decoration: none;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
 }
-.newBtn:hover { background: rgba(0, 0, 0, 0.045); }
-.newBtn:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: -2px; }
-.heading { font-size: 12px; font-weight: 500; color: var(--tf-text-4); padding: 14px 18px 6px; }
-/* 搜尋框：平時收在標頭的搜尋 icon 裡，展開時出現在面板頂端；半透明底，層級上屬於清單的一部分。 */
-.searchWrap { position: relative; margin: 0 8px 6px; }
-.searchIcon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--tf-text-4); pointer-events: none; }
-.search {
-  width: 100%; box-sizing: border-box; padding: 6px 8px 6px 28px;
-  border: 1px solid transparent; border-radius: var(--tf-radius-md);
-  background: rgba(0, 0, 0, 0.045); color: var(--tf-text-1); font: inherit; font-size: 13px;
+.newBtn:hover { background: var(--tf-hover); color: var(--tf-text-1); }
+.newBtn:active { transform: scale(0.92); }
+
+/* 清單：列高 32、列間 2，底部漸隱。 */
+.list {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px;
+  display: flex; flex-direction: column; gap: 2px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
 }
-.search::placeholder { color: var(--tf-text-4); }
-.search:focus-visible { outline: none; border-color: var(--tf-graphite); background: var(--tf-surface); }
-/* type=search 在 WebKit 自帶的清除鈕與本站風格不一致；輸入框夠短，全選刪除即可。 */
-.search::-webkit-search-cancel-button { appearance: none; }
-.list { flex: 1; overflow-y: auto; padding: 0 8px; }
-.empty { margin: 8px 10px; font-size: 12.5px; line-height: 1.5; color: var(--tf-text-muted-aa); overflow-wrap: anywhere; }
 .more {
   display: block; width: 100%; margin: 6px 0 10px; padding: 7px 10px;
-  border: none; border-radius: var(--tf-radius-md); background: none;
+  border: none; border-radius: 8px; background: none;
   color: var(--tf-text-muted-aa); font: inherit; font-size: 12.5px; cursor: pointer;
 }
-.more:hover:not(:disabled) { background: rgba(0, 0, 0, 0.045); color: var(--tf-text-1); }
+.more:hover:not(:disabled) { background: var(--tf-hover); color: var(--tf-text-1); }
 .more:disabled { cursor: default; }
 .item {
-  display: block; padding: 8px 10px; border-radius: var(--tf-radius-md);
-  font-size: 14px; color: var(--tf-text-1); text-decoration: none;
+  display: block; height: 32px; line-height: 32px; padding: 0 4px 0 10px;
+  font-size: 13px; color: var(--tf-text-2); text-decoration: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .item:hover { color: var(--tf-text-1); }
+.item:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; border-radius: 8px; }
 
 /* 底色（hover／選取）一律由 .row 這一層畫，.item 與 .del 都不得自帶底色。
    它們是同一列的兩格：只要其中一格自己也塗一層，兩層 rgba 會疊加，刪除鈕那一小塊
    就明顯比標題那塊淺——選取態與 hover 都各犯過一次。 */
-.row { display: flex; align-items: center; gap: 2px; border-radius: var(--tf-radius-md); }
-.row:hover { background: rgba(0, 0, 0, 0.045); }
+.row { display: flex; align-items: center; border-radius: 8px; transition: background 0.12s; }
+.row:hover { background: rgba(0, 0, 0, 0.04); }
 .row .item { flex: 1; min-width: 0; }
+/* 字面值而非 var(--tf-selected)：同值，但測試（jsdom 不載入 tokens.css）要能讀到實際底色。 */
 .rowActive, .rowActive:hover { background: rgba(0, 0, 0, 0.07); }
-.item.active { color: var(--tf-text-1); font-weight: 500; }
-/* del 的顯隱位移由 Motion（ConversationList.tsx 的 rest/hover variants + whileFocus）驅動；此處僅留底樣式與 hover 變色。 */
-.del { flex: none; border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 6px; cursor: pointer; }
+.item.active { color: var(--tf-text-1); font-weight: 550; }
+.del {
+  flex: none; width: 24px; height: 24px; margin-right: 4px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 0; cursor: pointer;
+}
 /* 刪除鈕的 hover 只改字色不加底色——底色歸 .row，見上。 */
 .del:hover { color: var(--tf-error); }
 
-/* 刪除失敗的行內訊息。刻意放在清單之上而非 toast：使用者的視線正在那份清單上，
+/* 刪除失敗的行內訊息。刻意放在清單之上而非提示訊息：使用者的視線正在那份清單上，
    而失敗的意思正是「這一列還在」。 */
 .error {
   margin: 0 12px 8px;
@@ -61,4 +68,8 @@
   color: var(--tf-error-text);
   font-size: 0.8125rem;
   line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chev, .newBtn, .row { transition: none; }
 }

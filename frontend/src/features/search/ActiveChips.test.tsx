@@ -8,16 +8,14 @@ describe('ActiveChips', () => {
     const { container } = render(<ActiveChips state={defaultState()} onPatch={() => {}} />)
     expect(container.querySelectorAll('button').length).toBe(0)
   })
-  it('市場 chip 可移除 → onPatch(market ALL)', () => {
-    const onPatch = vi.fn()
-    render(<ActiveChips state={{ ...defaultState(), market: 'TW' }} onPatch={onPatch} />)
-    fireEvent.click(screen.getByRole('button', { name: /台股/ }))
-    expect(onPatch).toHaveBeenCalledWith({ market: 'ALL' })
+  it('只選了市場 → 不重複列出（市場膠囊已標示）', () => {
+    const { container } = render(<ActiveChips state={{ ...defaultState(), market: 'TW' }} onPatch={() => {}} />)
+    expect(container.querySelectorAll('button').length).toBe(0)
   })
   it('個股 chip 可移除 → onPatch(relates_stock false)', () => {
     const onPatch = vi.fn()
     render(<ActiveChips state={{ ...defaultState(), relates_stock: true }} onPatch={onPatch} />)
-    fireEvent.click(screen.getByRole('button', { name: /個股/ }))
+    fireEvent.click(screen.getByRole('button', { name: /個股相關/ }))
     expect(onPatch).toHaveBeenCalledWith({ relates_stock: false })
   })
 })

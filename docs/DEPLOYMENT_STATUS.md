@@ -16,7 +16,8 @@
 - **來源主機信標**（2026-10-13）：兩台都已啟用——辦公室主機設 `HOST_BEACON_NAME=office` 並跑 `report-mark-beacon.timer`，EC2 設 `HOST_BEACON_WATCH=office` 並跑 feed-health／feed-incident。**告警還沒演練過**（沒有實際驗證過失聯或推送失敗時通知會送達）。處置與停用見 `docs/production_resilience.md`「來源主機信標」。
 - **開關**（2026-10-13）：兩個環境的環境檔都沒有設 `UPLOAD_ENABLED`、`QUOTA_ENFORCE`、`ADMIN_MFA_REQUIRED`，走程式預設（關、影子模式、關；`app/config.py`）；都設 `ASK_ENABLE_WEB=0`；功能旗標沒有任何 DB 覆寫（`ask.web_search` 的預設是關，`app/services/feature_flags.py`）。
 - **網搜**（repo 可查）：沒有後端（DeepSeek 版尚未實作），後端對網搜請求一律以設定錯誤拒絕，前端 `frontend/src/lib/useWebSearch.ts` 依功能旗標隱藏開關。後端完成後把 `ASK_ENABLE_WEB` 設 1、再到管理後台「功能旗標」覆寫開啟即可，前端不必改。
-- **物件儲存與金鑰共用**（2026-10-13）：兩個環境都是 `OBJECT_STORAGE_MODE=r2`，共用同一個 R2 bucket 與 DeepSeek 金鑰。在測試環境刪改 R2 物件或手動多跑 LLM 批次，會影響正式環境的資料或費用。
+- **LLM 供應商**（2026-10-29）：兩個環境的程式都在 main `4b86ee44`，兩份環境檔（repo 根 `.env`、`/etc/default/report-mark-llm`）都設 `LLM_PROVIDER=opencode_go`，走 OpenCode Go 手動備援——DeepSeek 帳戶餘額為 0。DeepSeek 儲值後兩台都要切回 `deepseek`（步驟見 `docs/production_resilience.md`「切換到 OpenCode Go」）；切回之前問答與批次都吃 Go 的訂閱額度。
+- **物件儲存與金鑰共用**（2026-10-13；Go 金鑰 2026-10-29）：兩個環境都是 `OBJECT_STORAGE_MODE=r2`，共用同一個 R2 bucket、同一把 DeepSeek 金鑰與同一把 OpenCode Go 金鑰（Go 的用量上限兩個環境合計）。在測試環境刪改 R2 物件或手動多跑 LLM 批次，會影響正式環境的資料、費用或 Go 額度。
 - **`pg_stat_statements`**（2026-10-13）：兩個環境都已啟用；EC2 的 app 帳號沒有 `pg_read_all_stats`，別人的語句文字會隱藏。
 - **夜間回填** `report-mark-backfill.timer`（2026-10-13）：測試環境仍啟用、還沒跑完（10/13 清晨那一輪結束時估計尚餘 869 篇）。journal 的「估計尚餘」歸零後由人手動 disable。
 - **帳號**（2026-10-13）：測試環境只有一位 `tester`（super admin），還沒建個人帳號。正式環境有 5 個帳號：4 位管理員（其中 1 位已停用）與舊的共用帳號 `staging`（已降為一般使用者，仍啟用）；共用帳號尚未停用。

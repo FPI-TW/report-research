@@ -5,8 +5,13 @@
 .degraded { background: var(--tf-error); }
 .unknown { background: var(--tf-text-4); }
 
-.row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px 8px; }
-.row .dot { margin-top: 5px; }
-.text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.label { font-size: 13px; color: var(--tf-text-2); }
-.message { font-size: 11.5px; color: var(--tf-text-4); line-height: 1.4; }
+/* 設定「關於」的系統狀態列：字級、列高與髮絲線比照設定彈窗的其他列（SettingsDialog.module.css 的 .row）。 */
+.row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  min-height: 60px; padding: 10px 0; border-bottom: 1px solid #f0f0f2;
+}
+.main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.label { font-size: 14.5px; color: var(--tf-text-1); }
+.message { font-size: 13px; line-height: 1.45; color: var(--tf-text-3); }
+.value { flex: none; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--tf-text-2); }
+.value[data-level='degraded'] { color: var(--tf-error-text); }

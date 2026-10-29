@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router'
-import { CircleHelp, Info, Shield, SlidersHorizontal, User, X, type LucideIcon } from 'lucide-react'
+import { ChevronRight, Info, Shield, SlidersHorizontal, User, X, type LucideIcon } from 'lucide-react'
 import { useFluidHover, useRegisterFluidHoverItem } from '@/hooks/use-fluid-hover'
 import { FluidHoverHighlight } from '@/components/fluid-hover-highlight'
 import { useStableRect } from '@/lib/useStableRect'
@@ -42,9 +42,10 @@ export function SettingsDialog({ open, tab, onTab, onClose }: {
 }) {
   const [elevating, setElevating] = useState(false)
   const tabsRef = useRef<HTMLDivElement>(null)
-  const hover = useFluidHover(tabsRef)
+  // 只量每個分頁的位置給選取那塊滑動底色；hover 是每個分頁自己的底色（與側欄主導覽一致）。
+  const rows = useFluidHover(tabsRef)
   const activeIdx = TABS.findIndex(t => t.key === tab)
-  const activeRect = useStableRect(hover, activeIdx)
+  const activeRect = useStableRect(rows, activeIdx)
   const title = TABS[activeIdx]?.label ?? ''
 
   function onKeyDown(e: KeyboardEvent) {
@@ -65,11 +66,10 @@ export function SettingsDialog({ open, tab, onTab, onClose }: {
       <div className={styles.layout}>
         <nav className={styles.nav} aria-label="設定分類">
           <h1 className={styles.navTitle}>設定</h1>
-          <div ref={tabsRef} className={styles.tabs} role="tablist" aria-orientation="vertical" onKeyDown={onKeyDown} {...hover.handlers}>
+          <div ref={tabsRef} className={styles.tabs} role="tablist" aria-orientation="vertical" onKeyDown={onKeyDown}>
             <FluidHoverHighlight rect={activeRect} session={0} fadeIn={false} transition={GLIDE} className={styles.hlActive} />
-            <FluidHoverHighlight hover={hover} transition={GLIDE} className={styles.hlHover} />
             {TABS.map((t, i) => (
-              <TabButton key={t.key} register={hover.registerItem} index={i} def={t} on={t.key === tab} onPick={() => onTab(t.key)} />
+              <TabButton key={t.key} register={rows.registerItem} index={i} def={t} on={t.key === tab} onPick={() => onTab(t.key)} />
             ))}
           </div>
         </nav>
@@ -144,27 +144,46 @@ function AccountTab() {
   )
 }
 
+/** 分段控制：選取的白底小卡是一塊滑動的底色（與側欄、設定分頁的選取同一套），切換時滑到另一格。 */
 function PrefsTab() {
   const locale = useLocale()
+  const segRef = useRef<HTMLDivElement>(null)
+  const seg = useFluidHover(segRef, { axis: 'x' })
+  const onRect = useStableRect(seg, LOCALES.findIndex(o => o.value === locale))
   return (
     <div className={styles.tabIn}>
       <div className={styles.row}>
         <span className={styles.rowLabel}>回答語言</span>
-        <div className={styles.seg} role="radiogroup" aria-label="回答語言">
-          {LOCALES.map(o => (
-            <button
-              key={o.value}
-              type="button"
-              role="radio"
-              aria-checked={locale === o.value}
-              className={styles.segBtn}
-              data-on={locale === o.value || undefined}
-              onClick={() => setLocale(o.value)}
-            >{o.label}</button>
+        <div ref={segRef} className={styles.seg} role="radiogroup" aria-label="回答語言">
+          <FluidHoverHighlight rect={onRect} session={0} fadeIn={false} transition={GLIDE} className={styles.segThumb} />
+          {LOCALES.map((o, i) => (
+            <SegButton key={o.value} register={seg.registerItem} index={i} label={o.label} on={locale === o.value} onPick={() => setLocale(o.value)} />
           ))}
         </div>
       </div>
     </div>
+  )
+}
+
+function SegButton({ register, index, label, on, onPick }: {
+  register: (index: number, element: HTMLElement | null) => void
+  index: number
+  label: string
+  on: boolean
+  onPick: () => void
+}) {
+  const ref = useRef<HTMLButtonElement>(null)
+  useRegisterFluidHoverItem(register, index, ref)
+  return (
+    <button
+      ref={ref}
+      type="button"
+      role="radio"
+      aria-checked={on}
+      className={styles.segBtn}
+      data-on={on || undefined}
+      onClick={onPick}
+    >{label}</button>
   )
 }
 
@@ -173,10 +192,10 @@ function AboutTab({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate()
   return (
     <div className={styles.tabIn}>
-      <div className={styles.statusRow}><SystemStatusRow status={status} /></div>
+      <SystemStatusRow status={status} />
       <button type="button" className={styles.linkRow} onClick={() => { onClose(); navigate('/help') }}>
-        <CircleHelp size={16} aria-hidden />
         <span className={styles.rowLabel}>使用說明</span>
+        <ChevronRight size={16} strokeWidth={1.5} aria-hidden className={styles.linkChev} />
       </button>
     </div>
   )

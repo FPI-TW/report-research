@@ -59,7 +59,18 @@ test('偏好：回答語言預設中文，切到 English 會記住', () => {
 
 test('關於：系統狀態與使用說明', async () => {
   wrap('about', { status: 'degraded', message: '部分核心服務異常' })
-  expect(await screen.findByRole('status', { name: '系統狀態：部分異常' })).toBeInTheDocument()
+  const row = await screen.findByRole('status', { name: '系統狀態：部分異常' })
+  expect(row).toHaveTextContent('系統狀態')
+  expect(row).toHaveTextContent('部分異常')
   expect(screen.getByText('部分核心服務異常')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /使用說明/ })).toBeInTheDocument()
+})
+
+test('關於：正常時只寫「正常」，不多一行重述的說明', async () => {
+  wrap('about', { status: 'ok', message: '系統運作正常' })
+  const row = await screen.findByRole('status', { name: '系統狀態：正常' })
+  expect(row).toHaveTextContent('正常')
+  expect(screen.queryByText('系統運作正常')).not.toBeInTheDocument()
+  // 不再是「系統狀態：正常」一整句
+  expect(screen.queryByText('系統狀態：正常')).not.toBeInTheDocument()
 })

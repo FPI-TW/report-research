@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 const deleteConversation = vi.fn(async (id: string) => { void id })
 vi.mock('../../lib/askApi', () => ({ deleteConversation: (id: string) => deleteConversation(id) }))
 import { ConversationList } from './ConversationList'
+import { clearPendingConversation, resolvePendingConversation, startPendingConversation } from '../../lib/pendingConversation'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); localStorage.clear() })
 
@@ -107,14 +108,13 @@ test('刪除成功：不顯示錯誤訊息', async () => {
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-function wrapWith(handler: (url: URL) => unknown[]) {
+function wrapWith(handler: (url: URL) => unknown[], qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }), path = '/assistant') {
   const fetchMock = vi.fn(async (input: string) =>
     new Response(JSON.stringify(handler(new URL(input, 'http://x'))), { status: 200 }))
   vi.stubGlobal('fetch', fetchMock)
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/assistant']}>
+      <MemoryRouter initialEntries={[path]}>
         <ConversationList />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -159,4 +159,61 @@ test('不滿一頁時沒有「載入更多」', async () => {
   wrapWith(() => [conv(1), conv(2)])
   await screen.findByText('對話 1')
   expect(screen.queryByRole('button', { name: '載入更多' })).not.toBeInTheDocument()
+})
+
+// ── 新對話送出當下就進「最近」（pendingConversation.ts）────────────────────────
+// 對話串的 id 要等整輪跑完（done）才有，原本清單也要等那時才重抓：一題跑數十秒，期間側欄看不到
+// 自己剛開的對話。
+
+test('新對話送出當下：排在最上面、標為目前對話，還沒有 id 所以沒有刪除鈕', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  wrapWith(() => [conv(1)], qc)
+  await screen.findByText('對話 1')
+  act(() => startPendingConversation(qc, 't1', '半導體庫存何時見底'))
+  const link = await screen.findByRole('link', { name: '半導體庫存何時見底' })
+  expect(link).toHaveAttribute('href', '/assistant')
+  expect(link).toHaveAttribute('aria-current', 'page')
+  // 排在既有對話之前
+  expect(link.compareDocumentPosition(screen.getByRole('link', { name: '對話 1' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.getAllByRole('button', { name: '刪除對話' })).toHaveLength(1)  // 只有對話 1 的
+})
+
+test('暫存列只在研究助理頁的新對話上標為目前對話', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  wrapWith(() => [conv(1)], qc, '/library')
+  await screen.findByText('對話 1')
+  act(() => startPendingConversation(qc, 't1', '新題'))
+  expect(await screen.findByRole('link', { name: '新題' })).not.toHaveAttribute('aria-current')
+})
+
+test('拿到 id 後改連到那一串；清單重抓到真的那一列時只留一列', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  let server = [conv(1)]
+  wrapWith(() => server, qc)
+  await screen.findByText('對話 1')
+  act(() => startPendingConversation(qc, 't1', '新題'))
+  act(() => resolvePendingConversation(qc, 't1', 'c9'))
+  await waitFor(() => expect(screen.getByRole('link', { name: '新題' })).toHaveAttribute('href', '/assistant?c=c9'))
+  server = [{ conversation_id: 'c9', title: '新題' }, conv(1)]
+  await act(async () => { await qc.invalidateQueries({ queryKey: ['conversations'] }) })
+  expect(screen.getAllByRole('link', { name: '新題' })).toHaveLength(1)
+  await act(async () => { clearPendingConversation(qc, 't1') })
+  expect(screen.getAllByRole('link', { name: '新題' })).toHaveLength(1)
+  expect(screen.getByRole('link', { name: '新題' })).toHaveAttribute('href', '/assistant?c=c9')
+})
+
+test('切走後還在補存的舊一串與剛送出的新一串並存：兩列都在，只有新的那列是目前對話', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  wrapWith(() => [conv(1)], qc)
+  await screen.findByText('對話 1')
+  act(() => startPendingConversation(qc, 't1', '舊題'))
+  act(() => startPendingConversation(qc, 't2', '新題'))
+  const fresh = await screen.findByRole('link', { name: '新題' })
+  const old = screen.getByRole('link', { name: '舊題' })
+  expect(fresh).toHaveAttribute('aria-current', 'page')
+  expect(old).not.toHaveAttribute('aria-current')
+  expect(fresh.compareDocumentPosition(old) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  // 舊的補存完成：改連到它自己的那一串
+  act(() => resolvePendingConversation(qc, 't1', 'c7'))
+  await waitFor(() => expect(screen.getByRole('link', { name: '舊題' })).toHaveAttribute('href', '/assistant?c=c7'))
 })

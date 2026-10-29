@@ -11,7 +11,7 @@ export function streamAsk(
   return readSSE('/api/ask', body, signal)
 }
 
-export async function stopAsk(body: {
+export interface StopBody {
   question: string
   conversation_id?: string | null
   partial_answer: string
@@ -21,15 +21,36 @@ export async function stopAsk(body: {
   regenerate_of?: string
   edit_of?: string
   request_id?: string
-}): Promise<{ qa_id: string }> {
+}
+
+// keepalive 請求的本體有 64 KiB 上限（瀏覽器規定，超過就整個送不出去），留一點餘裕。
+const KEEPALIVE_MAX_BYTES = 60_000
+
+function byteLength(body: StopBody): number {
+  return new TextEncoder().encode(JSON.stringify(body)).length
+}
+
+/** 關頁時送的停止請求要塞進 keepalive 的上限：先捨來源，再截短已生成的文字，問題本身一定留著。 */
+export function fitKeepalive(body: StopBody): StopBody {
+  if (byteLength(body) <= KEEPALIVE_MAX_BYTES) return body
+  let slim: StopBody = { ...body, sources: [], ext_sources: [] }
+  while (byteLength(slim) > KEEPALIVE_MAX_BYTES && slim.partial_answer) {
+    slim = { ...slim, partial_answer: slim.partial_answer.slice(0, Math.floor(slim.partial_answer.length / 2)) }
+  }
+  return slim
+}
+
+export async function stopAsk(body: StopBody, opts: { keepalive?: boolean } = {}): Promise<{ qa_id: string }> {
   // 帶逾時：呼叫端已先把 UI 標成 stopped、事後才補 qaId（fail-open），這個請求
   // 掛住十幾秒只會讓晚到的回應更容易撞上世代檢查被丟棄，不如早點放棄。
+  // keepalive：重整或關頁時送出，請求要活過頁面卸載（useAskController 的 pagehide）。
   const resp = await fetch('/api/ask/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(opts.keepalive ? fitKeepalive(body) : body),
     credentials: 'same-origin',
     signal: AbortSignal.timeout(10_000),
+    ...(opts.keepalive ? { keepalive: true } : {}),
   })
   if (!resp.ok) throw new Error(`stop failed: ${resp.status}`)
   return resp.json()

@@ -1,108 +1,106 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { afterEach, expect, test, vi } from 'vitest'
 import { AccountMenu } from './AccountMenu'
-import { setLocale } from '../../lib/useLocale'
+import { ShellContext } from './shellContext'
 
-function stubStats(role: 'admin' | 'user' = 'user') {
-  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
-    url === '/api/me'
-      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role }), { status: 200 })
-      : new Response(JSON.stringify({
-        total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst',
-      }), { status: 200 }),
-  ))
+const STATS = { total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }
+
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+function stub(role: 'admin' | 'user' = 'user', status: { status: string; message: string } = { status: 'ok', message: '系統運作正常' }) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role }), { status: 200 })
+    if (url === '/api/status') return new Response(JSON.stringify(status), { status: 200 })
+    return new Response(JSON.stringify(STATS), { status: 200 })
+  }))
 }
 
-beforeEach(() => { localStorage.clear(); setLocale('zh-Hant') })
-afterEach(() => { vi.unstubAllGlobals(); setLocale('zh-Hant'); localStorage.clear() })
-
-function wrap(ui: React.ReactNode) {
+function wrap(openSettings = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <ShellContext.Provider value={{ openSearch: vi.fn(), openSettings }}>
+        <MemoryRouter initialEntries={['/library']}>
+          <Routes>
+            <Route path="/library" element={<AccountMenu variant="sidebar" />} />
+            <Route path="/help" element={<div>說明頁</div>} />
+          </Routes>
+        </MemoryRouter>
+      </ShellContext.Provider>
     </QueryClientProvider>,
   )
+  return openSettings
 }
 
-test('點帳號鈕開選單，顯示登出（原生 form action=/logout）', async () => {
-  stubStats()
-  wrap(<AccountMenu variant="row" />)
-  expect(await screen.findByText('analyst')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  const logout = screen.getByRole('button', { name: '登出' })
-  expect(logout).toHaveAttribute('type', 'submit')
-  expect(logout.closest('form')).toHaveAttribute('action', '/logout')
-  expect(screen.getByRole('link', { name: /使用說明/ })).toHaveAttribute('href', '/help')
+async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByText('analyst')
+  await user.click(screen.getByRole('button', { name: /analyst/ }))
+  return screen.findByRole('menu')
+}
+
+test('個人列顯示名稱與角色；選單只有設定、使用說明、登出', async () => {
+  stub('user')
+  const user = userEvent.setup()
+  wrap()
+  expect(await screen.findByText('使用者')).toBeInTheDocument()
+  await openMenu(user)
+  expect(screen.getAllByRole('menuitem')).toHaveLength(3)
+  for (const name of ['設定', '使用說明', '登出']) expect(screen.getByRole('menuitem', { name })).toBeInTheDocument()
 })
 
-test('語言切換：預設中文 checked，點 English 切換', async () => {
-  stubStats()
-  wrap(<AccountMenu variant="row" />)
-  expect(await screen.findByText('analyst')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  const zh = screen.getByRole('radio', { name: '中文' })
-  const en = screen.getByRole('radio', { name: 'English' })
-  expect(zh).toHaveAttribute('aria-checked', 'true')
-  expect(en).toHaveAttribute('aria-checked', 'false')
-  fireEvent.click(en)
-  expect(en).toHaveAttribute('aria-checked', 'true')
-  expect(zh).toHaveAttribute('aria-checked', 'false')
-  expect(localStorage.getItem('tf.locale')).toBe('en')
+test('管理員也看不到「管理後台」入口（避免資安疑慮，管理員直接輸入網址）', async () => {
+  stub('admin')
+  const user = userEvent.setup()
+  wrap()
+  expect(await screen.findByText('管理員')).toBeInTheDocument()
+  await openMenu(user)
+  expect(screen.queryByText(/管理後台/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: /管理/ })).not.toBeInTheDocument()
 })
 
-test('管理員的帳號選單多一個「管理後台」入口（主導覽刻意不放）', async () => {
-  stubStats('admin')
-  wrap(<AccountMenu variant="row" />)
-  expect(await screen.findByText('analyst')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  expect(await screen.findByRole('link', { name: /管理後台/ })).toHaveAttribute('href', '/admin')
+test('設定：開啟設定彈窗的「帳號」分頁', async () => {
+  stub()
+  const user = userEvent.setup()
+  const openSettings = wrap()
+  await openMenu(user)
+  await user.click(screen.getByRole('menuitem', { name: '設定' }))
+  expect(openSettings).toHaveBeenCalledWith('account')
 })
 
-test('一般使用者的帳號選單沒有管理後台入口', async () => {
-  stubStats('user')
-  wrap(<AccountMenu variant="row" />)
-  expect(await screen.findByText('analyst')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  await screen.findByRole('link', { name: /使用說明/ })
-  expect(screen.queryByRole('link', { name: /管理後台/ })).not.toBeInTheDocument()
+test('使用說明：導到 /help', async () => {
+  stub()
+  const user = userEvent.setup()
+  wrap()
+  await openMenu(user)
+  await user.click(screen.getByRole('menuitem', { name: '使用說明' }))
+  expect(await screen.findByText('說明頁')).toBeInTheDocument()
 })
 
-test('每個人的帳號選單都有「帳號安全」，點了開啟兩步驟驗證設定', async () => {
-  stubStats('user')
-  wrap(<AccountMenu variant="row" />)
-  expect(await screen.findByText('analyst')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  fireEvent.click(screen.getByRole('button', { name: /帳號安全/ }))
-  expect(await screen.findByRole('dialog', { name: '帳號安全' })).toBeInTheDocument()
+test('登出：送出 POST /logout 的表單', async () => {
+  stub()
+  const user = userEvent.setup()
+  const submit = vi.spyOn(HTMLFormElement.prototype, 'requestSubmit').mockImplementation(function (this: HTMLFormElement) {
+    expect(this.getAttribute('action')).toBe('/logout')
+    expect(this.getAttribute('method')).toBe('post')
+  })
+  wrap()
+  await openMenu(user)
+  await user.click(screen.getByRole('menuitem', { name: '登出' }))
+  expect(submit).toHaveBeenCalledTimes(1)
 })
 
-test('收合側欄（mini）的選單 portal 到 body、以 fixed 定位，不被側欄的窄容器壓扁', async () => {
-  stubStats()
-  const { container } = wrap(<AccountMenu variant="mini" />)
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  const menu = await screen.findByRole('menu')
-  expect(container.contains(menu)).toBe(false)
-  expect(document.body.contains(menu)).toBe(true)
-  expect(menu.style.position).toBe('fixed')
-  expect(menu.style.width).toBe('248px')
-  expect(screen.getByRole('button', { name: '登出' })).toBeInTheDocument()
+test('系統正常時不顯示任何狀態；部分異常時頭像 title 寫一句', async () => {
+  stub('user', { status: 'degraded', message: '部分核心服務異常' })
+  wrap()
+  await waitFor(() => expect(screen.getByRole('button', { name: /analyst/ })).toHaveAttribute('title', 'analyst（系統狀態：部分異常）'))
 })
 
-test('手機分頁列（mobile）同樣 portal 到 body；展開側欄（row）仍在原容器內', async () => {
-  stubStats()
-  const mobile = wrap(<AccountMenu variant="mobile" />)
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  const menu = await screen.findByRole('menu')
-  expect(mobile.container.contains(menu)).toBe(false)
-  expect(menu.style.position).toBe('fixed')
-  mobile.unmount()
-
-  const row = wrap(<AccountMenu variant="row" />)
-  fireEvent.click(screen.getByRole('button', { expanded: false }))
-  const rowMenu = await screen.findByRole('menu')
-  expect(row.container.contains(rowMenu)).toBe(true)
-  expect(rowMenu.style.position).toBe('')
+test('系統正常：頭像沒有 title 提示', async () => {
+  stub('user')
+  wrap()
+  await screen.findByText('analyst')
+  expect(screen.getByRole('button', { name: /analyst/ })).not.toHaveAttribute('title')
 })

@@ -12,6 +12,7 @@ from app.services.radar.compute import (  # noqa: F401
     build_events_page,
     build_instrument_slim,
     build_overview,
+    build_rating_changes,
 )
 from app.services.radar.queries import (  # noqa: F401
     fetch_broker_coverage_counts,
@@ -19,6 +20,7 @@ from app.services.radar.queries import (  # noqa: F401
     fetch_catalog_facets,
     fetch_coverage_counts,
     fetch_instrument_signals,
+    fetch_recent_rating_changes,
     fetch_signals_for_instruments,
     list_radar_instruments,
 )

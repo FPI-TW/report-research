@@ -1,71 +1,180 @@
-.scroll { height: 100%; overflow-y: auto; }
-.wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 80px; }
+/* 使用說明（交接包「使用說明」）：內容寬 1040，左側 188px 目錄（sticky）＋右側 700px 內文。
+   設計稿用到、tokens 還沒有的幾個值先放在頁面變數，之後若收進 tokens.css 只改這裡。 */
+.page {
+  --help-body-text: #3a3a3e;
+  --help-tile-line: #e6e6e9;
+  --help-card-hover-line: #c7c7cc;
+  --help-tip-text: #5d4a1e;
+  --help-kbd-ring: #dcdce0;
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+}
 
-.head { margin-bottom: 26px; }
-.title { margin: 0; font-family: var(--tf-display); font-size: 30px; font-weight: 800; letter-spacing: -0.01em; color: var(--tf-text-1); }
-.accent { color: var(--tf-gold-strong); }
-.lede { margin: 12px 0 0; font-size: 15px; line-height: 1.7; color: var(--tf-text-2); }
+/* 整頁位移進場放在捲動容器本身（交接包坑 3：捲動區「內容」不做位移進場）。
+   position: relative 讓各節的 offsetTop 以捲動區為準（scroll-spy 用）。 */
+.scroll {
+  position: relative; flex: 1; min-height: 0; overflow-y: auto;
+  animation: helpPageIn var(--tf-dur-enter) var(--tf-ease-apple) both;
+}
+@keyframes helpPageIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 
-/* 目錄 */
-.toc { background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-panel); box-shadow: var(--tf-shadow-xs); padding: 16px 20px; margin: 24px 0 34px; }
-.tocLabel { font-size: 12px; font-weight: 700; color: var(--tf-text-3); letter-spacing: 0.05em; margin-bottom: 8px; }
-.tocList { margin: 0; padding-left: 20px; }
-.tocList li { margin: 3px 0; }
-.tocList a { color: var(--tf-graphite); text-decoration: none; font-weight: 600; font-size: 14.5px; }
-.tocList a:hover { color: var(--tf-graphite-hover); text-decoration: underline; }
+.wrap {
+  max-width: 1040px; margin: 0 auto; padding: 32px 24px 80px;
+  display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 48px; align-items: start;
+}
 
-.section { margin: 0 0 38px; scroll-margin-top: 20px; }
-.h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; font-family: var(--tf-display); font-size: 21px; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); }
-.no { color: var(--tf-gold-strong); font-variant-numeric: tabular-nums; }
-.section p { margin: 10px 0; font-size: 15px; line-height: 1.75; color: var(--tf-text-2); }
-.bul { margin: 12px 0; padding-left: 22px; }
-.bul li { margin: 7px 0; font-size: 15px; line-height: 1.7; color: var(--tf-text-2); }
-.section strong, .bul strong { color: var(--tf-text-1); font-weight: 700; }
+/* ── 目錄：列高 34、列間 2；hover 與目前一節各是一塊滑動底色 ── */
+.toc { position: sticky; top: 24px; }
+.tocList { position: relative; display: flex; flex-direction: column; gap: 2px; }
+.hlActive { z-index: 0; border-radius: 8px; background: var(--tf-selected); }
+.hlHover { z-index: 0; border-radius: 8px; background: var(--tf-hover); }
+.tocRow {
+  position: relative; z-index: 1; display: flex; align-items: center; width: 100%; height: 34px; padding: 0 10px;
+  border: none; border-radius: 8px; background: transparent; color: var(--tf-text-2);
+  font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+  transition: color 0.12s, transform 0.12s;
+}
+.tocRow:hover, .tocRow[data-on] { color: var(--tf-text-1); }
+.tocRow[data-on] { font-weight: 550; }
+.tocRow:active { transform: scale(0.985); }
+.tocRow:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
 
-.h3 { font-family: var(--tf-display); font-size: 16.5px; font-weight: 600; margin: 24px 0 8px; color: var(--tf-text-1); }
+.article { min-width: 0; max-width: 700px; }
+.title { margin: 0; font-size: 28px; line-height: 1.25; font-weight: 600; letter-spacing: -0.02em; color: var(--tf-text-1); }
 
-/* 內嵌強調小標 */
-.tagInline { display: inline-block; font-size: 13px; font-weight: 600; padding: 1px 8px; border-radius: var(--tf-radius-md); background: var(--tf-graphite-tint); color: var(--tf-graphite); }
+/* ── 捷徑卡 ── */
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+.card {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  border: 1px solid var(--help-tile-line); border-radius: 12px; background: var(--tf-surface);
+  color: var(--tf-text-1); text-decoration: none;
+  transition: border-color 0.12s, transform 0.12s;
+  animation: helpCardIn 0.65s var(--tf-ease-apple) both;
+}
+.card:nth-child(2) { animation-delay: 0.07s; }
+.card:nth-child(3) { animation-delay: 0.14s; }
+.card:nth-child(4) { animation-delay: 0.21s; }
+@keyframes helpCardIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+.card:hover { border-color: var(--help-card-hover-line); }
+.card:active { transform: scale(0.985); }
+.card:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.cardIcon {
+  flex: none; width: 34px; height: 34px; border-radius: 10px; background: var(--tf-canvas); color: var(--tf-text-1);
+  display: flex; align-items: center; justify-content: center;
+}
+.cardText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cardTitle { font-size: 14.5px; font-weight: 550; }
+.cardDesc { font-size: 12.5px; line-height: 1.5; color: var(--tf-text-muted-aa); }
+.cardArrow { flex: none; color: var(--help-card-hover-line); transition: transform 0.16s var(--tf-ease-out), color 0.12s; }
+.card:hover .cardArrow { color: var(--tf-text-1); transform: translateX(2px); }
 
-/* 提示框 */
-.note { background: var(--tf-fill-subtle); border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 12px 16px; margin: 14px 0; font-size: 14px; line-height: 1.65; color: var(--tf-text-2); }
-.note strong { color: var(--tf-text-1); }
+/* ── 各節 ── */
+.sec { margin-top: 52px; }
+.h2 { margin: 0; font-size: 20px; line-height: 1.35; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); }
+/* 點目錄時焦點移到標題（讓鍵盤接著從這一節往下走），標題本身不是互動元件，不畫焦點環。 */
+.h2:focus { outline: none; }
+.p { margin: 10px 0 0; font-size: 15px; line-height: 1.8; color: var(--help-body-text); }
 
-/* 網址列 + 複製 */
-.urlRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.url { font-family: var(--tf-mono); font-size: 14.5px; background: var(--tf-canvas); border: 1px solid var(--tf-border); padding: 4px 10px; border-radius: var(--tf-radius-md); color: var(--tf-text-1); }
-.copyBtn { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--tf-graphite); background: var(--tf-graphite-tint); border: 1px solid var(--tf-graphite-line); border-radius: var(--tf-radius-md); padding: 5px 11px; cursor: pointer; font-family: inherit; }
-.copyBtn:hover { background: var(--tf-surface); border-color: var(--tf-graphite); }
-.copyDone { color: var(--tf-success-text); background: color-mix(in srgb, var(--tf-success) 12%, white); border-color: var(--tf-success-line); }
+.steps { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 6px; font-size: 15px; line-height: 1.75; color: var(--help-body-text); }
+.stepNo {
+  width: 22px; height: 22px; margin-top: 3px; border-radius: 999px; background: var(--tf-graphite); color: var(--tf-on-graphite);
+  font-size: 12px; font-weight: 600; line-height: 22px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.list { margin: 14px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; line-height: 1.75; color: var(--help-body-text); }
+.list li::marker { color: var(--tf-gold-strong); }
 
-/* 畫面截圖 figure */
-.figure { margin: 16px 0 8px; }
-.figure img { display: block; width: 100%; height: auto; border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); box-shadow: var(--tf-shadow-xs); }
-.figcaption { margin-top: 8px; font-size: 12.5px; color: var(--tf-text-3); text-align: center; line-height: 1.5; }
+.tip {
+  display: flex; gap: 10px; align-items: flex-start; margin-top: 16px; padding: 12px 14px; border-radius: 10px;
+  background: var(--tf-gold-panel); font-size: 14px; line-height: 1.65; color: var(--help-tip-text);
+}
+.tipIcon { flex: none; margin-top: 3px; color: var(--tf-gold-text); }
 
-/* 圖例（市場徽章 / 商品類型 / 標的） */
-.legend { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 6px; }
-.lrow { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: start; font-size: 14px; line-height: 1.55; color: var(--tf-text-2); }
-.lrow .m strong { color: var(--tf-text-1); }
-.chip { justify-self: start; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: var(--tf-radius-pill); white-space: nowrap; }
-.dot { width: 6px; height: 6px; border-radius: 50%; opacity: 0.9; }
-.subjChip { justify-self: start; display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: var(--tf-radius-md); color: var(--tf-text-2); background: var(--tf-canvas); border: 1px solid var(--tf-border); white-space: nowrap; }
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px;
+  border-radius: 6px; background: var(--tf-surface);
+  box-shadow: inset 0 0 0 1px var(--help-kbd-ring), inset 0 -1px 0 var(--help-kbd-ring);
+  font: 500 12px/22px var(--tf-display); font-variant-numeric: tabular-nums; color: var(--tf-text-1);
+  vertical-align: 1px;
+}
+.cite {
+  display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--tf-gold-tint); color: var(--tf-gold-text);
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
+  vertical-align: 1px;
+}
 
-/* 結果部位編號說明 */
-.anatomy { list-style: none; margin: 12px 0 6px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.anatomy li { display: grid; grid-template-columns: 24px 1fr; gap: 11px; align-items: start; font-size: 14px; line-height: 1.6; color: var(--tf-text-2); }
-.anatomy .n { width: 22px; height: 22px; border-radius: 50%; background: var(--tf-graphite); color: var(--tf-on-graphite); font-size: 12px; font-weight: 700; line-height: 22px; text-align: center; font-variant-numeric: tabular-nums; }
-.anatomy strong { color: var(--tf-text-1); }
+.more {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 14px; font-size: 13px; font-weight: 500;
+  color: var(--tf-gold-text); text-decoration: none; transition: gap 0.18s var(--tf-ease-out);
+}
+.more:hover { gap: 7px; }
+.more:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; border-radius: 4px; }
 
-.subjBlock { margin: 12px 0; }
-.sbHead { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--tf-text-2); }
-.sbHead strong { color: var(--tf-text-1); }
-.sbEg { font-size: 13.5px; color: var(--tf-text-3); line-height: 1.8; margin-top: 5px; }
+/* ── 平台網址 ── */
+.urlField {
+  display: flex; align-items: center; gap: 8px; height: 44px; margin-top: 14px; padding: 0 6px 0 14px;
+  border: 1px solid var(--tf-border); border-radius: 10px; background: var(--tf-fill-subtle);
+}
+.urlInput {
+  flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: none; padding: 0;
+  font: inherit; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--tf-text-1);
+}
+.copyBtn {
+  flex: none; display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--tf-border); border-radius: 10px; background: var(--tf-surface);
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--tf-text-1); cursor: pointer;
+  transition: background 0.12s, transform 0.12s;
+}
+.copyBtn:hover { background: var(--tf-fill-subtle); }
+.copyBtn:active { transform: scale(0.97); }
+.copyBtn:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.copiedIcon { color: var(--tf-success); animation: helpPop 0.34s var(--tf-ease-emphasized) both; }
+@keyframes helpPop { from { transform: scale(0.4); opacity: 0; } to { transform: none; opacity: 1; } }
 
-.foot { margin-top: 50px; padding-top: 20px; border-top: 1px solid var(--tf-divider); font-size: 13px; color: var(--tf-text-3); font-weight: 600; text-align: center; }
+/* ── 表格（市場代碼、快捷鍵） ── */
+.tile { margin-top: 14px; overflow: hidden; border: 1px solid var(--help-tile-line); border-radius: 16px; background: var(--tf-surface); }
+.table { width: 100%; border-collapse: collapse; font-size: 13.5px; color: var(--tf-text-1); }
+.table th { padding: 10px 8px; font-size: 12px; font-weight: 500; color: var(--tf-text-4); text-align: left; }
+.table td { padding: 10px 8px; vertical-align: baseline; }
+.table th:first-child, .table td:first-child { padding-left: 16px; }
+.table th:last-child, .table td:last-child { padding-right: 16px; }
+.table tbody tr { border-top: 1px solid var(--tf-border-weak); }
+.table th:nth-child(1) { width: 90px; }
+.table th:nth-child(2) { width: 76px; }
+.mktCode { font-family: var(--tf-code); font-size: 12.5px; font-weight: 600; line-height: inherit; }
+.scope { color: var(--tf-text-2); }
 
-@media (max-width: 767px) {
+.keys td { padding-top: 8px; padding-bottom: 8px; height: 46px; vertical-align: middle; }
+.keys tbody tr:first-child { border-top: none; }
+.where { width: 1%; white-space: nowrap; font-size: 12px; color: var(--tf-text-4); }
+.keyCell { width: 1%; white-space: nowrap; }
+.keyList { display: flex; gap: 4px; justify-content: flex-end; min-width: 140px; }
+
+.srOnly {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* 各節捲進畫面時上浮淡入（瀏覽器支援捲動時間軸才做；不支援就直接顯示） */
+@supports (animation-timeline: view()) {
+  .sec { animation: helpRise linear both; animation-timeline: view(); animation-range: entry 0% entry 30%; }
+}
+@keyframes helpRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); }
+  .toc { display: none; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
   .wrap { padding: 24px 16px 64px; }
-  .title { font-size: 25px; }
-  .lrow { grid-template-columns: 78px 1fr; }
+  .table th:nth-child(1) { width: 72px; }
+  .table th:nth-child(2) { width: 64px; }
+  .keyList { min-width: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll, .card, .sec, .copiedIcon { animation: none; }
+  .tocRow, .card, .cardArrow, .copyBtn, .more { transition: none; }
+  .card:hover .cardArrow, .card:active, .tocRow:active, .copyBtn:active { transform: none; }
 }

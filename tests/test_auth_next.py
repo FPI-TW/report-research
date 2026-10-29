@@ -80,11 +80,11 @@ def test_authed_login_get_honors_safe_next():
 
 
 def test_authed_root_redirects_to_spa():
-    # 舊 vanilla 首頁已退場：授權後根路徑導向 SPA 檢索頁
+    # 舊 vanilla 首頁已退場：授權後根路徑導向 SPA 研報庫
     client = TestClient(app, cookies=_auth_cookies(), follow_redirects=False)
     resp = client.get("/")
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/app/search"
+    assert resp.headers["location"] == "/app/library"
 
 
 def _auth_cookies() -> dict[str, str]:
@@ -92,11 +92,11 @@ def _auth_cookies() -> dict[str, str]:
 
 
 def test_authed_monitor_redirects_to_spa():
-    # 導入監控已搬進管理後台：舊書籤一律回檢索頁
+    # 導入監控已搬進管理後台：舊書籤一律回研報庫
     client = TestClient(app, cookies=_auth_cookies())
     resp = client.get("/monitor", follow_redirects=False)
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/app/search"
+    assert resp.headers["location"] == "/app/library"
 
 
 def test_authed_help_redirects_to_spa():

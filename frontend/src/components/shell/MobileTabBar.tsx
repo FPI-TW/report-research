@@ -5,10 +5,10 @@ import styles from './MobileTabBar.module.css'
 export function MobileTabBar() {
   return (
     <div className={styles.bar}>
-      <NavItem to="/search" icon="search" label="檢索" variant="mobile" />
-      <NavItem to="/ask" icon="messages" label="問答" variant="mobile" />
-      <NavItem to="/radar" icon="compass" label="觀點" variant="mobile" />
-      <NavItem to="/brief" icon="fileText" label="簡報" variant="mobile" />
+      <NavItem to="/library" icon="search" label="研報庫" />
+      <NavItem to="/assistant" icon="messages" label="研究助理" />
+      <NavItem to="/consensus" icon="compass" label="券商共識" />
+      <NavItem to="/brief" icon="fileText" label="每日簡報" />
       <div className={styles.account}><AccountMenu variant="mobile" /></div>
     </div>
   )

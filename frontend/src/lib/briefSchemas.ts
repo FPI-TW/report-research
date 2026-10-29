@@ -18,6 +18,12 @@ export const briefReportRefSchema = z.object({
   report_date: z.string().nullable().optional(),
 })
 
+// 窗期內某市場的新進研報篇數（market 為 null＝未標市場）。
+export const briefMarketCountSchema = z.object({
+  market: z.string().nullish(),
+  report_count: z.number(),
+})
+
 export const briefPayloadSchema = z.object({
   brief_date: z.string(),
   window_start: z.string(),
@@ -29,6 +35,10 @@ export const briefPayloadSchema = z.object({
   signal_count: z.number(),
   reports: z.array(briefReportRefSchema),
   created_at: z.string(),
+  // 概況卡的市場分布與券商數：後端讀取時現算的派生資料，查詢失敗或舊版後端時缺值，
+  // 概況卡就只顯示篇數。
+  markets: z.array(briefMarketCountSchema).nullish(),
+  broker_count: z.number().nullish(),
 })
 
 export const briefEnvelopeSchema = z.object({
@@ -38,6 +48,12 @@ export const briefEnvelopeSchema = z.object({
   available_dates: z.array(z.string()).optional().default([]),
 })
 
+// GET /api/brief/dates：有簡報的日期（新→舊），月曆用。
+export const briefDatesSchema = z.object({
+  dates: z.array(z.string()),
+})
+
 export type BriefReportRef = z.infer<typeof briefReportRefSchema>
+export type BriefMarketCount = z.infer<typeof briefMarketCountSchema>
 export type BriefPayload = z.infer<typeof briefPayloadSchema>
 export type BriefEnvelope = z.infer<typeof briefEnvelopeSchema>

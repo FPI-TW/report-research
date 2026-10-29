@@ -1,19 +1,44 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { CiteButton } from '../components/CitePreview'
 import type { Source } from './askSchemas'
 
 const HTTP = /^https?:\/\//i
 
+export interface RenderAnswerOptions {
+  /**
+   * 串流中才給：純文字切成小段（CJK 一字一段、英數一詞一段），每段一個帶 key 的 span、套這個 class。
+   * key 是該段在行內文字裡的起始位置——串流只會在尾端長字，已出現的段落 key 不變、不重新掛載，
+   * 所以 class 上的進場動畫只在新段落出現時播一次。收尾後不給，DOM 回到純文字。
+   */
+  streamChunkClass?: string
+  /** 自訂 [n] 膠囊（預設 CiteButton）。回傳的節點由這裡包上 key。 */
+  renderCite?: (n: number, source: Source | undefined, onCite: (n: number) => void) => ReactNode
+}
+
+// CJK（含全形標點）一字一段；其餘以「一段非空白＋後綴空白」為一段；開頭的空白自成一段。
+const CHUNK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF\u3000-\u303F]|[^\s\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF\u3000-\u303F]+\s*|\s+/g
+
+function chunked(text: string, at: number, keyBase: string, cls: string): ReactNode[] {
+  return Array.from(text.matchAll(CHUNK_RE), m => (
+    <span key={`${keyBase}-c${at + m.index}`} className={cls}>{m[0]}</span>
+  ))
+}
+
 // 行內：粗體/斜體/行內 code/連結/[n] 膠囊 → React 節點（React 自動轉義文字）
 // sources 若提供，[n] 膠囊帶 hover／focus 來源預覽（CiteButton）；未提供則為單純膠囊。
-function renderInline(text: string, sourceCount: number, onCite: (n: number) => void, keyBase: string, sources?: Source[]): ReactNode[] {
+function renderInline(text: string, sourceCount: number, onCite: (n: number) => void, keyBase: string, sources?: Source[], opts?: RenderAnswerOptions): ReactNode[] {
   const out: ReactNode[] = []
+  const pushText = (s: string, at: number) => {
+    if (!s) return
+    if (opts?.streamChunkClass) out.push(<Fragment key={`${keyBase}-t${at}`}>{chunked(s, at, keyBase, opts.streamChunkClass)}</Fragment>)
+    else out.push(s)
+  }
   const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|\[(\d+)\]/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index))
+    if (m.index > last) pushText(text.slice(last, m.index), last)
     const key = `${keyBase}-${i++}`
     if (m[1] !== undefined) out.push(<strong key={key}>{m[1]}</strong>)
     else if (m[2] !== undefined) out.push(<em key={key}>{m[2]}</em>)
@@ -21,20 +46,23 @@ function renderInline(text: string, sourceCount: number, onCite: (n: number) => 
     else if (m[4] !== undefined && m[5] !== undefined) {
       const href = m[5].trim()
       if (HTTP.test(href)) out.push(<a key={key} href={href} target="_blank" rel="noopener noreferrer">{m[4]}</a>)
-      else out.push(m[0])
+      else pushText(m[0], m.index)
     } else if (m[6] !== undefined) {
       const n = Number(m[6])
       if (n >= 1 && n <= sourceCount) {
-        out.push(<CiteButton key={key} n={n} source={sources?.find(s => s.n === n)} onCite={onCite} />)
-      } else out.push(m[0])
+        const source = sources?.find(s => s.n === n)
+        out.push(opts?.renderCite
+          ? <Fragment key={key}>{opts.renderCite(n, source, onCite)}</Fragment>
+          : <CiteButton key={key} n={n} source={source} onCite={onCite} />)
+      } else pushText(m[0], m.index)
     }
     last = re.lastIndex
   }
-  if (last < text.length) out.push(text.slice(last))
+  if (last < text.length) pushText(text.slice(last), last)
   return out
 }
 
-export function renderAnswer(md: string, sourceCount: number, onCite: (n: number) => void, sources?: Source[]): ReactNode {
+export function renderAnswer(md: string, sourceCount: number, onCite: (n: number) => void, sources?: Source[], opts?: RenderAnswerOptions): ReactNode {
   const lines = md.split('\n')
   const blocks: ReactNode[] = []
   let para: string[] = []
@@ -44,7 +72,7 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
   let code: string[] | null = null
   let k = 0
 
-  const inline = (text: string, keyBase: string) => renderInline(text, sourceCount, onCite, keyBase, sources)
+  const inline = (text: string, keyBase: string) => renderInline(text, sourceCount, onCite, keyBase, sources, opts)
 
   const flushPara = () => { if (para.length) { blocks.push(<p key={`p${k++}`}>{inline(para.join(' '), `p${k}`)}</p>); para = [] } }
   const flushUl = () => { if (ul.length) { const items = ul; blocks.push(<ul key={`ul${k++}`}>{items.map((t, i) => <li key={i}>{inline(t, `ul${k}-${i}`)}</li>)}</ul>); ul = [] } }

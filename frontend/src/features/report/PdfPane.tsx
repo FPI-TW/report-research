@@ -1,19 +1,26 @@
 import { Suspense, lazy } from 'react'
+import { FileWarning, FileX } from 'lucide-react'
 import { displayTitle } from '../../lib/displayTitle'
 import { reportFileHref } from '../../lib/readingApi'
 import type { ReadingDoc } from '../../lib/readingSchemas'
-import type { JumpRequest, JumpResult } from './pdf/PdfViewer'
+import type { JumpMarkSource, JumpRequest, JumpResult, PdfLoadState } from './pdf/PdfViewer'
 import { ViewerBoundary } from './pdf/ViewerBoundary'
+import { StateBox } from './ReportStates'
+import stateStyles from './ReportStates.module.css'
 import styles from './PdfPane.module.css'
 
-// 懶載入：PDFium 的 WASM 與外掛加起來體積可觀，不該讓問答與檢索頁一起背。
+// 懶載入：PDFium 的 WASM 與外掛加起來體積可觀，不該讓研究助理與研報庫一起背。
 const PdfViewer = lazy(() => import('./pdf/PdfViewer'))
 
 interface Props {
   doc: ReadingDoc
   /** 左欄摘錄的跳轉請求，透傳給自訂檢視器 */
   jump?: JumpRequest | null
+  /** 有引文的摘錄，縮圖列據此標出各頁的金色編號 */
+  marks?: JumpMarkSource[]
   onJumpResult?: (r: JumpResult) => void
+  /** PDF 檔本身載入失敗／（重試後）載入成功，見 PdfViewer 的 PdfLoadState */
+  onLoadState?: (s: PdfLoadState) => void
   /**
    * 引擎降級成瀏覽器內建檢視時通知呼叫端。
    * 內建檢視**沒有任何搜尋能力**，所以摘錄必須整批退回非互動 ——
@@ -35,7 +42,6 @@ function BuiltInViewer({ href, title }: { href: string; title: string }) {
       <div className={styles.pdfBar}>
         <span className={styles.pdfHint}>若下方無法顯示 PDF</span>
         <a className={styles.pdfLink} href={href} target="_blank" rel="noopener noreferrer">在新分頁開啟</a>
-        <span className={styles.pdfDot} aria-hidden="true">·</span>
         <a className={styles.pdfLink} href={href} download>下載</a>
       </div>
       <iframe className={styles.frame} src={href} title={title} />
@@ -50,13 +56,11 @@ function BuiltInViewer({ href, title }: { href: string; title: string }) {
  * 內嵌不了又沒有全文的研報仍然送到這裡，靠它們給出終態。改 ReportPage 的分派條件時
  * 要記得這件事，否則那一格會退化成永遠的載入骨架。
  */
-export function PdfPane({ doc, jump = null, onJumpResult, onDegraded }: Props) {
+export function PdfPane({ doc, jump = null, marks, onJumpResult, onLoadState, onDegraded }: Props) {
   if (!doc.has_file) {
     return (
       <div className={styles.stage}>
-        <div className={styles.state} role="status">
-          <p className={styles.stateText}>找不到原始檔。</p>
-        </div>
+        <StateBox role="status" onCanvas icon={<FileX size={18} strokeWidth={1.8} />} title="找不到原始檔" />
       </div>
     )
   }
@@ -68,18 +72,23 @@ export function PdfPane({ doc, jump = null, onJumpResult, onDegraded }: Props) {
     const ext = doc.file_name.split('.').pop()?.toUpperCase() ?? '檔案'
     return (
       <div className={styles.stage}>
-        <div className={styles.state} role="status">
-          <p className={styles.stateText}>{ext} 文件無法內嵌預覽，請下載查看。</p>
-          <a className={styles.download} href={href} download>下載原始檔</a>
-        </div>
+        <StateBox
+          role="status"
+          onCanvas
+          icon={<FileWarning size={18} strokeWidth={1.8} />}
+          title={`${ext} 文件無法內嵌預覽`}
+        >
+          <a className={stateStyles.btn} href={href} download>下載原始檔</a>
+        </StateBox>
       </div>
     )
   }
 
   // 降級決策集中在這裡：引擎載入失敗（邊界）與程式碼分割失敗（Suspense 之外的
   // 載入錯誤同樣會被邊界接住）都退回同一個內建檢視，不會出現兩套降級規則。
+  // （PDF 檔本身開不起來是另一回事：引擎好好的，由檢視器在畫布中央給「PDF 載入失敗」。）
   return (
-    <div className={`${styles.stage} ${styles.stageViewer}`}>
+    <div className={styles.viewerStage}>
       {/* key 綁 href：邊界只有 failed 一個狀態，重建不會丟東西，但**不綁的話**在同一個
           ReportPage 實例內換研報時 failed 會沾黏，讓下一篇明明能開也直接落到內建檢視。
           **不要**給 PdfViewer 加 key —— 那會讓同篇的任何重渲染都重載一次引擎。 */}
@@ -89,7 +98,14 @@ export function PdfPane({ doc, jump = null, onJumpResult, onDegraded }: Props) {
         onError={onDegraded}
       >
         <Suspense fallback={<div className={styles.booting} role="status">正在啟動 PDF 引擎…</div>}>
-          <PdfViewer url={href} title={title} jump={jump} onJumpResult={onJumpResult} />
+          <PdfViewer
+            url={href}
+            title={title}
+            jump={jump}
+            marks={marks}
+            onJumpResult={onJumpResult}
+            onLoadState={onLoadState}
+          />
         </Suspense>
       </ViewerBoundary>
     </div>

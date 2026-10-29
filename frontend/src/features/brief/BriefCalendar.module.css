@@ -1,0 +1,40 @@
+/* 簡報月曆：有簡報的日期下方金色圓點、選取石墨實心、今天細框，沒有簡報的日期不可點。 */
+.calendar { padding: 16px 16px 14px; }
+.head { display: flex; align-items: center; gap: 4px; padding: 0 4px 10px; }
+.label { flex: 1; margin: 0; font-size: 14px; font-weight: 600; color: var(--tf-text-1); font-variant-numeric: tabular-nums; }
+.nav {
+  flex: none; width: 28px; height: 28px; padding: 0; border: none; border-radius: 999px; background: transparent;
+  color: var(--tf-text-muted-aa); display: flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
+}
+.nav:hover { background: var(--brief-hover, rgba(0, 0, 0, 0.05)); color: var(--tf-text-1); }
+.nav:active:not(:disabled) { transform: scale(0.92); }
+.nav:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.nav:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+
+.grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; justify-items: center; }
+.weekdays { margin-bottom: 4px; }
+.weekday { font-size: 11px; line-height: 24px; color: var(--tf-text-4); }
+
+.day {
+  position: relative; width: 34px; height: 34px; padding: 0; border: none; border-radius: 999px; background: transparent;
+  font: inherit; font-size: 12.5px; font-weight: 500; line-height: 34px; font-variant-numeric: tabular-nums;
+  color: var(--brief-faint, #c7c7cc); cursor: default;
+  transition: background 0.24s var(--tf-ease-apple), color 0.24s, transform 0.12s;
+}
+.day:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+.avail { color: var(--tf-text-1); cursor: pointer; }
+.avail:hover { background: var(--brief-hover, rgba(0, 0, 0, 0.05)); }
+.avail:active { transform: scale(0.92); }
+.avail::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 4px; width: 4px; height: 4px; margin: 0 auto;
+  border-radius: 999px; background: var(--tf-gold-strong);
+}
+.today { box-shadow: inset 0 0 0 1px var(--brief-faint, #c7c7cc); }
+.selected, .selected:hover { background: var(--tf-graphite); color: var(--tf-on-graphite); box-shadow: none; }
+.selected::after { background: var(--tf-on-graphite); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav, .day { transition: none; }
+  .nav:active:not(:disabled), .avail:active { transform: none; }
+}

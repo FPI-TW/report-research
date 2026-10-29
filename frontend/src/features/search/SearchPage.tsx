@@ -1,42 +1,33 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { useStats } from '../../lib/useStats'
 import { useSearchResults } from '../../lib/useSearchResults'
 import {
-  parseParams, buildParams, modeOf, hasAnyFilter,
-  clearFilters, browseAll, type SearchState,
+  parseParams, buildParams, modeOf, hasAnyFilter, browseAll, type SearchState,
 } from '../../lib/searchFilters'
 import { normalizeSort } from '../../lib/sortForMode'
 import { queryTerms } from '../../lib/terms'
 import { latestId } from '../../lib/isLatest'
 import { MARKET_ORDER } from '../../lib/meta'
-import { resultsMetaText, emptyState } from '../../lib/resultsMeta'
+import type { ReportRow } from '../../lib/schemas'
 import type { TableSort, TableSortKey } from '../../lib/tableSort'
 import { SearchBar } from './SearchBar'
 import { MarketChipBar } from './MarketChipBar'
-import { SortMenu } from './SortMenu'
 import { MoreFiltersPopover } from './MoreFiltersPopover'
 import { ActiveChips } from './ActiveChips'
-import { ResultsMeta } from './ResultsMeta'
-import { BentoWall } from './BentoWall'
-import { monthOf } from './bentoFormat'
-import { FeatureTile } from './FeatureTile'
-import { HitBar } from './HitBar'
-import { ResultRow } from './ResultRow'
-import { CardsView } from './CardsView'
-import { TableView } from './TableView'
-import { SearchSkeleton } from './SearchSkeleton'
-import { EmptyState } from './EmptyState'
-import { LoadMore } from './LoadMore'
-import { ViewSwitch } from './ViewSwitch'
-import { Reveal } from '../../components/primitives/Reveal'
-import { Pressable } from '../../components/primitives/Pressable'
-import { useScrolled } from '../../lib/useScrolled'
+import { LibraryHome } from './LibraryHome'
+import { HomeSkeleton, ListSkeleton } from './LibrarySkeleton'
+import { ResultsSection } from './ResultsSection'
+import { ReportPreview } from './ReportPreview'
+import { StateBox } from './StateBox'
 import styles from './SearchPage.module.css'
+
+/** 按 Enter 搜尋後骨架至少顯示這麼久（交接包：0.65 秒），快取命中時也看得出「有在找」。 */
+export const SEARCH_FLASH_MS = 650
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
-  // URL 為狀態真相；初次載入亦將 sort 過 normalizeSort，避免書籤 /search?sort=relevance（無 q）
+  // URL 為狀態真相；初次載入亦將 sort 過 normalizeSort，避免書籤 /library?sort=relevance（無 q）
   // 讓 browse 態殘留不合法排序（顯示與後端雖已各自回退，仍以狀態一致為準）。
   const state = useMemo(() => {
     const s = parseParams(params.toString())
@@ -44,35 +35,49 @@ export default function SearchPage() {
   }, [params])
   const mode = modeOf(state)
   const [tableSort, setTableSort] = useState<TableSort>({ key: 'date', dir: 'desc' })
+  const [preview, setPreview] = useState<ReportRow | null>(null)
 
   const stats = useStats()
   const results = useSearchResults(state)
-  // 工具列吸頂後才實體化成玻璃：捲到它底下之前保持透明無邊
-  const { scrolled, sentinelRef } = useScrolled()
   const terms = useMemo(() => queryTerms(state.q), [state.q])
   const latest = useMemo(() => latestId(results.rows), [results.rows])
 
-  // 空查詢、無篩選、未按「查看全部」→ Bento 簡報牆（每日簡報面）
-  const showBento = mode === 'browse' && !hasAnyFilter(state) && !state.all
+  // 骨架閃現：Enter 送出與「重試」都先顯示骨架，至少 SEARCH_FLASH_MS
+  const [flashing, setFlashing] = useState(false)
+  const flashTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(flashTimer.current), [])
+  function flash() {
+    window.clearTimeout(flashTimer.current)
+    setFlashing(true)
+    flashTimer.current = window.setTimeout(() => setFlashing(false), SEARCH_FLASH_MS)
+  }
+
+  // 空查詢、無篩選、未按「查看全部」→ 首頁 bento
+  const showHome = mode === 'browse' && !hasAnyFilter(state) && !state.all
 
   function applyState(next: SearchState) {
     setParams(buildParams({ ...next, sort: normalizeSort(modeOf(next), next.sort) }))
   }
   const update = (patch: Partial<SearchState>) => applyState({ ...state, ...patch })
 
-  /** 全語料庫的市場計數（/api/stats，與查詢無關）。 */
-  const corpusComposition = useMemo(
-    () => (stats.data?.markets ?? []).filter(m => m.market),
-    [stats.data],
-  )
+  function onSubmit(q: string) {
+    if (q) flash()
+    update({ q })
+  }
+  function retry() {
+    flash()
+    results.refetch()
+  }
+
+  /** 瀏覽時的市場計數來自全語料（/api/stats，與查詢無關）。 */
   const corpusCounts = useMemo(() => {
     const m: Record<string, number> = {}
-    for (const it of corpusComposition) m[it.market] = it.count
+    for (const it of stats.data?.markets ?? []) if (it.market) m[it.market] = it.count
     if (stats.data) m.ALL = stats.data.total_reports
     return m
-  }, [corpusComposition, stats.data])
+  }, [stats.data])
 
-  /** 命中集合的市場計數（/api/search 分面）。 */
+  /** 搜尋時的市場計數來自命中集合（/api/search 分面）。 */
   const hitCounts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const f of results.facets) m[f.market] = f.count
@@ -80,132 +85,94 @@ export default function SearchPage() {
     return m
   }, [results.facets, results.total])
 
-  // chips 三條規則，每一步都不說謊：
-  //   搜尋且未選市場 → 分面涵蓋全部命中，故顯示真實命中數，並隱藏零命中的市場；
-  //   搜尋且已選市場 → 分面只含該市場，其他市場的命中數無從得知（要再跑一次未篩選檢索），
-  //                    故全列出但不顯示計數，寧可不說也不編造；
+  // 膠囊計數三條規則，每一步都不說謊：
+  //   搜尋且未選市場 → 分面涵蓋全部命中，顯示真實命中數，並隱藏零命中的市場；
+  //   搜尋且已選市場 → 分面只含該市場，其他市場的命中數無從得知，全列出但不顯示計數；
   //   瀏覽 → 全語料庫計數。
   const searchAllMarkets = mode === 'search' && state.market === 'ALL'
-  const chipCounts = mode === 'search' ? (searchAllMarkets ? hitCounts : undefined) : corpusCounts
-  const chipCodes = searchAllMarkets
+  const chipCounts = mode === 'search' ? (searchAllMarkets && !results.isLoading ? hitCounts : undefined) : corpusCounts
+  const chipCodes = searchAllMarkets && !results.isLoading
     ? MARKET_ORDER.filter(c => (hitCounts[c] ?? 0) > 0)
     : undefined
 
   const instrumentOptions = (stats.data?.instrument_types ?? []).map(t => t.type)
   const reportTypeOptions = (stats.data?.report_types ?? []).map(t => t.type)
 
-  function onSort(key: TableSortKey) {
+  function onTableSort(key: TableSortKey) {
     setTableSort(s => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))
   }
 
-  const [topHit, ...restHits] = results.rows
-  const showFeature = mode === 'search' && state.view !== 'table' && !!topHit
+  const busy = flashing || results.isLoading || (results.isError && results.isFetching)
+
+  function body() {
+    if (busy) return showHome ? <HomeSkeleton /> : <ListSkeleton />
+    if (results.isError) {
+      return (
+        <StateBox
+          kind="error"
+          className={styles.stateTop}
+          title="研報載入失敗"
+          description="連線逾時，請稍後再試。"
+          action="重試"
+          onAction={retry}
+        />
+      )
+    }
+    if (showHome && results.rows.length > 0) {
+      return (
+        <LibraryHome
+          rows={results.rows}
+          latestId={latest}
+          totalReports={stats.data?.total_reports ?? results.total}
+          onPreview={setPreview}
+          onSeeAll={() => update({ all: true })}
+        />
+      )
+    }
+    return (
+      <ResultsSection
+        mode={mode}
+        rows={results.rows}
+        total={results.total}
+        terms={terms}
+        view={state.view}
+        onView={v => update({ view: v })}
+        tableSort={tableSort}
+        onTableSort={onTableSort}
+        hasMore={results.hasMore}
+        remaining={results.remaining}
+        loadingMore={results.isFetchingMore}
+        onLoadMore={results.loadMore}
+        onPreview={setPreview}
+        onClear={() => applyState(browseAll(state))}
+        filters={(
+          <MoreFiltersPopover
+            state={state}
+            instrumentOptions={instrumentOptions}
+            reportTypeOptions={reportTypeOptions}
+            onApply={update}
+          />
+        )}
+      />
+    )
+  }
 
   return (
     <div className={styles.page}>
-      <span ref={sentinelRef} className={styles.sentinel} aria-hidden="true" />
-      <div className={`${styles.bar} ${scrolled ? styles.barStuck : ''}`}>
-        <div className={styles.barInner}>
-          <div className={styles.controls}>
-            <div className={styles.searchRow}>
-              <SearchBar initial={state.q} onSubmit={q => update({ q })} size={showBento ? 'lg' : 'md'} />
-              {!showBento && (
-                <div className={styles.toolbar}>
-                  <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
-                  <MoreFiltersPopover
-                    state={state}
-                    instrumentOptions={instrumentOptions}
-                    reportTypeOptions={reportTypeOptions}
-                    onApply={update}
-                  />
-                  <ViewSwitch view={state.view} onChange={v => update({ view: v })} />
-                </div>
-              )}
-            </div>
-            <MarketChipBar
-              value={state.market}
-              onChange={m => update({ market: m })}
-              counts={chipCounts}
-              codes={chipCodes}
-            />
-            <ActiveChips state={state} onPatch={update} />
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.inner}>
-        {results.isError ? (
-          <Reveal className={styles.error}>
-            載入失敗，請稍後再試。<Pressable onClick={results.refetch}>重試</Pressable>
-          </Reveal>
-        ) : results.isLoading ? (
-          <SearchSkeleton view={state.view === 'table' ? 'table' : 'cards'} mode={mode} />
-        ) : results.total === 0 ? (
-          <Reveal>
-            <EmptyState
-              copy={emptyState(state, hasAnyFilter(state))}
-              onClear={() => applyState(clearFilters(state))}
-              onBrowseAll={() => applyState(browseAll(state))}
-            />
-          </Reveal>
-        ) : showBento ? (
-          <BentoWall
-            rows={results.rows}
-            latestId={latest}
-            totalReports={stats.data?.total_reports ?? results.total}
-            composition={corpusComposition}
-            monthLabel={monthOf(results.rows[0]?.report_date ?? null)}
-            onSeeAll={() => update({ all: true })}
+      <div className={styles.pad}>
+        <SearchBar initial={state.q} onSubmit={onSubmit} />
+        <div className={styles.filters}>
+          <MarketChipBar
+            value={state.market}
+            onChange={m => update({ market: m })}
+            counts={chipCounts}
+            codes={chipCodes}
           />
-        ) : (
-          <>
-            {/* 色譜對查詢有反應：這裡是命中結果的市場組成，不再是全語料庫 */}
-            {mode === 'search' && results.facets.length > 0 && (
-              <HitBar slices={results.facets} total={results.total} />
-            )}
-
-            <div className={styles.resultsHead}>
-              <span className={styles.resultsTitle}>{mode === 'search' ? '搜尋結果' : '最新入庫'}</span>
-              {/* 篇數歸命中組成條獨有；此處只說排序，避免同一畫面把數字講兩次 */}
-              {mode === 'search'
-                ? <span className={styles.resultsSort}>依相關度排序</span>
-                : <ResultsMeta text={resultsMetaText(state, results.total)} />}
-            </div>
-
-            {showFeature && (
-              <FeatureTile
-                className={styles.featureRow}
-                row={topHit}
-                mode="search"
-                isLatest={topHit.report_id === latest}
-              />
-            )}
-
-            {state.view === 'table' ? (
-              <TableView rows={results.rows} mode={mode} sort={tableSort} onSort={onSort} />
-            ) : mode === 'search' ? (
-              <div className={styles.results}>
-                {restHits.map((r, i) => (
-                  <ResultRow
-                    key={r.report_id}
-                    row={r}
-                    isLatest={r.report_id === latest}
-                    terms={terms}
-                    index={i}
-                  />
-                ))}
-              </div>
-            ) : (
-              // 完整清單（查看全部／已篩選的瀏覽）：時間是主軸，保留月份分組
-              <CardsView rows={results.rows} mode={mode} terms={terms} latestId={latest} />
-            )}
-
-            {results.hasMore && (
-              <LoadMore remaining={results.remaining} loading={results.isFetchingMore} onClick={results.loadMore} />
-            )}
-          </>
-        )}
+        </div>
+        <ActiveChips state={state} onPatch={update} />
+        {body()}
       </div>
+      <ReportPreview row={preview} onClose={() => setPreview(null)} />
     </div>
   )
 }

@@ -1,0 +1,17 @@
+.tile { display: flex; flex-direction: column; padding: 18px 22px; min-width: 0; }
+.head { display: flex; align-items: baseline; gap: 10px; }
+.date { font-size: 12px; color: var(--tf-text-4); }
+
+.points { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.point { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; line-height: 1.6; color: var(--tf-graphite); }
+.dot { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--tf-gold-strong); margin-top: 8.5px; }
+.pointText { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.spacer { flex: 1; min-height: 14px; }
+.stats { display: flex; gap: 20px; padding: 12px 0; border-top: 1px solid var(--tf-border-weak); }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.statN { font-size: 18px; font-weight: 600; color: var(--tf-text-1); }
+.statL { font-size: 12px; color: var(--tf-text-muted-aa); }
+.more { align-self: flex-start; }
+
+.note { margin: 14px 0 0; display: flex; align-items: baseline; gap: 10px; font-size: 13px; color: var(--tf-text-muted-aa); }

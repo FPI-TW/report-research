@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { SlidersHorizontal } from 'lucide-react'
 import { Popover } from '../../components/primitives/Popover'
-import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import { instrumentLabel, reportTypeLabel } from '../../lib/meta'
 import { activeAdvancedCount, type SearchState } from '../../lib/searchFilters'
@@ -37,7 +37,7 @@ function pick(s: SearchState): Draft {
 
 // 對齊 Claude Design（.dc.html 更多篩選彈出層）：pill 切換 + 清除條件/套用（apply-on-button）。
 // 商品類型/報告類型 pill 顯示中文（instrumentLabel/reportTypeLabel），送後端仍為原碼。
-// 註：.dc.html 的「個股 · 標的」為標的代碼/名稱文字框，但後端無「標的值」篩選端點，
+// 註：.dc.html 的「個股／標的」為標的代碼/名稱文字框，但後端無「標的值」篩選端點，
 // 依 Phase 1 §0 既定決策改為 個股/期貨 兩顆布林 pill；標「個股相關/期貨相關」以與商品類型的「期貨」區隔。
 export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions, onApply }: Props) {
   const [open, setOpen] = useState(false)
@@ -61,13 +61,12 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
 
   return (
     <div className={styles.wrap}>
-      <Pressable className={styles.trigger} onClick={() => setOpen(o => !o)}
-        aria-haspopup="dialog" aria-expanded={open}>
-        <Icon name="filter" size={18} />
+      <button type="button" className={styles.trigger} onClick={() => setOpen(o => !o)}
+        aria-haspopup="dialog" aria-expanded={open} data-on={count > 0 || undefined}>
+        <SlidersHorizontal size={14} strokeWidth={1.8} aria-hidden />
         更多篩選
         {count > 0 && <span className={styles.badge}>{count}</span>}
-        <Icon name="chevronDown" size={15} />
-      </Pressable>
+      </button>
       <Popover open={open} onClose={() => setOpen(false)} className={styles.panel}
         role="dialog" ariaLabel="更多篩選">
         <div className={styles.sectionLabel}>商品類型</div>
@@ -88,7 +87,7 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
           ))}
         </div>
 
-        <div className={styles.sectionLabel}>個股 · 期貨</div>
+        <div className={styles.sectionLabel}>標的</div>
         <div className={styles.pillRow}>
           <Pressable className={pillClass(draft.relates_stock)}
             aria-pressed={draft.relates_stock}

@@ -180,6 +180,7 @@ async def _snapshot(session, pair: "_Pair", rid_a_now: str) -> dict:
     win = await brief.fetch_window_reports(session, *window, limit=500)
     out["brief"] = {hashes[r.file_hash] for r in win if r.file_hash in hashes}
     out["brief_count_delta"] = await brief.count_window_reports(session, *window)
+    out["brief_mix_total"] = sum(n for _, n in (await brief.fetch_window_mix(session, *window)).markets)
     linked = await brief.fetch_reports_by_ids(session, [rid_a_now, rid_b])
     out["brief_links"] = {hashes[r.file_hash] for r in linked}
     changes = await brief.fetch_signal_changes(
@@ -270,6 +271,7 @@ class ReportVisibilityDbTests(unittest.TestCase):
         self.assertEqual(hidden["coverage"], before["coverage"] - 1)
         self.assertEqual(hidden["overview"], before["overview"] - 1)
         self.assertEqual(hidden["brief_count_delta"], before["brief_count_delta"] - 1)
+        self.assertEqual(hidden["brief_mix_total"], before["brief_mix_total"] - 1)
         self.assertEqual(before["catalog"], [(CODE, 2)])
         self.assertEqual(hidden["catalog"], [(CODE, 1)])
         self.assertEqual(restored["coverage"], before["coverage"])

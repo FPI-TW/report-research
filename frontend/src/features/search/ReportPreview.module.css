@@ -1,0 +1,27 @@
+.panel { --tf-modal-width: min(580px, 100%); }
+.body { padding: 24px 26px 22px; overflow-y: auto; }
+
+.meta { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.market { font-weight: 600; }
+.broker { color: var(--tf-text-muted-aa); }
+.date { color: var(--tf-text-4); }
+.close {
+  margin-left: auto; flex: none;
+  width: 30px; height: 30px; border: none; border-radius: 999px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--tf-border-weak); color: var(--tf-text-2); cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.close:hover { background: var(--tf-graphite-line); }
+.close:active { transform: scale(0.92); }
+.close:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; }
+
+.title { margin: 10px 0 0; font-size: 21px; line-height: 1.4; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.targets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.summary { --lib-preview-text: #3a3a3e; margin: 14px 0 0; font-size: 15px; line-height: 1.8; color: var(--lib-preview-text); }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .close { transition: none; }
+  .close:active { transform: none; }
+}

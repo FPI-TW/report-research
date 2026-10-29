@@ -1,0 +1,164 @@
+/* 本篇評等：淺灰底圓角卡（頁內唯一的填色塊，無陰影）。整張可點，到該標的的券商共識。 */
+.lk {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--tf-text-2);
+  text-decoration: none;
+  transition: color var(--tf-dur-1) var(--tf-ease-standard), gap var(--tf-dur-2) var(--tf-ease-out);
+}
+.lk:hover {
+  color: var(--tf-text-1);
+  gap: 7px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.card {
+  --rd-card-bg: #f7f7f8;
+  --rd-card-bg-hover: var(--tf-border-weak);
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--rd-card-bg);
+  color: var(--tf-text-1);
+  text-decoration: none;
+}
+
+.cardOn {
+  cursor: pointer;
+  transition:
+    background var(--tf-dur-1) var(--tf-ease-standard),
+    transform var(--tf-dur-1) var(--tf-ease-standard);
+}
+.cardOn:hover {
+  background: var(--rd-card-bg-hover);
+}
+.cardOn:active {
+  transform: scale(0.99);
+}
+.cardOn:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: -2px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rBuy { background: var(--tf-badge-buy-bg); color: var(--tf-badge-buy-fg); }
+.rOverweight { background: var(--tf-badge-overweight-bg); color: var(--tf-badge-overweight-fg); }
+.rNeutral { background: var(--tf-badge-neutral-bg); color: var(--tf-badge-neutral-fg); }
+.rUnderweight { background: var(--tf-badge-underweight-bg); color: var(--tf-badge-underweight-fg); }
+.rSell { background: var(--tf-badge-sell-bg); color: var(--tf-badge-sell-fg); }
+
+.mid {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.k {
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}
+
+.vRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.v {
+  font-size: 22px;
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.up,
+.down {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.up { color: var(--tf-up); }
+.down { color: var(--tf-down); }
+
+.who {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  max-width: 120px;
+  text-align: right;
+}
+.who .k {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 標的代號：數字與字母都等寬；行高沿用父層，免得撐高行框和旁邊錯位 */
+.code {
+  font-family: var(--tf-code);
+  line-height: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--tf-text-1);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lk,
+  .cardOn {
+    transition: none;
+  }
+  .lk:hover {
+    gap: 4px;
+  }
+  .cardOn:active {
+    transform: none;
+  }
+}

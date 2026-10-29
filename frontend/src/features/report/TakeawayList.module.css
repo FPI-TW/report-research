@@ -1,105 +1,167 @@
+/* 重點摘錄：每條是一列（可點時是按鈕）。金色編號圓點對應 PDF 縮圖與頁緣的同號圓點。
+   列本身左右各外擴 12px，hover 底色才不會貼著文字邊緣。 */
 .list {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
 }
 
 .tk {
-  display: block;
-  width: 100%;
-  margin-bottom: 3px;
-  /* 可跳的條目是 <button>：清掉瀏覽器預設，讓兩種條目的量體完全一致 */
-  appearance: none;
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  width: calc(100% + 24px);
+  margin: 0 -12px;
+  padding: 10px 12px;
   border: 0;
-  padding: 0;
+  border-radius: 10px;
   background: transparent;
-  font: inherit;
-  color: inherit;
   text-align: left;
+  color: var(--tf-text-1);
+  font: inherit;
 }
 
-/* 只有可搜尋的條目才有 hover 底色與焦點環；不可搜尋者維持靜態，不暗示動作。
-   刻意用「加法」區分（可跳的多一層底色），不是把不可跳的調淡——調淡會被讀成
-   「這條比較不重要」或「這條壞了」，兩個都是誤導。 */
 .tkOn {
   cursor: pointer;
+  transition:
+    background var(--tf-dur-1) var(--tf-ease-standard),
+    transform var(--tf-dur-1) var(--tf-ease-standard);
 }
-.tkOn:hover .in {
-  background: var(--tf-gold-panel);
-  border-color: var(--tf-gold-line);
+.tkOn:hover {
+  background: #f7f7f8;
+}
+.tkOn:active {
+  transform: scale(0.99);
+  background: var(--tf-border-weak);
 }
 .tkOn:focus-visible {
-  outline: none;
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: -2px;
 }
-.tkOn:focus-visible .in {
+
+/* 選取中（尋找中或已找到）：淡金底、編號圓點轉實心金 */
+.tkSel,
+.tkSel:hover {
   background: var(--tf-gold-panel);
-  border-color: var(--tf-gold-line);
-  box-shadow: var(--tf-ring-graphite);
-}
-
-/* 尋找結果：頁碼／命中數。等寬讓數字不跳動。 */
-.state {
-  display: block;
-  margin-top: 5px;
-  font-family: var(--tf-mono);
-  font-size: 10.5px;
-  color: var(--tf-gold-text);
-}
-
-/* 找不到——用文字明說，不用 tooltip：真實原因是「PDF 文字層與抽取文字對不上」，
-   對讀者既無意義也無法行動。 */
-.miss {
-  display: block;
-  margin-top: 5px;
-  font-size: 11px;
-  color: var(--tf-text-4);
-}
-
-.in {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 9px 10px;
-  border-radius: var(--tf-radius-md);
-  /* 透明邊是佔位（拿掉會讓整列左右各縮 1px），也是 hover/focus 時那圈邊的落點 */
-  border: 1px solid transparent;
-  transition: background var(--tf-dur-1) var(--tf-ease-standard),
-              border-color var(--tf-dur-1) var(--tf-ease-standard);
 }
 
 .n {
-  font-family: var(--tf-mono);
-  font-size: 10px;
-  color: var(--tf-gold-text);
-  background: var(--tf-gold-tint);
-  border: 1px solid var(--tf-gold-line);
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  flex: none;
+  width: 22px;
+  height: 22px;
   margin-top: 1px;
-  font-weight: 700;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-gold-tint);
+  color: var(--tf-gold-text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background 0.3s var(--tf-ease-apple),
+    color 0.3s var(--tf-ease-apple);
+}
+.tkSel .n {
+  background: var(--tf-gold-strong);
+  color: var(--tf-on-gold);
 }
 
 .x {
-  flex: 1;
-  font-size: 13.5px;
-  line-height: 1.7;
-  color: var(--tf-text-1);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* 讓出右上角 ↗ 的位置 */
+  padding-right: 18px;
+}
+
+.claim {
+  font-size: 14.5px;
+  line-height: 1.65;
 }
 
 .q {
-  display: block;
-  margin-top: 5px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
-  color: var(--tf-text-3);
-  font-style: italic;
-  padding-left: 9px;
-  border-left: 2px solid var(--tf-gold-line);
+  color: var(--tf-text-4);
+}
+/* 引號只在畫面上補：逐字引文的文字節點保持原樣（它也是 PDF 搜尋的關鍵字） */
+.q::before {
+  content: '「';
+}
+.q::after {
+  content: '」';
 }
 
-/* 只給輔助技術的結果播報。不用 display:none —— 那會讓 aria-live 完全不播報。 */
+/* 尋找中：流光文字 */
+.finding {
+  align-self: flex-start;
+  font-size: 12px;
+  background: linear-gradient(
+    90deg,
+    var(--tf-text-muted-aa) 0%,
+    var(--tf-text-muted-aa) 38%,
+    var(--tf-text-1) 50%,
+    var(--tf-text-muted-aa) 62%,
+    var(--tf-text-muted-aa) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    tkShimmer 1.8s linear infinite,
+    tkFade 0.18s ease both;
+}
+@keyframes tkShimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+@keyframes tkFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.found {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--tf-gold-text);
+  font-variant-numeric: tabular-nums;
+  animation: tkFade 0.18s ease both;
+}
+
+.miss {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+  animation: tkFade 0.18s ease both;
+}
+
+/* hover 時右上淡出 ↗：「點了會帶你去原文」 */
+.go {
+  position: absolute;
+  right: 10px;
+  top: 14px;
+  color: var(--tf-text-4);
+  opacity: 0;
+  transform: translate(-3px, 3px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.24s var(--tf-ease-apple);
+}
+.tkOn:hover .go,
+.tkOn:focus-visible .go {
+  opacity: 1;
+  transform: none;
+}
+
+/* 只給輔助技術的狀態播報。不用 display:none —— 那會讓 aria-live 完全不播報。 */
 .srOnly {
   position: absolute;
   width: 1px;
@@ -110,4 +172,35 @@
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
+@media (max-width: 1023px) {
+  .tk {
+    width: calc(100% + 16px);
+    margin: 0 -8px;
+    padding: 10px 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tkOn,
+  .n,
+  .go {
+    transition: none;
+  }
+  .tkOn:active {
+    transform: none;
+  }
+  .go {
+    transform: none;
+  }
+  .found,
+  .miss {
+    animation: none;
+  }
+  .finding {
+    animation: none;
+    background: none;
+    color: var(--tf-text-muted-aa);
+  }
 }

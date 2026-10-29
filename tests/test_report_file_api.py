@@ -110,6 +110,16 @@ class ReportFileBehaviourTests(unittest.TestCase):
         self.assertEqual(body["market"], "TW")
         # 檔案不存在 → has_file False（不因 file_path 有值就當有檔）
         self.assertFalse(body["has_file"])
+        # 欄序不含 file_hash 的舊列 → None，不因長度不足而 500
+        self.assertIsNone(body["file_hash"])
+
+    def test_full_returns_file_hash_for_reading_page_link(self):
+        """研究助理的來源只帶 report_id；「在閱讀頁開啟」靠 /full 換到閱讀頁的 file_hash。"""
+        digest = "d" * 64
+        row = ("a.pdf", "TW", "kgi", None, None, "/nonexistent/a.pdf", None, None, None, None, digest)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        body = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/full").json()
+        self.assertEqual(body["file_hash"], digest)
 
     def test_file_404_when_path_missing_on_disk(self):
         row = ("a.pdf", "TW", "kgi", None, None, "/nonexistent/a.pdf", None, None)

@@ -1,0 +1,113 @@
+/* 券商共識清單與詳情共用的小元件樣式（交接包「券商共識」與 Design Tokens）。
+   只給本 feature 用；全站共用的東西在 styles/tokens.css。 */
+
+/* 卡片（tile）：白底、髮絲框、圓角 16，無陰影（只有浮層有陰影）。 */
+.tile {
+  background: var(--tf-surface);
+  border: 1px solid #e6e6e9;
+  border-radius: 16px;
+}
+
+/* 一般按鈕 36px；按壓 scale(.97)。 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--tf-border);
+  border-radius: 10px;
+  background: var(--tf-surface);
+  color: var(--tf-text-1);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, box-shadow 0.18s, transform 0.12s;
+}
+.btn:hover { background: #f7f7f8; }
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition-duration: 0.08s;
+}
+.btn:disabled { color: var(--tf-text-muted-aa); background: var(--tf-surface); cursor: default; }
+.btn:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
+
+/* 評等徽章（紅漲綠跌）。 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.buy { background: var(--tf-badge-buy-bg); color: var(--tf-badge-buy-fg); }
+.overweight { background: var(--tf-badge-overweight-bg); color: var(--tf-badge-overweight-fg); }
+.neutral { background: var(--tf-badge-neutral-bg); color: var(--tf-badge-neutral-fg); }
+.underweight { background: var(--tf-badge-underweight-bg); color: var(--tf-badge-underweight-fg); }
+.sell { background: var(--tf-badge-sell-bg); color: var(--tf-badge-sell-fg); }
+.unknown { background: transparent; color: var(--tf-text-muted-aa); box-shadow: inset 0 0 0 1px var(--tf-border); }
+
+/* 標的代號：數字與字母都等寬；行高沿用父層以免錯位。 */
+.code {
+  font-family: var(--tf-code);
+  font-feature-settings: normal;
+  line-height: inherit;
+  letter-spacing: 0;
+}
+
+/* 數字、日期、篇數、價格：同一字型的等寬數字，不換 monospace。 */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.up { color: var(--tf-up); }
+.down { color: var(--tf-down); }
+
+/* 只給輔助技術讀的文字。display: block 讓可及名稱在它前後斷字：欄名接在數值前面時，
+   inline 的話會黏成「目標價1,568」。 */
+.srOnly {
+  display: block;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 骨架：#ececef 圓角塊＋白色掃光（1.5s）。 */
+.skel {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #ececef;
+}
+.skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: skelSweep 1.5s var(--tf-ease-apple) infinite;
+}
+@keyframes skelSweep {
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: none; }
+  .skel::after { animation: none; display: none; }
+  .btn:active:not(:disabled) { transform: none; }
+}

@@ -1,3 +1,4 @@
+import { ArrowUpRight, Info } from 'lucide-react'
 import type { Takeaway } from '../../lib/readingSchemas'
 import type { JumpResult } from './pdf/PdfViewer'
 import styles from './TakeawayList.module.css'
@@ -5,8 +6,9 @@ import styles from './TakeawayList.module.css'
 interface Props {
   takeaways: Takeaway[]
   /**
-   * 整區能不能互動。false＝這篇沒有可搜尋的 PDF（.docx／無檔／引擎已降級成內建檢視）。
-   * **整批切換，不逐條標灰**：逐條標灰會被讀成「這條資料有問題」，其實是引擎層的事。
+   * 整區能不能互動。false＝這篇沒有可搜尋的 PDF（.docx／無檔／引擎已降級成內建檢視／
+   * PDF 載入失敗）。**整批切換，不逐條標灰**：逐條標灰會被讀成「這條資料有問題」，
+   * 其實是引擎層的事。
    */
   canJump?: boolean
   /** 正在尋找中的那一條（點下去到結果回來之間） */
@@ -25,10 +27,13 @@ interface Props {
  * 知道系統做了什麼、結果是什麼。這與 2026-08-03 移除的那個舊互動不同：舊的寫著
  * 「跳至原文位置」卻根本沒有落點，按下去毫無反應、零訊息。
  *
- * 三種狀態都看得見（pending／頁碼／找不到），**沒有任何路徑通往「什麼都沒發生」**。
+ * 三種狀態都看得見（尋找中／第 N 頁／找不到），**沒有任何路徑通往「什麼都沒發生」**。
  *
  * 不可跳時維持非互動的 `<div>`，**不要用 disabled button**：disabled 預設不可聚焦，
  * 螢幕閱讀器會整條跳過，讀者連這條摘錄存在都不知道。
+ *
+ * 逐字引文原樣顯示、**不轉繁簡**：它是錨定基準，也是 PDF 搜尋的關鍵字。引號「」由 CSS
+ * 補在外面，不進文字節點。
  */
 export function TakeawayList({ takeaways, canJump, pendingOrdinal, result, onJump }: Props) {
   return (
@@ -46,32 +51,39 @@ export function TakeawayList({ takeaways, canJump, pendingOrdinal, result, onJum
             : ''}
       </span>
       {takeaways.map(t => {
+        const pending = pendingOrdinal === t.ordinal
+        const mine = result?.ordinal === t.ordinal ? result : null
+        const found = Boolean(mine?.ok)
+        const interactive = Boolean(canJump && t.quote)
         const body = (
-          <div className={styles.in}>
+          <>
             <span className={styles.n}>{t.ordinal}</span>
             <span className={styles.x}>
-              {t.claim}
+              <span className={styles.claim}>{t.claim}</span>
               {t.quote && <span className={styles.q}>{t.quote}</span>}
-              {pendingOrdinal === t.ordinal && <span className={styles.state}>尋找中…</span>}
-              {/* 成功時**不顯示任何文字**：PDF 真的捲過去並高亮，那本身就是回饋，
-                  再標一次頁碼是重複。唯一的例外是多重命中 —— 約 6-7% 的引文在同一份
-                  PDF 裡不只出現一次（其中約 1/3 還在同一頁），跳到的是第一處，未必是
-                  摘錄真正引用的那一處。不講的話，落錯位置看起來會跟成功一模一樣。
-                  （看不見畫面的讀者拿不到「捲過去了」這個回饋，所以頁碼仍保留在
-                    下方的 live region 裡。） */}
-              {result?.ordinal === t.ordinal && result.ok && (result.total ?? 1) > 1 && (
-                <span className={styles.state}>共 {result.total} 處</span>
+              {pending && <span className={styles.finding}>尋找中…</span>}
+              {/* 頁碼就是 PDF 縮圖列上那一頁的金色編號，兩邊對得起來。多重命中（約 6-7% 的
+                  引文在同一份 PDF 裡不只出現一次）跳到的是第一處，未必是摘錄真正引用的那一處
+                  —— 所以要再標「共 N 處」，否則落錯位置看起來會跟成功一模一樣。 */}
+              {found && mine && (
+                <span className={styles.found}>
+                  <span>第 {mine.page} 頁</span>
+                  {(mine.total ?? 1) > 1 && <span>共 {mine.total} 處</span>}
+                </span>
               )}
-              {result?.ordinal === t.ordinal && !result.ok && (
-                <span className={styles.miss}>原文中找不到這段文字</span>
+              {mine && !mine.ok && (
+                <span className={styles.miss}>
+                  <Info size={13} strokeWidth={2} aria-hidden />
+                  原文中找不到這段文字
+                </span>
               )}
             </span>
-          </div>
+          </>
         )
 
         // 沒有引文就沒有可搜尋的東西——那類條目一律非互動（claim 是 LLM 的轉述，
         // 拿它去搜 PDF 幾乎必然落空）。
-        if (!canJump || !t.quote) {
+        if (!interactive) {
           return (
             <div key={t.ordinal} className={styles.tk}>
               {body}
@@ -82,16 +94,17 @@ export function TakeawayList({ takeaways, canJump, pendingOrdinal, result, onJum
         return (
           // **這裡不可以掛 aria-label**：它會**覆蓋**由後代內容算出的可及名稱，而按鈕在
           // 可及性樹上是葉節點，讀者無法「進去」讀內容。掛上去等於把 claim、逐字引文、
-          // 尋找中、共 N 處、找不到全部對螢幕閱讀器關掉 —— 而 PDF 內文本來就沒有文字節點
+          // 尋找中、第 N 頁、找不到全部對螢幕閱讀器關掉 —— 而 PDF 內文本來就沒有文字節點
           // （SelectionLayer 只畫色塊），左欄摘錄是視障讀者唯一拿得到研報內容的地方。
           // 動作說明改成 sr-only 節點附加在內容之後：可及名稱＝內容 ＋ 動作。
           <button
             key={t.ordinal}
             type="button"
-            className={`${styles.tk} ${styles.tkOn}`}
+            className={`${styles.tk} ${styles.tkOn}${pending || found ? ` ${styles.tkSel}` : ''}`}
             onClick={() => onJump?.(t)}
           >
             {body}
+            <ArrowUpRight className={styles.go} size={14} strokeWidth={1.8} aria-hidden />
             <span className={styles.srOnly}>：在原文中尋找這段引文</span>
           </button>
         )

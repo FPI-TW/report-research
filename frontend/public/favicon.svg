@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="廷豐智能研報">
-  <rect width="64" height="64" rx="16" fill="#fffaf0"/>
-  <path d="M19 17v16c0 9 5.8 15 13 15s13-6 13-15V17" fill="none" stroke="#a86f09" stroke-width="4" stroke-linecap="round"/>
-  <rect x="23" y="18" width="18" height="20" rx="6" fill="#fff" stroke="#a86f09" stroke-width="4"/>
-  <path d="M29 27h6M32 18v-5M24 45c2.2 3.2 4.8 5 8 5s5.8-1.8 8-5" fill="none" stroke="#a86f09" stroke-width="3" stroke-linecap="round"/>
+  <rect width="64" height="64" rx="14" fill="#ffffff"/>
+  <!-- 照 src/assets/logo.png（560×560，側欄的品牌標記）量出的幾何重畫，座標沿用原圖；
+       transform 把原圖裡圖形所在的 432×432 範圍（左上 64,65.5）縮進白底內 52×52、四周留 6。 -->
+  <g transform="translate(6 6) scale(0.120370) translate(-64 -65.5)" fill="none" stroke="#ae7515" stroke-linecap="round">
+    <circle cx="280" cy="256" r="142" stroke-width="28"/>
+    <rect x="219.5" y="210.5" width="121" height="92" rx="18.5" stroke-width="27"/>
+    <path d="M280 120v43M280 350v42" stroke-width="28"/>
+    <path d="M84 257a196 196 0 0 0 392 0" stroke-width="22"/>
+  </g>
 </svg>

@@ -77,9 +77,15 @@ function NavRow({ register, index, def, active, collapsed }: { register: Registe
   )
 }
 
-/** 收合時才包提示（展開時文字就在列上，再浮一次是重複）。 */
+/**
+ * 收合時才顯示提示（展開時文字就在列上，再浮一次是重複）。
+ *
+ * 提示框一律包著、展開時以 `forceOpen={false}` 關掉，而不是展開時拆掉：拆掉會讓這一列的 DOM 節點
+ * 整個換新，而滑動高亮只在列第一次掛上時登錄節點（useRegisterFluidHoverItem），之後量的都是已經
+ * 移除的舊節點、量不到就沿用舊值——在收合狀態下載入、再展開，選取底色就一直停在收合時的 36px 寬。
+ */
 function RowTip({ show, label, children }: { show: boolean; label: ReactNode; children: React.ReactElement }) {
-  return show ? <Tooltip content={label} side="right" sideOffset={10}>{children}</Tooltip> : children
+  return <Tooltip content={label} side="right" sideOffset={10} forceOpen={show ? undefined : false}>{children}</Tooltip>
 }
 
 /**

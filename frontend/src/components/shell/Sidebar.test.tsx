@@ -81,3 +81,25 @@ test('收合時：個人列只剩頭像，使用說明鈕 inert（被裁掉的�
   const help = document.querySelector('aside a[href="/help"]')
   expect(help).toHaveAttribute('inert')
 })
+
+// 收合／展開若把列的 DOM 節點換新，滑動高亮登錄的還是舊節點、量不到新位置：在收合狀態下載入再展開，
+// 選取底色一直停在 36px 寬（實測）。jsdom 量不到版面，這裡釘住根因——切換前後是同一個節點。
+test('收合／展開切換時，主導覽各列是同一個 DOM 節點（不重新掛載）', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const ui = (collapsed: boolean) => (
+    <QueryClientProvider client={qc}>
+      <ShellContext.Provider value={{ openSearch: vi.fn(), openSettings: vi.fn() }}>
+        <MemoryRouter initialEntries={['/consensus']}><Sidebar collapsed={collapsed} onToggle={vi.fn()} /></MemoryRouter>
+      </ShellContext.Provider>
+    </QueryClientProvider>
+  )
+  const { rerender } = render(ui(true))
+  const link = screen.getByRole('link', { name: '券商共識' })
+  const search = screen.getByRole('button', { name: /搜尋/ })
+  rerender(ui(false))
+  expect(screen.getByRole('link', { name: '券商共識' })).toBe(link)
+  expect(screen.getByRole('button', { name: /搜尋/ })).toBe(search)
+  rerender(ui(true))
+  expect(screen.getByRole('link', { name: '券商共識' })).toBe(link)
+})

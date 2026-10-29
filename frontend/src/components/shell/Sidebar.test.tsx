@@ -64,3 +64,20 @@ test('一般介面沒有管理後台入口', () => {
   wrap()
   expect(screen.queryByText(/管理後台/)).not.toBeInTheDocument()
 })
+
+test('使用說明在個人列最右邊（帳號選單之外），連到 /help', () => {
+  wrap()
+  const help = screen.getByRole('link', { name: '使用說明' })
+  expect(help).toHaveAttribute('href', '/help')
+  const account = screen.getByRole('button', { name: /analyst|使用者/ })
+  // 同一列：帳號選單的觸發點在前、使用說明在後
+  expect(help.parentElement).toBe(account.parentElement)
+  expect(account.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+test('收合時：個人列只剩頭像，使用說明鈕 inert（被裁掉的按鈕不可被 Tab 到）', () => {
+  wrap('/library', true)
+  expect(screen.queryByRole('link', { name: '使用說明' })).not.toBeInTheDocument()
+  const help = document.querySelector('aside a[href="/help"]')
+  expect(help).toHaveAttribute('inert')
+})

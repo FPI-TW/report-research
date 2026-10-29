@@ -1,22 +1,27 @@
-/* 側欄底部的個人列：頭像、名稱、角色、上下箭頭。收合成 52px 時只剩頭像（文字被側欄的寬度裁掉）。 */
+/* 側欄底部的個人列：頭像、名稱與角色，上下箭頭緊貼在名稱與角色的右邊；最右邊是使用說明鈕（Sidebar）。
+   觸發範圍與 hover 底色只包住頭像到箭頭（寬度隨內容），不鋪滿到使用說明鈕：箭頭貼著文字時，
+   鋪滿會在箭頭右邊留一大塊空白底色。margin-right: auto 把使用說明鈕推到最右邊；名稱太長時整塊縮、
+   名稱截斷。收合成 52px 時只剩頭像（Sidebar 把它壓成 36px）。
+   刻意沒有按下縮放：選單以這一列為錨點，Radix 每一幀照它變形後的位置重新定位，按下的 scale(0.985)
+   會把選單往內拖 2px、放開再彈回去（實測），看起來就是點一下晃一下。 */
 .row {
-  position: relative; display: flex; align-items: center; gap: 10px;
-  width: 240px; height: 48px; padding: 0 10px 0 6px; border: none; border-radius: 8px;
+  position: relative; flex: 0 1 auto; min-width: 0; margin-right: auto; display: flex; align-items: center; gap: 10px;
+  height: 48px; padding: 0 10px 0 6px; border: none; border-radius: 8px;
   background: transparent; font: inherit; text-align: left; cursor: pointer;
-  transition: background 0.12s, transform 0.12s;
+  transition: background 0.12s;
 }
 .row:hover, .row[data-open] { background: var(--tf-hover); }
-.row:active { transform: scale(0.985); }
 .row:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: -2px; }
 .avatar {
   position: relative; flex: none; width: 28px; height: 28px; border-radius: 999px;
   display: flex; align-items: center; justify-content: center;
   background: var(--tf-graphite); color: #ffffff; font-size: 12px; font-weight: 600;
 }
-.text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+/* 不撐滿：箭頭才會跟在文字後面。名稱太長時文字縮、箭頭不縮。 */
+.text { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
 .name { font-size: 13px; font-weight: 550; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .role { font-size: 12px; color: var(--tf-text-3); }
-.chev { flex: none; color: var(--tf-text-4); }
+.chev { flex: none; margin-left: -4px; color: var(--tf-text-4); }
 
 /* 手機分頁列：只有頭像。 */
 .avatarBtn {
@@ -25,6 +30,11 @@
 }
 .avatarBtn:hover { background: var(--tf-hover); }
 
-.menu { min-width: 240px; }
+/* 選單寬度至少 200px、觸發點更寬時跟著它，不超出側欄；元件預設的 w-72（288px）比整個側欄還寬。 */
+.menu { width: max(200px, var(--radix-dropdown-menu-trigger-width)); min-width: 0; }
+/* 打開選單時第一列自動取得焦點，元件的 outline-none 是 Tailwind 的 layer 規則，蓋不過 tokens.css
+   無 layer 的全域 :focus-visible，第一列就套上一圈深色焦點環。選單裡亮起來的那一列（hover 底色）
+   就是焦點指示，鍵盤上下移動時照樣跟著走。 */
+.menu [role='menuitem']:focus-visible { outline: none; }
 /* 系統狀態異常時頭像右上角的紅點（燈號本體在 SystemStatus.module.css） */
 .alertDot { position: absolute; top: -1px; right: -1px; box-shadow: 0 0 0 2px var(--tf-sidebar); }

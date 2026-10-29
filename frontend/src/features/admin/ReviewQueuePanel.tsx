@@ -62,8 +62,10 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
   const save = (item: ReviewItem, update: ReviewUpdate) => {
     q.save(itemId(kind, item), update).then(() => {
       toast(`已儲存：${subjectOf(kind, item)}・${STATUS_LABEL[update.status]}・${VERIFY_LABEL[update.verification]}`)
-      // 存完就不在目前這個篩選裡的，不再指著它：清單會補上下一筆。
-      if (status !== 'all' && status !== update.status) select(null)
+      // 存完就不在目前這個篩選裡的，不再指著它：清單會補上下一筆。要同步清掉：`isSaving` 轉回 false 的
+      // 那次 render（React Query 排在下一個 macrotask）若還看得到舊的 `?review=`，單筆查詢會為這筆多打一次，
+      // 右欄也會閃一下「載入中…」；預設的 transition 在主機忙時就會晚到。
+      if (status !== 'all' && status !== update.status) select(null, { flushSync: true })
     }).catch(() => toast('儲存失敗，請重試', { tone: 'bad' }))
   }
 

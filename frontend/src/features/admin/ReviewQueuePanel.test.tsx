@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router'
+import { createMemoryRouter, useLocation } from 'react-router'
+import { RouterProvider } from 'react-router/dom'
 import { afterEach, expect, test, vi } from 'vitest'
 import { Toaster, dismissToast } from '../../components/console'
 import type { JudgeScale } from '../../lib/reviewSchemas'
@@ -29,13 +30,19 @@ function mount(handler: Handler, { scale = null, canReadContent = false, entry =
   })
   vi.stubGlobal('fetch', fetchMock)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // 與 App.tsx 同一種 router（data router＋react-router/dom 的 RouterProvider）：導航的 flushSync 只在這種
+  // router 生效，用 <MemoryRouter> 會讓「儲存後同步取消選取」在測試裡靜默變回 transition。
+  const router = createMemoryRouter([{
+    path: '*',
+    element: <>
+      <ReviewQueuePanel scale={scale} canReadContent={canReadContent} />
+      <Toaster />
+      <Search />
+    </>,
+  }], { initialEntries: [entry] })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[entry]}>
-        <ReviewQueuePanel scale={scale} canReadContent={canReadContent} />
-        <Toaster />
-        <Search />
-      </MemoryRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   )
   return fetchMock
@@ -280,10 +287,20 @@ test('展開五頁後儲存只刷新首頁，後續分頁不漏掉因結案而�
   expect(detail().getByRole('heading', { name: '問答 qa11' })).toBeInTheDocument()
   expect(search()).toBe('?review=qa11')
   fetchMock.mockClear()
+  // 每次 DOM 變動都記下 toast 出現時 URL 指著哪一筆。取消選取若退回 transition，toast 先 commit、URL 晚到，
+  // 這段空檔裡單筆查詢會為剛存好的那筆多打一次；觀察者在每次 commit 後就跑，不必等主機忙才抓得到。
+  const urlsWithToast: (string | null)[] = []
+  const probe = new MutationObserver(() => {
+    if (screen.queryByText(/^已儲存：/)) urlsWithToast.push(search())
+  })
+  probe.observe(document.body, { childList: true, subtree: true, characterData: true })
   fireEvent.click(seg('處理狀態', '已處理'))
   fireEvent.click(screen.getByRole('button', { name: '儲存' }))
   const more = await screen.findByRole('button', { name: '載入更多（共 40 筆）' })
   expect(await screen.findByRole('status')).toHaveTextContent('已儲存：問答 qa11・已處理・未驗證')
+  probe.disconnect()
+  expect(urlsWithToast.length).toBeGreaterThan(0)
+  expect(urlsWithToast).not.toContain('?review=qa11')
   expect(listReads(fetchMock).map(p => p.get('offset'))).toEqual(['0'])
   expect(queue().getAllByText(/^問答 qa/)).toHaveLength(10)
   // 存完的那筆已不在待處理：不再指著它，詳情回到第一筆

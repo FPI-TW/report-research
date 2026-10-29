@@ -19,6 +19,10 @@ function parseStatus(raw: string | null): StatusFilter {
  * 沒有用共用的 `useQueryParam`：換分頁或換狀態要同時清掉 `review`，而它一次只改一個鍵，
  * 連呼叫兩次後一次會蓋掉前一次。換分頁、換狀態各多一筆瀏覽紀錄；在清單裡換選取則取代目前這一筆，
  * 免得逐筆看完之後要按很多次上一頁才離得開。
+ *
+ * react-router 預設把導航包在 `startTransition`，URL 可能晚於同一刻的其他狀態更新才 commit。`select` 的
+ * `flushSync` 讓這次改動同步生效（只在 data router 有效，`App.tsx` 用的就是）：儲存後取消選取靠它，見
+ * `ReviewQueuePanel.tsx` 的 `save`。
  */
 export function useReviewParams() {
   const [params, setParams] = useSearchParams()
@@ -27,7 +31,7 @@ export function useReviewParams() {
   const status = parseStatus(params.get('status'))
   const review = params.get('review')
 
-  const patch = useCallback((changes: Record<string, string | null>, replace: boolean) => {
+  const patch = useCallback((changes: Record<string, string | null>, replace: boolean, flushSync = false) => {
     setParams(prev => {
       const next = new URLSearchParams(prev)
       for (const [key, value] of Object.entries(changes)) {
@@ -35,7 +39,7 @@ export function useReviewParams() {
         else next.delete(key)
       }
       return next
-    }, { replace })
+    }, { replace, flushSync })
   }, [setParams])
 
   const setKind = useCallback((next: ReviewKind) => {
@@ -44,8 +48,8 @@ export function useReviewParams() {
   const setStatus = useCallback((next: StatusFilter) => {
     patch({ status: next === DEFAULT_STATUS ? null : next, review: null }, false)
   }, [patch])
-  const select = useCallback((id: string | null) => {
-    patch({ review: id }, true)
+  const select = useCallback((id: string | null, { flushSync = false }: { flushSync?: boolean } = {}) => {
+    patch({ review: id }, true, flushSync)
   }, [patch])
 
   return { kind, status, review, setKind, setStatus, select }

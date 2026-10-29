@@ -34,6 +34,9 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 # 守門：tests/test_llm_http.py 的 ConftestGuardTests（含靜態釘住「賦值而非 setdefault」）。
 os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
+# OpenCode Go（`LLM_PROVIDER=opencode_go` 的手動備援）同一套兩道防線：切到 Go 的測試自己 patch 假金鑰與 transport。
+os.environ["OPENCODE_GO_API_KEY"] = ""
+os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
 
 # 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
 # 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，

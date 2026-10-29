@@ -1264,6 +1264,7 @@ export type SchemaSection = z.infer<typeof SchemaSectionSchema>
 
 export const SecretsPresentSchema = z.object({
   deepseek_api_key: z.boolean(),
+  opencode_go_api_key: z.boolean().nullable().optional(),
   session_secret: z.boolean(),
   edge_secret: z.boolean(),
   r2_credentials: z.boolean(),

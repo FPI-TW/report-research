@@ -20,13 +20,17 @@
 2. 否則查預設表 `DEEPSEEK_DEFAULTS`（第二版計畫 §8）。只有網搜那列**刻意**是空字串：網搜沒有
    後端（見下方 `DEEPSEEK_DEFAULTS` 的註解）。
 
-`LLM_PROVIDER` 只剩一個合法值 `deepseek`（預設；空值＝預設）。**claude CLI 已於 2026-09-23 永久放棄**
-（OAuth 過期、不再修復登入，計畫 D-C），遷移終局 PR-M 移除了 CLI backend，連帶退役 `claude_cli`／
+`LLM_PROVIDER` 有兩個合法值：`deepseek`（預設；空值＝預設）與 `opencode_go`。**claude CLI 已於 2026-09-23
+永久放棄**（OAuth 過期、不再修復登入，計畫 D-C），遷移終局 PR-M 移除了 CLI backend，連帶退役 `claude_cli`／
 `claude_only` 兩個值與 Claude 預設表（`RETIRED_PROVIDERS`）。設了退役值或未知值：web 記 ERROR、當成
 `deepseek`（線上要容錯，檢索等不需要 LLM 的功能不能因一個拼字停擺）；批次在預檢以 rc=2 拒跑
 （`scripts/_llm_env.require_llm_key`：拒跑不花錢，而想「讓 LLM 停下來」的人設了退役值，不能變成照常計費）。
-沒有可回退的後端：402 或 DeepSeek 停機時 LLM 功能全部停擺，處置是儲值或等服務恢復
-（docs/production_resilience.md）。
+
+`opencode_go` 是 DeepSeek 帳號失效（402 餘額不足）時的**手動備援**：同一顆模型改經 OpenCode Go 訂閱的
+OpenAI 相容端點送出。**換的是送達路徑、不是模型**：白名單、預設表、judge 系譜、`judge_model` 一律沿用
+DeepSeek 名稱，只在送出時經 `wire_model` 翻成 Go 的模型 ID（`GO_MODEL_IDS`）。刻意不做自動 failover：
+Go 有用量上限、條款以 coding agent 流量為前提、資料保留條件逐月續約，切過去是要人決定的事。切換與切回的
+步驟、風險見 docs/production_resilience.md「切換到 OpenCode Go」。
 
 注意：預設表只決定「名稱」。名稱不在白名單內的呼叫一律失敗、不會被送到付費端點：
 
@@ -140,7 +144,23 @@ DEEPSEEK_DEFAULTS: dict[str, str] = {
 }
 
 PROVIDER_DEEPSEEK = "deepseek"
-PROVIDERS = (PROVIDER_DEEPSEEK,)
+PROVIDER_OPENCODE_GO = "opencode_go"
+PROVIDERS = (PROVIDER_DEEPSEEK, PROVIDER_OPENCODE_GO)
+
+# 各 provider 的金鑰環境變數（`llm_http._api_key`、批次預檢 `scripts/_llm_env`、啟動自檢共用）。
+PROVIDER_KEY_ENV: dict[str, str] = {
+    PROVIDER_DEEPSEEK: "DEEPSEEK_API_KEY",
+    PROVIDER_OPENCODE_GO: "OPENCODE_GO_API_KEY",
+}
+PROVIDER_LABEL: dict[str, str] = {PROVIDER_DEEPSEEK: "DeepSeek", PROVIDER_OPENCODE_GO: "OpenCode Go"}
+
+# 白名單名稱 → OpenCode Go 的模型 ID（同一顆模型；`deepseek-flash` 與舊名 `deepseek-v4-flash` 都是 V4.1-Flash）。
+# 白名單每一個名稱都要有對應（tests/test_llm_models.py 釘住），否則切到 Go 時那個名稱會送出 Go 不認得的 ID。
+GO_MODEL_IDS: dict[str, str] = {
+    "deepseek-flash": "deepseek-v4.1-flash",
+    "deepseek-v4-flash": "deepseek-v4.1-flash",
+    "deepseek-v4-pro": "deepseek-v4-pro",
+}
 DEFAULT_PROVIDER = PROVIDER_DEEPSEEK
 # PR-M 退役的值（claude CLI 已放棄、Claude 預設表已刪）。與一般拼錯分開列，是為了讓錯誤訊息說得出
 # 「這個值曾經合法、現在沒有對應的後端」：web 記 ERROR 並當成 deepseek，批次預檢 rc=2（見模組 docstring）。
@@ -182,6 +202,18 @@ def provider(env: Mapping[str, str] | None = None) -> str:
     return raw
 
 
+def key_env(env: Mapping[str, str] | None = None) -> str:
+    """目前 provider 的金鑰環境變數名稱。"""
+    return PROVIDER_KEY_ENV[provider(env)]
+
+
+def wire_model(model: str, prov: str) -> str:
+    """送進請求本體的模型 ID。DeepSeek 原樣；Go 查 `GO_MODEL_IDS`，查不到原樣（白名單外的名稱在分派層就被擋下）。"""
+    if prov == PROVIDER_OPENCODE_GO:
+        return GO_MODEL_IDS.get(model, model)
+    return model
+
+
 def default_model(task: str) -> str:
     """某任務的預設（不看任務旋鈕）。"""
     return DEEPSEEK_DEFAULTS[task]
@@ -221,10 +253,11 @@ def diagnose(
     *,
     has_key: bool,
     web_enabled: bool = False,
+    prov: str = PROVIDER_DEEPSEEK,
 ) -> list[tuple[int, str]]:
     """啟動自檢：解析結果 → [(logging level, 訊息)]。純函式，web/server.py 負責記錄。
 
-    - 白名單名稱而 `DEEPSEEK_API_KEY` 為空 → ERROR（那些任務每一次呼叫都會失敗）。
+    - 白名單名稱而目前 provider 的金鑰（`PROVIDER_KEY_ENV[prov]`）為空 → ERROR（那些任務每一次呼叫都會失敗）。
     - 不在白名單的名稱（含 `claude-*`、CLI 別名、打錯字、空字串）→ ERROR：PR-M 起沒有其他 backend，
       `llm.stream_completion` 對這些名稱一律拋 config 錯誤。
     - 網搜任務（`ask_web`）不列入上面兩項：網搜沒有後端（Claude CLI 已移除、DeepSeek 網搜延後到 P9），
@@ -243,8 +276,8 @@ def diagnose(
     if http and not has_key:
         out.append((
             logging.ERROR,
-            "DEEPSEEK_API_KEY 為空，但這些任務解析到 DeepSeek 模型，呼叫會全數失敗："
-            + "、".join(http),
+            f"{PROVIDER_KEY_ENV[prov]} 為空（LLM_PROVIDER={prov}），但這些任務解析到 DeepSeek 模型，"
+            "呼叫會全數失敗：" + "、".join(http),
         ))
     if other:
         out.append((

@@ -257,7 +257,7 @@ class LlmObserverTests(unittest.TestCase):
             llm_http.remove_observer(seen.append)
         self.assertEqual(len(seen), 1)
         self.assertEqual(set(seen[0]), {"task", "model", "model_resp", "kind", "finish_reason", "attempts",
-                                        "ttft_ms", "total_ms", "tokens"})
+                                        "ttft_ms", "total_ms", "tokens", "provider"})
         self.assertEqual(seen[0]["tokens"], {"hit": 10, "miss": 20, "completion": 30, "reasoning": 0})
 
     def test_observer_errors_do_not_break_the_call(self):

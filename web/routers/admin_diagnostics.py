@@ -111,6 +111,8 @@ class ConfigFlags(BaseModel):
 
 class SecretsPresent(BaseModel):
     deepseek_api_key: bool
+    # 可缺：前後端版本錯開時舊 web 不回這個鍵（OpenCode Go 是 402 時的手動備援）
+    opencode_go_api_key: bool | None = None
     session_secret: bool
     edge_secret: bool
     r2_credentials: bool

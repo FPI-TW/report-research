@@ -138,9 +138,11 @@ def _tag_via_cli(
     而排程殼只印一行「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
     2026-08-12 那輪 rsync 帶進 33 檔、全被吞掉，四天後才被發現。
     """
+    from app.services.rating_index import strip_rating_index
     from app.services.tagging import TAG_INSTRUCTION, parse_tags
 
-    body = (text or "")[:excerpt]
+    # 封面的近期報告／評等異動索引表會被當成本篇標的（app/services/rating_index.py）
+    body = strip_rating_index(text)[:excerpt]
     prompt = (
         f"{TAG_INSTRUCTION}\n\n檔名：{file_name}\n"
         f"報告內文（前 {excerpt} 字摘錄）：\n{body}\n\n"

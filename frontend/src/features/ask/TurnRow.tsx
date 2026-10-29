@@ -35,15 +35,17 @@ interface Props {
  *
  * - 重新生成失敗（已有舊版本）：再重新生成一次。一個字都沒串出就失敗時 reducer 已把舊版還原成
  *   live，所以這次重生不會把失敗的那次留成一個版本。
- * - 一般提問失敗、而且是最後一輪：原地重送（editResubmit）。這一輪沒有 qaId（後端沒有落庫），
- *   所以不帶 edit_of，後端看到的就是一題普通的提問。
+ * - 一般提問失敗、而且是最後一輪：原地重送（editResubmit）。失敗的那輪通常已補存成停止列
+ *   （有 qaId，見 useAskController 的 keepUnfinished；後端自己記下的失敗列也會收斂到同一列），
+ *   帶 edit_of 讓後端停用它再重送，紀錄裡才不會留下失敗的那次。沒存到（qaId 為 null）就不帶，
+ *   後端看到的是一題普通的提問。
  * - 其他情形（中間輪失敗之後又問了別的）：原地重送會把後面的輪次一起截掉，只好照舊新開一輪。
  */
 function retry(t: Turn, isLast: boolean, a: TurnActions) {
   if (t.priorVersions.length > 0 || t.versionCount > 1) {
     a.regenerate(t.id, t.qaId, t.question)
-  } else if (isLast && !t.qaId) {
-    a.editResubmit(t.id, null, t.question)
+  } else if (isLast) {
+    a.editResubmit(t.id, t.qaId, t.question)
   } else {
     a.submit(t.question)
     return

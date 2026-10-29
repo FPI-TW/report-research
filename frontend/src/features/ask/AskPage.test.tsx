@@ -18,6 +18,7 @@ vi.mock('../../lib/askApi', () => ({
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
   sendFeedback: vi.fn(async () => {}),
 }))
+import { stopAsk } from '../../lib/askApi'
 import AskPage from './AskPage'
 
 afterEach(() => {
@@ -143,7 +144,7 @@ test('換不到 file_hash（研報被隱藏、查無）時留在原頁並提示'
   expect(screen.getByTestId('pathname').textContent).toBe('/assistant')
 })
 
-test('失敗後重試：同一輪原地重送，不多一輪、不帶 edit_of', async () => {
+test('失敗後重試：同一輪原地重送，不多一輪；帶 edit_of 停用補存的那一列', async () => {
   streamAsk
     .mockReturnValueOnce(immediate([
       { event: 'status', data: { stage: 'understanding' } },
@@ -155,14 +156,35 @@ test('失敗後重試：同一輪原地重送，不多一輪、不帶 edit_of', 
   const alert = await screen.findByRole('alert')
   expect(alert).toHaveTextContent('回答沒有完成')
   expect(alert).toHaveTextContent('問答服務發生錯誤，請稍後再試')
+  // 沒跑完的新提問照樣落庫（stopAsk 回 qa-stop），對話才會留在側欄
+  await waitFor(() => expect(stopAsk).toHaveBeenCalledWith(expect.objectContaining({ question: '台積電評價' })))
+  await waitFor(() => expect(screen.getByTestId('search-params').textContent).toBe('?c=qa-stop'))
   fireEvent.click(within(alert).getByRole('button', { name: '重試' }))
   await waitFor(() => expect(screen.getByText(/這是答案/)).toBeInTheDocument())
   expect(turns()).toHaveLength(1)
   expect(streamAsk).toHaveBeenCalledTimes(2)
   const body = streamAsk.mock.calls[1][0] as Record<string, unknown>
   expect(body.question).toBe('台積電評價')
-  expect(body.edit_of).toBeUndefined()
+  // 停用失敗的那一列再重送：紀錄裡不留下失敗的那次
+  expect(body.edit_of).toBe('qa-stop')
+  expect(body.conversation_id).toBe('qa-stop')
   expect(body.regenerate_of).toBeUndefined()
+})
+
+test('失敗後重試：補存沒成功（沒有 qaId）就不帶 edit_of，當一題普通的提問', async () => {
+  vi.mocked(stopAsk).mockRejectedValueOnce(new Error('stop failed: 503'))
+  streamAsk
+    .mockReturnValueOnce(immediate([{ event: 'error', data: { detail: '問答服務發生錯誤，請稍後再試' } }]))
+    .mockReturnValueOnce(immediate(answered))
+  wrap()
+  ask('台積電評價')
+  const alert = await screen.findByRole('alert')
+  await waitFor(() => expect(stopAsk).toHaveBeenCalled())
+  fireEvent.click(within(alert).getByRole('button', { name: '重試' }))
+  await waitFor(() => expect(screen.getByText(/這是答案/)).toBeInTheDocument())
+  expect(turns()).toHaveLength(1)
+  const body = streamAsk.mock.calls[1][0] as Record<string, unknown>
+  expect(body.edit_of).toBeUndefined()
 })
 
 // 閱讀頁的「就這篇提問」靠 ?q= 把報告名帶過來

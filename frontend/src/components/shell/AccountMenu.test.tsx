@@ -18,14 +18,14 @@ function stub(role: 'admin' | 'user' = 'user', status: { status: string; message
   }))
 }
 
-function wrap(openSettings = vi.fn()) {
+function wrap(openSettings = vi.fn(), variant: 'sidebar' | 'mobile' = 'sidebar') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
       <ShellContext.Provider value={{ openSearch: vi.fn(), openSettings }}>
         <MemoryRouter initialEntries={['/library']}>
           <Routes>
-            <Route path="/library" element={<AccountMenu variant="sidebar" />} />
+            <Route path="/library" element={<AccountMenu variant={variant} />} />
             <Route path="/help" element={<div>說明頁</div>} />
           </Routes>
         </MemoryRouter>
@@ -36,19 +36,20 @@ function wrap(openSettings = vi.fn()) {
 }
 
 async function openMenu(user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByText('analyst')
+  await waitFor(() => expect(screen.getByRole('button', { name: /analyst/ })).toBeInTheDocument())
   await user.click(screen.getByRole('button', { name: /analyst/ }))
   return screen.findByRole('menu')
 }
 
-test('個人列顯示名稱與角色；選單只有設定、使用說明、登出', async () => {
+test('個人列顯示名稱與角色；選單只有設定、登出（使用說明是側欄個人列右邊的獨立按鈕）', async () => {
   stub('user')
   const user = userEvent.setup()
   wrap()
   expect(await screen.findByText('使用者')).toBeInTheDocument()
   await openMenu(user)
-  expect(screen.getAllByRole('menuitem')).toHaveLength(3)
-  for (const name of ['設定', '使用說明', '登出']) expect(screen.getByRole('menuitem', { name })).toBeInTheDocument()
+  expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+  for (const name of ['設定', '登出']) expect(screen.getByRole('menuitem', { name })).toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: '使用說明' })).not.toBeInTheDocument()
 })
 
 test('管理員也看不到「管理後台」入口（避免資安疑慮，管理員直接輸入網址）', async () => {
@@ -70,11 +71,12 @@ test('設定：開啟設定彈窗的「帳號」分頁', async () => {
   expect(openSettings).toHaveBeenCalledWith('account')
 })
 
-test('使用說明：導到 /help', async () => {
+test('手機版：分頁列沒有放使用說明的位置，選單仍列使用說明並導到 /help', async () => {
   stub()
   const user = userEvent.setup()
-  wrap()
+  wrap(vi.fn(), 'mobile')
   await openMenu(user)
+  expect(screen.getAllByRole('menuitem')).toHaveLength(3)
   await user.click(screen.getByRole('menuitem', { name: '使用說明' }))
   expect(await screen.findByText('說明頁')).toBeInTheDocument()
 })

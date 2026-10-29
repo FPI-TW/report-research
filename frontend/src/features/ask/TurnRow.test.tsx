@@ -70,6 +70,15 @@ test('最後一輪的一般提問失敗：原地重送（不帶 edit_of、不多
   expect(actions.stickToBottom).toHaveBeenCalled()
 })
 
+test('最後一輪的一般提問失敗、已補存成停止列：原地重送並帶 edit_of 停用那一列', () => {
+  const t = makeTurn({ id: 'e', phase: 'error', qaId: 'qa-stop', answer: '' })
+  render(<TurnRow turn={t} busy={false} isLast actions={actions} />)
+  fireEvent.click(screen.getByRole('button', { name: '重試' }))
+  expect(actions.editResubmit).toHaveBeenCalledWith('e', 'qa-stop', 'Q')
+  expect(actions.submit).not.toHaveBeenCalled()
+  expect(actions.regenerate).not.toHaveBeenCalled()
+})
+
 test('重新生成失敗：再重新生成一次（沿用版本鏈），不另開一輪', () => {
   const prior = { answer: '舊答案', sources: [], extSources: [], qaId: 'qa0', thinkingMs: null, stages: [], feedback: null, followups: [], stopped: false }
   const t = makeTurn({ id: 'r', phase: 'error', qaId: 'qa0', priorVersions: [prior], versionCount: 2, versionIndex: 1 })

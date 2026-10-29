@@ -24,11 +24,14 @@ export default defineConfig({
     fs: {
       allow: [fileURLToPath(new URL('.', import.meta.url)), fileURLToPath(new URL('../docs', import.meta.url))],
     },
+    // 一律寫物件、changeOrigin: false：Vite 的字串簡寫會自動帶 changeOrigin: true，把 Host 改寫成
+    // localhost:8097，與瀏覽器送的 Origin（dev server 的位址）不符，web/csrf.py 就把每個 POST
+    // （含 /login、/api/ask）擋成 403。
     proxy: {
-      '/api': 'http://localhost:8097',
-      '/external': 'http://localhost:8097',
-      '/login': 'http://localhost:8097',
-      '/logout': 'http://localhost:8097',
+      '/api': { target: 'http://localhost:8097', changeOrigin: false },
+      '/external': { target: 'http://localhost:8097', changeOrigin: false },
+      '/login': { target: 'http://localhost:8097', changeOrigin: false },
+      '/logout': { target: 'http://localhost:8097', changeOrigin: false },
     },
   },
 })

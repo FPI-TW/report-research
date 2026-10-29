@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { getConversation, deleteConversation, sendFeedback } from './askApi'
+import { getConversation, deleteConversation, fitKeepalive, sendFeedback, stopAsk } from './askApi'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -74,4 +74,34 @@ test('sendFeedback POST 到 /api/feedback', async () => {
   await sendFeedback('qa1', 'like')
   const call = spy.mock.calls[0] as unknown as [string, RequestInit]
   expect(JSON.parse(call[1].body as string)).toEqual({ qa_id: 'qa1', value: 'like' })
+})
+
+const bytes = (b: unknown) => new TextEncoder().encode(JSON.stringify(b)).length
+
+test('keepalive 本體在上限內就原樣送', () => {
+  const body = { question: 'Q', partial_answer: '短', sources: [{ n: 1 }], stages: ['understanding'] }
+  expect(fitKeepalive(body)).toBe(body)
+})
+
+test('超過 keepalive 上限：先捨來源，再截短已生成的文字，問題一定留著', () => {
+  const sources = Array.from({ length: 100 }, (_, n) => ({ n, title: '標題'.repeat(100) }))
+  const withSources = fitKeepalive({ question: 'Q', partial_answer: '答', sources })
+  expect(withSources.sources).toEqual([])
+  expect(withSources.partial_answer).toBe('答')
+
+  const long = fitKeepalive({ question: 'Q', partial_answer: '字'.repeat(40_000), sources })
+  expect(bytes(long)).toBeLessThanOrEqual(60_000)
+  expect(long.question).toBe('Q')
+  expect(long.partial_answer.length).toBeGreaterThan(0)
+  expect('字'.repeat(40_000).startsWith(long.partial_answer)).toBe(true)
+})
+
+test('stopAsk 的 keepalive：請求帶 keepalive，本體已經裁過', async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ qa_id: 'q1' }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+  const sources = Array.from({ length: 100 }, (_, n) => ({ n, title: '標題'.repeat(100) }))
+  await stopAsk({ question: 'Q', partial_answer: '答', sources }, { keepalive: true })
+  const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit
+  expect(init.keepalive).toBe(true)
+  expect(JSON.parse(init.body as string).sources).toEqual([])
 })

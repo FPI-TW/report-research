@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '../primitives/ConfirmDialog'
 import { useConversations } from '../../lib/useConversations'
+import { usePendingConversations } from '../../lib/pendingConversation'
 import { useDeleteConversation } from '../../lib/useDeleteConversation'
 import styles from './ConversationList.module.css'
 
@@ -19,15 +20,38 @@ const delVariants = {
   hover: { opacity: 1 },
 }
 
+interface Row {
+  key: string
+  /** null＝剛送出的新對話，後端還沒建立這一串（見 pendingConversation.ts）。 */
+  id: string | null
+  title: string
+  /** 研究助理頁上正在跑的那一串（還沒有 id、網址也還沒有 ?c）。 */
+  current?: boolean
+}
+
 /**
  * 側欄的「最近」對話（交接包「側欄」）。標題列右側的 ＋ 開新對話（新對話入口只在這裡與搜尋彈窗，
  * 研究助理頁右上不放）；標題可收合清單。搜尋對話改在搜尋彈窗（⌘K）裡做，這裡不再放搜尋框。
+ *
+ * 新對話送出第一題就排到最上面（暫存列），不等那一輪跑完；清單重抓到真的那一列之後由它接手。
+ * 沒跑完的也照樣落庫（useAskController 的 keepUnfinished），所以暫存列最後一定會換成真列或消失。
  */
 export function ConversationList() {
   const [open, setOpen] = useState(readOpen)
   const { items, hasMore, isFetchingMore, loadMore } = useConversations('')
+  const drafts = usePendingConversations()
   const [params] = useSearchParams()
+  const { pathname } = useLocation()
   const activeC = params.get('c')
+  const known = new Set(items.map(cv => cv.conversation_id))
+  const rows: Row[] = [
+    ...drafts
+      .filter(p => !(p.conversationId && known.has(p.conversationId)))
+      // 拿到 conversation_id 之後就以它為 key：重抓回來的真列沿用同一個 key，不會閃一下。
+      // 只有最新那筆可能是正在跑的那一串；較舊、還沒有 id 的是切走後正在補存的。
+      .map((p, i) => ({ key: p.conversationId ?? `pending:${p.key}`, id: p.conversationId, title: p.title, current: i === 0 && drafts[0] === p })),
+    ...items.map(cv => ({ key: cv.conversation_id, id: cv.conversation_id, title: cv.title })),
+  ]
   const navigate = useNavigate()
   const del = useDeleteConversation()
   const [pending, setPending] = useState<string | null>(null)
@@ -67,35 +91,38 @@ export function ConversationList() {
       {open && (
         <div className={`${styles.list} tf-scroll`}>
           <AnimatePresence initial={false}>
-            {items.map((cv) => {
-              const on = cv.conversation_id === activeC
+            {rows.map(({ key, id, title, current }) => {
+              const on = id ? id === activeC : Boolean(current) && !activeC && pathname === '/assistant'
               return (
                 <motion.div
-                  key={cv.conversation_id}
+                  key={key}
                   className={`${styles.row} ${on ? styles.rowActive : ''}`}
                   data-active={on ? 'true' : undefined}
                   layout="position"
                   initial="rest"
                   animate="rest"
                   whileHover="hover"
-                  exit={{ opacity: 0, x: -12, transition: { duration: 0.18 } }}
+                  // 暫存列換成真列（key 從 pending: 換成 id）時是原地替換，不播刪除的淡出。
+                  exit={id ? { opacity: 0, x: -12, transition: { duration: 0.18 } } : undefined}
                 >
                   <Link
-                    to={`/assistant?c=${encodeURIComponent(cv.conversation_id)}`}
+                    to={id ? `/assistant?c=${encodeURIComponent(id)}` : '/assistant'}
                     className={`${styles.item} ${on ? styles.active : ''}`}
                     aria-current={on ? 'page' : undefined}
-                    title={cv.title}
-                  >{cv.title}</Link>
-                  <motion.button
-                    type="button"
-                    className={styles.del}
-                    aria-label="刪除對話"
-                    variants={delVariants}
-                    whileFocus={{ opacity: 1 }}
-                    onClick={() => setPending(cv.conversation_id)}
-                  >
-                    <Trash2 size={14} strokeWidth={1.6} aria-hidden />
-                  </motion.button>
+                    title={title}
+                  >{title}</Link>
+                  {id && (
+                    <motion.button
+                      type="button"
+                      className={styles.del}
+                      aria-label="刪除對話"
+                      variants={delVariants}
+                      whileFocus={{ opacity: 1 }}
+                      onClick={() => setPending(id)}
+                    >
+                      <Trash2 size={14} strokeWidth={1.6} aria-hidden />
+                    </motion.button>
+                  )}
                 </motion.div>
               )
             })}

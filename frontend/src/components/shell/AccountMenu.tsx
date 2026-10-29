@@ -15,7 +15,9 @@ import styles from './AccountMenu.module.css'
 const ROLE_LABEL: Record<string, string> = { admin: '管理員', user: '使用者' }
 
 /**
- * 帳號選單（交接包「帳號選單」）：側欄底部的個人列往上開，只有設定、使用說明、登出。
+ * 帳號選單（交接包「帳號選單」）：側欄底部的個人列往上開，只有設定與登出。
+ * 使用說明在側欄是個人列最右邊的獨立按鈕（`Sidebar`）；手機分頁列只有頭像、沒有放它的位置，
+ * 所以手機版的選單仍列使用說明。
  *
  * - **不放「管理後台」入口**（含管理員帳號）：避免資安疑慮，管理員直接輸入 `/app/admin`。
  *   授權只在後端 `web/authz.py`，這裡本來就只是顯示層。
@@ -69,15 +71,22 @@ export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar'
         <DropdownContent side="top" align="start" sideOffset={6} className={styles.menu}>
           <DropdownLabel>{me.data?.username ?? name}</DropdownLabel>
           <MenuItem index={0} icon={Settings} label="設定" onSelect={() => openSettings('account')} />
-          <MenuItem
-            index={1}
-            icon={CircleHelp}
-            label="使用說明"
-            onSelect={() => navigate('/help')}
-            onPointerEnter={() => preloadRoute('help')}
-          />
+          {variant === 'mobile' && (
+            <MenuItem
+              index={1}
+              icon={CircleHelp}
+              label="使用說明"
+              onSelect={() => navigate('/help')}
+              onPointerEnter={() => preloadRoute('help')}
+            />
+          )}
           <DropdownSeparator />
-          <MenuItem index={2} icon={LogOut} label="登出" onSelect={() => logoutRef.current?.requestSubmit()} />
+          <MenuItem
+            index={variant === 'mobile' ? 2 : 1}
+            icon={LogOut}
+            label="登出"
+            onSelect={() => logoutRef.current?.requestSubmit()}
+          />
         </DropdownContent>
       </DropdownMenu>
       {/* 登出要 POST（CSRF 守門在後端）；選單項目觸發這張隱藏表單。 */}

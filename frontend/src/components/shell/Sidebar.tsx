@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router'
-import { BarChart3, FileText, Library, MessageSquare, PanelLeft, Search, type LucideIcon } from 'lucide-react'
+import { BarChart3, CircleHelp, FileText, Library, MessageSquare, PanelLeft, Search, type LucideIcon } from 'lucide-react'
 import { useFluidHover, useRegisterFluidHoverItem } from '@/hooks/use-fluid-hover'
 import { FluidHoverHighlight } from '@/components/fluid-hover-highlight'
 import { useStableRect } from '@/lib/useStableRect'
@@ -77,26 +77,35 @@ function NavRow({ register, index, def, active, collapsed }: { register: Registe
   )
 }
 
-/** 收合時才包提示（展開時文字就在列上，再浮一次是重複）。 */
+/**
+ * 收合時才顯示提示（展開時文字就在列上，再浮一次是重複）。
+ *
+ * 提示框一律包著、展開時以 `forceOpen={false}` 關掉，而不是展開時拆掉：拆掉會讓這一列的 DOM 節點
+ * 整個換新，而滑動高亮只在列第一次掛上時登錄節點（useRegisterFluidHoverItem），之後量的都是已經
+ * 移除的舊節點、量不到就沿用舊值——在收合狀態下載入、再展開，選取底色就一直停在收合時的 36px 寬。
+ */
 function RowTip({ show, label, children }: { show: boolean; label: ReactNode; children: React.ReactElement }) {
-  return show ? <Tooltip content={label} side="right" sideOffset={10}>{children}</Tooltip> : children
+  return <Tooltip content={label} side="right" sideOffset={10} forceOpen={show ? undefined : false}>{children}</Tooltip>
 }
 
 /**
  * 左側欄（交接包「側欄」）：Claude Desktop／Grok 式單欄，256px，可收合成 52px 圖示列。
  * 收合是同一個元件縮寬，文字淡出、圖示不位移；不做整個隱藏，也不用 Fluid 的 peek。
  *
- * 主導覽的 hover 與選取各是一塊滑動的底色（Fluid 的 useFluidHover 量每列位置），
- * 選取那塊跟著路由滑到新的一列。列高 36px、列間 2px，兩塊底色不會黏在一起。
+ * 主導覽的選取是一塊滑動的底色（Fluid 的 useFluidHover 只拿來量每列位置），跟著路由滑到新的一列。
+ * hover 則是每一列自己的底色，與下方「最近」對話同一個樣子：滑動的 hover 底色會落後游標，
+ * 經過列間 2px 的空隙時還會淡出再重新淡入，看起來時有時無。
+ *
+ * 底部是個人列（帳號選單）與最右邊的使用說明鈕；收合時只剩頭像。
  */
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { pathname } = useLocation()
   const { openSearch } = useShell()
   const mac = useIsMac()
   const navRef = useRef<HTMLElement>(null)
-  const hover = useFluidHover(navRef)
+  const rows = useFluidHover(navRef)
   const active = activeIndexOf(pathname)
-  const activeRect = useStableRect(hover, active)
+  const activeRect = useStableRect(rows, active)
   const toggleLabel = collapsed ? '展開側欄' : '收合側欄'
 
   return (
@@ -113,12 +122,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         </Tooltip>
       </div>
 
-      <nav ref={navRef} className={styles.nav} aria-label="主導覽" {...hover.handlers}>
+      <nav ref={navRef} className={styles.nav} aria-label="主導覽">
         <FluidHoverHighlight rect={activeRect} session={0} fadeIn={false} transition={GLIDE} className={styles.hlActive} />
-        <FluidHoverHighlight hover={hover} transition={GLIDE} className={styles.hlHover} />
-        <SearchRow register={hover.registerItem} kbd={`${mac ? '⌘' : 'Ctrl'} K`} mac={mac} collapsed={collapsed} onClick={openSearch} />
+        <SearchRow register={rows.registerItem} kbd={`${mac ? '⌘' : 'Ctrl'} K`} mac={mac} collapsed={collapsed} onClick={openSearch} />
         {NAV.map((n, i) => (
-          <NavRow key={n.to} register={hover.registerItem} index={i + 1} def={n} active={active === i + 1} collapsed={collapsed} />
+          <NavRow key={n.to} register={rows.registerItem} index={i + 1} def={n} active={active === i + 1} collapsed={collapsed} />
         ))}
       </nav>
 
@@ -128,6 +136,18 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
       <div className={styles.foot}>
         <AccountMenu variant="sidebar" collapsed={collapsed} />
+        <Tooltip content="使用說明" side="top" sideOffset={6}>
+          <Link
+            to="/help"
+            className={styles.help}
+            aria-label="使用說明"
+            aria-hidden={collapsed}
+            inert={collapsed}
+            onPointerEnter={() => preloadRoute('help')}
+          >
+            <CircleHelp size={16} strokeWidth={1.5} aria-hidden />
+          </Link>
+        </Tooltip>
       </div>
     </aside>
   )

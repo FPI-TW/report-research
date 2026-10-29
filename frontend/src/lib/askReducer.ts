@@ -77,6 +77,9 @@ export type AskAction =
   | { type: 'load'; turns: Turn[] }
   | { type: 'reset' }
   | { type: 'ask-stop'; id: string; qaId: string | null }
+  /** 沒跑完的那一輪補存之後（useAskController 的 keepUnfinished）記下 qa_id，phase 不動：
+   *  之後重生帶 regenerate_of 接回那一列，不會在對話裡多出一題。 */
+  | { type: 'set-qa'; id: string; qaId: string }
   | { type: 'regenerate-start'; id: string }
   | { type: 'followups'; id: string; data: string[] }
   | { type: 'set-version'; id: string; index: number }
@@ -185,6 +188,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
       // 同時顯示「排隊中…」與排隊說明，兩個狀態互相矛盾。
       turns: mapTurn(state.turns, action.id, t => ({ ...t, phase: 'stopped', qaId: action.qaId ?? t.qaId, queuePosition: null })),
     }
+    case 'set-qa': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, qaId: action.qaId })) }
     case 'followups': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, followups: action.data })) }
     case 'regenerate-start': return {
       turns: mapTurn(state.turns, action.id, t => {

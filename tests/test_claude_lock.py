@@ -52,6 +52,8 @@ LOCKED_SCRIPTS = [
     # 不在 main 進入點）——排程每 3 小時叫它一次而真正呼叫 LLM 的只有一天一次，
     # 在入口取鎖會讓其餘七次 no-op 撞鎖 rc=75、把 unit_failures 灌成雜訊。
     "generate_brief.py",
+    # 修復索引表污染的一次性批次：重標經 _ingest_core 的行內標註呼叫點。
+    "repair_rating_index.py",
 ]
 
 

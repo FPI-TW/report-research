@@ -24,6 +24,7 @@ from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
 load_llm_env()
 
 from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
+from app.services.rating_index import strip_rating_index  # noqa: E402
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, CliResult, is_retryable, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
@@ -45,7 +46,8 @@ _fail = 0
 
 
 def build_prompt(file_name: str, text: str, excerpt: int) -> str:
-    body = (text or "")[:excerpt]
+    # 與 sync 的行內標註同一套前處理（scripts/_ingest_core.py 的 _tag_via_cli）
+    body = strip_rating_index(text)[:excerpt]
     return (
         f"{TAG_INSTRUCTION}\n\n"
         f"檔名：{file_name}\n"

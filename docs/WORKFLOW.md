@@ -69,7 +69,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 ### ② 多維標註：`scripts/tag_all_cli.py`（LLM）
 
 - 輸入 `data/extracted/`，輸出 `data/tags/<file_hash>.json`；已有標籤檔即跳過。`--workers`（預設 8）、`--limit`、`--excerpt`（預設 10000 字）。模型 `TAG_MODEL`（未設查表，預設 `deepseek-flash`）。
-- 標籤 schema（`app/services/tagging.py`）：`market`（findb 代碼）、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`（四碼數字，最多 8 個）、`futures_targets`（小詞表）。Python 端 `parse_tags` 正規化：舊中文標籤經 `LEGACY_TO_FINDB` 對照，詞表外的值丟棄。
+- 標籤 schema（`app/services/tagging.py`）：`market`（findb 代碼）、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`（四碼數字，最多 8 個）、`futures_targets`（小詞表）。Python 端 `parse_tags` 正規化：舊中文標籤經 `LEGACY_TO_FINDB` 對照，詞表外的值丟棄。送標註與訊號擷取的內文先經 `app/services/rating_index.py` 剔除封面的近期報告／評等異動索引表。
 - 取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75。
 - 提高 `--workers` 前依 `.env.example` 算式重算 DB 連線數。
 

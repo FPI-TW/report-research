@@ -109,6 +109,11 @@ class StripTests(unittest.TestCase):
             with self.subTest(text=text[:10]):
                 self.assertEqual(R.strip_rating_index(text), text)
 
+    def test_dash_only_calendar_untouched(self):
+        # 富邦總經週報的選舉行事曆：整群都是「-」結尾，沒有一列帶評等詞
+        text = "全球重要選舉\n3/10 葡萄牙 議會選舉 - \n4/10 南韓 國會選舉 - \n6/2 墨西哥 總統與國會選舉 - \n" + PADDING
+        self.assertEqual(R.strip_rating_index(text), text)
+
     def test_fewer_than_min_rows_untouched(self):
         text = "10/22 3293鈊象 買進\n\n10/15 2049上銀 買進\n內文"
         self.assertEqual(R.strip_rating_index(text), text)

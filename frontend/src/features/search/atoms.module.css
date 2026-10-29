@@ -1,0 +1,80 @@
+/* 研報庫各元件共用的小零件（交接包 Design Tokens）。
+   交接包有、tokens.css 還沒有的值先在這裡用頁面變數撐著：卡片框 #e6e6e9、卡片圓角 16px、
+   骨架 #ececef、共識列底 #f7f7f8。日後補進 tokens 時改這幾行即可。 */
+.tile {
+  --lib-tile-border: #e6e6e9;
+  background: var(--tf-surface);
+  border: 1px solid var(--lib-tile-border);
+  border-radius: 16px;
+}
+
+.h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; color: var(--tf-text-1); }
+
+/* 數字：介面字型的等寬數字，不換 monospace（交接包「字型」） */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* 標的代號：數字與字母都等寬，行高沿用父層 */
+.code { font-family: var(--tf-code); font-feature-settings: normal; line-height: inherit; letter-spacing: 0; }
+.codeChip {
+  display: inline-flex; align-items: center;
+  height: 22px; padding: 0 7px; border-radius: 6px;
+  background: var(--tf-canvas); color: var(--tf-text-2);
+  font-family: var(--tf-code); font-size: 11.5px; line-height: 22px;
+}
+
+/* 文字連結（「券商共識 ›」「閱讀全文 ›」）：hover 時箭頭往外推 */
+.lk {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; color: var(--tf-text-2); text-decoration: none;
+  background: none; border: none; padding: 0; cursor: pointer; font-family: inherit;
+  transition: color 120ms ease, gap 180ms var(--tf-ease-out);
+}
+.lk:hover { color: var(--tf-text-1); gap: 7px; }
+.lk:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; border-radius: 4px; }
+
+/* 評等徽章（紅漲綠跌） */
+.badge {
+  display: inline-flex; align-items: center; flex: none;
+  height: 22px; padding: 0 8px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.buy { background: var(--tf-badge-buy-bg); color: var(--tf-badge-buy-fg); }
+.overweight { background: var(--tf-badge-overweight-bg); color: var(--tf-badge-overweight-fg); }
+.neutral { background: var(--tf-badge-neutral-bg); color: var(--tf-badge-neutral-fg); }
+.underweight { background: var(--tf-badge-underweight-bg); color: var(--tf-badge-underweight-fg); }
+.sell { background: var(--tf-badge-sell-bg); color: var(--tf-badge-sell-fg); }
+
+/* 按鈕 */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; padding: 0 16px;
+  border: 1px solid var(--tf-border); border-radius: 10px;
+  background: var(--tf-surface); color: var(--tf-text-1);
+  font-family: inherit; font-size: 13px; font-weight: 500; text-decoration: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.btn:hover { background: #f7f7f8; color: var(--tf-text-1); }
+.btn:active { transform: scale(0.97); }
+.btn:focus-visible { outline: 2px solid var(--tf-gold-text); outline-offset: 2px; }
+.btnPrimary, .btnPrimary:hover { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
+
+/* 骨架：#ececef 圓角塊＋白色掃光 1.5s */
+.skel {
+  --lib-skel: #ececef;
+  display: block; position: relative; overflow: hidden;
+  border-radius: 6px; background: var(--lib-skel);
+}
+.skel::after {
+  content: ""; position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: skelSweep 1.5s var(--tf-ease-apple) infinite;
+}
+@keyframes skelSweep { to { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .skel::after { animation: none; display: none; }
+  .btn, .lk { transition: none; }
+  .btn:active { transform: none; }
+}

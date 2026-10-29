@@ -51,7 +51,7 @@ export function RouteError({ standalone = false }: Props) {
           <button type="button" className={styles.btn} onClick={() => window.location.reload()}>
             重新載入
           </button>
-          {!stale && <Link className={styles.link} to="/search">回到檢索</Link>}
+          {!stale && <Link className={styles.link} to="/library">回到研報庫</Link>}
         </div>
         {!stale && message && <code className={styles.detail}>{message}</code>}
       </div>

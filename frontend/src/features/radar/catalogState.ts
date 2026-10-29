@@ -1,6 +1,6 @@
 import {
   catalogSortSchema, stanceFilterSchema,
-  type CatalogSort, type Market, type StanceFilter,
+  type CatalogSort, type Market, type RadarInstrumentItem, type StanceFilter,
 } from '../../lib/radarSchemas'
 
 /** 共識預覽恆以 90 天窗期計算（後端 `build_instrument_slim()` 不吃 URL 的 `window`）。 */
@@ -13,7 +13,7 @@ export const SORT_OPTIONS: ReadonlyArray<{ value: CatalogSort; label: string }> 
   { value: 'latest', label: '最新研報' },
   { value: 'reports', label: '研報數' },
   { value: 'brokers', label: '券商數' },
-  { value: 'code', label: '代碼' },
+  { value: 'code', label: '代號' },
 ]
 
 export const SORT_LABEL: Record<CatalogSort, string> = Object.fromEntries(
@@ -27,7 +27,7 @@ export const STANCE_DISPLAY: Record<StanceFilter, string> = {
   bearish: '偏空',
 }
 
-/** `''` 代表不篩選——原生 `<select>` 的 value 只能是字串，不能是 undefined。 */
+/** 立場選項；`''` 代表不篩選（「全部」）。清單頁的分段控制把它換成 `all`，進網址時是刪掉 `stance`。 */
 export const STANCE_OPTIONS: ReadonlyArray<{ value: StanceFilter | ''; label: string }> = [
   { value: '', label: '全部' },
   { value: 'bullish', label: STANCE_DISPLAY.bullish },
@@ -84,5 +84,27 @@ export function instrumentHref(
   // broker（展開哪家券商）是「這一檔」的狀態：帶去另一檔只會指到一家可能根本沒覆蓋它的券商。
   sp.delete('broker')
   if (!sp.get('window')) sp.set('window', '90')
-  return `/radar?${sp}`
+  return `/consensus?${sp}`
+}
+
+export interface ChangePart {
+  tone: 'up' | 'down'
+  text: string
+}
+
+/**
+ * 「近期變化」欄：評等調升、調降各幾家（可同時出現）。評等沒有變動時才看目標價的調整方向，
+ * 而且只講方向——清單 payload 本來就沒有目標價數值，這裡也不該冒出幅度。
+ */
+export function changeParts(item: RadarInstrumentItem): ChangePart[] {
+  const stance = item.consensus?.stance
+  if (!stance) return []
+  const parts: ChangePart[] = []
+  if (stance.upgrades > 0) parts.push({ tone: 'up', text: `調升 ${stance.upgrades}` })
+  if (stance.downgrades > 0) parts.push({ tone: 'down', text: `調降 ${stance.downgrades}` })
+  if (parts.length) return parts
+  const dir = item.consensus?.target?.revision_direction
+  if (dir === 'up') return [{ tone: 'up', text: '目標價上修' }]
+  if (dir === 'down') return [{ tone: 'down', text: '目標價下修' }]
+  return []
 }

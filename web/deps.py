@@ -167,6 +167,9 @@ from app.services.brief import (  # noqa: E402
 from app.services.brief import (  # noqa: E402
     fetch_reports_by_ids as fetch_brief_reports,
 )
+from app.services.brief import (  # noqa: E402
+    fetch_window_mix as fetch_brief_window_mix,
+)
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.radar import (  # noqa: E402
@@ -175,6 +178,7 @@ from app.services.radar import (  # noqa: E402
     fetch_catalog_facets,
     fetch_coverage_counts,
     fetch_instrument_signals,
+    fetch_recent_rating_changes,
     fetch_signals_for_instruments,
     list_radar_instruments,
 )
@@ -220,6 +224,7 @@ __all__ = [
     "fetch_brief_by_date",
     "fetch_brief_dates",
     "fetch_brief_reports",
+    "fetch_brief_window_mix",
     "fetch_broker_coverage_counts",
     "fetch_broker_signals",
     "fetch_catalog_facets",
@@ -229,6 +234,7 @@ __all__ = [
     "fetch_instrument_names",
     "fetch_instrument_signals",
     "fetch_latest_brief",
+    "fetch_recent_rating_changes",
     "fetch_signals",
     "fetch_signals_for_instruments",
     "fetch_similar",

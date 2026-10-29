@@ -11,9 +11,13 @@ interface ModalProps {
   title?: ReactNode
   children: ReactNode
   className?: string
+  /** 不包標題列與 .body 內距，由呼叫端自己排版（設定、搜尋彈窗）。 */
+  bare?: boolean
+  /** 沒有 title 時的無障礙名稱。 */
+  ariaLabel?: string
 }
 
-export function Modal({ open, onClose, title, children, className }: ModalProps) {
+export function Modal({ open, onClose, title, children, className, bare = false, ariaLabel }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const reduced = useReducedMotion()
@@ -28,7 +32,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
 
   // 一律 portal 到 document.body。`.scrim` 是 position: fixed，而 fixed 的定位基準
   // 不必然是視窗——祖先只要有 backdrop-filter／filter／transform 就會成為它的
-  // containing block。側欄 SideRail 的 `.sidebar` 正是磨砂玻璃（backdrop-filter），歷史對話
+  // containing block。舊版側欄的 `.sidebar` 是磨砂玻璃（backdrop-filter），歷史對話
   // 面板又 overflow: hidden，所以歷史對話的刪除確認框原本被鎖在側欄裡、
   // 貼著畫面最左側顯示並被裁切。這條缺陷不會有任何錯誤訊息，只會「窗開錯地方」。
   return createPortal(
@@ -54,6 +58,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
             role="dialog"
             aria-modal="true"
             aria-labelledby={title != null ? titleId : undefined}
+            aria-label={title == null ? ariaLabel : undefined}
             onClick={e => e.stopPropagation()}
             initial={{ opacity: 0, y: 8, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -66,7 +71,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
                 <button type="button" className={styles.close} onClick={onClose} aria-label="關閉">×</button>
               </div>
             )}
-            <div className={styles.body}>{children}</div>
+            {bare ? children : <div className={styles.body}>{children}</div>}
           </motion.div>
         </motion.div>
       )}

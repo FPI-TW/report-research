@@ -41,7 +41,7 @@ describe('管理後台主題', () => {
 
   it('只有 /app/admin 底下才先寫主題；研報平台不碰', () => {
     stubSystem(true)
-    applyAdminThemeEarly('/app/search')
+    applyAdminThemeEarly('/app/library')
     expect(document.documentElement.dataset.theme).toBeUndefined()
     applyAdminThemeEarly('/app/administrator')
     expect(document.documentElement.dataset.theme).toBeUndefined()

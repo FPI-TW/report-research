@@ -81,6 +81,8 @@ it('引擎失敗 → 退回內建 iframe（含逃生口），並留下可觀測�
   // 沒有這兩條逃生口，降級後的空白框就是死路
   expect(screen.getByRole('link', { name: '在新分頁開啟' })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: '下載' })).toBeInTheDocument()
+  // 產品 UI 規則：同列資訊靠間距區分，不用「·」
+  expect(screen.queryByText('·')).toBeNull()
 
   // 降級對讀者是靜默的，少了這行就永遠查不出「為什麼大家的檢視器長得不一樣」
   expect(err.mock.calls.some(call => String(call[0]).includes('[pdf] 引擎不可用'))).toBe(true)
@@ -89,7 +91,7 @@ it('引擎失敗 → 退回內建 iframe（含逃生口），並留下可觀測�
 it('非 PDF → 給可下載的替代說明，兩種檢視都不掛', () => {
   render(<PdfPane doc={doc({ is_pdf: false, file_name: '產業展望.docx' })} />)
 
-  expect(screen.getByText('DOCX 文件無法內嵌預覽，請下載查看。')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'DOCX 文件無法內嵌預覽' })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: '下載原始檔' })).toBeInTheDocument()
   expect(screen.queryByTestId('pdf-viewer')).toBeNull()
   expect(screen.queryByTitle(TITLE)).toBeNull()
@@ -98,6 +100,6 @@ it('非 PDF → 給可下載的替代說明，兩種檢視都不掛', () => {
 it('無原始檔 → 只說找不到，不給指向不存在檔案的連結', () => {
   render(<PdfPane doc={doc({ has_file: false, is_pdf: false })} />)
 
-  expect(screen.getByText('找不到原始檔。')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '找不到原始檔' })).toBeInTheDocument()
   expect(screen.queryByRole('link')).toBeNull()
 })

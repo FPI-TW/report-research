@@ -66,10 +66,10 @@ class LoginTotpTests(_Base):
     def test_password_step_issues_short_lived_challenge_not_a_session(self):
         self._turn_on_totp(self.alice)
         c = _client()
-        r = c.post("/login", data={"username": "alice", "password": USER_PW, "next": "/app/ask"})
+        r = c.post("/login", data={"username": "alice", "password": USER_PW, "next": "/app/assistant"})
         self.assertEqual(r.status_code, 303)
         self.assertTrue(r.headers["location"].startswith("/login?step=totp"))
-        self.assertIn("next=%2Fapp%2Fask", r.headers["location"])
+        self.assertIn("next=%2Fapp%2Fassistant", r.headers["location"])
         cookies = r.headers.get_list("set-cookie")
         mfa = next(h for h in cookies if h.startswith(auth.MFA_COOKIE_NAME + "="))
         self.assertIn("Path=/login", mfa)
@@ -84,8 +84,8 @@ class LoginTotpTests(_Base):
         c = _client()
         c.post("/login", data={"username": "alice", "password": USER_PW})
         with _clock(T0 + 30):
-            r = c.post("/login", data={"step": "totp", "code": _code(secret, T0 + 30), "next": "/app/ask"})
-        self.assertEqual((r.status_code, r.headers["location"]), (303, "/app/ask"))
+            r = c.post("/login", data={"step": "totp", "code": _code(secret, T0 + 30), "next": "/app/assistant"})
+        self.assertEqual((r.status_code, r.headers["location"]), (303, "/app/assistant"))
         cookies = r.headers.get_list("set-cookie")
         self.assertTrue(any(h.startswith(auth.COOKIE_NAME + "=") for h in cookies))
         self.assertTrue(any(h.startswith(auth.MFA_COOKIE_NAME + '=""') or

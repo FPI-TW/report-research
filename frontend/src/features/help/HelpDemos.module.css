@@ -1,0 +1,451 @@
+/* 使用說明的操作示範（交接包「使用說明」）：每段 9 秒循環，模擬游標點擊（按下 scale .82），結尾淡出。
+   - 舞台固定 640×244，座標以 px 寫死，游標才點得準；容器窄於 640 時整塊等比縮小（--demo-scale 由元件量）。
+   - **各元素的基本樣式就是最終畫面**：減少動態時動畫整個停用，看到的就是這一格；動畫中的樣子全寫在關鍵影格。
+   - 游標座標：箭頭尖端在 svg 的 (4, 2)，要點 (x, y) 就把 left/top 設成 (x-4, y-2)。
+   - 設計稿用到、tokens 還沒有的值放在 .demo 的變數，之後收進 tokens.css 只改這裡。 */
+.demo {
+  --demo-bg: #f5f5f7;
+  --demo-ring: #ececef;
+  --demo-card-ring: #e9e9ec;
+  --demo-line: #e3e2dd;
+  --demo-line-strong: #cfcfd4;
+  --demo-canvas: #e9e9ec;
+  --demo-faint: #c7c7cc;
+  --demo-kbd-ring: #dcdce0;
+  position: relative;
+  height: calc(244px * var(--demo-scale, 1) + 2px);
+  margin-top: 18px;
+  border: 1px solid var(--demo-ring);
+  border-radius: 14px;
+  background: var(--demo-bg);
+  overflow: hidden;
+}
+.stage {
+  position: absolute; top: 0; left: 50%; width: 640px; height: 244px; margin-left: -320px;
+  transform: scale(var(--demo-scale, 1)); transform-origin: 50% 0;
+  font-size: 12px; color: var(--tf-text-1); line-height: 1.4;
+}
+.stage * {
+  animation-duration: 9s;
+  animation-iteration-count: infinite;
+  animation-timing-function: var(--tf-ease-apple);
+  animation-fill-mode: both;
+}
+/* 還沒捲進畫面（或已捲走）就停在當下那一格 */
+.demo:not([data-playing]) .stage * { animation-play-state: paused; }
+
+.loop { position: absolute; inset: 0; animation-name: loopFade; }
+@keyframes loopFade { 0%, 93% { opacity: 1; } 98%, 100% { opacity: 0; } }
+
+/* ── 共用零件 ── */
+.cursor {
+  position: absolute; z-index: 5; width: 18px; height: 18px; pointer-events: none;
+  transform-origin: 4px 2px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+}
+.cursor path { fill: var(--tf-text-1); stroke: #ffffff; stroke-width: 1.6; stroke-linejoin: round; }
+.card { position: absolute; background: var(--tf-surface); border: 1px solid var(--demo-card-ring); border-radius: 10px; }
+.line { display: block; height: 6px; border-radius: 3px; background: var(--demo-line); }
+.lineDark { background: var(--tf-text-1); opacity: 0.72; }
+.lineDim { background: var(--demo-line-strong); }
+.markLine { background: var(--tf-mark); }
+.grow { flex: 1; min-width: 0; }
+.faint { color: var(--tf-text-4); }
+.code { margin-left: 5px; font-family: var(--tf-code); font-weight: 400; font-size: 10.5px; line-height: inherit; color: var(--tf-text-4); }
+.mkt { display: inline-flex; align-items: center; height: 15px; padding: 0 6px; border-radius: 999px; font-size: 9.5px; font-weight: 600; }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 62px; height: 22px;
+  border: 1px solid var(--tf-border); border-radius: 999px; background: var(--tf-surface);
+  font-size: 11px; color: var(--tf-text-2);
+}
+.chipN { font-variant-numeric: tabular-nums; opacity: 0.6; }
+.badge { display: inline-flex; align-items: center; justify-content: center; height: 17px; padding: 0 6px; border-radius: 5px; font-size: 10px; font-weight: 600; }
+.buy { background: var(--tf-badge-buy-bg); color: var(--tf-badge-buy-fg); }
+.neutral { background: var(--tf-badge-neutral-bg); color: var(--tf-badge-neutral-fg); }
+.up { color: var(--tf-up); }
+.down { color: var(--tf-down); }
+.dist { display: flex; gap: 2px; width: 100%; height: 6px; border-radius: 3px; overflow: hidden; }
+.dBuy { background: var(--tf-rating-buy); }
+.dOw { background: var(--tf-rating-overweight); }
+.dNeu { background: var(--tf-rating-neutral); }
+.dUw { background: var(--tf-rating-underweight); }
+
+/* ── 研報庫 ── */
+.lSearch { left: 38px; top: 18px; width: 564px; height: 40px; border-radius: 12px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; }
+.lType { font-size: 13px; white-space: nowrap; animation-name: lType; }
+@keyframes lType { 0%, 12% { clip-path: inset(0 100% 0 0); } 30%, 100% { clip-path: inset(0 0 0 0); } }
+.lEnter {
+  height: 22px; padding: 0 7px; border-radius: 6px; background: var(--tf-surface); box-shadow: inset 0 0 0 1px var(--demo-kbd-ring);
+  font-size: 10.5px; line-height: 22px; color: var(--tf-text-muted-aa); animation-name: lKey;
+}
+@keyframes lKey {
+  0%, 31% { background: var(--tf-surface); color: var(--tf-text-muted-aa); transform: none; }
+  33% { background: var(--tf-graphite); color: var(--tf-on-graphite); transform: scale(0.9); }
+  37%, 100% { background: var(--tf-surface); color: var(--tf-text-muted-aa); transform: none; }
+}
+.lChips { position: absolute; left: 38px; top: 72px; display: flex; gap: 6px; }
+.lAll { animation-name: lAll; }
+@keyframes lAll {
+  0%, 59% { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
+  62%, 100% { background: var(--tf-surface); border-color: var(--tf-border); color: var(--tf-text-2); }
+}
+.lTw { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); animation-name: lTw; }
+@keyframes lTw {
+  0%, 59% { background: var(--tf-surface); border-color: var(--tf-border); color: var(--tf-text-2); }
+  62%, 100% { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
+}
+.lRow { left: 38px; width: 564px; height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 12px; }
+.lMkt { font-size: 10.5px; font-weight: 600; }
+.lTitle { font-size: 12px; white-space: nowrap; }
+.top { height: 16px; padding: 0 6px; border-radius: 5px; background: var(--tf-gold-tint); color: var(--tf-gold-text); font-size: 9.5px; font-weight: 600; line-height: 16px; }
+.lRow .markLine { flex: 1; }
+.lMeta { margin-left: auto; font-size: 10px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lR1 { top: 108px; animation-name: lR1; }
+.lR2 { top: 150px; animation-name: lR2; }
+.lR3 { top: 192px; opacity: 0; animation-name: lR3; }
+@keyframes lR1 { 0%, 36% { opacity: 0; transform: translateY(12px); } 43%, 100% { opacity: 1; transform: none; } }
+@keyframes lR2 { 0%, 39% { opacity: 0; transform: translateY(12px); } 46%, 100% { opacity: 1; transform: none; } }
+@keyframes lR3 {
+  0%, 42% { opacity: 0; transform: translateY(12px); }
+  49%, 62% { opacity: 1; transform: none; }
+  68%, 100% { opacity: 0; transform: scale(0.97); }
+}
+/* 點 Enter（585, 46）→ 點台股（150, 90）：尖端落在目標右下，被點的字不被游標蓋住 */
+.lCur { left: 146px; top: 88px; animation-name: lCur; }
+@keyframes lCur {
+  0% { left: 556px; top: 210px; transform: none; }
+  10%, 28% { left: 196px; top: 30px; }
+  32% { left: 581px; top: 44px; transform: none; }
+  33% { transform: scale(0.82); }
+  35% { transform: none; }
+  54%, 58% { left: 146px; top: 88px; transform: none; }
+  60% { transform: scale(0.82); }
+  62%, 100% { left: 146px; top: 88px; transform: none; }
+}
+
+/* ── 閱讀頁 ── */
+.rPanel { left: 16px; top: 14px; width: 196px; height: 216px; overflow: hidden; }
+.rPanel > * { position: absolute; }
+.rTitle { left: 12px; top: 14px; width: 72%; height: 7px; }
+.rMeta1 { left: 12px; top: 28px; width: 160px; }
+.rMeta2 { left: 12px; top: 38px; width: 110px; }
+.rH { left: 12px; font-size: 10px; font-weight: 600; line-height: 12px; }
+.rH1 { top: 52px; }
+.rH2 { top: 186px; }
+.rSim { left: 12px; top: 204px; width: 140px; }
+.rTk { left: 6px; right: 6px; height: 34px; padding: 6px; border-radius: 7px; display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 7px; }
+.rTk1 { top: 68px; }
+.rTk2 { top: 106px; }
+.rTk3 { top: 144px; }
+.rTkOn { background: var(--tf-gold-panel); animation-name: rTkOn; }
+@keyframes rTkOn { 0%, 14% { background: transparent; } 15%, 100% { background: var(--tf-gold-panel); } }
+.rNo {
+  width: 14px; height: 14px; border-radius: 999px; background: var(--tf-gold-tint); color: var(--tf-gold-text);
+  font-size: 8.5px; font-weight: 700; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.rNoOn { background: var(--tf-gold-strong); color: var(--tf-on-gold); animation-name: rNoOn; }
+@keyframes rNoOn {
+  0%, 14% { background: var(--tf-gold-tint); color: var(--tf-gold-text); }
+  15%, 100% { background: var(--tf-gold-strong); color: var(--tf-on-gold); }
+}
+.rBody { display: flex; flex-direction: column; gap: 5px; padding-top: 3px; }
+.rSlot { position: relative; height: 10px; }
+.rSlot > * { position: absolute; left: 0; top: 0; }
+.rL2 { opacity: 0; animation-name: rL2; }
+@keyframes rL2 { 0%, 14% { opacity: 1; } 15%, 100% { opacity: 0; } }
+.rFinding, .rFound { font-size: 9px; line-height: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rFinding { color: var(--tf-text-muted-aa); opacity: 0; animation-name: rFinding; }
+@keyframes rFinding { 0%, 14% { opacity: 0; } 15%, 24% { opacity: 1; } 25%, 100% { opacity: 0; } }
+.rFound { color: var(--tf-gold-text); animation-name: rFound; }
+@keyframes rFound { 0%, 24% { opacity: 0; } 26%, 100% { opacity: 1; } }
+
+.rCanvas { position: absolute; left: 224px; top: 14px; width: 400px; height: 216px; border-radius: 10px; background: var(--demo-canvas); overflow: hidden; }
+.rThumbs { position: absolute; left: 0; top: 0; bottom: 0; width: 60px; }
+.rThumb { position: absolute; left: 16px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.rThumbImg {
+  position: relative; width: 28px; height: 38px; padding: 6px 5px; border-radius: 2px; background: var(--tf-surface);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.rTl { display: block; height: 2px; border-radius: 1px; background: var(--demo-line); }
+.rThumbNo { font-size: 8px; line-height: 10px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; }
+/* 縮圖右上的金色編號（一頁兩條以內列編號，三條以上顯示區間） */
+.rBadge {
+  position: absolute; z-index: 2; top: -5px; right: -8px; min-width: 12px; height: 12px; padding: 0 3px; border-radius: 999px;
+  background: var(--tf-gold-strong); color: var(--tf-on-gold); font-size: 7.5px; font-weight: 700; line-height: 12px;
+  text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.rFrame {
+  position: absolute; z-index: 1; left: 14px; top: 10px; width: 32px; height: 42px; border-radius: 3px;
+  box-shadow: 0 0 0 1.5px var(--tf-graphite); transform: translateY(54px); animation-name: rFrame;
+}
+@keyframes rFrame { 0%, 21% { transform: none; } 26%, 100% { transform: translateY(54px); } }
+.rView { position: absolute; left: 68px; top: 0; right: 0; bottom: 0; overflow: hidden; }
+.rScroll { position: absolute; left: 0; right: 0; top: 0; transform: translateY(-202px); animation-name: rScroll; }
+@keyframes rScroll { 0%, 17% { transform: none; } 27%, 100% { transform: translateY(-202px); } }
+.rPage { position: absolute; left: 44px; width: 236px; height: 190px; border-radius: 2px; background: var(--tf-surface); }
+.pLine { position: absolute; left: 20px; height: 5px; }
+/* 跳到原文：引文淡金高亮（進場先深後淡）＋左側頁緣同號金點 */
+.rHit {
+  position: absolute; left: 17px; top: 59px; width: 182px; height: 11px; border-radius: 2px;
+  background: rgba(174, 116, 21, 0.3); box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3); animation-name: rHit;
+}
+@keyframes rHit {
+  0%, 26% { opacity: 0; }
+  28% { opacity: 1; background: rgba(174, 116, 21, 0.6); box-shadow: 0 0 0 5px rgba(174, 116, 21, 0.25); }
+  42%, 100% { opacity: 1; background: rgba(174, 116, 21, 0.3); box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3); }
+}
+.rDot {
+  position: absolute; left: 1px; top: 57px; width: 14px; height: 14px; border-radius: 999px;
+  background: var(--tf-gold-strong); color: var(--tf-on-gold); font-size: 8px; font-weight: 700; line-height: 14px;
+  text-align: center; font-variant-numeric: tabular-nums; animation-name: rDot;
+}
+@keyframes rDot {
+  0%, 27% { opacity: 0; transform: scale(0.4); }
+  30% { opacity: 1; transform: scale(1.14); }
+  33%, 100% { opacity: 1; transform: none; }
+}
+/* 拖曳選字：外掛畫的選取色塊（--tf-gold-line） */
+.rSel { position: absolute; left: 20px; top: 86px; width: 150px; height: 13px; border-radius: 2px; background: var(--tf-gold-line); animation-name: rSel; }
+@keyframes rSel { 0%, 46% { width: 0; } 58%, 100% { width: 150px; } }
+
+.rDockBox, .rToastBox { position: absolute; left: 68px; right: 0; display: flex; justify-content: center; }
+.rDockBox { bottom: 10px; }
+.rDock {
+  display: flex; align-items: center; height: 26px; padding: 0 6px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94); box-shadow: var(--tf-shadow-float); color: var(--tf-text-2);
+}
+.rIb { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; border-radius: 999px; }
+.rSep { flex: none; width: 1px; height: 12px; margin: 0 5px; background: var(--tf-border); }
+.rPg { position: relative; width: 34px; height: 14px; font-size: 9.5px; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.rPg > * { position: absolute; inset: 0; }
+.rPg1 { opacity: 0; animation-name: rPg1; }
+.rPg2 { animation-name: rPg2; }
+@keyframes rPg1 { 0%, 23% { opacity: 1; } 25%, 100% { opacity: 0; } }
+@keyframes rPg2 { 0%, 23% { opacity: 0; } 25%, 100% { opacity: 1; } }
+.rPct { width: 32px; font-size: 9.5px; text-align: center; font-variant-numeric: tabular-nums; }
+/* 有選取時才出現的複製鈕：寬度從 0 長出來，工具列跟著重新置中 */
+.rCopy { display: flex; align-items: center; width: 31px; overflow: hidden; animation-name: rCopy; }
+@keyframes rCopy { 0%, 57% { width: 0; opacity: 0; } 61%, 100% { width: 31px; opacity: 1; } }
+.rCopyBtn { flex: none; animation-name: rCopyBtn; }
+@keyframes rCopyBtn {
+  0%, 67% { background: transparent; transform: none; }
+  69% { background: var(--tf-border); transform: scale(0.86); }
+  72%, 100% { background: transparent; transform: none; }
+}
+.rToastBox { bottom: 44px; }
+.rToast {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 999px;
+  background: var(--tf-graphite); color: var(--tf-on-graphite); font-size: 10px; white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16); animation-name: rToast;
+}
+@keyframes rToast {
+  0%, 69% { opacity: 0; transform: translateY(8px); }
+  73%, 87% { opacity: 1; transform: none; }
+  91%, 100% { opacity: 0; transform: none; }
+}
+/* 點摘錄 2（80, 128）→ 拖曳 (356, 119)→(506, 119) → 點複製鈕（578, 212） */
+.rCur { left: 574px; top: 210px; animation-name: rCur; }
+@keyframes rCur {
+  0% { left: 596px; top: 218px; transform: none; }
+  9% { left: 76px; top: 126px; transform: none; }
+  12% { transform: scale(0.82); }
+  15% { transform: none; }
+  38% { left: 76px; top: 126px; }
+  45% { left: 352px; top: 117px; transform: none; }
+  47% { transform: scale(0.82); }
+  58% { left: 502px; top: 117px; transform: scale(0.82); }
+  60% { transform: none; }
+  66% { left: 574px; top: 210px; }
+  68% { transform: scale(0.82); }
+  70%, 100% { left: 574px; top: 210px; transform: none; }
+}
+
+/* ── 研究助理 ── */
+.aBubble {
+  position: absolute; right: 77px; top: 16px; padding: 7px 12px; border-radius: 14px 14px 4px 14px;
+  background: var(--tf-graphite); color: var(--tf-on-graphite); white-space: nowrap; animation-name: aBub;
+}
+@keyframes aBub { 0%, 4% { opacity: 0; transform: translateY(10px) scale(0.95); } 11%, 100% { opacity: 1; transform: none; } }
+.aThink { position: absolute; left: 77px; top: 60px; display: flex; align-items: center; font-size: 11.5px; color: var(--tf-text-muted-aa); animation-name: aThink; }
+@keyframes aThink { 0%, 10% { opacity: 0; } 15%, 100% { opacity: 1; } }
+/* 思考中：金色旋轉弧線；完成後不放圖示（寬度收掉，標籤靠左） */
+.aArcBox { display: flex; width: 0; margin-right: 0; overflow: hidden; opacity: 0; animation-name: aArcBox; }
+@keyframes aArcBox {
+  0%, 34% { width: 14px; margin-right: 7px; opacity: 1; }
+  37%, 100% { width: 0; margin-right: 0; opacity: 0; }
+}
+.stage .aArc { flex: none; width: 14px; height: 14px; color: var(--tf-gold-strong); animation: aSpin 0.9s linear infinite; }
+@keyframes aSpin { to { transform: rotate(360deg); } }
+.aLabels { display: grid; }
+.aLabels > * { grid-area: 1 / 1; white-space: nowrap; }
+.aL1 { opacity: 0; animation-name: aL1; }
+.aL2 { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; animation-name: aL2; }
+@keyframes aL1 { 0%, 34% { opacity: 1; } 36%, 100% { opacity: 0; } }
+@keyframes aL2 { 0%, 35% { opacity: 0; } 38%, 100% { opacity: 1; } }
+.aAns { position: absolute; left: 77px; top: 96px; width: 486px; display: flex; flex-direction: column; gap: 12px; }
+.aLine { display: block; height: 7px; border-radius: 3px; background: var(--demo-line-strong); }
+.aA1 { width: 447px; animation-name: aA1; }
+.aRow3 { position: relative; display: block; height: 7px; }
+.aA2 { width: 340px; animation-name: aA2; }
+.aA3 { width: 233px; animation-name: aA3; }
+@keyframes aA1 { 0%, 37% { width: 0; } 45%, 100% { width: 447px; } }
+@keyframes aA2 { 0%, 45% { width: 0; } 52%, 100% { width: 340px; } }
+@keyframes aA3 { 0%, 53% { width: 0; } 59%, 100% { width: 233px; } }
+.aCite {
+  position: absolute; left: 239px; top: -4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px;
+  background: var(--tf-gold-tint); color: var(--tf-gold-text); font-size: 9.5px; font-weight: 700; line-height: 15px;
+  text-align: center; font-variant-numeric: tabular-nums; animation-name: aCite;
+}
+@keyframes aCite {
+  0%, 51% { opacity: 0; transform: scale(0.4); }
+  54% { opacity: 1; transform: scale(1.18); }
+  57%, 100% { opacity: 1; transform: none; }
+}
+.aSrc { position: absolute; left: 77px; top: 162px; display: flex; align-items: center; gap: 8px; animation-name: aSrc; }
+.aActs { position: absolute; left: 77px; top: 214px; display: flex; gap: 14px; color: var(--tf-text-muted-aa); animation-name: aSrc; }
+@keyframes aSrc { 0%, 59% { opacity: 0; transform: translateY(8px); } 65%, 100% { opacity: 1; transform: none; } }
+.aSrcCard { position: relative; width: 128px; height: 40px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.aSrcT { font-size: 9.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aSrcM { width: 50%; height: 5px; }
+.aAll { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--tf-text-2); white-space: nowrap; }
+/* 引用預覽卡：浮層，有陰影 */
+.aPeek {
+  position: absolute; left: 214px; top: 56px; z-index: 4; width: 220px; padding: 10px 12px; border-radius: 10px;
+  background: var(--tf-surface); box-shadow: var(--tf-shadow-pop); display: flex; flex-direction: column; gap: 6px;
+  animation-name: aPeek;
+}
+@keyframes aPeek {
+  0%, 66% { opacity: 0; transform: translateY(6px); }
+  71%, 87% { opacity: 1; transform: none; }
+  91%, 100% { opacity: 0; transform: none; }
+}
+.aPeekT { font-size: 11px; font-weight: 600; }
+.aPeekM { margin-top: -3px; font-size: 9.5px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
+/* 滑到引用編號（330, 142，編號右下） */
+.aCur { left: 326px; top: 140px; animation-name: aCur; }
+@keyframes aCur {
+  0%, 56% { left: 572px; top: 212px; }
+  64%, 92% { left: 326px; top: 140px; }
+  100% { left: 572px; top: 212px; }
+}
+
+/* ── 券商共識 ── */
+.cCat { left: 38px; top: 16px; width: 564px; overflow: hidden; opacity: 0; animation-name: cCat; }
+@keyframes cCat { 0%, 25% { opacity: 1; transform: none; } 33%, 100% { opacity: 0; transform: translateX(-28px); } }
+.cHead { display: flex; align-items: center; gap: 10px; height: 26px; padding: 0 12px; border-bottom: 1px solid var(--tf-border-weak); font-size: 10px; color: var(--tf-text-4); }
+.cRow { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; }
+.cRow + .cRow { border-top: 1px solid var(--tf-border-weak); }
+.cRow1 { animation-name: cRow1; }
+@keyframes cRow1 {
+  0%, 13% { background: transparent; }
+  16%, 21% { background: var(--tf-hover); }
+  23% { background: var(--tf-border-weak); }
+  25%, 100% { background: var(--tf-hover); }
+}
+.cName { display: flex; align-items: baseline; font-size: 12px; font-weight: 600; }
+.cColR { width: 52px; display: flex; }
+.cColR .badge { width: 46px; }
+.cColD { width: 150px; }
+.cColC { width: 70px; font-size: 10.5px; }
+.cDet { position: absolute; left: 38px; top: 16px; width: 564px; height: 214px; animation-name: cDet; }
+@keyframes cDet { 0%, 28% { opacity: 0; transform: translateX(32px); } 38%, 100% { opacity: 1; transform: none; } }
+.cDetHead { display: flex; align-items: baseline; gap: 6px; height: 22px; }
+.cDetHead .code { margin-left: 0; font-size: 11px; }
+.cDetHead .mkt { align-self: center; }
+.cDetName { font-size: 15px; font-weight: 600; }
+.cSeg { align-self: center; display: flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--tf-border-weak); }
+.cSegItem { height: 18px; padding: 0 7px; border-radius: 5px; font-size: 9.5px; line-height: 18px; color: var(--tf-text-2); font-variant-numeric: tabular-nums; }
+.cSegOn { background: var(--tf-surface); color: var(--tf-text-1); font-weight: 600; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08); }
+.cCards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.cCard { position: relative; height: 52px; padding: 8px 10px; display: flex; flex-direction: column; justify-content: space-between; animation-name: cCard; }
+@keyframes cCard { 0%, 34% { opacity: 0; transform: translateY(12px); } 42%, 100% { opacity: 1; transform: none; } }
+.cLbl { font-size: 9.5px; color: var(--tf-text-4); }
+.cVal { display: flex; align-items: center; gap: 8px; }
+.cVal .dist { flex: 1; }
+.cNum { font-size: 15px; font-weight: 600; line-height: 17px; font-variant-numeric: tabular-nums; }
+.cUnit { margin-left: -5px; align-self: flex-end; font-size: 9px; color: var(--tf-text-4); }
+.cPlot { position: relative; height: 76px; margin-top: 8px; padding: 8px 10px; }
+.cAxis { position: absolute; left: 6%; right: 6%; top: 60px; height: 1px; background: var(--tf-border); }
+.cMed { position: absolute; left: 50%; top: 22px; height: 38px; border-left: 1.5px dashed var(--tf-gold-strong); transform-origin: 50% 100%; animation-name: cMed; }
+@keyframes cMed { 0%, 58% { transform: scaleY(0); } 65%, 100% { transform: none; } }
+.cMedLbl { position: absolute; left: calc(50% + 5px); top: 18px; font-size: 8.5px; color: var(--tf-gold-text); animation-name: cMedLbl; }
+@keyframes cMedLbl { 0%, 62% { opacity: 0; } 67%, 100% { opacity: 1; } }
+.cDot { position: absolute; width: 11px; height: 11px; margin-left: -5px; border-radius: 999px; background: var(--tf-graphite); box-shadow: 0 0 0 2px var(--tf-surface); animation-name: cDot; }
+@keyframes cDot { 0%, 46% { opacity: 0; transform: translateY(-14px); } 53%, 100% { opacity: 1; transform: none; } }
+.cThesis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.cTh { position: relative; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; animation-name: cTh; }
+@keyframes cTh { 0%, 64% { opacity: 0; transform: translateY(10px); } 71%, 100% { opacity: 1; transform: none; } }
+.cThDim { font-size: 10px; font-weight: 600; }
+.cThBadge { margin-left: auto; height: 16px; padding: 0 6px; border-radius: 999px; font-size: 8.5px; font-weight: 600; line-height: 16px; white-space: nowrap; }
+.tUp { background: var(--tf-badge-buy-bg); color: var(--tf-badge-buy-fg); }
+.tFlat { background: var(--tf-border-weak); color: var(--tf-text-muted-aa); }
+.tDiv { background: repeating-linear-gradient(135deg, var(--tf-badge-buy-bg) 0 4px, var(--tf-badge-sell-bg) 4px 8px); color: var(--tf-text-2); }
+/* 點第一列台積電（64, 72），點完移到右側留白處 */
+.cCur { left: 614px; top: 148px; animation-name: cCur; }
+@keyframes cCur {
+  0% { left: 556px; top: 210px; transform: none; }
+  13%, 21% { left: 60px; top: 70px; transform: none; }
+  23% { transform: scale(0.82); }
+  25% { transform: none; }
+  40%, 100% { left: 614px; top: 148px; transform: none; }
+}
+
+/* ── 每日簡報 ── */
+.bCol { position: absolute; left: 26px; top: 14px; width: 371px; height: 216px; }
+/* 切換日期：左欄整欄重播進場（交接包：0.5s 由下 10px） */
+.bA { opacity: 0; animation-name: bA; }
+.bB { animation-name: bB; }
+@keyframes bA { 0%, 31% { opacity: 1; transform: none; } 34%, 100% { opacity: 0; transform: translateY(-6px); } }
+@keyframes bB { 0%, 34% { opacity: 0; transform: translateY(10px); } 40%, 100% { opacity: 1; transform: none; } }
+.bOv { left: 0; top: 0; width: 100%; height: 104px; padding: 12px 14px; display: flex; flex-direction: column; }
+.bDateRow { display: flex; align-items: baseline; gap: 8px; }
+.bDate { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; line-height: 24px; font-variant-numeric: tabular-nums; }
+.bWd { font-size: 10.5px; color: var(--tf-text-4); }
+.bArr { align-self: center; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--tf-border); border-radius: 999px; color: var(--tf-text-muted-aa); }
+.bStats { display: flex; gap: 18px; margin-top: 8px; font-size: 9.5px; color: var(--tf-text-4); }
+.bStat { display: flex; flex-direction: column; }
+.bStatN { font-size: 14px; font-weight: 600; line-height: 17px; color: var(--tf-text-1); font-variant-numeric: tabular-nums; }
+.bMix { display: flex; gap: 2px; height: 5px; margin-top: 10px; border-radius: 3px; overflow: hidden; }
+.bHl { left: 0; top: 114px; width: 100%; height: 102px; padding: 10px 14px; display: flex; flex-direction: column; gap: 7px; }
+.bHlTitle { font-size: 10.5px; font-weight: 600; line-height: 15px; }
+.bHlRow { display: flex; align-items: center; gap: 10px; }
+.bNo { width: 20px; line-height: 1.2; font-size: 11px; font-weight: 600; color: var(--tf-gold-strong); font-variant-numeric: tabular-nums; }
+.bNoBig { font-size: 15px; }
+.bCal { left: 422px; top: 14px; width: 194px; height: 216px; padding: 10px 12px; }
+.bCalHead { display: flex; align-items: center; gap: 6px; height: 20px; }
+.bMonth { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bWeek, .bGrid { display: grid; grid-template-columns: repeat(7, 24px); text-align: center; }
+.bWeek { margin-top: 4px; font-size: 8.5px; line-height: 16px; color: var(--tf-text-4); }
+.bGrid { position: relative; grid-auto-rows: 24px; font-size: 10px; line-height: 24px; font-variant-numeric: tabular-nums; }
+.bDay { position: relative; z-index: 1; color: var(--demo-faint); }
+.bAvail { color: var(--tf-text-1); }
+.bAvail::after { content: ''; position: absolute; left: 50%; bottom: 2px; width: 3px; height: 3px; margin-left: -1.5px; border-radius: 999px; background: var(--tf-gold-strong); }
+.bToday::before { content: ''; position: absolute; left: 1px; top: 1px; width: 22px; height: 22px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--demo-faint); }
+/* 選取中的日期：石墨實心白字；從 28 日滑到 27 日 */
+.bSelMark { position: absolute; left: 72px; top: 48px; width: 24px; height: 24px; display: flex; justify-content: center; align-items: center; transform: translateX(-24px); animation-name: bSel; }
+.bSelMark > span { width: 22px; height: 22px; border-radius: 999px; background: var(--tf-graphite); }
+@keyframes bSel { 0%, 30% { transform: none; } 37%, 100% { transform: translateX(-24px); } }
+.b27 { color: var(--tf-on-graphite); animation-name: b27; }
+.b28 { color: var(--tf-text-1); animation-name: b28; }
+@keyframes b27 { 0%, 30% { color: var(--tf-text-1); } 36%, 100% { color: var(--tf-on-graphite); } }
+@keyframes b28 { 0%, 30% { color: var(--tf-on-graphite); } 36%, 100% { color: var(--tf-text-1); } }
+.b27::after { background: var(--tf-on-graphite); animation-name: b27dot; }
+.b28::after { background: var(--tf-gold-strong); animation-name: b28dot; }
+@keyframes b27dot { 0%, 30% { background: var(--tf-gold-strong); } 36%, 100% { background: var(--tf-on-graphite); } }
+@keyframes b28dot { 0%, 30% { background: var(--tf-on-graphite); } 36%, 100% { background: var(--tf-gold-strong); } }
+.bSrcTitle { display: block; margin-top: 12px; font-size: 10px; font-weight: 600; }
+.bSrc { position: absolute; left: 12px; right: 12px; top: 156px; display: flex; flex-direction: column; gap: 10px; }
+.bSrcRow { display: flex; gap: 7px; }
+.bSrcDot { flex: none; width: 6px; height: 6px; margin-top: 1px; border-radius: 999px; }
+.bSrcLines { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+/* 點 27 日（502, 133，日期右下） */
+.bCur { left: 498px; top: 131px; animation-name: bCur; }
+@keyframes bCur {
+  0% { left: 316px; top: 212px; transform: none; }
+  22%, 28% { left: 498px; top: 131px; transform: none; }
+  30% { transform: scale(0.82); }
+  32%, 100% { left: 498px; top: 131px; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage *, .stage *::before, .stage *::after { animation: none !important; }
+}

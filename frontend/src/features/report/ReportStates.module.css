@@ -1,53 +1,104 @@
 .page {
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
-  padding: 64px 24px 40px;
 }
 
 .box {
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  box-shadow: var(--tf-shadow-xs);
-  padding: 32px 28px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
-  max-width: 440px;
-  width: 100%;
+  padding: 56px 24px;
+  animation: stIn 0.18s ease both;
+}
+@keyframes stIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.boxPlain {
-  max-width: 520px;
-  width: 100%;
+.ic {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-border-weak);
+  color: var(--tf-text-muted-aa);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.icOnCanvas {
+  background: var(--tf-surface);
 }
 
 .title {
-  font-family: var(--tf-display);
+  margin: 14px 0 0;
+  font-size: 16px;
   font-weight: 600;
-  font-size: 19px;
   color: var(--tf-text-1);
-  margin: 0 0 8px;
 }
 
-.text {
+.desc {
+  margin: 6px 0 0;
+  max-width: 360px;
   font-size: 13.5px;
-  color: var(--tf-text-3);
-  line-height: 1.6;
-  margin: 0 0 18px;
+  line-height: 1.65;
+  color: var(--tf-text-muted-aa);
+}
+
+.acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 .btn {
-  display: inline-block;
-  background: var(--tf-graphite);
-  color: var(--tf-on-graphite);
-  border-radius: var(--tf-radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--tf-border);
+  border-radius: 10px;
+  background: var(--tf-surface);
+  color: var(--tf-text-1);
+  font: inherit;
   font-size: 13px;
-  font-weight: 600;
-  padding: 9px 18px;
+  font-weight: 500;
   text-decoration: none;
-  transition: background var(--tf-dur-1) var(--tf-ease-standard);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--tf-dur-1) var(--tf-ease-standard),
+    transform var(--tf-dur-1) var(--tf-ease-standard);
 }
-.btn:hover { background: var(--tf-graphite-hover); }
+.btn:hover {
+  background: #f7f7f8;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 2px;
+}
+.btnPrimary,
+.btnPrimary:hover {
+  background: var(--tf-graphite);
+  border-color: var(--tf-graphite);
+  color: var(--tf-on-graphite);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .box {
+    animation: none;
+  }
+  .btn {
+    transition: none;
+  }
+  .btn:active {
+    transform: none;
+  }
+}

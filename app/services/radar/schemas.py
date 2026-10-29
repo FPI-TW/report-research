@@ -300,3 +300,22 @@ class RadarInstrumentsResponse(BaseModel):
     facets: dict[str, int] = {}
     # 整個篩選結果的最新研報日期（不是本頁的）。報頭「最新更新」用它。
     latest_report_date: Optional[str] = None
+
+
+class RatingChangeItem(BaseModel):
+    """跨標的的一筆評等變動（研報庫首頁）。只有 up／down：持平不是變動，unknown 不比。"""
+
+    market: Market
+    market_display: Optional[str] = None
+    instrument_code: str
+    instrument_name: Optional[str] = None
+    broker: str
+    broker_display: Optional[str] = None
+    report_date: str
+    rating_from: RatingNorm
+    rating_to: RatingNorm
+    direction: Direction
+
+
+class RatingChangesResponse(BaseModel):
+    items: list[RatingChangeItem]

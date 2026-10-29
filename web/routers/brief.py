@@ -41,6 +41,13 @@ class BriefReportRef(BaseModel):
     report_date: Optional[str] = None
 
 
+class BriefMarketCount(BaseModel):
+    """窗期內某市場的新進研報篇數。market 為 None＝未標市場。"""
+
+    market: Optional[str] = None
+    report_count: int
+
+
 class BriefPayload(BaseModel):
     brief_date: str
     window_start: str
@@ -52,6 +59,10 @@ class BriefPayload(BaseModel):
     signal_count: int
     reports: list[BriefReportRef]
     created_at: str
+    # 概況卡的市場分布與券商數：讀取時以同一條窗期規則現算（零 LLM、不落庫）。
+    # 派生資料，查詢失敗時為 None，簡報照常回應（fail-open）。
+    markets: Optional[list[BriefMarketCount]] = None
+    broker_count: Optional[int] = None
 
 
 class BriefEnvelope(BaseModel):
@@ -80,6 +91,8 @@ async def _payload(session, row) -> BriefPayload:
     —— 簡報本文仍然有效，只是少幾個連結，故不視為錯誤。
     """
     reports = await deps.fetch_brief_reports(session, row.report_ids)
+    # 必須是這個 session 的最後一個查詢：失敗會讓交易進入 aborted，之後的查詢都會失敗。
+    mix = await _window_mix(session, row)
     return BriefPayload(
         brief_date=row.brief_date.isoformat(),
         window_start=row.window_start.isoformat(),
@@ -89,7 +102,22 @@ async def _payload(session, row) -> BriefPayload:
         signal_count=row.signal_count,
         reports=[_ref(r) for r in reports],
         created_at=row.created_at.isoformat(),
+        markets=(
+            [BriefMarketCount(market=m, report_count=n) for m, n in mix.markets]
+            if mix is not None
+            else None
+        ),
+        broker_count=mix.broker_count if mix is not None else None,
     )
+
+
+async def _window_mix(session, row):
+    """概況卡的市場分布與券商數；派生資料，失敗就降級成 None，不擋簡報本文。"""
+    try:
+        return await deps.fetch_brief_window_mix(session, row.window_start, row.window_end)
+    except Exception:
+        logger.warning("簡報市場分布查詢失敗，概況卡降級", exc_info=True)
+        return None
 
 
 # ── 以下為路由。新增輔助函式一律放在這一行之上 ──────────────────────

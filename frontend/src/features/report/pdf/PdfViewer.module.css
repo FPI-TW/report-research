@@ -1,35 +1,189 @@
-/* 自訂 PDF 檢視器的 chrome。
-   設計原則：介面讓位給文件 —— 工具列是浮在文件上的一顆玻璃膠囊（不是橫貫全寬的長條），
-   縮圖列用覆蓋而非推擠（展開收合時閱讀寬度不變），捲動時 chrome 淡出、頁碼膠囊浮現。 */
+/* PDF 畫布（交接包「閱讀頁」）：底色 #e9e9ec，左側 128px 縮圖列（可收合），
+   底部置中的浮動工具列，右上浮出的文件內搜尋列。 */
 
 .root {
   position: relative;
   flex: 1;
   min-height: 0;
   width: 100%;
-  background: var(--tf-canvas);
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: var(--tf-shadow-float);
+  display: flex;
+  background: #e9e9ec;
 }
 
-/* 捲動區的上內距要讓開浮島，否則第一頁會被壓在底下 */
+/* 縮圖列與畫布並排 */
+.body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── 縮圖列 ── */
+.thumbs {
+  flex: none;
+  width: 128px;
+  min-height: 0;
+  overflow: hidden;
+  background: #efeff1;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  transition:
+    width var(--tf-dur-collapse) var(--tf-ease-apple),
+    opacity 0.3s ease,
+    border-color 0.3s ease;
+}
+.thumbsOff {
+  width: 0;
+  opacity: 0;
+  border-right-width: 0;
+}
+
+/* ThumbnailsPane 自己就是捲動容器（內聯 overflow-y:auto ＋ height:100%），我們只加樣式。
+   寬度固定 128，收合時由外層 .thumbs 裁掉，縮圖不會跟著擠壓變形。
+   細捲軸：平常透明，滑過才顯示。 */
+.thumbsScroll {
+  width: 128px;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.thumbsScroll:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
+}
+.thumbsScroll::-webkit-scrollbar {
+  width: 8px;
+}
+.thumbsScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thumbsScroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.thumbsScroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+}
+
+.thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+}
+.thumb:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+.thumbImg {
+  position: relative;
+  display: block;
+  background: var(--tf-surface);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 0.2s var(--tf-ease-apple);
+}
+.thumbImg img {
+  display: block;
+}
+.thumb:hover .thumbImg {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+}
+.thumbOn .thumbImg,
+.thumbOn:hover .thumbImg {
+  box-shadow: 0 0 0 2px var(--tf-graphite);
+}
+
+/* 含重點摘錄的頁：右上金色編號，與左欄摘錄的編號對應 */
+.thumbMark {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-gold-strong);
+  color: var(--tf-on-gold);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.thumbNo {
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+}
+.thumbOn .thumbNo {
+  color: var(--tf-text-1);
+  font-weight: 600;
+}
+
+/* ── 畫布 ── */
+.stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 捲動區：底部讓出浮動工具列的高度，最後一頁才不會被壓在底下 */
 .viewport {
   position: absolute;
   inset: 0;
-  padding-top: 60px;
+  padding-bottom: 72px;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.viewport:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.24) transparent;
+}
+.viewport::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.viewport::-webkit-scrollbar-track,
+.viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.viewport::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  background-color: transparent;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.viewport:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+}
+.viewport::-webkit-scrollbar-thumb:active {
+  background-color: rgba(138, 90, 15, 0.55);
+}
+.viewport:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--tf-gold-text);
 }
 
-/* 紙張：髮絲環＋接觸陰影＋大範圍柔影三層。
-   接觸陰影是紙張「貼在桌面上」的關鍵，只有大範圍柔影會讓它看起來像漂浮的貼紙。 */
+/* 紙張：白紙＋髮絲環。頁內內容不加陰影（只有浮層有陰影）。 */
 .page {
   position: relative;
   background: var(--tf-surface);
-  border-radius: 6px;
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.07),
-    0 1px 2px rgba(0, 0, 0, 0.05),
-    0 14px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
   /* 內容是點陣圖，游標不會自動變成 I 形。沒有這一行，「這裡可以選字」完全沒有提示
      ——選取外掛裝了也等於沒人知道。整張紙都給 text 是刻意的：外掛以字形命中判定，
      圖片區塊拖曳只是選不到東西，比游標在文字上卻顯示箭頭好。 */
@@ -46,305 +200,261 @@
   -webkit-user-drag: none;
 }
 
-/* 頁碼放在紙張之外的右下角：印在紙上會和研報自己的頁碼打架 */
-.pageNo {
+/* ── 跳到原文的標記 ── */
+.markLayer {
   position: absolute;
-  bottom: -15px;
-  right: 2px;
-  font-family: var(--tf-mono);
-  font-size: 9.5px;
-  color: var(--tf-text-4);
+  inset: 0;
   pointer-events: none;
 }
 
-/* ── 浮島工具列 ── */
-.island {
+/* 引文淡金高亮：進場先深後淡（1.4s） */
+.hit {
   position: absolute;
-  left: 50%;
-  top: 12px;
-  transform: translateX(-50%);
-  z-index: 6;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 6px;
-  border-radius: var(--tf-radius-pill);
-  background: var(--tf-glass-strong);
-  -webkit-backdrop-filter: var(--tf-glass-filter);
-  backdrop-filter: var(--tf-glass-filter);
-  box-shadow:
-    0 0 0 0.5px var(--tf-glass-border),
-    var(--tf-glass-sheen),
-    0 6px 20px rgba(0, 0, 0, 0.12);
-  transition: opacity var(--tf-dur-3) var(--tf-ease-standard);
+  border-radius: 2px;
+  background: rgba(174, 116, 21, 0.3);
+  box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3);
+  mix-blend-mode: multiply;
+  animation: pdfHit 1.4s var(--tf-ease-apple) both;
+}
+@keyframes pdfHit {
+  0% {
+    background: rgba(174, 116, 21, 0.6);
+    box-shadow: 0 0 0 6px rgba(174, 116, 21, 0.25);
+  }
+  100% {
+    background: rgba(174, 116, 21, 0.3);
+    box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3);
+  }
 }
 
-/* 捲動中淡出，但**刻意留 0.42 不歸零**：完全消失會讓工具列變成隱藏功能，
-   對運動障礙使用者尤其麻煩。降低透明度偏好與減少動態偏好都直接停用這個行為。 */
-.islandDim {
-  opacity: 0.42;
+/* 頁緣同號金點 */
+.markDot {
+  position: absolute;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-gold-strong);
+  color: var(--tf-on-gold);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  animation: markPop 0.45s var(--tf-ease-emphasized) both;
 }
-@media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
-  .island {
-    transition: none;
-    background: var(--tf-surface);
+@keyframes markPop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
   }
-  .islandDim {
+  60% {
+    transform: scale(1.14);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
     opacity: 1;
   }
 }
 
-.btn {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--tf-graphite);
-  width: 27px;
-  height: 27px;
-  border-radius: var(--tf-radius-pill);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background var(--tf-dur-1) var(--tf-ease-standard);
-}
-.btn:hover {
-  background: color-mix(in srgb, var(--tf-text-1) 6%, transparent);
-}
-.btn:focus-visible {
-  outline: 2px solid var(--tf-graphite);
-  outline-offset: 1px;
-}
-.btnOn {
-  background: var(--tf-graphite);
-  color: var(--tf-on-graphite);
-}
-.btnOn:hover {
-  background: var(--tf-graphite-hover);
-}
-
-.sep {
-  width: 1px;
-  height: 16px;
-  background: var(--tf-glass-border);
-  margin: 0 2px;
-}
-
-.zoom {
-  font-family: var(--tf-mono);
-  font-size: 10.5px;
-  color: var(--tf-text-2);
-  min-width: 38px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
-.btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.btn:disabled:hover {
-  background: transparent;
-}
-
-/* chevronDown 反向當「上一個」用，省一顆圖示 */
-.flip {
-  transform: rotate(180deg);
-}
-
-/* 頁碼輸入：外觀盡量像文字、不像表單控制項，直到 hover/focus 才顯形 */
-.pageInput {
-  width: 30px;
-  padding: 2px 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--tf-text-1);
-  font-family: var(--tf-mono);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-.pageInput:hover {
-  background: color-mix(in srgb, var(--tf-text-1) 6%, transparent);
-}
-.pageInput:focus {
-  outline: 2px solid var(--tf-graphite);
-  outline-offset: 0;
-  background: var(--tf-surface);
-}
-.pageTotal {
-  font-family: var(--tf-mono);
-  font-size: 10.5px;
-  color: var(--tf-text-4);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── 搜尋列：貼在浮島下方，同一套玻璃語彙 ── */
-.searchBar {
-  position: absolute;
-  left: 50%;
-  top: 52px;
-  transform: translateX(-50%);
-  z-index: 6;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 8px;
-  border-radius: var(--tf-radius-pill);
-  color: var(--tf-text-3);
-  background: var(--tf-glass-strong);
-  -webkit-backdrop-filter: var(--tf-glass-filter);
-  backdrop-filter: var(--tf-glass-filter);
-  box-shadow:
-    0 0 0 0.5px var(--tf-glass-border),
-    var(--tf-glass-sheen),
-    0 6px 20px rgba(0, 0, 0, 0.12);
-}
-
-.searchInput {
-  width: 168px;
-  border: 0;
-  background: transparent;
-  color: var(--tf-text-1);
-  font-size: 12px;
-  padding: 3px 2px;
-}
-.searchInput:focus {
-  outline: none;
-}
-.searchInput::placeholder {
-  color: var(--tf-text-4);
-}
-
-.searchCount {
-  min-width: 46px;
-  text-align: right;
-  font-family: var(--tf-mono);
-  font-size: 10px;
-  color: var(--tf-text-4);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── 覆蓋式縮圖列 ── */
-.thumbs {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 96px;
-  z-index: 7;
-  padding: 14px 0 24px;
-  overflow: hidden;
-  background: var(--tf-glass-strong);
-  -webkit-backdrop-filter: var(--tf-glass-filter);
-  backdrop-filter: var(--tf-glass-filter);
-  border-right: 1px solid var(--tf-glass-border);
-  box-shadow: 6px 0 22px rgba(0, 0, 0, 0.07);
-  transform: translateX(-100%);
-  transition: transform var(--tf-dur-3) var(--tf-ease-standard);
-}
-.thumbsOpen {
-  transform: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .thumbs {
-    transition: none;
-  }
-}
-
-/* ThumbnailsPane 自己就是捲動容器（內聯 overflow-y:auto ＋ height:100%），我們只加樣式。
-   96px 的欄寬裡，作業系統預設捲軸（Windows Chrome 約 15px）會吃掉六分之一還跟玻璃介面
-   完全不搭，所以收成 6px 的細捲軸；縮圖寬度 THUMB_WIDTH 就是照這個數字算的。
-   捲軸只在 hover 時才明顯——縮圖本身才是內容，軌道常駐會變成視覺噪音。 */
-.thumbsScroll {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--tf-text-1) 18%, transparent) transparent;
-}
-.thumbsScroll::-webkit-scrollbar {
-  width: 6px;
-}
-.thumbsScroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.thumbsScroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--tf-text-1) 18%, transparent);
-  border-radius: 3px;
-}
-.thumbsScroll:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--tf-text-1) 34%, transparent);
-}
-
-.thumbBtn {
+/* ── 底部浮動工具列 ──
+   置中用 left/right 0＋margin auto＋width max-content，不用 translateX(-50%)：
+   進場動畫的 transform 會把置中蓋掉，整條往右偏（交接包「實測抓到的坑」第 2 條）。 */
+.dock {
   position: absolute;
   left: 0;
   right: 0;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
+  bottom: 18px;
+  z-index: 5;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin: 0 auto;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-}
-
-.thumbImg {
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--tf-surface);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.13),
-    0 2px 6px rgba(0, 0, 0, 0.06);
-  transition: box-shadow var(--tf-dur-1) var(--tf-ease-standard);
-}
-.thumbCurrent .thumbImg {
-  box-shadow:
-    0 0 0 2px var(--tf-graphite),
-    0 2px 8px rgba(0, 0, 0, 0.12);
-}
-
-.thumbNo {
-  font-family: var(--tf-mono);
-  font-size: 9px;
-  color: var(--tf-text-4);
-}
-
-/* ── 頁碼膠囊：只在捲動時浮現 ── */
-.pill {
-  position: absolute;
-  left: 50%;
-  bottom: 16px;
-  transform: translateX(-50%) translateY(6px);
-  z-index: 6;
-  background: rgba(28, 28, 30, 0.82);
+  gap: 2px;
+  height: 44px;
+  padding: 0 6px;
+  border-radius: var(--tf-radius-pill);
+  background: rgba(255, 255, 255, 0.94);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  color: #fff;
-  font-family: var(--tf-mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  padding: 5px 12px;
-  border-radius: var(--tf-radius-pill);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity var(--tf-dur-2) var(--tf-ease-standard),
-    transform var(--tf-dur-2) var(--tf-ease-standard);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.08),
+    0 8px 28px rgba(0, 0, 0, 0.14);
+  white-space: nowrap;
+  animation: dockIn 0.24s var(--tf-ease-out) both;
 }
-.pillOn {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-@media (prefers-reduced-motion: reduce) {
-  .pill {
-    transition: none;
-    transform: translateX(-50%);
+@keyframes dockIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
-/* ── 引擎啟動中 ── */
+.thumbsGroup {
+  display: contents;
+}
+
+.ib {
+  appearance: none;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--tf-radius-pill);
+  background: transparent;
+  color: var(--tf-text-muted-aa);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    background var(--tf-dur-1) var(--tf-ease-standard),
+    color var(--tf-dur-1) var(--tf-ease-standard),
+    transform var(--tf-dur-1) var(--tf-ease-standard);
+}
+.ib:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--tf-text-1);
+}
+.ib:active:not(:disabled) {
+  transform: scale(0.92);
+}
+.ib:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+}
+.ib:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: -2px;
+}
+.ibOn,
+.ibOn:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--tf-text-1);
+}
+
+.sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--tf-border);
+}
+
+/* 縮放百分比：點一下重設 */
+.zoomPct {
+  width: 50px;
+  font-size: 13px;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 頁碼「n / N」：輸入框外觀像文字，hover/focus 才顯形 */
+.pageBox {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  min-width: 52px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pageInput {
+  width: 2.6em;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tf-text-1);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.pageInput:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.pageInput:focus {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 0;
+  background: var(--tf-surface);
+  text-align: center;
+}
+
+.pageTotal {
+  padding-left: 4px;
+  color: var(--tf-text-4);
+}
+
+/* ── 文件內搜尋列：右上浮層 ── */
+.findBar {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 6px 0 12px;
+  border-radius: 12px;
+  background: var(--tf-surface);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.14);
+  transform-origin: 100% 0;
+  animation: findIn 0.12s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+@keyframes findIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scaleY(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.findBar .ib {
+  width: 28px;
+  height: 28px;
+}
+
+.findInput {
+  width: 170px;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--tf-text-1);
+}
+.findInput::placeholder {
+  color: var(--tf-text-4);
+}
+/* 一律用自訂的關閉鈕，隱藏瀏覽器內建的藍色清除鈕 */
+.findInput::-webkit-search-cancel-button,
+.findInput::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+.findCount {
+  min-width: 44px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--tf-text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 引擎啟動中、文件載入中 ── */
 .booting {
   position: absolute;
   inset: 0;
@@ -353,30 +463,51 @@
   align-items: center;
   justify-content: center;
   gap: 14px;
-  color: var(--tf-text-4);
+  color: var(--tf-text-muted-aa);
   font-size: 12px;
 }
 
 .bootPaper {
   width: min(52%, 300px);
   height: 42%;
-  border-radius: 6px;
-  background: var(--tf-surface);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.07),
-    0 14px 30px rgba(0, 0, 0, 0.08);
+  background: #f4f4f6;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 
-/* 只給輔助技術的狀態播報（複製成功／失敗）。不用 display:none —— 那會讓 aria-live
-   完全不播報；要留在無障礙樹裡但視覺上不佔位。 */
-.srOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
+/* ── PDF 載入失敗：畫布中央 ── */
+.failed {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+/* 窄版：縮圖列不顯示，工具列的縮圖開關一併收起 */
+@media (max-width: 1023px) {
+  .thumbs,
+  .thumbsGroup {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumbs,
+  .thumbImg,
+  .ib {
+    transition: none;
+  }
+  .ib:active:not(:disabled) {
+    transform: none;
+  }
+  .dock,
+  .findBar,
+  .hit,
+  .markDot {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .dock {
+    background: var(--tf-surface);
+  }
 }

@@ -90,7 +90,7 @@ export function AdminShell() {
           </nav>
         )}
         <div className={styles.railSpacer} />
-        <Link to="/search" className={styles.railAction} title="回到研報平台" aria-label="回到研報平台">
+        <Link to="/library" className={styles.railAction} title="回到研報平台" aria-label="回到研報平台">
           <Icon name="arrowLeft" size={18} />
         </Link>
         <form method="post" action="/logout" className={styles.railForm}>
@@ -152,7 +152,7 @@ export function AdminShell() {
           {elevated && (
             <span className={styles.elevated} title="10 分鐘內不用再驗證"><Lamp tone="ok" label="" />已驗證</span>
           )}
-          <Link to="/search" className={styles.back}><Icon name="arrowLeft" size={14} />研報平台</Link>
+          <Link to="/library" className={styles.back}><Icon name="arrowLeft" size={14} />研報平台</Link>
         </header>
         <RequireAdmin>
           {mfaRequired ? (

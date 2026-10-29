@@ -19,6 +19,7 @@ from app.services.radar.queries import (  # noqa: E402
     CoverageCounts,
     RadarCatalogPage,
     RadarInstrumentRow,
+    RatingChangeRow,
 )
 from app.services.radar.types import Signal  # noqa: E402
 from web import deps, server  # noqa: E402
@@ -93,7 +94,7 @@ class RadarApiBase(unittest.TestCase):
                 "SessionFactory", "fetch_coverage_counts", "fetch_instrument_signals",
                 "fetch_broker_signals", "list_radar_instruments",
                 "fetch_signals_for_instruments", "fetch_broker_coverage_counts",
-                "fetch_catalog_facets",
+                "fetch_catalog_facets", "fetch_recent_rating_changes",
             )
         }
         deps.SessionFactory = lambda: _FakeSession()
@@ -699,6 +700,80 @@ class CatalogStanceFilterTests(RadarApiBase):
         self.assertEqual(
             _authed_client().get("/api/radar/instruments?stance=bull").status_code, 422
         )
+
+
+def _change(code="8046", rating_from="neutral", rating_to="buy", *, market="TW", name="南電",
+            broker="fubon", d=date(2026, 10, 5)):
+    return RatingChangeRow(
+        market=market, instrument_code=code, instrument_name=name, broker=broker,
+        report_date=d, rating_from=rating_from, rating_to=rating_to,
+    )
+
+
+class RatingChangesTests(RadarApiBase):
+    def test_unauthenticated_401(self):
+        c = TestClient(server.app, follow_redirects=False, base_url="http://127.0.0.1")
+        self.assertEqual(c.get("/api/radar/rating-changes").status_code, 401)
+
+    def test_shape_and_direction(self):
+        seen = {}
+
+        async def fetch(session, *, limit):
+            seen["limit"] = limit
+            return [
+                _change(),
+                _change("1477", "buy", "overweight", name=None, broker="citic", d=date(2026, 8, 12)),
+            ]
+
+        self._set(fetch_recent_rating_changes=fetch)
+        r = _authed_client().get("/api/radar/rating-changes")
+
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(seen, {"limit": 4})
+        items = r.json()["items"]
+        self.assertEqual(
+            items[0],
+            {
+                "market": "TW", "market_display": "台股", "instrument_code": "8046",
+                "instrument_name": "南電", "broker": "fubon", "broker_display": "富邦",
+                "report_date": "2026-10-05", "rating_from": "neutral", "rating_to": "buy",
+                "direction": "up",
+            },
+        )
+        self.assertEqual(items[1]["direction"], "down")
+        self.assertIsNone(items[1]["instrument_name"])
+
+    def test_limit_validation(self):
+        async def fetch(session, *, limit):
+            return []
+
+        self._set(fetch_recent_rating_changes=fetch)
+        c = _authed_client()
+        self.assertEqual(c.get("/api/radar/rating-changes?limit=0").status_code, 422)
+        self.assertEqual(c.get("/api/radar/rating-changes?limit=21").status_code, 422)
+        self.assertEqual(c.get("/api/radar/rating-changes?limit=20").json(), {"items": []})
+
+    def test_flat_or_unknown_rows_are_dropped(self):
+        async def fetch(session, *, limit):
+            return [_change(rating_from="buy", rating_to="buy"), _change(rating_from="unknown")]
+
+        self._set(fetch_recent_rating_changes=fetch)
+        self.assertEqual(_authed_client().get("/api/radar/rating-changes").json(), {"items": []})
+
+    def test_cached_per_limit(self):
+        calls = []
+
+        async def fetch(session, *, limit):
+            calls.append(limit)
+            return [_change()]
+
+        self._set(fetch_recent_rating_changes=fetch)
+        c = _authed_client()
+        first = c.get("/api/radar/rating-changes")
+        second = c.get("/api/radar/rating-changes")
+        c.get("/api/radar/rating-changes?limit=6")
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(calls, [4, 6])
 
 
 if __name__ == "__main__":

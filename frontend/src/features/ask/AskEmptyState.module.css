@@ -1,8 +1,33 @@
-.wrap { position: relative; max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 24px 16px; }
-.wrap > *:not(.heroBg) { position: relative; z-index: 1; }
-/* 品牌漸層氛圍：柔和放射遮罩、低透明度，僅作背景光暈 */
-.heroBg { position: absolute; inset: -48px -80px; z-index: 0; overflow: hidden; border-radius: 40px; pointer-events: none; -webkit-mask-image: radial-gradient(72% 62% at 50% 42%, #000 0%, transparent 100%); mask-image: radial-gradient(72% 62% at 50% 42%, #000 0%, transparent 100%); }
-.heroGradient { position: absolute; inset: 0; background: linear-gradient(120deg, var(--tf-graphite-tint), var(--tf-gold-tint) 45%, var(--tf-graphite-line) 70%, var(--tf-graphite-tint)); background-size: 280% 280%; opacity: 0.5; }
-.glyph { display: block; margin-bottom: 6px; }
-.title { font-family: var(--tf-display); font-weight: 600; font-size: 24px; color: var(--tf-graphite-deep); }
-.sub { font-size: 13.5px; color: var(--tf-text-3); margin-bottom: 14px; max-width: 420px; }
+/* min-height 100%：在捲動區裡垂直置中；視窗太矮時改成可捲動而不是擠壓。只淡入、不位移（坑 3）。 */
+.wrap {
+  min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 0 56px;
+  animation: fadeIn 0.18s ease both;
+}
+.inner { position: relative; width: 100%; max-width: 680px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.logo { display: block; width: 52px; height: 52px; margin-bottom: 18px; }
+.title { margin: 0 0 28px; font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -0.02em; color: var(--tf-text-1); }
+
+.grid { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sugg {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 16px;
+  border: 1px solid #e9e9ec; border-radius: 12px; background: var(--tf-surface);
+  text-align: left; font: inherit; cursor: pointer;
+  transition: border-color var(--tf-dur-1) ease, background var(--tf-dur-1) ease, transform var(--tf-dur-1) ease;
+  animation: fadeUp 0.24s var(--tf-ease-out) both;
+}
+.sugg:hover { border-color: #c7c7cc; background: var(--tf-fill-subtle); }
+.sugg:active { transform: scale(0.97); }
+.mkt { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.q { font-size: 13.5px; line-height: 1.55; color: var(--tf-text-1); }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 640px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* 手機分頁列（fixed，56px＋安全區）疊在內容上：最後一張建議題要捲得出來。 */
+@media (max-width: 767px) {
+  .wrap { padding-bottom: calc(56px + 56px + env(safe-area-inset-bottom)); }
+}

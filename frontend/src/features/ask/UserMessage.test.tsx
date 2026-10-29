@@ -38,7 +38,7 @@ describe('UserMessage', () => {
     const box = screen.getByRole('textbox')
     await userEvent.clear(box)
     await userEvent.type(box, '新問題')
-    await userEvent.click(screen.getByRole('button', { name: /送出/ }))
+    await userEvent.click(screen.getByRole('button', { name: '重新提問' }))
     expect(onEdit).toHaveBeenCalledWith('新問題')
   })
 
@@ -60,8 +60,8 @@ it('編輯框：按鈕與輸入框包在同一個容器，textarea 無框且不�
   // 不給使用者拖大小；外框畫在容器上，textarea 自己是裸的
   expect(getComputedStyle(ta).resize).toBe('none')
   expect(getComputedStyle(ta).borderTopStyle).toBe('none')
-  // 送出鈕（在 editActions 列內）與 textarea 同屬同一個 editBox 容器
-  const send = screen.getByRole('button', { name: '送出' })
+  // 重新提問鈕（在 editActions 列內）與 textarea 同屬同一個 editBox 容器
+  const send = screen.getByRole('button', { name: '重新提問' })
   expect(send.parentElement!.parentElement).toBe(ta.parentElement)
 })
 

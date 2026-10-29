@@ -1,13 +1,80 @@
-/* 思考狀態：收成一行膠囊摘要，展開才見步驟 */
-.card { display: inline-block; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-card); padding: 8px 14px; margin: 4px 0 14px; }
-.head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 0; cursor: pointer; font-size: 12.5px; color: var(--tf-text-3); font-variant-numeric: tabular-nums; }
-/* 旋轉由 Motion（animate rotate）驅動，這裡僅負責圖示對齊 */
-.chev { display: inline-flex; align-items: center; }
-.steps { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--tf-text-2); }
-.done { color: var(--tf-graphite); }
-.spin { color: var(--tf-graphite); }
-.dot { width: 7px; height: 7px; border-radius: 999px; border: 1.5px solid var(--tf-border); display: inline-block; margin: 0 4.5px; }
-.pendingText { color: var(--tf-text-4); }
-/* 排隊中：說明為何一個字都還沒出來（沒有這行，畫面與「卡住了」無法分辨） */
-.queueNote { margin-top: 8px; font-size: 12.5px; color: var(--tf-text-3); }
+/* 思考區（交接包「研究助理／思考區」）：標頭是一行可展開的膠囊鈕，步驟清單收在它下面。 */
+.wrap { position: relative; }
+
+/* 負的左外距讓文字與回答本文左緣對齊，hover 底色往左多出去一點（原型的作法）。 */
+.head {
+  display: inline-flex; align-items: center; gap: 10px; height: 34px;
+  margin-left: -8px; padding: 0 10px 0 8px;
+  border: none; border-radius: 999px; background: transparent;
+  font: inherit; font-size: 13.5px; color: var(--tf-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.headBtn { cursor: pointer; transition: background var(--tf-dur-1) ease; }
+.headBtn:hover { background: var(--tf-hover); }
+
+.icon { width: 18px; height: 18px; flex: none; display: flex; align-items: center; justify-content: center; }
+.spin { animation: spin 1.1s linear infinite; transform-origin: 50% 50%; }
+.arcTrack { stroke: #ece3cf; }
+.arc { stroke: var(--tf-gold-strong); }
+.haltRing { stroke: #c7c7cc; }
+.haltSquare { fill: var(--tf-text-4); }
+
+.label { font-weight: 500; }
+/* 流光文字：思考中、撰寫中、排隊中。漸層停點取自原型。 */
+.shimmer {
+  background: linear-gradient(90deg, var(--tf-text-muted-aa) 0%, var(--tf-text-muted-aa) 38%, var(--tf-text-1) 50%, var(--tf-text-muted-aa) 62%, var(--tf-text-muted-aa) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+.sub { color: var(--tf-text-4); }
+.clock { font-size: 12px; color: var(--tf-text-4); }
+.chev { flex: none; color: var(--tf-text-4); transition: transform 0.2s var(--tf-ease-out); }
+.chevUp { transform: rotate(180deg); }
+
+/* 高度動畫走 grid 0fr → 1fr，內層 overflow hidden 才收得起來。 */
+.collapse {
+  display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows 0.34s var(--tf-ease-out), opacity 0.24s var(--tf-ease-out);
+}
+.open { grid-template-rows: 1fr; opacity: 1; }
+.inner { overflow: hidden; min-height: 0; }
+
+.steps { list-style: none; margin: 10px 0 4px; padding: 2px 0 2px 2px; display: flex; flex-direction: column; gap: 12px; }
+.step { position: relative; display: flex; align-items: center; gap: 12px; min-height: 18px; font-size: 13.5px; color: var(--tf-text-2); }
+.step[data-state='pending'] { color: var(--tf-text-4); }
+.step[data-state='active'] .name { color: var(--tf-text-1); font-weight: 600; }
+
+/* 連接線：從本步圖示下緣（18px＋4px 間隙）接到下一步上緣（列間距 12px 扣掉 2px）。 */
+.line { position: absolute; left: 8px; top: 22px; bottom: -10px; width: 1.5px; background: var(--tf-border); border-radius: 1px; overflow: hidden; }
+.lineOn::after {
+  content: ''; position: absolute; inset: 0; background: var(--tf-graphite);
+  transform-origin: top; animation: lineFill 0.24s var(--tf-ease-out) both;
+}
+
+.ic { position: relative; width: 18px; height: 18px; flex: none; display: flex; align-items: center; justify-content: center; }
+.doneDot {
+  width: 18px; height: 18px; border-radius: 999px; background: var(--tf-graphite); color: var(--tf-on-graphite);
+  display: flex; align-items: center; justify-content: center;
+  animation: pop 0.34s var(--tf-ease-emphasized) both;
+}
+.activeDot { position: relative; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; }
+.ring { position: absolute; inset: 3px; border-radius: 999px; background: rgba(174, 116, 21, 0.35); animation: ring 1.4s var(--tf-ease-out) infinite; }
+.core { position: relative; width: 8px; height: 8px; border-radius: 999px; background: var(--tf-gold-strong); }
+.pendingDot { width: 8px; height: 8px; border-radius: 999px; border: 1.5px solid #c7c7cc; background: var(--tf-canvas); }
+.meta { font-size: 12px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; animation: fadeUp 0.24s var(--tf-ease-out) both; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+@keyframes ring { 0% { transform: scale(0.7); opacity: 0.9; } 100% { transform: scale(2); opacity: 0; } }
+@keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.14); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes lineFill { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* 減少動態：全站規則已把動畫縮到 0.001ms；流光與旋轉是無限循環，這裡再明確停掉、顯示靜態終態。 */
+@media (prefers-reduced-motion: reduce) {
+  .spin, .ring { animation: none; }
+  .shimmer { animation: none; background: none; color: var(--tf-text-2); }
+}

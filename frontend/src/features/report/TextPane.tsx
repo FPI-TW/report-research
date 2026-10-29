@@ -1,5 +1,7 @@
-import { Skeleton } from '../../components/primitives/Skeleton'
+import { AlertCircle } from 'lucide-react'
 import type { ReadingText } from '../../lib/readingSchemas'
+import { StateBox } from './ReportStates'
+import stateStyles from './ReportStates.module.css'
 import styles from './TextPane.module.css'
 
 interface Props {
@@ -25,10 +27,15 @@ export function TextPane({ text, isLoading, isError, onRetry, hasFile }: Props) 
   if (isError) {
     return (
       <div className={styles.stage}>
-        <div className={styles.state} role="status">
-          <p className={styles.stateText}>全文載入失敗。</p>
-          <button type="button" className={styles.retry} onClick={onRetry}>重試</button>
-        </div>
+        <StateBox
+          role="status"
+          onCanvas
+          icon={<AlertCircle size={18} strokeWidth={1.8} />}
+          title="全文載入失敗"
+          desc="連線逾時，請稍後再試。"
+        >
+          <button type="button" className={stateStyles.btn} onClick={onRetry}>重試</button>
+        </StateBox>
       </div>
     )
   }
@@ -38,7 +45,7 @@ export function TextPane({ text, isLoading, isError, onRetry, hasFile }: Props) 
       <div className={styles.stage}>
         <article className={styles.reader} aria-busy="true" data-testid="text-skeleton">
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} width={i % 3 === 2 ? '68%' : '100%'} height={14} radius={4} style={{ marginBottom: 12 }} />
+            <span key={i} className={styles.sk} style={{ width: i % 3 === 2 ? '68%' : '100%' }} />
           ))}
         </article>
       </div>
@@ -49,12 +56,12 @@ export function TextPane({ text, isLoading, isError, onRetry, hasFile }: Props) 
     <div className={styles.stage}>
       <article className={styles.reader}>
         <div className={styles.note}>
-          此為原始檔的文字抽取結果，圖表與表格排版不會保留{hasFile ? ' — 需要原始版面請由頁首下載原始檔' : ''}。
+          此為原始檔的文字抽取結果，圖表與表格排版不會保留{hasFile ? '；需要原始版面請下載原始檔' : ''}。
         </div>
         <div className={styles.body}>{text.text}</div>
         {text.truncated && (
           <p className={styles.truncated}>
-            全文過長，此處僅顯示前段{hasFile ? ' — 需要完整內容請由頁首下載原始檔' : ''}。
+            全文過長，此處僅顯示前段{hasFile ? '；需要完整內容請下載原始檔' : ''}。
           </p>
         )}
       </article>

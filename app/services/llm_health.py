@@ -179,7 +179,10 @@ async def _refresh(currency: str, floor: float) -> None:
     prev = _snap
     fails = 0
     cleared = prev.cleared_at
-    if res.kind is None:
+    if res.kind is None and res.provider == llm_models.PROVIDER_OPENCODE_GO:
+        # Go 沒有餘額：端點與金鑰可用就是 ok，但不解除閂鎖（見模組 docstring「OpenCode Go」）
+        state, detail = OK, "OpenCode Go 端點可用（沒有餘額可查）"
+    elif res.kind is None:
         state, detail = judge_balance(res.body or {}, currency=currency, floor=floor)
         if state != EXHAUSTED:
             cleared = started
@@ -211,9 +214,9 @@ async def _account_state(*, currency: str, floor: float) -> tuple[str, str]:
     """帳號狀態與給日誌的原因（主答設定正常時才會問到這裡）。"""
     global _task
     if not llm_http.api_key_configured():
-        return AUTH_FAILED, "問答主答走 DeepSeek 但 DEEPSEEK_API_KEY 為空"
+        return AUTH_FAILED, f"問答主答走 {llm_http.provider_label()} 但 {llm_models.key_env()} 為空"
     now = time.monotonic()
-    latched = llm_http.last_quota_at() > _snap.cleared_at
+    latched = llm_http.last_quota_at() > _cleared_at()
     if now >= _snap.expires_at or (latched and now >= _snap.checked_at + FAIL_TTL):
         # 換過 event loop（測試每個 TestClient 一個 loop）時舊 task 永遠不會完成，不能沿用
         if _task is None or _task.done() or _task.get_loop() is not asyncio.get_running_loop():
@@ -222,9 +225,18 @@ async def _account_state(*, currency: str, floor: float) -> tuple[str, str]:
             await asyncio.wait_for(asyncio.shield(_task), timeout=WAIT)
         except asyncio.TimeoutError:
             pass
-    if llm_http.last_quota_at() > _snap.cleared_at and _snap.state != AUTH_FAILED:
+    if llm_http.last_quota_at() > _cleared_at() and _snap.state != AUTH_FAILED:
+        if llm_models.provider() == llm_models.PROVIDER_OPENCODE_GO:
+            return EXHAUSTED, "本行程的請求碰到 OpenCode Go 額度上限，尚無之後成功的請求"
         return EXHAUSTED, "本行程的請求收到 402，尚無之後開始的成功餘額查詢"
     return _snap.state, _snap.detail
+
+
+def _cleared_at() -> float:
+    """閂鎖的解除點：DeepSeek＝之後開始的成功餘額查詢；Go＝之後成功的真實請求（沒有餘額可查）。"""
+    if llm_models.provider() == llm_models.PROVIDER_OPENCODE_GO:
+        return llm_http.last_ok_at()
+    return _snap.cleared_at
 
 
 def cached_snapshot() -> dict:

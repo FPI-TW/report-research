@@ -50,7 +50,9 @@ DeepSeek 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0
   明確失敗。
   通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否一致，**永遠不印金鑰本身**。
 
-另有 `python -m scripts._llm_env <環境檔> …`（`main`）：比對幾份環境檔的金鑰指紋，與上面同一套
+`LLM_PROVIDER=opencode_go`（402 時的手動備援）時檢查的是 `OPENCODE_GO_API_KEY`，通過時印 `OpenCode Go 金鑰 fp=…`。
+
+另有 `python -m scripts._llm_env <環境檔> …`（`main`）：比對幾份環境檔的金鑰指紋與 `LLM_PROVIDER`，與上面同一套
 解析（`file_key_fingerprint`），輪替後核對 `.env` 與 llm 檔用（docs/production_resilience.md）。
 
 從 worktree 跑（`ROOT` 不是部署目錄）時另印警告：flock 以 checkout 為範圍，worktree 的批次
@@ -67,6 +69,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
+from app.services import llm_models
 from app.services.llm_models import (
     PROVIDERS,
     RETIRED_PROVIDERS,
@@ -81,6 +84,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LLM_ENV_FILE = "/etc/default/report-mark-llm"
 EXAMPLE = "deploy/systemd/report-mark-llm.env.example"
 KEY = "DEEPSEEK_API_KEY"
+GO_KEY = "OPENCODE_GO_API_KEY"
+# `main` 逐份比對的鍵：兩個金鑰，加上 `LLM_PROVIDER`——web 讀 repo 根 .env、批次讀這份環境檔，provider
+# 不一致時兩邊會走不同的供應商（一邊花 DeepSeek、一邊花 Go），而且各自的金鑰檢查都會通過。
+PROVIDER_KEY = "LLM_PROVIDER"
 RC_CONFIG = 2
 # 斷路器標記的有效期（沒有 sync 輪次 id 時）：之內其他用到 DeepSeek 的段預檢拒跑。排程裡的段
 # 改看輪次 id（見模組 docstring「斷路器標記綁定 sync 輪次」），這個值只管手動執行。
@@ -147,12 +154,18 @@ def breaker_active() -> str | None:
     return _fresh_breaker()
 
 
+def _key_name() -> str:
+    """目前 provider 的金鑰鍵名；`LLM_PROVIDER` 可能來自環境檔，所以要在 `load_llm_env()` 之後才問。"""
+    return llm_models.key_env()
+
+
 def load_llm_env() -> None:
     path = env_file_path()
-    key_before = os.environ.get(KEY)
+    preset_empty = sorted(
+        k for k in (KEY, GO_KEY) if os.environ.get(k) is not None and not (os.environ.get(k) or "").strip()
+    )
     state: dict[str, object] = {
-        "path": path, "error": None, "duplicates": [], "file_has_key": False,
-        "env_key_preset_empty": key_before is not None and not key_before.strip(),
+        "path": path, "error": None, "duplicates": [], "file_keys": [], "preset_empty": preset_empty,
     }
     _STATE.clear()
     _STATE.update(state)
@@ -170,7 +183,7 @@ def load_llm_env() -> None:
     parsed = [p for p in (_parse_line(line) for line in text.splitlines()) if p is not None]
     counts = Counter(k for k, _ in parsed)
     duplicates = sorted(k for k, n in counts.items() if n > 1)
-    _STATE["file_has_key"] = any(k == KEY and v.strip() for k, v in parsed)
+    _STATE["file_keys"] = sorted({k for k, v in parsed if k in (KEY, GO_KEY) and v.strip()})
     if duplicates:
         # 不載入：哪一行生效取決於讀的人（先到先贏 vs 後者覆蓋），任何一個選擇都可能是錯的。
         _STATE["duplicates"] = duplicates
@@ -185,23 +198,23 @@ def fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
-def file_key_fingerprint(path: Path | str) -> str | None:
-    """環境檔裡 `DEEPSEEK_API_KEY` 的指紋（前 8 碼）；沒有這個鍵或值為空回 None。
+def file_key_fingerprint(path: Path | str, key: str = KEY) -> str | None:
+    """環境檔裡 `key`（預設 `DEEPSEEK_API_KEY`）的指紋（前 8 碼）；沒有這個鍵或值為空回 None。
 
     與預檢、web 看到的值同一套解析（`web.env_loader._parse_line`：去 `export `、去成對引號、
     strip），所以引號、尾隨空白、CRLF 都不會讓兩份其實相同的金鑰算出不同指紋。重複鍵取第一行
     （同 `load_env_file`）；`main` 另外把重複當成失敗。讀檔錯誤原樣拋出，交給呼叫端說明
     （見 docs/production_resilience.md）。
     """
-    values = _file_key_values(path)
+    values = _file_key_values(path, key)
     return fingerprint(values[0]) if values and values[0] else None
 
 
-def _file_key_values(path: Path | str) -> list[str]:
-    """環境檔裡每一行 `DEEPSEEK_API_KEY` 的值（依檔內順序、已 strip）。讀檔錯誤原樣拋出。"""
+def _file_key_values(path: Path | str, key: str = KEY) -> list[str]:
+    """環境檔裡每一行 `key` 的值（依檔內順序、已 strip）。讀檔錯誤原樣拋出。"""
     text = Path(path).read_text(encoding="utf-8")
     parsed = (_parse_line(line) for line in text.splitlines())
-    return [p[1].strip() for p in parsed if p is not None and p[0] == KEY]
+    return [p[1].strip() for p in parsed if p is not None and p[0] == key]
 
 
 def _say(msg: str) -> None:
@@ -231,17 +244,19 @@ def _warn_if_not_deploy_root() -> None:
 
 def _missing_key_hint(path: Path) -> str:
     err = _STATE.get("error")
-    if _STATE.get("env_key_preset_empty") and _STATE.get("file_has_key"):
-        return f"環境裡已有空的 {KEY}，它擋住了 {path} 的值（只補不存在的鍵）：先 `unset {KEY}` 再執行"
+    key = _key_name()
+    preset_empty = key in (_STATE.get("preset_empty") or [])
+    if preset_empty and key in (_STATE.get("file_keys") or []):
+        return f"環境裡已有空的 {key}，它擋住了 {path} 的值（只補不存在的鍵）：先 `unset {key}` 再執行"
     if err == "permission":
         return f"讀不到 {path}（PermissionError；檔案是 0640 root:kashionz）：以 kashionz 執行"
     if err == "missing":
         return f"{path} 不存在：依 {EXAMPLE} 檔頭的指令安裝後用 sudoedit 填金鑰"
     if err:
         return f"讀 {path} 失敗（{err}）"
-    if _STATE.get("env_key_preset_empty"):
-        return f"環境裡的 {KEY} 是空值，且 {path} 也沒有填：先 `unset {KEY}`，再用 sudoedit 填進環境檔"
-    return f"{path} 沒有填 {KEY}：用 sudoedit 填（不要 echo／tee，也不要 source 這個檔）"
+    if preset_empty:
+        return f"環境裡的 {key} 是空值，且 {path} 也沒有填：先 `unset {key}`，再用 sudoedit 填進環境檔"
+    return f"{path} 沒有填 {key}：用 sudoedit 填（不要 echo／tee，也不要 source 這個檔）"
 
 
 def _invalid_provider() -> str | None:
@@ -314,17 +329,20 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
             f"批次斷路器{when}跳脫過（{breaker_path()}：{tripped}）。"
             f"本段要用 {', '.join(names)}，先不跑；確認 DeepSeek 恢復後刪除該檔，或等標記過期"
         )
-    key = (os.environ.get(KEY) or "").strip()
+    key_name = _key_name()
+    key = (os.environ.get(key_name) or "").strip()
     if not key:
         sources = sorted({_model_source(t, m) for t, m in pairs})
         _fail(
-            f"{'、'.join(sources)} 需要 {KEY}，但目前沒有值。{_missing_key_hint(Path(str(path)))}"
+            f"{'、'.join(sources)} 需要 {key_name}（LLM_PROVIDER={provider()}），但目前沒有值。"
+            f"{_missing_key_hint(Path(str(path)))}"
         )
-    _say(f"DeepSeek 金鑰 fp={fingerprint(key)}（模型：{', '.join(names)}）")
+    label = llm_models.PROVIDER_LABEL[provider()]
+    _say(f"{label} 金鑰 fp={fingerprint(key)}（模型：{', '.join(names)}）")
 
 
 def main(argv: list[str] | None = None) -> int:
-    """比對幾份環境檔的金鑰指紋（輪替後核對兩份是否逐字相同；只印前 8 碼，不印金鑰）。
+    """比對幾份環境檔的金鑰指紋與 `LLM_PROVIDER`（輪替或切換後核對兩份是否一致；只印前 8 碼，不印金鑰）。
 
     用法：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`
     rc=0：每份都有值且指紋相同；rc=1：有缺值、讀不到、不一致，或某份檔裡 `DEEPSEEK_API_KEY`
@@ -335,35 +353,53 @@ def main(argv: list[str] | None = None) -> int:
     if not paths:
         print("用法：python -m scripts._llm_env <環境檔> [<環境檔> …]", file=sys.stderr)
         return RC_CONFIG
-    fps: set[str | None] = set()
-    duplicated = False
+    texts: dict[str, list[tuple[str, str]] | None] = {}
     for p in paths:
         try:
-            values = _file_key_values(p)
+            text = Path(p).read_text(encoding="utf-8")
         except PermissionError:
             print(f"{p}  讀不到（PermissionError：以 kashionz 執行，或加入該檔的群組）")
-            fps.add(None)
+            texts[p] = None
             continue
         except OSError as exc:
             print(f"{p}  讀不到（{type(exc).__name__}）")
-            fps.add(None)
+            texts[p] = None
             continue
-        fp = fingerprint(values[0]) if values and values[0] else None
-        print(f"{p}  fp={fp}" if fp else f"{p}  （沒有 {KEY} 或值為空）")
-        fps.add(fp)
-        if len(values) > 1:
-            duplicated = True
-            each = "、".join(f"fp={fingerprint(v)}" if v else "（空值）" for v in values)
-            print(
-                f"{p}  警告：{KEY} 有 {len(values)} 行（{each}）。systemd 的 EnvironmentFile 取最後一行、"
-                "程式（load_env_file）取第一行，兩邊會用不同的金鑰；刪掉多餘的行再核對"
-            )
-    ok = None not in fps and len(fps) == 1 and not duplicated
+        texts[p] = [(k, v.strip()) for k, v in (x for x in map(_parse_line, text.splitlines()) if x is not None)]
+    readable = {p: kv for p, kv in texts.items() if kv is not None}
+    ok = len(readable) == len(paths)
+    duplicated = False
+    # DeepSeek 金鑰一律要比；Go 金鑰只在有任何一份填了時才比（沒切過 Go 的主機兩份都沒有，是正常的）。
+    keys = [KEY] + ([GO_KEY] if any(v for kv in readable.values() for k, v in kv if k == GO_KEY) else [])
+    for key in keys:
+        fps: set[str | None] = set()
+        for p, kv in readable.items():
+            values = [v for k, v in kv if k == key]
+            fp = fingerprint(values[0]) if values and values[0] else None
+            print(f"{p}  {key} fp={fp}" if fp else f"{p}  （沒有 {key} 或值為空）")
+            fps.add(fp)
+            if len(values) > 1:
+                duplicated = True
+                each = "、".join(f"fp={fingerprint(v)}" if v else "（空值）" for v in values)
+                print(
+                    f"{p}  警告：{key} 有 {len(values)} 行（{each}）。systemd 的 EnvironmentFile 取最後一行、"
+                    "程式（load_env_file）取第一行，兩邊會用不同的金鑰；刪掉多餘的行再核對"
+                )
+        ok = ok and None not in fps and len(fps) == 1
+    # provider 以正規化後的值比（未設＝deepseek）：web 與批次走不同供應商時，兩邊的金鑰檢查各自都會通過。
+    provs: set[str] = set()
+    for p, kv in readable.items():
+        values = [v for k, v in kv if k == PROVIDER_KEY]
+        prov = provider({PROVIDER_KEY: values[0]} if values else {})
+        print(f"{p}  {PROVIDER_KEY}={prov}" + ("" if values else "（未設）"))
+        provs.add(prov)
+        duplicated = duplicated or len(values) > 1
+    ok = ok and len(provs) <= 1
     if duplicated:
         print("有重複的鍵，不能判定一致")
     else:
         print("一致" if ok else "不一致或有缺值")
-    return 0 if ok else 1
+    return 0 if ok and not duplicated else 1
 
 
 if __name__ == "__main__":

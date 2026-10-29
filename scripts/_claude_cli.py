@@ -126,7 +126,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from app.services import llm_failures, llm_http, llm_usage
+from app.services import llm_failures, llm_http, llm_models, llm_usage
 from app.services.llm_models import HTTP_MODELS, is_http_model
 from scripts._llm_env import BREAKER_TTL_S, breaker_path, sync_round_id
 
@@ -176,11 +176,26 @@ class CliResult(NamedTuple):
 # 傳輸層退避用的 sleep；測試把它換成記錄器，免得真的等 2／6 秒。
 _http_sleep = time.sleep
 
-# 帳號層級錯誤的處置提示（接在 `API[<kind>]` 錯誤字串後面，一起印進中止訊息）。
+# 帳號層級錯誤的處置提示（接在 `API[<kind>]` 錯誤字串後面，一起印進中止訊息），依 `LLM_PROVIDER` 分兩套。
 _ACCOUNT_HINTS = {
-    llm_http.AUTH: "檢查 DEEPSEEK_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
-    llm_http.QUOTA: "儲值後重跑；不要把 model 改成 Claude 繞過（那等於繞過預算）",
-    llm_http.CONFIG: "檢查模型名與 DEEPSEEK_BASE_URL",
+    llm_models.PROVIDER_DEEPSEEK: {
+        llm_http.AUTH: "檢查 DEEPSEEK_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+        llm_http.QUOTA: (
+            "儲值後重跑；等不及儲值時可依 docs/production_resilience.md「切換到 OpenCode Go」手動切換"
+            "（不要把 model 改成白名單外的名稱繞過）"
+        ),
+        llm_http.CONFIG: "檢查模型名與 DEEPSEEK_BASE_URL",
+    },
+    llm_models.PROVIDER_OPENCODE_GO: {
+        llm_http.AUTH: "檢查 OPENCODE_GO_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+        llm_http.QUOTA: (
+            "OpenCode Go 額度用完（5 小時／每週／每月上限）：等額度窗重置後重跑，或 DeepSeek 儲值後切回"
+            " LLM_PROVIDER=deepseek（docs/production_resilience.md「切換到 OpenCode Go」）"
+        ),
+        llm_http.CONFIG: (
+            "檢查模型名、OPENCODE_GO_BASE_URL，以及 Go 主控台的 Regions 是否開了 Global（DeepSeek 模型需要）"
+        ),
+    },
 }
 
 
@@ -455,6 +470,8 @@ def record_usage(
             "attempts": attempts,
             "ttft_ms": ttft_ms,
             "total_ms": total_ms,
+            # 走哪個供應商（費用歸因：Go 是訂閱額度、DeepSeek 是按量計費；欄位放末尾，舊列沒有＝deepseek）
+            "provider": llm_models.provider(),
         }
         line = json.dumps(row, ensure_ascii=False, default=str) + "\n"
         path = usage_log_path()
@@ -513,7 +530,7 @@ def _run_http(
         finish_reason=out.finish_reason, attempts=result.attempts, ttft_ms=out.ttft_ms,
     )
     if result.kind in llm_http.ACCOUNT_KINDS:
-        raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[result.kind]}")
+        raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[llm_models.provider()][result.kind]}")
     _BREAKER.observe(result.kind)
     if result.kind is None:
         _BAD_REQUESTS.mark_success()

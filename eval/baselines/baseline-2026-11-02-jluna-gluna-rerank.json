@@ -1,0 +1,1567 @@
+{
+  "summary": {
+    "faithfulness": 0.9167249108062909,
+    "context_precision": 0.7803503003010979,
+    "answer_relevancy": 0.6741936503647071,
+    "latency_ms_mean": 20688.722222222223,
+    "latency_ms_p50": 17636,
+    "latency_ms_p95": 32427,
+    "n": 18,
+    "n_errors": 0,
+    "n_no_context": 0,
+    "n_judge_errors": 0,
+    "n_effective_faithfulness": 18,
+    "n_effective_context_precision": 18,
+    "n_effective_answer_relevancy": 18,
+    "judged_ids_sha": "b4ec1b78ce3cb01086b58520bf889a60ceb58d4844851ada3efa130603332c12",
+    "citation_rate": 1.0,
+    "simplified_residual_rate": 0.0,
+    "n_truncated": 0,
+    "thresholds_pass": false,
+    "thresholds_failed": [
+      "context_precision"
+    ],
+    "judge_model": "gpt-6-luna",
+    "judge_prompt_sha": "5a8bc181190ada7a09b05faebdf309eddffe547c16dd4ada2a03eb81572f7de9",
+    "judge_schema_version": 2
+  },
+  "config": {
+    "gen_model": "gpt-6-luna",
+    "gen_timeout": 120.0,
+    "models": {
+      "generate": "gpt-6-luna",
+      "judge_decompose": "gpt-6-luna",
+      "judge_ground": "gpt-6-luna",
+      "judge_context_precision": "gpt-6-luna",
+      "judge_answer_relevancy": "gpt-6-luna"
+    },
+    "judge": {
+      "provider": "llm_http",
+      "model": "gpt-6-luna",
+      "timeout": 180.0,
+      "prompt_sha": "5a8bc181190ada7a09b05faebdf309eddffe547c16dd4ada2a03eb81572f7de9",
+      "schema_version": 2,
+      "lineage": "gpt-6-luna-2026-11",
+      "max_tokens": {
+        "decompose": 8192,
+        "ground": 2048,
+        "context_precision": 2048,
+        "answer_relevancy": 1024
+      },
+      "observed": {
+        "model_resp": [
+          "gpt-6-luna"
+        ],
+        "system_fingerprint": [],
+        "requests": 214,
+        "usage": {
+          "completion_tokens": 80934,
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 1219272,
+          "prompt_tokens": 1219272
+        }
+      }
+    },
+    "embed_model": "BAAI/bge-m3",
+    "rerank_top_m": 16,
+    "rerank_model": "BAAI/bge-reranker-v2-m3",
+    "agentic": false,
+    "concurrency": 1,
+    "repeat": 3,
+    "queryset": "eval/ragas_questions.json",
+    "queryset_sha256": "fe7119622deef350a3dba8981bbd34e617a7ac4172cd25743b48a4a66c1c1ec9",
+    "corpus_id": "devdb-2026-10-28:md5:3030a8008c760885c1b6630ddc83ecc7",
+    "scope": null,
+    "limit": null,
+    "commit": "8b12a44ff9da7b183d42e84e750d167c62fa81d2",
+    "started_at": "2026-11-02T08:20:04.692195+00:00",
+    "finished_at": "2026-11-02T08:52:46.150588+00:00"
+  },
+  "notes": [
+    "judge 系譜 gpt-6-luna-2026-11（judge=gpt-6-luna，自 2026-11 起的新量尺）：與舊系譜的結果（eval/baselines/ 裡 2026-11 之前的基準線）不可比，eval_compare 回 2 是預期；門檻數值不變。"
+  ],
+  "cases": [
+    {
+      "id": "q001",
+      "question": "台積電最新的營運展望如何",
+      "faithfulness": 0.9503086419753086,
+      "context_precision": 0.2513756613756613,
+      "answer_relevancy": 0.7099921662539229,
+      "n_contexts": 15,
+      "latency_ms": 21792,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q001",
+          "question": "台積電最新的營運展望如何",
+          "faithfulness": 0.9259259259259259,
+          "context_precision": 0.2782539682539682,
+          "answer_relevancy": 0.6853023810848411,
+          "answer_relevancy_questions": [
+            "凱基對台積電 2026 年第三季及第四季的營收與毛利率有何預估？",
+            "哪些需求因素支撐台積電先進製程需求？研報如何看待 2027 年 N3 產能與價格？",
+            "台積電將 2026 年營收成長及資本支出指引上調至何種水準？N2 量產與海外擴產對毛利率及中長期展望有何影響？"
+          ],
+          "answer_relevancy_sims": [
+            0.7158,
+            0.6465,
+            0.6936
+          ],
+          "n_contexts": 15,
+          "latency_ms": 34812,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q001",
+          "question": "台積電最新的營運展望如何",
+          "faithfulness": 1.0,
+          "context_precision": 0.1976190476190476,
+          "answer_relevancy": 0.7283796479831052,
+          "answer_relevancy_questions": [
+            "根據截至 2026 年 10 月 1 日的研報，台積電 2026 年第三季與第四季的營收及毛利率展望為何？",
+            "AI/HPC、iPhone 備貨及其他需求如何影響台積電先進製程產能與 2027 年價格展望？",
+            "台積電近期毛利率可能面臨哪些壓力，哪些因素可望抵銷？較早的 2026 年全年營收成長與資本支出指引為何？"
+          ],
+          "answer_relevancy_sims": [
+            0.7697,
+            0.6575,
+            0.758
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15254,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q001",
+          "question": "台積電最新的營運展望如何",
+          "faithfulness": 0.925,
+          "context_precision": 0.2782539682539682,
+          "answer_relevancy": 0.7162944696938226,
+          "answer_relevancy_questions": [
+            "截至2026年10月1日，凱基對台積電3Q26營收與毛利率的預估為何？需求因素及成本壓力有哪些？",
+            "凱基如何展望台積電4Q26營收與毛利率，以及2027年各製程與先進封裝的價格調漲幅度和產能狀況？",
+            "台積電較早期公布的2026年美元營收成長與資本支出指引為何？研報對2026至2028年資本支出及毛利率趨勢有何看法？"
+          ],
+          "answer_relevancy_sims": [
+            0.6882,
+            0.6986,
+            0.762
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15309,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q002",
+      "question": "比較研報對台股大盤走勢與風險的看法",
+      "faithfulness": 0.9220165799113168,
+      "context_precision": 1.0,
+      "answer_relevancy": 0.620492505426514,
+      "n_contexts": 7,
+      "latency_ms": 15499,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q002",
+          "question": "比較研報對台股大盤走勢與風險的看法",
+          "faithfulness": 0.9473684210526315,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6135595249151821,
+          "answer_relevancy_questions": [
+            "元大與凱基對台股短期走勢及中長期展望有何不同看法？",
+            "元大如何分析近期台股的技術面、指數區間與主要風險，並建議採取什麼策略？",
+            "凱基如何看待升息、企業獲利成長對台股的影響？其指數目標與投資策略為何？"
+          ],
+          "answer_relevancy_sims": [
+            0.6294,
+            0.6282,
+            0.5831
+          ],
+          "n_contexts": 7,
+          "latency_ms": 13066,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q002",
+          "question": "比較研報對台股大盤走勢與風險的看法",
+          "faithfulness": 0.8571428571428571,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.5721827828191114,
+          "answer_relevancy_questions": [
+            "元大與凱基在 2026 年 9 月 29 日對台股短線及中長期走勢各有什麼看法？",
+            "元大認為台股短線面臨哪些風險，並預估 2026 年 9 月 29 日至 10 月 2 日的加權指數區間是多少？",
+            "凱基對台股年底及未來一年的指數目標、企業盈餘成長展望與投資策略為何？"
+          ],
+          "answer_relevancy_sims": [
+            0.6097,
+            0.5674,
+            0.5394
+          ],
+          "n_contexts": 7,
+          "latency_ms": 15950,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q002",
+          "question": "比較研報對台股大盤走勢與風險的看法",
+          "faithfulness": 0.9615384615384616,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6757352085452487,
+          "answer_relevancy_questions": [
+            "研報如何看待台股短線與中長期走勢，並預估加權指數的短期區間及中長期目標點位？",
+            "研報看好台股中長期表現的主要依據是什麼？企業獲利成長與 AI 需求將如何影響預期？",
+            "研報指出台股面臨哪些主要風險，並分別建議採取什麼短線與中長期投資策略？"
+          ],
+          "answer_relevancy_sims": [
+            0.7126,
+            0.6054,
+            0.7093
+          ],
+          "n_contexts": 7,
+          "latency_ms": 17480,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q003",
+      "question": "研報如何評估材料產業的需求與風險？",
+      "faithfulness": 0.924074074074074,
+      "context_precision": 1.0,
+      "answer_relevancy": 0.6483356496109843,
+      "n_contexts": 3,
+      "latency_ms": 17279,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q003",
+          "question": "研報如何評估材料產業的需求與風險？",
+          "faithfulness": 0.925,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6234570322709554,
+          "answer_relevancy_questions": [
+            "研報對化纖原料、五大泛用樹脂與半導體耗材的需求展望及產業評等如何？",
+            "化纖原料與五大泛用樹脂面臨哪些需求、價格、利差或供給方面的主要風險？",
+            "半導體耗材及其他材料相關子產業（如面板、磊晶與封裝）的成長動能和展望為何？"
+          ],
+          "answer_relevancy_sims": [
+            0.6866,
+            0.6038,
+            0.58
+          ],
+          "n_contexts": 3,
+          "latency_ms": 18428,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q003",
+          "question": "研報如何評估材料產業的需求與風險？",
+          "faithfulness": 0.9583333333333334,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6882929291402137,
+          "answer_relevancy_questions": [
+            "2026年3月至7月研報如何評估化纖原料產業的需求、供需、評等與長期結構性風險？",
+            "研報對五大泛用樹脂產業的需求、產品利差、供給過剩及新增產能風險有何看法，且7月對哪些公司提出買進建議？",
+            "研報如何看待半導體耗材、面板與光電組件的需求展望、主要風險及相關投資建議？"
+          ],
+          "answer_relevancy_sims": [
+            0.7063,
+            0.6541,
+            0.7045
+          ],
+          "n_contexts": 3,
+          "latency_ms": 17147,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q003",
+          "question": "研報如何評估材料產業的需求與風險？",
+          "faithfulness": 0.8888888888888888,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6332569874217839,
+          "answer_relevancy_questions": [
+            "研報如何評估化纖原料產業的需求、報價與競爭狀況？哪些因素可能影響 R-PET、尼龍絲及 Spandex 的長期發展？",
+            "五大泛用樹脂產業目前面臨哪些需求、利差與新增產能風險？近期油價變化如何影響下游備貨意願？",
+            "半導體耗材的需求復甦由哪些因素支撐？研報對價格談判、合約負債及產業景氣循環有何預期？"
+          ],
+          "answer_relevancy_sims": [
+            0.6901,
+            0.579,
+            0.6307
+          ],
+          "n_contexts": 3,
+          "latency_ms": 16263,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q004",
+      "question": "散熱技術的進展如何？",
+      "faithfulness": 0.9378143133462283,
+      "context_precision": 0.6200736799943148,
+      "answer_relevancy": 0.594451858704258,
+      "n_contexts": 15,
+      "latency_ms": 16622,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q004",
+          "question": "散熱技術的進展如何？",
+          "faithfulness": 0.9772727272727273,
+          "context_precision": 0.6395691609977324,
+          "answer_relevancy": 0.5809962315259308,
+          "answer_relevancy_questions": [
+            "AI 伺服器散熱技術為何從傳統氣冷轉向液冷與整合式方案？目前有哪些主要發展趨勢？",
+            "健策推出的 Vapor Chamber Lid、Micro-Channel Lid 與 VC+MC Lid 分別對應哪些 TDP，並處於什麼發展階段？",
+            "和碩、光寶科與元鈦科展示了哪些伺服器及資料中心散熱方案？這些方案在功耗或解熱容量上有何特色？"
+          ],
+          "answer_relevancy_sims": [
+            0.6742,
+            0.4388,
+            0.63
+          ],
+          "n_contexts": 15,
+          "latency_ms": 17793,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q004",
+          "question": "散熱技術的進展如何？",
+          "faithfulness": 0.9,
+          "context_precision": 0.6742843576176909,
+          "answer_relevancy": 0.5745462804842117,
+          "answer_relevancy_questions": [
+            "AI 晶片功耗持續提升時，健策展示的 Vapor Chamber Lid、Micro-Channel Lid 與 VC+MC Lid 各自適用於什麼功耗範圍，目前開發或測試進度如何？",
+            "伺服器與資料中心的液冷散熱方案有哪些配置？研報提到的水冷伺服器耗電量、CDU 解熱能力及相關產能布局為何？",
+            "一詮與健策在均熱片、Micro-channel Lid、Removable Lid 等散熱產品上的供應與送樣驗證進度如何，哪些產品仍待客戶驗證或量產？"
+          ],
+          "answer_relevancy_sims": [
+            0.4967,
+            0.6102,
+            0.6166
+          ],
+          "n_contexts": 15,
+          "latency_ms": 16096,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q004",
+          "question": "散熱技術的進展如何？",
+          "faithfulness": 0.9361702127659575,
+          "context_precision": 0.5463675213675213,
+          "answer_relevancy": 0.6278130641026314,
+          "answer_relevancy_questions": [
+            "AI伺服器功耗持續提高，帶動哪些散熱技術與產業趨勢？",
+            "健策的 Vapor Chamber Lid、Micro-Channel Lid 與 VC+MC Lid 各自適用於何種 TDP，開發或量產進度如何？",
+            "伺服器液冷、混合散熱及均熱片產品的應用與產能有哪些發展？"
+          ],
+          "answer_relevancy_sims": [
+            0.7127,
+            0.4666,
+            0.7042
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15976,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q005",
+      "question": "AI 伺服器的最新發展如何？",
+      "faithfulness": 0.9318184078859678,
+      "context_precision": 0.8654761904761904,
+      "answer_relevancy": 0.6184222370110489,
+      "n_contexts": 15,
+      "latency_ms": 17161,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q005",
+          "question": "AI 伺服器的最新發展如何？",
+          "faithfulness": 0.9032258064516129,
+          "context_precision": 0.8654761904761904,
+          "answer_relevancy": 0.6388486005685643,
+          "answer_relevancy_questions": [
+            "研報對緯創 2026 年 AI 伺服器出貨、營收占比與 EPS 有何最新預估？",
+            "緯創 2027 年的 AI 伺服器成長動能來自哪些新專案、新客戶與產品？",
+            "GB 系列轉向 Vera Rubin 的產業出貨展望為何？AI 伺服器需求與緯創擴產面臨哪些支撐因素及風險？"
+          ],
+          "answer_relevancy_sims": [
+            0.6213,
+            0.6916,
+            0.6037
+          ],
+          "n_contexts": 15,
+          "latency_ms": 19428,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q005",
+          "question": "AI 伺服器的最新發展如何？",
+          "faithfulness": 0.9347826086956522,
+          "context_precision": 0.8654761904761904,
+          "answer_relevancy": 0.5954609378606642,
+          "answer_relevancy_questions": [
+            "緯創 2026 年 GB300 與 GB／Vera Rubin AI 伺服器的出貨、營收占比預估為何？",
+            "Vera Rubin 平台預計何時開始出貨並擴大放量？其單價相較前一代有何變化，對緯創及其他 ODM 的成長有何影響？",
+            "AI 伺服器需求與產業成長的主要動能和限制因素有哪些？"
+          ],
+          "answer_relevancy_sims": [
+            0.543,
+            0.4853,
+            0.7581
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15403,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q005",
+          "question": "AI 伺服器的最新發展如何？",
+          "faithfulness": 0.9574468085106383,
+          "context_precision": 0.8654761904761904,
+          "answer_relevancy": 0.6209571726039181,
+          "answer_relevancy_questions": [
+            "緯創 2026 年 GB300、GB／VR AI 伺服器的出貨量與營收占比展望為何？",
+            "Vera Rubin 平台預計何時開始出貨並擴大量產？哪些新專案與客戶平台有望帶動緯創 2027 年伺服器營收成長？",
+            "AI 伺服器產業目前的需求與供應鏈發展趨勢為何？資料中心建置、零組件供應及電力有哪些機會與限制？"
+          ],
+          "answer_relevancy_sims": [
+            0.5681,
+            0.5158,
+            0.779
+          ],
+          "n_contexts": 15,
+          "latency_ms": 16653,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q006",
+      "question": "台積電先進製程的營運展望如何？",
+      "faithfulness": 0.9659863945578232,
+      "context_precision": 0.6706349206349206,
+      "answer_relevancy": 0.6888653027154298,
+      "n_contexts": 15,
+      "latency_ms": 17636,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q006",
+          "question": "台積電先進製程的營運展望如何？",
+          "faithfulness": 0.8979591836734694,
+          "context_precision": 0.6706349206349206,
+          "answer_relevancy": 0.7021772177846218,
+          "answer_relevancy_questions": [
+            "台積電的先進製程需求與產能利用率展望如何，N3、N5及N2製程目前有哪些產能變化？",
+            "AI、HPC及加速器需求將如何推動台積電2026年的營收成長？",
+            "台積電2026年的資本支出與擴產計畫為何，主要投向哪些先進製程及封裝產能？"
+          ],
+          "answer_relevancy_sims": [
+            0.7484,
+            0.6512,
+            0.7069
+          ],
+          "n_contexts": 15,
+          "latency_ms": 18169,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q006",
+          "question": "台積電先進製程的營運展望如何？",
+          "faithfulness": 1.0,
+          "context_precision": 0.6706349206349206,
+          "answer_relevancy": 0.7072332746049415,
+          "answer_relevancy_questions": [
+            "台積電先進製程目前的產能利用率如何？哪些製程產能維持滿載或接近滿載，主要需求動能為何？",
+            "台積電在2026年如何擴充2奈米與3奈米產能？相關資本支出規劃為何？",
+            "AI與HPC需求及先進製程擴產，如何支撐台積電2026年的營收展望？擴產過程有哪些風險？"
+          ],
+          "answer_relevancy_sims": [
+            0.779,
+            0.6198,
+            0.7229
+          ],
+          "n_contexts": 15,
+          "latency_ms": 17349,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q006",
+          "question": "台積電先進製程的營運展望如何？",
+          "faithfulness": 1.0,
+          "context_precision": 0.6706349206349206,
+          "answer_relevancy": 0.6571854157567257,
+          "answer_relevancy_questions": [
+            "台積電近期先進製程的產能利用率如何？AI、HPC 及 GPU／ASIC 需求對稼動率有何影響？",
+            "台積電 2026 年 2 奈米與 3 奈米的擴產進度如何，預計投入多少資本支出？",
+            "研報如何預估台積電 2026 年營收成長，並指出哪些因素是主要成長動能與後續觀察重點？"
+          ],
+          "answer_relevancy_sims": [
+            0.725,
+            0.6115,
+            0.6351
+          ],
+          "n_contexts": 15,
+          "latency_ms": 17391,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q007",
+      "question": "散熱產業供應鏈的成長動能如何？",
+      "faithfulness": 0.9131263616557734,
+      "context_precision": 0.859412676268737,
+      "answer_relevancy": 0.7666145302746457,
+      "n_contexts": 15,
+      "latency_ms": 20292,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q007",
+          "question": "散熱產業供應鏈的成長動能如何？",
+          "faithfulness": 0.8703703703703703,
+          "context_precision": 0.8258398167489077,
+          "answer_relevancy": 0.7503552228077423,
+          "answer_relevancy_questions": [
+            "目前散熱產業的主要成長動能為何？AI 伺服器需求、液冷普及與晶片功耗提升如何影響散熱產品需求與價值量？",
+            "近期散熱供應鏈與個別廠商的營運表現如何？奇鋐、健策的成長由哪些需求帶動，哪些因素可能造成公司間表現分化？",
+            "太空 AI 是否會成為散熱產業的新市場？目前發展階段如何，短期內是否能成為主要營收動能？"
+          ],
+          "answer_relevancy_sims": [
+            0.7815,
+            0.771,
+            0.6985
+          ],
+          "n_contexts": 15,
+          "latency_ms": 19944,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q007",
+          "question": "散熱產業供應鏈的成長動能如何？",
+          "faithfulness": 0.9558823529411765,
+          "context_precision": 0.9265583953083955,
+          "answer_relevancy": 0.753656897902583,
+          "answer_relevancy_questions": [
+            "近期散熱產業供應鏈的主要成長動能為何？AI 伺服器拉貨對營收與需求有何影響？",
+            "GPU 與 ASIC 平台升級如何帶動液冷、水冷板、均熱片及高階散熱產品的需求與價值量？",
+            "散熱供應鏈中哪些產品升級有助提升單價與獲利，且公司間表現可能受到哪些因素影響？"
+          ],
+          "answer_relevancy_sims": [
+            0.8547,
+            0.6171,
+            0.7892
+          ],
+          "n_contexts": 15,
+          "latency_ms": 23172,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q007",
+          "question": "散熱產業供應鏈的成長動能如何？",
+          "faithfulness": null,
+          "context_precision": 0.8258398167489077,
+          "answer_relevancy": 0.7958314701136118,
+          "answer_relevancy_questions": [
+            "散熱產業供應鏈目前的主要成長動能有哪些？",
+            "AI 伺服器需求、液冷滲透率提升與高功耗晶片，如何帶動散熱產品升級和價值量增加？",
+            "散熱供應鏈各廠商的近期出貨與營運表現為何分化，應留意哪些拉貨、產能或獲利風險？"
+          ],
+          "answer_relevancy_sims": [
+            0.9564,
+            0.6678,
+            0.7633
+          ],
+          "n_contexts": 15,
+          "latency_ms": 17761,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false,
+          "judge_errors": {
+            "faithfulness": "JudgeError: API[invalid_json] 回應不是合法 JSON：content 不是合法 JSON（1919 字）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "q008",
+      "question": "台積電先進封裝產能與需求如何？",
+      "faithfulness": 0.9196798361952627,
+      "context_precision": 0.4706984814127671,
+      "answer_relevancy": 0.6298558432426765,
+      "n_contexts": 15,
+      "latency_ms": 15892,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q008",
+          "question": "台積電先進封裝產能與需求如何？",
+          "faithfulness": 0.9655172413793104,
+          "context_precision": 0.41569264069264067,
+          "answer_relevancy": 0.6570778295890841,
+          "answer_relevancy_questions": [
+            "台積電先進封裝的需求現況如何，主要由哪些客戶與 AI 晶片需求帶動？",
+            "台積電 CoWoS 產能預計在 2026、2027 年如何成長，2027 年月產能估計是多少？",
+            "CoWoS 供需緊俏會帶來哪些影響，包括需求外溢至其他封裝業者及對 12 吋矽晶圓需求的影響？"
+          ],
+          "answer_relevancy_sims": [
+            0.8425,
+            0.5799,
+            0.5488
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15620,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q008",
+          "question": "台積電先進封裝產能與需求如何？",
+          "faithfulness": 0.8461538461538461,
+          "context_precision": 0.5159554730983302,
+          "answer_relevancy": 0.5821213181548303,
+          "answer_relevancy_questions": [
+            "台積電 CoWoS 先進封裝需求主要由哪些應用與客戶帶動？",
+            "研報如何預估台積電 2025 年底至 2027 年的 CoWoS 月產能變化？",
+            "CoWoS 供需情況、訂單外溢及 CoPoS 替代方案的發展時程如何？"
+          ],
+          "answer_relevancy_sims": [
+            0.7108,
+            0.5616,
+            0.474
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15987,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q008",
+          "question": "台積電先進封裝產能與需求如何？",
+          "faithfulness": 0.9473684210526315,
+          "context_precision": 0.48044733044733046,
+          "answer_relevancy": 0.6503683819841152,
+          "answer_relevancy_questions": [
+            "台積電 CoWoS 先進封裝的需求主要來自哪些產品與客戶？",
+            "研報預估台積電 2025 至 2027 年 CoWoS 月產能將如何變化？不同報告的預估有何差異？",
+            "台積電 CoWoS 目前的供需狀況如何，產能擴充對封測供應鏈及 CoPoS 等替代方案有何影響？"
+          ],
+          "answer_relevancy_sims": [
+            0.7192,
+            0.5656,
+            0.6664
+          ],
+          "n_contexts": 15,
+          "latency_ms": 16069,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q009",
+      "question": "台指期近期盤勢與多空看法",
+      "faithfulness": 0.8568007662835249,
+      "context_precision": 1.0,
+      "answer_relevancy": 0.6918035774612004,
+      "n_contexts": 15,
+      "latency_ms": 17109,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q009",
+          "question": "台指期近期盤勢與多空看法",
+          "faithfulness": 0.875,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.7061069106023439,
+          "answer_relevancy_questions": [
+            "截至2026年10月1日，台指期與台股近期走勢如何？",
+            "近期台指期偏多的依據有哪些，外資買盤、電子類股與49,000點關卡有何關聯？",
+            "台指期後續延續漲勢有哪些風險，外資期貨淨空單應觀察什麼水準？"
+          ],
+          "answer_relevancy_sims": [
+            0.767,
+            0.6645,
+            0.6869
+          ],
+          "n_contexts": 15,
+          "latency_ms": 16887,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q009",
+          "question": "台指期近期盤勢與多空看法",
+          "faithfulness": 0.8333333333333334,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.7383601772408771,
+          "answer_relevancy_questions": [
+            "截至 2026 年 10 月 1 日，台指期的最新走勢如何？",
+            "台指期近期是否偏多，哪些市場表現與籌碼因素支持或限制這個判斷？",
+            "台指期近期能否挑戰 49,000 點，需滿足哪些外資買賣超與期貨淨空單條件？"
+          ],
+          "answer_relevancy_sims": [
+            0.755,
+            0.7987,
+            0.6614
+          ],
+          "n_contexts": 15,
+          "latency_ms": 17629,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q009",
+          "question": "台指期近期盤勢與多空看法",
+          "faithfulness": 0.8620689655172413,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6309436445403801,
+          "answer_relevancy_questions": [
+            "10月1日加權指數與近月台指期的收盤點數及漲跌幅為何？電子類股和金融類股當日表現如何？",
+            "近期台指期多頭延續的依據是什麼？哪些因素支持電子股領漲？",
+            "台指期挑戰49,000點需要哪些條件？目前有哪些籌碼或類股風險需要留意？"
+          ],
+          "answer_relevancy_sims": [
+            0.6225,
+            0.6724,
+            0.598
+          ],
+          "n_contexts": 15,
+          "latency_ms": 16812,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q010",
+      "question": "選擇權盤後分析與籌碼",
+      "faithfulness": 0.8598901098901099,
+      "context_precision": 0.6826946334089191,
+      "answer_relevancy": 0.5986861827878361,
+      "n_contexts": 15,
+      "latency_ms": 25364,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q010",
+          "question": "選擇權盤後分析與籌碼",
+          "faithfulness": 0.8928571428571429,
+          "context_precision": 0.4692857142857143,
+          "answer_relevancy": 0.5653292042848207,
+          "answer_relevancy_questions": [
+            "根據 2026 年 9 月 10 日的選擇權研報，P/C Ratio 與買賣權最大未平倉量如何反映市場情緒、短線壓力與支撐？",
+            "2026 年 9 月 2 日與 9 月 3 日的 VIX、買賣權隱含波動率及最大 OI 有何變化，顯示哪些避險需求與風險？",
+            "比較 2026 年 9 月 1 日、9 月 2 日、9 月 3 日與 8 月 26 日的選擇權籌碼，市場情緒如何轉變，各日期的支撐與壓力區在哪裡？"
+          ],
+          "answer_relevancy_sims": [
+            0.5654,
+            0.5223,
+            0.6083
+          ],
+          "n_contexts": 15,
+          "latency_ms": 25137,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q010",
+          "question": "選擇權盤後分析與籌碼",
+          "faithfulness": 0.8269230769230769,
+          "context_precision": 0.8736394557823128,
+          "answer_relevancy": 0.6004993814203542,
+          "answer_relevancy_questions": [
+            "如何綜合隱含波動率、VIX、P/C Ratio與未平倉量（OI），分析選擇權市場的情緒、支撐與壓力？",
+            "2026年9月10日的選擇權籌碼訊號如何解讀，主要支撐與壓力位在哪裡？",
+            "近期選擇權市場的多空情緒如何變化？請比較9月初的防禦、偏多與區間整理訊號，並說明判讀時的注意事項。"
+          ],
+          "answer_relevancy_sims": [
+            0.6151,
+            0.5918,
+            0.5945
+          ],
+          "n_contexts": 15,
+          "latency_ms": 25790,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q010",
+          "question": "選擇權盤後分析與籌碼",
+          "faithfulness": null,
+          "context_precision": 0.7051587301587302,
+          "answer_relevancy": 0.6302299626583333,
+          "answer_relevancy_questions": [
+            "2026年9月10日選擇權盤後籌碼顯示什麼市場情緒，買權與賣權最大未平倉量分別代表哪些壓力與支撐？",
+            "2026年9月1日至9月3日，台指選擇權的隱含波動率、VIX、P/C Ratio及最大未平倉量有哪些變化，反映何種市場預期？",
+            "盤後分析選擇權籌碼時，應如何綜合解讀隱含波動率、VIX、P/C Ratio與最大未平倉量，並避免把不同日期的數據誤當成連續行情？"
+          ],
+          "answer_relevancy_sims": [
+            0.6101,
+            0.5628,
+            0.7178
+          ],
+          "n_contexts": 15,
+          "latency_ms": 25164,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false,
+          "judge_errors": {
+            "faithfulness": "JudgeError: API[invalid_json] 回應不是合法 JSON：content 不是合法 JSON（3703 字）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "q011",
+      "question": "FOMC 會議結果對市場的影響",
+      "faithfulness": 0.8120237462342725,
+      "context_precision": 0.9444444444444443,
+      "answer_relevancy": 0.632358036198254,
+      "n_contexts": 10,
+      "latency_ms": 18753,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q011",
+          "question": "FOMC 會議結果對市場的影響",
+          "faithfulness": 0.8863636363636364,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6236815811595635,
+          "answer_relevancy_questions": [
+            "2026年9月FOMC升息一碼後，最新研報如何評估升息對股市的影響，以及市場仍需留意哪些風險？",
+            "2026年9月FOMC升息前後，美國長短期利率、10年期公債殖利率與殖利率曲線有何變化，Fed獨立性疑慮可能帶來什麼影響？",
+            "油價與通膨疑慮升高時，美元、黃金、原油及美股各自如何反應？"
+          ],
+          "answer_relevancy_sims": [
+            0.6636,
+            0.634,
+            0.5734
+          ],
+          "n_contexts": 10,
+          "latency_ms": 17668,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q011",
+          "question": "FOMC 會議結果對市場的影響",
+          "faithfulness": 0.9444444444444444,
+          "context_precision": 0.9166666666666666,
+          "answer_relevancy": 0.6423802419194687,
+          "answer_relevancy_questions": [
+            "2026年9月17日FOMC升息一碼至3.75%～4.00%後，研報如何解讀升息對股市及市場信心的影響？",
+            "2026年9月FOMC升息前後，長端美債殖利率、債券價格與美元受到哪些因素影響？",
+            "研報指出，白宮施壓、Fed獨立性及政策溝通不清，可能如何影響後續利率與市場風險？"
+          ],
+          "answer_relevancy_sims": [
+            0.6939,
+            0.6348,
+            0.5985
+          ],
+          "n_contexts": 10,
+          "latency_ms": 17548,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q011",
+          "question": "FOMC 會議結果對市場的影響",
+          "faithfulness": 0.6052631578947368,
+          "context_precision": 0.9166666666666666,
+          "answer_relevancy": 0.6310122855157296,
+          "answer_relevancy_questions": [
+            "2026 年 9 月 17 日 FOMC 升息後，升息對股市可能有什麼影響，投資人應留意哪些風險？",
+            "升息如何影響債券長端殖利率、殖利率曲線與美元？美國政府施壓聯準會降息又可能帶來什麼影響？",
+            "比較 2026 年 7 月與 9 月 FOMC 的利率決策及政策訊號，並說明後續市場應關注哪些通膨與聯準會獨立性風險。"
+          ],
+          "answer_relevancy_sims": [
+            0.6969,
+            0.5874,
+            0.6087
+          ],
+          "n_contexts": 10,
+          "latency_ms": 21043,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q012",
+      "question": "美國通膨與 CPI 數據的解讀",
+      "faithfulness": 0.9698611868824635,
+      "context_precision": 0.7851851851851852,
+      "answer_relevancy": 0.6783229923073506,
+      "n_contexts": 12,
+      "latency_ms": 32198,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q012",
+          "question": "美國通膨與 CPI 數據的解讀",
+          "faithfulness": 0.9574468085106383,
+          "context_precision": 0.75,
+          "answer_relevancy": 0.6702576995043484,
+          "answer_relevancy_questions": [
+            "美國 8 月 CPI 的整體與核心通膨表現如何？能源價格和核心服務價格分別帶來哪些影響？",
+            "9 月美國 PMI 顯示哪些景氣與投入成本變化，這些訊號如何影響通膨再加速風險？",
+            "近期 CPI、PMI 與能源成本訊號對聯準會政策立場及升息預期有何影響？"
+          ],
+          "answer_relevancy_sims": [
+            0.7004,
+            0.6451,
+            0.6652
+          ],
+          "n_contexts": 12,
+          "latency_ms": 28582,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q012",
+          "question": "美國通膨與 CPI 數據的解讀",
+          "faithfulness": 0.9777777777777777,
+          "context_precision": 0.8333333333333334,
+          "answer_relevancy": 0.6604049749020201,
+          "answer_relevancy_questions": [
+            "美國近期通膨是否有再度升溫的風險？8 月 CPI 與 9 月 PMI 的數據各透露了什麼訊號？",
+            "8 月美國 CPI 上升的主要原因有哪些？能源、核心服務、需求與科技投資分別扮演什麼角色？",
+            "較早的 PCE 數據曾顯示通膨降溫，為何近期判斷仍認為聯準會有理由維持緊縮立場？"
+          ],
+          "answer_relevancy_sims": [
+            0.7138,
+            0.6484,
+            0.619
+          ],
+          "n_contexts": 12,
+          "latency_ms": 37658,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q012",
+          "question": "美國通膨與 CPI 數據的解讀",
+          "faithfulness": 0.9743589743589743,
+          "context_precision": 0.7722222222222223,
+          "answer_relevancy": 0.7043063025156835,
+          "answer_relevancy_questions": [
+            "近期美國 CPI 與 PMI 資料顯示通膨是否有重新升溫的風險？主要訊號有哪些？",
+            "近期美國通膨壓力主要來自哪些項目，價格上漲是否已廣泛擴散至各類商品與服務？",
+            "最新通膨資料對 PCE 通膨預估及聯準會維持偏緊政策的可能性有何影響？"
+          ],
+          "answer_relevancy_sims": [
+            0.7564,
+            0.6718,
+            0.6847
+          ],
+          "n_contexts": 12,
+          "latency_ms": 30355,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q013",
+      "question": "輝達 NVIDIA 的財報與展望",
+      "faithfulness": 0.9798088410991638,
+      "context_precision": 0.578974358974359,
+      "answer_relevancy": 0.708099659137404,
+      "n_contexts": 15,
+      "latency_ms": 29262,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q013",
+          "question": "輝達 NVIDIA 的財報與展望",
+          "faithfulness": 0.9838709677419355,
+          "context_precision": 0.45,
+          "answer_relevancy": 0.7013345721287546,
+          "answer_relevancy_questions": [
+            "輝達 FY2Q27 財報表現如何？營收、資料中心營收、毛利率與每股盈餘各為多少，是否優於市場預期？",
+            "輝達對 FY3Q27 的營收與毛利率有何展望？記憶體成本如何影響短期毛利率？",
+            "輝達對 2027 年成長、供應限制與主要投資風險有何看法？凱基如何調整目標價與評價基礎？"
+          ],
+          "answer_relevancy_sims": [
+            0.7391,
+            0.7075,
+            0.6573
+          ],
+          "n_contexts": 15,
+          "latency_ms": 34300,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q013",
+          "question": "輝達 NVIDIA 的財報與展望",
+          "faithfulness": 1.0,
+          "context_precision": 0.836923076923077,
+          "answer_relevancy": 0.7125500627488749,
+          "answer_relevancy_questions": [
+            "輝達 FY2Q27 最新財報表現如何？營收、毛利率、EPS 與資料中心營收是否優於市場預期？",
+            "輝達對 FY3Q27 營收及 2027 年成長的展望為何？需求、訂單 backlog 與供給限制如何影響營收預期？",
+            "記憶體成本上升將如何影響輝達未來幾季的毛利率？凱基的目標價、估值依據及主要投資風險為何？"
+          ],
+          "answer_relevancy_sims": [
+            0.7426,
+            0.7144,
+            0.6807
+          ],
+          "n_contexts": 15,
+          "latency_ms": 37644,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q013",
+          "question": "輝達 NVIDIA 的財報與展望",
+          "faithfulness": 0.9555555555555556,
+          "context_precision": 0.45,
+          "answer_relevancy": 0.7104143425345827,
+          "answer_relevancy_questions": [
+            "輝達 FY2Q27 財報表現如何？營收、毛利率、EPS 及資料中心營收分別是多少？",
+            "輝達 FY3Q27 營收指引是多少，與分析師預期相比如何？中期需求與訂單能見度有哪些依據？",
+            "記憶體成本與供應限制可能如何影響輝達近期毛利率及出貨？凱基兩份報告的目標價與評價基準又有何不同？"
+          ],
+          "answer_relevancy_sims": [
+            0.7341,
+            0.7126,
+            0.6846
+          ],
+          "n_contexts": 15,
+          "latency_ms": 15841,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q014",
+      "question": "聯發科的營運與成長動能",
+      "faithfulness": 0.9685918226939898,
+      "context_precision": 0.755127196036287,
+      "answer_relevancy": 0.6888219206995427,
+      "n_contexts": 13,
+      "latency_ms": 32427,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q014",
+          "question": "聯發科的營運與成長動能",
+          "faithfulness": 0.9411764705882353,
+          "context_precision": 0.7551271960362869,
+          "answer_relevancy": 0.6520804260270023,
+          "answer_relevancy_questions": [
+            "研報如何評估聯發科 AI ASIC／Google TPU 業務的成長前景、量產時程與營收貢獻？",
+            "分析師預估聯發科 2026、2027 年 AI ASIC 市場規模、市占率及營收占比為何？",
+            "聯發科的手機與其他產品線近期表現如何，ASIC 業務發展面臨哪些執行進展與風險？"
+          ],
+          "answer_relevancy_sims": [
+            0.6865,
+            0.5724,
+            0.6974
+          ],
+          "n_contexts": 13,
+          "latency_ms": 62232,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q014",
+          "question": "聯發科的營運與成長動能",
+          "faithfulness": 0.9821428571428571,
+          "context_precision": 0.7551271960362869,
+          "answer_relevancy": 0.7039631896163807,
+          "answer_relevancy_questions": [
+            "聯發科近期營運表現如何？2026 年第二季各業務營收變化，以及第三季營收展望為何？",
+            "研報如何評估聯發科 AI ASIC 與 Google TPU 業務的中長期成長潛力、營收貢獻與市占率？",
+            "聯發科手機業務面臨哪些壓力，AI ASIC／TPU 後續成長又有哪些量產、良率、供應與技術風險？"
+          ],
+          "answer_relevancy_sims": [
+            0.7386,
+            0.6734,
+            0.6999
+          ],
+          "n_contexts": 13,
+          "latency_ms": 18561,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q014",
+          "question": "聯發科的營運與成長動能",
+          "faithfulness": 0.9824561403508771,
+          "context_precision": 0.7551271960362869,
+          "answer_relevancy": 0.7104221464552452,
+          "answer_relevancy_questions": [
+            "聯發科未來的成長動能為何？Google TPU 等 AI ASIC 專案對營收、市占率及營收結構可能帶來什麼影響？",
+            "聯發科 2026 年第二季營運表現如何，第三季展望為何？智慧邊緣與網通業務能否抵銷手機業務疲弱？",
+            "聯發科成長展望面臨哪些主要風險？AI ASIC 放量與手機需求有哪些不確定因素？"
+          ],
+          "answer_relevancy_sims": [
+            0.7635,
+            0.6574,
+            0.7105
+          ],
+          "n_contexts": 13,
+          "latency_ms": 16488,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q015",
+      "question": "勤美最近的營運狀況如何",
+      "faithfulness": 0.9781362007168459,
+      "context_precision": 1.0,
+      "answer_relevancy": 0.7868391155977473,
+      "n_contexts": 10,
+      "latency_ms": 15835,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q015",
+          "question": "勤美最近的營運狀況如何",
+          "faithfulness": 1.0,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.8149615556928677,
+          "answer_relevancy_questions": [
+            "勤美近期的營運狀況與 2026 年全年展望為何？",
+            "勤美金屬成型事業近期回溫的原因是什麼，管理層對全年展望如何？",
+            "勤美的建設住宅與生活創新事業有哪些近期營運進展和後續支撐？"
+          ],
+          "answer_relevancy_sims": [
+            0.8893,
+            0.7781,
+            0.7775
+          ],
+          "n_contexts": 10,
+          "latency_ms": 17780,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q015",
+          "question": "勤美最近的營運狀況如何",
+          "faithfulness": 0.967741935483871,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.7541400699579169,
+          "answer_relevancy_questions": [
+            "勤美近期營運表現如何？2025 年營收、2026 年前四個月營收及 2025 年 EPS 與現金股利各是多少？",
+            "勤美金屬成型事業近期回升的原因為何？公司對 2026 年全年展望如何？",
+            "勤美建設住宅與生活創新事業有哪些後續營運支撐，包括建案完工交屋、銷售情況及酒店營運？"
+          ],
+          "answer_relevancy_sims": [
+            0.8083,
+            0.7549,
+            0.6993
+          ],
+          "n_contexts": 10,
+          "latency_ms": 15441,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q015",
+          "question": "勤美最近的營運狀況如何",
+          "faithfulness": 0.9666666666666667,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.7914157211424571,
+          "answer_relevancy_questions": [
+            "勤美近期的營運與財務表現如何？2025 年合併營收、EPS、現金股利，以及 2026 年 1–4 月營收和年增率各是多少？",
+            "勤美金屬成型事業近期回溫的原因為何？公司對 2026 年全年展望如何？",
+            "勤美建設住宅與生活創新事業近期有哪些交屋、銷售與營運進展？"
+          ],
+          "answer_relevancy_sims": [
+            0.8187,
+            0.7561,
+            0.7995
+          ],
+          "n_contexts": 10,
+          "latency_ms": 14284,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q016",
+      "question": "台驊控股法說會重點是什麼",
+      "faithfulness": 1.0,
+      "context_precision": 1.0,
+      "answer_relevancy": 0.5582134669629727,
+      "n_contexts": 15,
+      "latency_ms": 24460,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q016",
+          "question": "台驊控股法說會重點是什麼",
+          "faithfulness": 1.0,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.5793947363731534,
+          "answer_relevancy_questions": [
+            "台驊控股法說會如何評估美伊衝突對航運供應鏈、全球運力與運價的影響？",
+            "美伊衝突可能如何造成亞洲缺櫃，並影響美線長約談判與船公司調漲運價？",
+            "台驊控股的營運表現、股利政策及未來發展重點為何？"
+          ],
+          "answer_relevancy_sims": [
+            0.6299,
+            0.3477,
+            0.7606
+          ],
+          "n_contexts": 15,
+          "latency_ms": 42971,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q016",
+          "question": "台驊控股法說會重點是什麼",
+          "faithfulness": 1.0,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.5421664951131012,
+          "answer_relevancy_questions": [
+            "台驊控股法說會如何評估美伊衝突對全球海運運力、SCFI運價及紅海危機重演風險的影響？",
+            "荷姆茲海峽受阻後，船舶改靠外圍港口造成哪些塞港與缺櫃問題？空櫃回流時間及亞洲缺櫃時程如何變化？",
+            "台驊控股2025年海運與空運業務表現、2026年股利政策為何？法說會還提到哪些運價談判與供應鏈區域化趨勢？"
+          ],
+          "answer_relevancy_sims": [
+            0.5987,
+            0.3111,
+            0.7167
+          ],
+          "n_contexts": 15,
+          "latency_ms": 14372,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q016",
+          "question": "台驊控股法說會重點是什麼",
+          "faithfulness": 1.0,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.5530791694026634,
+          "answer_relevancy_questions": [
+            "台驊控股法說會如何評估美伊衝突對海運供應鏈、港口壅塞及全球運力的影響？",
+            "美伊衝突若持續，可能如何影響貨櫃回流、亞洲缺櫃風險、SCFI運價及美線長約談判？",
+            "台驊控股提及哪些供應鏈與航運產業趨勢、2025年營運表現及股利政策？"
+          ],
+          "answer_relevancy_sims": [
+            0.6279,
+            0.3557,
+            0.6756
+          ],
+          "n_contexts": 15,
+          "latency_ms": 16038,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q017",
+      "question": "研報對台積電 2026 年資本支出的估計是多少？請標明數值單位與報告日期。",
+      "faithfulness": 0.9444444444444445,
+      "context_precision": 0.6316524216524216,
+      "answer_relevancy": 0.889097014902974,
+      "n_contexts": 14,
+      "latency_ms": 15412,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q017",
+          "question": "研報對台積電 2026 年資本支出的估計是多少？請標明數值單位與報告日期。",
+          "faithfulness": 1.0,
+          "context_precision": 0.7069230769230769,
+          "answer_relevancy": 0.8931152149028456,
+          "answer_relevancy_questions": [
+            "較新的研報估計台積電 2026 年資本支出是多少？",
+            "2026 年 3 月 12 日的研報估計台積電 2026 年資本支出是多少？",
+            "2026 年 1 月 19 日的研報估計台積電 2026 年資本支出是多少？"
+          ],
+          "answer_relevancy_sims": [
+            0.8909,
+            0.893,
+            0.8955
+          ],
+          "n_contexts": 14,
+          "latency_ms": 22371,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q017",
+          "question": "研報對台積電 2026 年資本支出的估計是多少？請標明數值單位與報告日期。",
+          "faithfulness": 0.8333333333333334,
+          "context_precision": 0.563034188034188,
+          "answer_relevancy": 0.9030831547614174,
+          "answer_relevancy_questions": [
+            "較新的研報對台積電 2026 年資本支出的估計是多少？報告日期為何？",
+            "2026 年 7 月 14 日的報告預估台積電 2026 年資本支出是多少？",
+            "2026 年 1 月 16 日及 1 月 19 日的報告，對台積電 2026 年資本支出的估計各是多少？"
+          ],
+          "answer_relevancy_sims": [
+            0.9224,
+            0.8815,
+            0.9053
+          ],
+          "n_contexts": 14,
+          "latency_ms": 12398,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q017",
+          "question": "研報對台積電 2026 年資本支出的估計是多少？請標明數值單位與報告日期。",
+          "faithfulness": 1.0,
+          "context_precision": 0.625,
+          "answer_relevancy": 0.8710926750446588,
+          "answer_relevancy_questions": [
+            "2026年7月16日的研報估計台積電2026年資本支出為多少？",
+            "該研報將台積電2026年資本支出展望從多少上調至多少？",
+            "台積電2026年資本支出的較新研報估計為何？較早的2026年1月研報估計又是多少？"
+          ],
+          "answer_relevancy_sims": [
+            0.883,
+            0.8537,
+            0.8766
+          ],
+          "n_contexts": 14,
+          "latency_ms": 11468,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "q018",
+      "question": "比較兩家券商對台積電目標價與獲利預估的看法，並指出數字的幣別與年度。",
+      "faithfulness": 0.6666666666666666,
+      "context_precision": 0.9305555555555555,
+      "answer_relevancy": 0.6262136472699651,
+      "n_contexts": 15,
+      "latency_ms": 19404,
+      "cited": 1.0,
+      "simplified": 0.0,
+      "gen_truncated": false,
+      "n_runs": 3,
+      "n_runs_ok": 3,
+      "runs": [
+        {
+          "id": "q018",
+          "question": "比較兩家券商對台積電目標價與獲利預估的看法，並指出數字的幣別與年度。",
+          "faithfulness": 0.3888888888888889,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6090080602128994,
+          "answer_relevancy_questions": [
+            "凱基對台積電的目標價是多少？其估值方式及 2026 年第三、第四季 EPS 預估為何？",
+            "永豐對台積電的目標價是多少？其 2025、2026 年全年及 2026 年各季 EPS 預估為何？",
+            "凱基與永豐對台積電的目標價及 EPS 預估有哪些差異？比較時應注意哪些口徑差異？"
+          ],
+          "answer_relevancy_sims": [
+            0.6076,
+            0.5682,
+            0.6512
+          ],
+          "n_contexts": 15,
+          "latency_ms": 20845,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q018",
+          "question": "比較兩家券商對台積電目標價與獲利預估的看法，並指出數字的幣別與年度。",
+          "faithfulness": 0.8888888888888888,
+          "context_precision": 0.7916666666666666,
+          "answer_relevancy": 0.6629397240311231,
+          "answer_relevancy_questions": [
+            "凱基與永豐金證券分別給予台積電多少目標價？",
+            "凱基和永豐金證券對台積電 2026 年 EPS 的預估各是多少？",
+            "兩家券商的台積電目標價採用哪些評價基準，資料日期與口徑有何差異？"
+          ],
+          "answer_relevancy_sims": [
+            0.6308,
+            0.5911,
+            0.7669
+          ],
+          "n_contexts": 15,
+          "latency_ms": 17891,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        },
+        {
+          "id": "q018",
+          "question": "比較兩家券商對台積電目標價與獲利預估的看法，並指出數字的幣別與年度。",
+          "faithfulness": 0.7222222222222222,
+          "context_precision": 1.0,
+          "answer_relevancy": 0.6066931575658728,
+          "answer_relevancy_questions": [
+            "凱基在 2026 年 10 月 1 日對台積電的目標價是多少，採用什麼估值基準，並預估 2026 年第三、四季 EPS 各為多少？",
+            "永豐在 2026 年 7 月 1 日對台積電的目標價是多少，並預估 2025 年及 2026 年全年 EPS 各為多少？",
+            "凱基與永豐對台積電的目標價相差多少？兩家對 2026 年 EPS 的預估為何不宜直接比較？"
+          ],
+          "answer_relevancy_sims": [
+            0.6165,
+            0.5885,
+            0.6151
+          ],
+          "n_contexts": 15,
+          "latency_ms": 19475,
+          "cited": true,
+          "simplified": false,
+          "gen_truncated": false
+        }
+      ]
+    }
+  ]
+}

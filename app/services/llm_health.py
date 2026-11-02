@@ -11,9 +11,9 @@
 | state | HTTP | 意義 |
 |---|---|---|
 | `unknown` | 200 | 還沒有完成過任何一次探測（或第一次連不上） |
-| `ok` | 200 | `GET /models` 回 200：端點與金鑰可用 |
+| `ok` | 200 | `GET /models` 回 200，或 403 但只缺 Models 讀取權限：端點與金鑰可用 |
 | `exhausted` | 503 | 探測回額度用完，或本行程的真實請求碰過額度用完、之後還沒有成功的請求（見下） |
-| `auth_failed` | 503 | 探測回 401；或沒有目前 provider 的金鑰 |
+| `auth_failed` | 503 | 探測回 401 或其他 403；或沒有目前 provider 的金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx）；單次不算 |
 | `indeterminate` | 503 | 判斷不出來：端點設定錯（404 等）、其他未預期的回應 |
 | `misconfigured` | 503 | 問答主答（`ASK_ANSWER` 任務）解析到白名單外的名稱：每題都回「設定有誤」（見下） |
@@ -116,7 +116,7 @@ async def _refresh() -> None:
     prev = _snap
     fails = 0
     if res.kind is None:
-        state, detail = OK, f"{llm_http.provider_label()} 端點可用"
+        state, detail = OK, res.detail or f"{llm_http.provider_label()} 端點可用"
     elif res.kind == llm_http.AUTH:
         state, detail = AUTH_FAILED, res.detail
     elif res.kind == llm_http.QUOTA:

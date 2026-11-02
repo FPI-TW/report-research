@@ -825,6 +825,8 @@ systemctl list-timers report-mark-audit.timer                   # 應排在每�
 | 正式（EC2） | `openai`（預設；未設、空值都是） | `OPENAI_API_KEY` | `https://api.openai.com/v1`；`OPENAI_BASE_URL` 可覆寫 |
 | 測試（辦公室主機） | `opencode_go` | `OPENCODE_GO_API_KEY` | `https://opencode.ai/inference/go/v1`；`OPENCODE_GO_BASE_URL` 可覆寫 |
 
+OpenAI 金鑰可以是限制權限的金鑰：Model capabilities 要能寫（Chat Completions），Models 讀取權限非必要。沒有它時 `/healthz/llm` 以 403 判斷金鑰已通過認證，少驗的只有模型清單。
+
 其他值（退役值 `deepseek`、`claude_cli`、`claude_only`，或拼錯）：web 記 ERROR 並當成 `openai`，批次預檢 **rc=2**，見「刻意讓 LLM 停下來」。
 
 - **資料**：依 OpenAI 文件，API 資料預設不用於訓練，濫用監控的保留期預設 30 天。走 OpenCode Go 時研報全文會多經過 OpenCode 這個中間商。
@@ -948,7 +950,7 @@ P5 對退出碼 8 只有一則措辭（「LLM 帳號不可用…」），是哪�
 | state | 意義 | 處置 |
 |---|---|---|
 | `exhausted` | 探測回額度用完，或本行程的真實請求碰過額度用完、之後還沒有成功的請求 | OpenAI：到後台補足額度或調高專案用量上限。OpenCode Go：等額度窗重置。之後依下方步驟重放 |
-| `auth_failed` | 401，或沒有目前 `LLM_PROVIDER` 的金鑰 | 看是不是金鑰被撤、貼錯或兩份不一致：依「LLM 供應商與金鑰」核對指紋，必要時輪替 |
+| `auth_failed` | 401、其他 403（只缺 Models 讀取權限不算），或沒有目前 `LLM_PROVIDER` 的金鑰 | 看是不是金鑰被撤、貼錯或兩份不一致：依「LLM 供應商與金鑰」核對指紋，必要時輪替 |
 | `unreachable` | 連續 2 次連不上（網路、逾時、429／5xx） | 看對外網路與供應商狀態頁；恢復後自動 RESOLVED |
 | `indeterminate` | 判斷不出來：端點設定錯（404 等）、其他未預期的回應 | 檢查 `OPENAI_BASE_URL`／`OPENCODE_GO_BASE_URL`，看 web 日誌的「healthz LLM 狀態」；否則是 API 改版 |
 | `misconfigured` | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱（`claude-*`、打錯字）：每題回「設定有誤」。不是帳號問題，這時不探端點 | 刻意停用就是預期的，不處置。否則改正 repo 根 `.env` 的 `ASK_ANSWER_MODEL`（或刪掉那一行用預設）並重啟 web；web 日誌的「healthz LLM 狀態」與啟動自檢都會說出是哪個值 |

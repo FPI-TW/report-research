@@ -135,7 +135,7 @@ class ClaimVerdict:
 #   parse        回應完整但不是 JSON
 #   schema       JSON 合法但不合 schema v2（重試 1 次後），含 grounding 全部缺漏
 #   content_risk 供應商內容審查拒答（HTTP 400 內容政策錯誤、finish_reason=content_filter；不重試）
-#   account      帳號層級：金鑰無效或缺漏（401）、額度用完（402、429 insufficient_quota）、
+#   account      帳號層級：金鑰無效、缺漏或權限不足（401、403）、額度用完（402、429 insufficient_quota）、
 #                模型或端點設定錯（404；model 不在白名單時不送出，也記這個）。
 #                每一次抽查都會踩到，不重試；告警走 `/healthz/llm`，這裡只記原因
 #   error        其他例外，或注入的 judge 回 None

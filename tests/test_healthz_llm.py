@@ -153,6 +153,16 @@ class ProbeJudgementTests(_Base):
         self.reply(401, {"error": {"message": "Incorrect API key"}})
         self.assertState(self.get(), 503, "auth_failed")
 
+    def test_key_without_models_scope_is_ok(self):
+        """限制權限的金鑰沒有 Models 讀取權限：伺服器認得金鑰才回缺哪個 scope，不是停擺（誤報會開 CRITICAL 事件）。"""
+        self.reply(403, {"error": {"message": "You have insufficient permissions for this operation. "
+                                              "Missing scopes: api.model.read."}})
+        self.assertState(self.get(), 200, "ok")
+
+    def test_other_403_is_auth_failed(self):
+        self.reply(403, {"error": {"message": "Country, region, or territory not supported"}})
+        self.assertState(self.get(), 503, "auth_failed")
+
     def test_unexpected_answers_are_indeterminate(self):
         for status, body in ((404, {"error": {"message": "Not Found"}}), (400, {"error": {"message": "bad"}}),
                              (418, {})):

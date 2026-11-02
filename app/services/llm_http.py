@@ -98,7 +98,7 @@ DEFAULT_GO_BASE_URL = "https://opencode.ai/inference/go/v1"
 GO_USER_AGENT = "report-mark/1 (+https://research.tingfong.com)"
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
-AUTH = "auth"                      # 缺金鑰或 401
+AUTH = "auth"                      # 缺金鑰、401、403
 QUOTA = "quota"                    # 額度或餘額用完（402、429 insufficient_quota、Go 的用量上限）
 CONFIG = "config"                  # 404／模型不存在
 CONTENT_FILTER = "content_filter"  # 內容政策（400）、finish_reason=content_filter、模型拒答（refusal）
@@ -118,7 +118,7 @@ ACCOUNT_KINDS = frozenset({AUTH, QUOTA, CONFIG})
 TRANSIENT_KINDS = frozenset({OVERLOADED, NETWORK})
 
 _PHRASES = {
-    AUTH: "金鑰無效或缺漏",
+    AUTH: "金鑰無效、缺漏或權限不足",
     QUOTA: "額度或餘額不足",
     CONFIG: "模型或端點設定錯誤",
     CONTENT_FILTER: "觸發供應商內容審查",
@@ -296,10 +296,10 @@ def classify_status(status: int, raw: bytes | str = b"", provider: str | None = 
     message = _error_message(raw) if raw else ""
     code = _error_code(raw) if raw else None
     detail = _redact(f"HTTP {status}" + (f" {message}" if message else ""))
-    if status == 401:
-        return AUTH, detail
     if status == 402 or code in _QUOTA_CODES:
         return QUOTA, detail
+    if status in (401, 403):  # 403：金鑰權限不足或地區、組織限制，每一篇都會踩到，不是單篇輸入的問題
+        return AUTH, detail
     if status == 404:
         return CONFIG, detail
     if status in (400, 422):
@@ -938,13 +938,23 @@ PROBE_TIMEOUT = 4.0
 
 @dataclass
 class ProbeResult:
-    """`GET /models` 的結果。`kind is None`＝HTTP 200，只代表端點與金鑰可用，**不代表額度還有**（兩條路徑都沒有
-    餘額端點；額度用完要等真實請求的 QUOTA，見 `_quota_seen_at`）。否則 `kind` 是本模組的錯誤 kind：
-    401→AUTH、402 與額度碼→QUOTA、429／5xx→OVERLOADED、連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG。"""
+    """`GET /models` 的結果。`kind is None`＝HTTP 200 或只缺 Models 讀取權限，只代表端點與金鑰可用，
+    **不代表額度還有**（兩條路徑都沒有餘額端點；額度用完要等真實請求的 QUOTA，見 `_quota_seen_at`）。
+    否則 `kind` 是本模組的錯誤 kind：401／403→AUTH（例外見 `_missing_models_scope`）、402 與額度碼→QUOTA、
+    429／5xx→OVERLOADED、連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG。"""
 
     kind: str | None
     detail: str = ""
     status: int | None = None
+
+
+def _missing_models_scope(raw: bytes) -> bool:
+    """`GET /models` 的 403 是不是**只**因為限制權限的金鑰沒有 Models 讀取權限（`api.model.read`）。
+
+    這種金鑰不需要這個權限就能呼叫 Chat Completions（2026-11-02 在 EC2 實測），而且伺服器要先認得金鑰才會回
+    「缺哪個 scope」，所以算端點與金鑰可用。其他 403（地區、組織限制）一律是 AUTH。
+    """
+    return "api.model.read" in raw.decode("utf-8", "replace")
 
 
 async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
@@ -970,6 +980,8 @@ async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
         return ProbeResult(NETWORK, _transport_detail(exc))
     except (httpx.InvalidURL, ValueError) as exc:
         return ProbeResult(CONFIG, _transport_detail(exc))
+    if response.status_code == 403 and _missing_models_scope(response.content):
+        return ProbeResult(None, "金鑰已通過認證，但沒有 Models 讀取權限，只驗到這裡", status=403)
     if response.status_code != 200:
         kind, detail = classify_status(response.status_code, response.content, _provider())
         return ProbeResult(kind, detail, status=response.status_code)
@@ -1349,7 +1361,7 @@ async def complete_json(
     - 重試（最多 `max_attempts`，預設 `JSON_MAX_ATTEMPTS`＝2 個請求）只給三種：`TRUNCATED` 以 2 倍
       `max_tokens` 重送、`EMPTY` 原樣重送、暫時性錯誤（`TRANSIENT_KINDS`）退避後重送（優先照
       `Retry-After`，上限 `_JSON_RETRY_AFTER_CAP`；等待會超過總期限就不等）。
-    - 內容政策、帳號（401、額度用完、404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
+    - 內容政策、帳號（401、403、額度用完、404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
       帳號錯誤要由呼叫端升級（離線整批中止、生產記 degraded），不在這裡處理。
     - httpx 的 read 逾時（請求已送出、伺服器 60 秒沒回任何位元組）歸 `TIMEOUT`、不重試：非串流時
       伺服器整份生成完才回本體，這時多半已在生成、會計費（見 `_json_once`）。連線／寫入逾時仍是

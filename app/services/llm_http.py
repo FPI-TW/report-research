@@ -98,7 +98,7 @@ DEFAULT_GO_BASE_URL = "https://opencode.ai/inference/go/v1"
 GO_USER_AGENT = "report-mark/1 (+https://research.tingfong.com)"
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
-AUTH = "auth"                      # 缺金鑰或 401
+AUTH = "auth"                      # 缺金鑰、401、403
 QUOTA = "quota"                    # 額度或餘額用完（402、429 insufficient_quota、Go 的用量上限）
 CONFIG = "config"                  # 404／模型不存在
 CONTENT_FILTER = "content_filter"  # 內容政策（400）、finish_reason=content_filter、模型拒答（refusal）
@@ -118,7 +118,7 @@ ACCOUNT_KINDS = frozenset({AUTH, QUOTA, CONFIG})
 TRANSIENT_KINDS = frozenset({OVERLOADED, NETWORK})
 
 _PHRASES = {
-    AUTH: "金鑰無效或缺漏",
+    AUTH: "金鑰無效、缺漏或權限不足",
     QUOTA: "額度或餘額不足",
     CONFIG: "模型或端點設定錯誤",
     CONTENT_FILTER: "觸發供應商內容審查",
@@ -296,10 +296,10 @@ def classify_status(status: int, raw: bytes | str = b"", provider: str | None = 
     message = _error_message(raw) if raw else ""
     code = _error_code(raw) if raw else None
     detail = _redact(f"HTTP {status}" + (f" {message}" if message else ""))
-    if status == 401:
-        return AUTH, detail
     if status == 402 or code in _QUOTA_CODES:
         return QUOTA, detail
+    if status in (401, 403):  # 403：金鑰權限不足或地區、組織限制，每一篇都會踩到，不是單篇輸入的問題
+        return AUTH, detail
     if status == 404:
         return CONFIG, detail
     if status in (400, 422):
@@ -938,13 +938,515 @@ PROBE_TIMEOUT = 4.0
 
 @dataclass
 class ProbeResult:
-    """`GET /models` 的結果。`kind is None`＝HTTP 200，只代表端點與金鑰可用，**不代表額度還有**（兩條路徑都沒有
-    餘額端點；額度用完要等真實請求的 QUOTA，見 `_quota_seen_at`）。否則 `kind` 是本模組的錯誤 kind：
-    401→AUTH、402 與額度碼→QUOTA、429／5xx→OVERLOADED、連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG。"""
+    """`GET /models` 的結果。`kind is None`＝HTTP 200 或只缺 Models 讀取權限，只代表端點與金鑰可用，
+    **不代表額度還有**（兩條路徑都沒有餘額端點；額度用完要等真實請求的 QUOTA，見 `_quota_seen_at`）。
+    否則 `kind` 是本模組的錯誤 kind：401／403→AUTH（例外見 `_missing_models_scope`）、402 與額度碼→QUOTA、
+    429／5xx→OVERLOADED、連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG。"""
 
     kind: str | None
     detail: str = ""
     status: int | None = None
+    retry_after: float | None = None
+    finish_reason: str | None = None
+    usage: dict | None = None
+    model_resp: str | None = None
+    streamed: bool = False
+    reasoning_chars: int = 0
+    ttft_ms: int | None = None
+    total_ms: int = 0
+    # 非串流回應才有（`complete_json`；9/24 探測實測有值）。同一個模型名可能在伺服端換了底層模型，
+    # judge 靠它與 `model_resp` 事後分辨「量尺是不是悄悄換了」。
+    system_fingerprint: str | None = None
+
+
+def _final_kind(acc: _Acc, got_text: bool) -> tuple[str | None, str]:
+    if acc.error is not None:
+        return acc.error
+    if acc.finish_reason == "content_filter":
+        return CONTENT_FILTER, "finish_reason=content_filter"
+    if acc.finish_reason == "length":
+        return TRUNCATED, "finish_reason=length"
+    if not acc.done and acc.finish_reason is None:
+        return NETWORK, "串流未收到結束訊號即中斷"
+    if not got_text:
+        detail = "只有 reasoning、沒有 content" if acc.reasoning_chars else "沒有 content"
+        return EMPTY, detail
+    return None, ""
+
+
+def _outcome(acc: _Acc, got_text: bool, t0: float, ttft_ms: int | None) -> ChatOutcome:
+    kind, detail = _final_kind(acc, got_text)
+    return ChatOutcome(
+        kind=kind,
+        detail=detail,
+        finish_reason=acc.finish_reason,
+        usage=acc.usage,
+        model_resp=acc.model_resp,
+        streamed=got_text,
+        reasoning_chars=acc.reasoning_chars,
+        ttft_ms=ttft_ms,
+        total_ms=int((time.monotonic() - t0) * 1000),
+    )
+
+
+def _fail(kind: str, detail: str, t0: float, **kw) -> ChatOutcome:
+    return ChatOutcome(kind=kind, detail=detail, total_ms=int((time.monotonic() - t0) * 1000), **kw)
+
+
+# 本行程最近一次真實請求碰到額度用完（QUOTA）的時刻（monotonic；0＝從未）。`/healthz/llm` 據此翻成 exhausted，
+# 直到之後有一次真實請求成功才解除（`_ok_seen_at`；`/models` 回 200 說明不了額度回來了沒，
+# `app/services/llm_health.py`）。
+# 只記本行程：web 的問答碰到立刻看得到；批次行程的由它自己的整批 rc=2 → OnFailure 告警。
+_quota_seen_at: float = 0.0
+# 本行程最近一次成功呼叫的時刻（monotonic；0＝從未）。
+_ok_seen_at: float = 0.0
+
+
+def last_quota_at() -> float:
+    return _quota_seen_at
+
+
+def last_ok_at() -> float:
+    return _ok_seen_at
+
+
+# ── observer hook（模組 docstring「observer hook」）────────────────────────────
+_OBSERVERS: list[Callable[[dict], None]] = []
+_observer_warned = False
+
+
+def add_observer(fn: Callable[[dict], None]) -> None:
+    """註冊一個呼叫收尾的 observer（同一個函式只註冊一次）。"""
+    if fn not in _OBSERVERS:
+        _OBSERVERS.append(fn)
+
+
+def remove_observer(fn: Callable[[dict], None]) -> None:
+    if fn in _OBSERVERS:
+        _OBSERVERS.remove(fn)
+
+
+def call_metadata(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> dict:
+    """交給 observer 的 metadata：只有 `_log_call` 那行 log 本來就有的欄位。**沒有 prompt、回答、header、金鑰**。
+
+    tokens 的鍵與 `scripts/_claude_cli.record_usage` 寫進 jsonl 的 `tokens` 同名（hit／miss／completion／reasoning）；
+    沒有用量（失敗在第一個 chunk 之前）時為 None。
+    """
+    usage = out.usage if isinstance(out.usage, dict) else None
+    tokens = None
+    if usage is not None:
+        details = usage.get("completion_tokens_details") or {}
+        tokens = {
+            "hit": usage.get("prompt_cache_hit_tokens"), "miss": usage.get("prompt_cache_miss_tokens"),
+            "completion": usage.get("completion_tokens"),
+            "reasoning": details.get("reasoning_tokens") if isinstance(details, dict) else None,
+        }
+    return {
+        "task": task, "model": model, "model_resp": out.model_resp, "kind": out.kind,
+        "finish_reason": out.finish_reason, "attempts": attempts, "ttft_ms": out.ttft_ms,
+        "total_ms": out.total_ms, "tokens": tokens, "provider": _provider(),
+    }
+
+
+def _notify_observers(task: str, model: str, out: ChatOutcome, attempts: int) -> None:
+    global _observer_warned
+    if not _OBSERVERS:
+        return
+    meta = call_metadata(task, model, out, attempts)
+    for fn in list(_OBSERVERS):
+        try:
+            fn(dict(meta))
+        except Exception:  # noqa: BLE001 — 用量歸因不能讓 LLM 呼叫失敗
+            if not _observer_warned:
+                _observer_warned = True
+                logger.warning("llm_http observer 失敗（之後同類失敗不再記錄）", exc_info=True)
+
+
+def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> None:
+    """每次呼叫一行結構化 log（不含 prompt、不含 header）；402 另記下時刻（見 `_quota_seen_at`）。
+
+    放在這裡是因為它是線上（`astream_chat`）與批次（`complete_chat`）共同的收尾點，每次呼叫恰好一次。
+    同一份 metadata 也交給已註冊的 observer（`add_observer`）。
+    """
+    global _quota_seen_at, _ok_seen_at
+    if out.kind == QUOTA:
+        _quota_seen_at = time.monotonic()
+    elif out.kind is None:
+        _ok_seen_at = time.monotonic()
+    usage = out.usage or {}
+    details = usage.get("completion_tokens_details") or {}
+    logger.info(
+        "llm_call task=%s model=%s model_resp=%s backend=http provider=%s kind=%s finish=%s attempts=%d "
+        "ttft_ms=%s total_ms=%d hit=%s miss=%s out=%s reasoning=%s fp=%s",
+        task, model, out.model_resp, _provider(), out.kind or "ok", out.finish_reason, attempts,
+        out.ttft_ms, out.total_ms, usage.get("prompt_cache_hit_tokens"),
+        usage.get("prompt_cache_miss_tokens"), usage.get("completion_tokens"),
+        details.get("reasoning_tokens"), out.system_fingerprint,
+    )
+    _notify_observers(task, model, out, attempts)
+
+
+
+
+# ── 連線 ─────────────────────────────────────────────────────────────────────
+# 測試注入點：設成 httpx.MockTransport 後呼叫 `_reset_clients()`。
+_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None
+
+_ASYNC_CLIENTS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
+    weakref.WeakKeyDictionary()
+)
+_SYNC_LOCAL = threading.local()
+_SYNC_CLIENTS: list[httpx.Client] = []
+_SYNC_LOCK = threading.Lock()
+
+# 讀到 [DONE] 之後把 chunked 結尾讀完的上限。不讀完的話 h11 狀態不是 DONE，httpcore 會直接
+# 關掉連線而不放回池，每次呼叫都重付 TCP＋TLS 交握（本機實測：5 次呼叫 5 條連線；讀完後 1 條）。
+_DRAIN_TIMEOUT = 2.0
+
+# 金鑰、端點、連線逾時三個鍵都在呼叫時讀（`os.getenv`，`grep -rn os.getenv app` 找得到），
+# 不進 app/config.py 的 Settings：批次腳本不讀 repo 根 `.env`，而 Settings 是 import 期就
+# 快取的單例——先快取到空值就一路空到底，手動執行時補設環境變數也不會生效。
+
+
+def _provider() -> str:
+    return _configured_provider()
+
+
+def provider_label() -> str:
+    """給人看的供應商名稱（錯誤提示、日誌）。"""
+    return PROVIDER_LABEL[_provider()]
+
+
+def _key_env() -> str:
+    return PROVIDER_KEY_ENV[_provider()]
+
+
+def _base_url_env() -> str:
+    return "OPENCODE_GO_BASE_URL" if _provider() == PROVIDER_OPENCODE_GO else "OPENAI_BASE_URL"
+
+
+def _api_key() -> str:
+    return (os.getenv(_key_env()) or "").strip()
+
+
+def _base_url() -> str:
+    default = DEFAULT_GO_BASE_URL if _provider() == PROVIDER_OPENCODE_GO else DEFAULT_BASE_URL
+    return ((os.getenv(_base_url_env()) or "").strip() or default).rstrip("/")
+
+
+def _url() -> str:
+    return _base_url() + "/chat/completions"
+
+
+def api_key_configured() -> bool:
+    """目前 provider 的金鑰有沒有值（不看內容；`/healthz/llm` 判 auth_failed 用）。"""
+    return bool(_api_key())
+
+
+def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
+    """`cap`＝剩餘期限（批次）：connect／read／write 都不超過它。
+
+    `LLM_CONNECT_TIMEOUT` 非數字、nan／inf 或 ≤0 一律退回 10 秒（同 `app.config._positive_float`；
+    本模組是葉模組，不 import `app.config`）：`float()` 收 `"nan"`／`"inf"`，而 nan、inf、負數都
+    不是合法的 socket 逾時值。
+    """
+    try:
+        connect = float(os.getenv("LLM_CONNECT_TIMEOUT") or 10)
+    except ValueError:
+        connect = 10.0
+    if not math.isfinite(connect) or connect <= 0:
+        connect = 10.0
+    write = _WRITE_TIMEOUT
+    if cap is not None:
+        cap = max(cap, 0.001)
+        connect, read, write = min(connect, cap), min(read, cap), min(write, cap)
+    return httpx.Timeout(connect=connect, read=read, write=write, pool=_POOL_TIMEOUT)
+
+
+def _provider_headers(user_id: str | None) -> dict:
+    """Go 要求的自報 User-Agent 與每段對話穩定的 `x-opencode-session`。呼叫端傳的 `user_id` 本來就是
+    每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；OpenAI 不送。"""
+    if _provider() != PROVIDER_OPENCODE_GO:
+        return {}
+    return {"User-Agent": GO_USER_AGENT, "x-opencode-session": _session_id(user_id) or "report-mark"}
+
+
+def _headers(key: str, user_id: str | None = None) -> dict:
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        **_provider_headers(user_id),
+    }
+
+
+def _preflight(t0: float) -> tuple[str, str] | ChatOutcome:
+    """送出前檢查金鑰與端點；設定錯誤一律回帳號層級的 outcome，不往外拋。
+
+    兩種實際會發生的設定錯：金鑰被複製貼上帶進全形引號或零寬空白（`strip()` 去不掉，
+    header 只能是 ASCII，httpx 會拋 UnicodeEncodeError）；`OPENAI_BASE_URL` 少了 scheme
+    （httpx 拋 UnsupportedProtocol，那是 TransportError，會被當成網路錯誤重試——每篇都記
+    「連線失敗」、批次卻不中止，正是四天停擺那種型態）。
+    """
+    key, key_env, url_env = _api_key(), _key_env(), _base_url_env()
+    if not key:
+        return _fail(AUTH, f"缺 {key_env}", t0)
+    if not (key.isascii() and key.isprintable()):
+        return _fail(AUTH, f"{key_env} 含非 ASCII 或不可列印字元（常見於貼上時帶入的全形引號、零寬空白）", t0)
+    url = _url()
+    try:
+        parsed = httpx.URL(url)
+    except (httpx.InvalidURL, ValueError):
+        return _fail(CONFIG, f"{url_env} 不是合法網址", t0)
+    if parsed.scheme not in ("http", "https") or not parsed.host:
+        return _fail(CONFIG, f"{url_env} 必須是 http(s):// 開頭的網址", t0)
+    return key, url
+
+
+def _async_client() -> httpx.AsyncClient:
+    """以 event loop 為鍵延遲建立。
+
+    `IsolatedAsyncioTestCase` 與批次的 `asyncio.run` 每次都換 loop，一個全域 client 會綁在
+    已經關閉的 loop 上。上限 10 條連線：`/api/ask` 閘門 3 格加上派生呼叫，綽綽有餘。
+
+    WeakKeyDictionary 單靠自己回收不了：池裡的連線經 transport 強引用 loop（也就是 key），
+    所以每次先把已關閉 loop 的條目丟掉（已關閉的 loop 無法再 await aclose，交給 GC 收 socket）。
+    同一個行程會跑多個 loop 的使用端，應在 loop 結束前 `await llm_http.aclose()`。
+    """
+    for stale in [lp for lp in list(_ASYNC_CLIENTS.keys()) if lp.is_closed()]:
+        _ASYNC_CLIENTS.pop(stale, None)
+    loop = asyncio.get_running_loop()
+    client = _ASYNC_CLIENTS.get(loop)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            transport=_transport,  # type: ignore[arg-type]
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            timeout=_timeout(_READ_TIMEOUT),
+        )
+        _ASYNC_CLIENTS[loop] = client
+    return client
+
+
+def _sync_client() -> httpx.Client:
+    """每條執行緒一個：不依賴 Client 的執行緒安全性，同時涵蓋 to_thread 與 ThreadPoolExecutor。"""
+    client = getattr(_SYNC_LOCAL, "client", None)
+    if client is None or client.is_closed:
+        client = httpx.Client(transport=_transport, timeout=_timeout(_READ_TIMEOUT))  # type: ignore[arg-type]
+        _SYNC_LOCAL.client = client
+        with _SYNC_LOCK:
+            _SYNC_CLIENTS.append(client)
+    return client
+
+
+async def aclose() -> None:
+    """關閉目前 event loop 的 AsyncClient（web lifespan 結束時呼叫）。"""
+    client = _ASYNC_CLIENTS.pop(asyncio.get_running_loop(), None)
+    if client is not None:
+        await client.aclose()
+
+
+def _close_sync_clients() -> None:
+    with _SYNC_LOCK:
+        clients, _SYNC_CLIENTS[:] = list(_SYNC_CLIENTS), []
+    for client in clients:
+        with contextlib.suppress(Exception):
+            client.close()
+
+
+atexit.register(_close_sync_clients)
+
+
+def _reset_clients() -> None:
+    """僅供測試：丟掉快取的 client，讓下一次呼叫用新的 `_transport`。"""
+    _ASYNC_CLIENTS.clear()
+    _close_sync_clients()
+    _SYNC_LOCAL.client = None
+
+
+def _transport_detail(exc: BaseException) -> str:
+    return _one_line(f"{type(exc).__name__}: {exc}")[:200]
+
+
+def _silent_detail(exc: BaseException, reasoning_chars: int = 0) -> str:
+    """首字前 read 逾時的 detail：說出是伺服器沉默，不是我們的首字期限。
+
+    已收到 reasoning 才沉默時換一種說法：推理應已關閉（見模組 docstring），這時伺服器其實
+    回應過，「未送出任何位元組」會把人帶去查連線。分類不變（TIMEOUT、不重試）。
+    """
+    if reasoning_chars > 0:
+        msg = f"reasoning（{reasoning_chars} 字）後伺服器沉默 {_READ_TIMEOUT:g}s、尚未輸出內容"
+    else:
+        msg = f"首字前伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組"
+    return _one_line(f"{msg}（{type(exc).__name__}）")[:200]
+
+
+# ── 線上：非同步串流 ─────────────────────────────────────────────────────────
+async def _drain(lines) -> None:
+    """[DONE] 之後把 chunked 結尾讀完，連線才能回池；有界、任何錯誤都忽略。"""
+    with contextlib.suppress(Exception):
+        async with asyncio.timeout(_DRAIN_TIMEOUT):
+            async for _ in lines:
+                pass
+
+
+async def astream_chat(
+    model: str,
+    prompt: str,
+    *,
+    max_tokens: int,
+    first_token_timeout: float,
+    system: str | None = None,
+    task: str = "-",
+    user_id: str | None = None,
+    total_timeout: float | None = None,
+) -> AsyncIterator[str | ChatOutcome]:
+    """串流呼叫：逐段 yield content 文字，最後 yield 一個 `ChatOutcome`（恰好一次）。
+
+    不做重試（重試策略在 `llm.stream_completion`，它才知道「已吐字就不重試」）。任何
+    httpx 例外都轉成 outcome，不往外拋；只有 `CancelledError` 原樣傳遞，並經 finally
+    關閉回應。
+
+    `total_timeout`：整次呼叫的牆鐘上限（None＝不設）；首字期限取兩者較早的。語意見模組
+    docstring 的「逾時語意」。
+    """
+    t0 = time.monotonic()
+    started = asyncio.get_running_loop().time()
+    deadline = started + first_token_timeout
+    total_deadline = None if total_timeout is None else started + total_timeout
+    if total_deadline is not None and total_deadline < deadline:
+        deadline = total_deadline
+        first_token_timeout = total_timeout
+    pre = _preflight(t0)
+    if isinstance(pre, ChatOutcome):
+        _log_call(task, model, pre)
+        yield pre
+        return
+    key, url = pre
+
+    acc = _Acc()
+    got_text = False
+    ttft_ms: int | None = None
+    response: httpx.Response | None = None
+    lines = None
+    out: ChatOutcome | None = None
+    try:
+        try:
+            body = build_body(
+                model, prompt, max_tokens=max_tokens, system=system,
+            )
+            client = _async_client()
+            request = client.build_request(
+                "POST", url, json=body, headers=_headers(key, user_id), timeout=_timeout(_READ_TIMEOUT)
+            )
+        except UnicodeError as exc:  # 先於 ValueError（它是子類）：單篇輸入的編碼問題，見 `_complete_once`
+            out = _fail(BAD_REQUEST, _transport_detail(exc), t0)
+        except (httpx.InvalidURL, ValueError) as exc:
+            out = _fail(CONFIG, _transport_detail(exc), t0)
+        else:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    response = await client.send(request, stream=True)
+            except TimeoutError:
+                out = _fail(TIMEOUT, f"首字期限 {first_token_timeout:g}s 內未收到回應", t0)
+            except httpx.ReadTimeout as exc:  # 伺服器沉默（首字前）＝逾時，不重試（見模組 docstring）
+                out = _fail(TIMEOUT, _silent_detail(exc), t0)
+            except httpx.TransportError as exc:
+                out = _fail(NETWORK, _transport_detail(exc), t0)
+
+        if out is None and response is not None and response.status_code != 200:
+            raw = b""
+            with contextlib.suppress(TimeoutError, httpx.HTTPError):
+                async with asyncio.timeout_at(deadline):
+                    raw = await response.aread()
+            kind, detail = classify_status(response.status_code, raw)
+            out = _fail(
+                kind, detail, t0, status=response.status_code,
+                retry_after=_retry_after(response.headers),
+            )
+
+        if out is None and response is not None:
+            lines = _aiter_sse_lines(response)
+            while True:
+                try:
+                    # 每個 await 各自包期限，不跨越 yield（見模組 docstring）：首字前是首字期限，
+                    # 之後是總時限（None＝不設）。
+                    async with asyncio.timeout_at(total_deadline if got_text else deadline):
+                        line = await anext(lines)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    if not got_text:
+                        out = _fail(TIMEOUT, f"首字期限 {first_token_timeout:g}s 內未收到內容", t0)
+                    elif acc.finish_reason is None:
+                        # 已吐字才到總時限：與 read 逾時同樣是「中途收掉」，呼叫端當截斷處理
+                        acc.error = (TIMEOUT, f"總時限 {total_timeout:g}s 到期（已吐字）")
+                    break
+                except httpx.ReadTimeout as exc:
+                    if not got_text:  # 首字前的沉默＝逾時，不是網路錯誤（不重試）
+                        out = _fail(TIMEOUT, _silent_detail(exc, acc.reasoning_chars), t0,
+                                    reasoning_chars=acc.reasoning_chars)
+                    elif acc.finish_reason is None:
+                        acc.error = (NETWORK, _transport_detail(exc))
+                    break
+                except httpx.HTTPError as exc:
+                    # 已經收到 finish_reason 才斷線：答案本身已完整，以 finish_reason 為準
+                    if acc.finish_reason is None:
+                        acc.error = (NETWORK, _transport_detail(exc))
+                    break
+                event = parse_sse_line(line)
+                if event is None:
+                    continue
+                if event is DONE:
+                    acc.done = True
+                    await _drain(lines)
+                    break
+                if not isinstance(event, dict):
+                    continue
+                text = acc.feed(event)
+                if acc.error is not None:
+                    break
+                if text:
+                    if not got_text:
+                        got_text = True
+                        ttft_ms = int((time.monotonic() - t0) * 1000)
+                    yield text
+    finally:
+        closer = getattr(lines, "aclose", None)
+        if closer is not None:
+            with contextlib.suppress(Exception):
+                await closer()
+        if response is not None:
+            with contextlib.suppress(Exception):
+                await response.aclose()
+
+    if out is None:
+        out = _outcome(acc, got_text, t0, ttft_ms)
+    _log_call(task, model, out)
+    yield out
+
+
+# ── 端點探測（`/healthz/llm`）────────────────────────────────────────────────
+PROBE_TIMEOUT = 4.0
+
+
+@dataclass
+class ProbeResult:
+    """`GET /models` 的結果。`kind is None`＝HTTP 200 或只缺 Models 讀取權限，只代表端點與金鑰可用，**不代表額度還有**（兩條路徑都沒有
+    餘額端點；額度用完要等真實請求的 QUOTA，見 `_quota_seen_at`）。否則 `kind` 是本模組的錯誤 kind：
+    401／403→AUTH（例外見 `_missing_models_scope`）、402 與額度碼→QUOTA、429／5xx→OVERLOADED、連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG。"""
+
+    kind: str | None
+    detail: str = ""
+    status: int | None = None
+
+
+def _missing_models_scope(raw: bytes) -> bool:
+    """`GET /models` 的 403 是不是**只**因為限制權限的金鑰沒有 Models 讀取權限（`api.model.read`）。
+
+    這種金鑰不需要這個權限就能呼叫 Chat Completions（2026-11-02 在 EC2 實測），而且伺服器要先認得金鑰才會回
+    「缺哪個 scope」，所以算端點與金鑰可用。其他 403（地區、組織限制）一律是 AUTH。
+    """
+    return "api.model.read" in raw.decode("utf-8", "replace")
 
 
 async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
@@ -970,6 +1472,8 @@ async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
         return ProbeResult(NETWORK, _transport_detail(exc))
     except (httpx.InvalidURL, ValueError) as exc:
         return ProbeResult(CONFIG, _transport_detail(exc))
+    if response.status_code == 403 and _missing_models_scope(response.content):
+        return ProbeResult(None, "金鑰已通過認證，但沒有 Models 讀取權限，只驗到這裡", status=403)
     if response.status_code != 200:
         kind, detail = classify_status(response.status_code, response.content, _provider())
         return ProbeResult(kind, detail, status=response.status_code)
@@ -1349,7 +1853,7 @@ async def complete_json(
     - 重試（最多 `max_attempts`，預設 `JSON_MAX_ATTEMPTS`＝2 個請求）只給三種：`TRUNCATED` 以 2 倍
       `max_tokens` 重送、`EMPTY` 原樣重送、暫時性錯誤（`TRANSIENT_KINDS`）退避後重送（優先照
       `Retry-After`，上限 `_JSON_RETRY_AFTER_CAP`；等待會超過總期限就不等）。
-    - 內容政策、帳號（401、額度用完、404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
+    - 內容政策、帳號（401、403、額度用完、404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
       帳號錯誤要由呼叫端升級（離線整批中止、生產記 degraded），不在這裡處理。
     - httpx 的 read 逾時（請求已送出、伺服器 60 秒沒回任何位元組）歸 `TIMEOUT`、不重試：非串流時
       伺服器整份生成完才回本體，這時多半已在生成、會計費（見 `_json_once`）。連線／寫入逾時仍是

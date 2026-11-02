@@ -186,6 +186,14 @@ class ClassifyStatusTests(unittest.TestCase):
                         raw = json.dumps({"error": {"message": "You exceeded your current quota", "code": code}})
                         self.assertEqual(lh.classify_status(status, raw, prov)[0], lh.QUOTA)
 
+    def test_403_is_auth_on_both_providers(self):
+        """權限或地區限制每一篇都會踩到：歸帳號層級（整批中止），不是單篇失敗。"""
+        for prov in lm.PROVIDERS:
+            with self.subTest(provider=prov):
+                raw = json.dumps({"error": {"message": "Country, region, or territory not supported"}})
+                self.assertEqual(lh.classify_status(403, raw, prov)[0], lh.AUTH)
+                self.assertIn(lh.AUTH, lh.ACCOUNT_KINDS)
+
     def test_plain_429_is_overloaded_on_both_providers(self):
         """限流重試就好，不得升級成 QUOTA（會整批中止）；`_is_go_quota` 明確排除「rate limit」。"""
         for prov in lm.PROVIDERS:

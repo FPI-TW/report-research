@@ -243,9 +243,9 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | state | HTTP | 條件 |
 |---|---|---|
 | `unknown` | 200 | 還沒有完成過任何一次探測（或第一次連不上） |
-| `ok` | 200 | `GET /models` 回 200 |
+| `ok` | 200 | `GET /models` 回 200，或 403 但只缺 Models 讀取權限（`api.model.read`） |
 | `exhausted` | 503 | 探測回額度用完，或本行程的真實請求碰過額度用完且之後還沒有成功的真實請求 |
-| `auth_failed` | 503 | 探測回 401，或沒有目前 provider 的金鑰 |
+| `auth_failed` | 503 | 探測回 401 或其他 403，或沒有目前 provider 的金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
 | `indeterminate` | 503 | 端點設定錯（404 等）、其他未預期的回應 |
 | `misconfigured` | 503 | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱 |

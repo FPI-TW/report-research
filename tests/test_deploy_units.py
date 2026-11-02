@@ -116,7 +116,7 @@ def _live_lines(path: Path) -> list[str]:
 
 
 class LlmEnvFileTests(unittest.TestCase):
-    """DeepSeek 金鑰檔（PR-10）：只給白名單上的 unit、格式兩種讀者都讀得懂、範例檔不帶金鑰。"""
+    """LLM 金鑰檔：只給白名單上的 unit、格式兩種讀者都讀得懂、範例檔不帶金鑰。"""
 
     def test_only_whitelisted_units_load_llm_env(self) -> None:
         """環境變數裡有金鑰的行程越少越好：只有 sync 與上傳 worker（設計決策 4：白名單只加這一支）呼叫 LLM。"""
@@ -135,7 +135,7 @@ class LlmEnvFileTests(unittest.TestCase):
                 self.assertLess(files.index("-/etc/default/report-mark-sync"), files.index(LLM_ENV_PATH))
 
     def test_llm_example_key_is_empty(self) -> None:
-        keys = [ln.partition("=")[2] for ln in _live_lines(LLM_ENV_EXAMPLE) if ln.startswith("DEEPSEEK_API_KEY=")]
+        keys = [ln.partition("=")[2] for ln in _live_lines(LLM_ENV_EXAMPLE) if ln.startswith("OPENAI_API_KEY=")]
         self.assertEqual(keys, [""], "範例檔的金鑰必須存在且為空")
 
     def test_llm_example_has_no_inline_comment_quotes_or_duplicates(self) -> None:
@@ -167,7 +167,7 @@ class LlmEnvFileTests(unittest.TestCase):
         """金鑰與模型旋鈕只放 llm 檔：共用檔是其他 unit 也讀、`db_backup.sh` 會逐鍵讀的檔。"""
         offenders = [
             ln for ln in _live_lines(SYNC_ENV_EXAMPLE)
-            if re.match(r"(DEEPSEEK_|LLM_|[A-Z_]+_MODEL=)", ln)
+            if re.match(r"(OPENAI_|OPENCODE_GO_|LLM_|[A-Z_]+_MODEL=)", ln)
         ]
         self.assertEqual(offenders, [])
 

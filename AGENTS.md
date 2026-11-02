@@ -1,6 +1,6 @@
 # AGENTS.md
 
-廷豐智能研報——券商研報平台：PDF/docx 抽字 → LLM（DeepSeek）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
+廷豐智能研報——券商研報平台：PDF/docx 抽字 → LLM（`gpt-6-luna`）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
 
 本檔是給貢獻者與 AI 代理的**唯一**指引檔（repo 刻意不放 CLAUDE.md，不要新增）。這裡只列鐵律、改動連動與陷阱；模組地圖與「刻意」設計的完整出處在 `docs/ARCHITECTURE.md`，管線與 API 契約在 `docs/WORKFLOW.md`，部署與維運程序在 `docs/production_resilience.md`。
 
@@ -27,7 +27,7 @@
 
 ## 鐵律
 
-- **分工**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），LLM（DeepSeek）只做語意（標註、摘要、問答、訊號擷取）。研報以檔案 SHA256 `file_hash` 識別；各入口能不能續跑、重跑會不會覆寫，以該腳本的 docstring 為準（例如 `scripts/extract_all.py` 每次全量重抽並覆寫同 hash 的快取，`scripts/ingest_all.py` 跳過已入庫的 hash）。
+- **分工**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），LLM（`gpt-6-luna`）只做語意（標註、摘要、問答、訊號擷取）。研報以檔案 SHA256 `file_hash` 識別；各入口能不能續跑、重跑會不會覆寫，以該腳本的 docstring 為準（例如 `scripts/extract_all.py` 每次全量重抽並覆寫同 hash 的快取，`scripts/ingest_all.py` 跳過已入庫的 hash）。
 - **不另建檢索**：新功能重用 `hybrid_search`／`retrieval_pipeline`。
 - **fail-open**：派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律降級，不阻斷主流程。
 - 市場代碼對齊 findb（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`），對照在 `app/services/tagging.py`、由 `tests/test_tagging.py` 逐字釘住，是跨 repo 契約；`make align` 零 LLM 重對。
@@ -55,7 +55,7 @@ cd frontend && npm test              # vitest
 cd frontend && npm run typecheck     # tsc --noEmit
 cd frontend && npm run lint          # eslint
 
-make summaries / titles / takeaways / signals / brief   # 批次，都呼叫 LLM（預設 DeepSeek）、以 flock 互斥
+make summaries / titles / takeaways / signals / brief   # 批次，都呼叫 LLM、以 flock 互斥
 make sync-once / db-backup / freshness / db-audit        # 維運（sync-once 不經 unit、不載入 /etc/default/report-mark-sync；部署主機要跑一輪用 systemctl start report-mark-sync.service）
 make llm-blocked                     # LLM 批次跳過名單（唯讀；research.llm_task_failure）
 make boilerplate                     # 重建跨文件樣板字典 data/boilerplate/（入庫切塊前剔除；零 LLM）
@@ -75,13 +75,13 @@ uv run python scripts/ingest_all.py
 - 端點走 HTTP 層測（`TestClient`），不直接呼叫 handler 物件。不要把函式夾在 `@router.*` 裝飾器與 handler 的 `def` 之間：裝飾器會套到那個函式上，端點回 422，直呼函式的測試照樣綠。把輔助函式集中放在所有路由之上只是排版慣例（既有註解會引用它），放在兩個完整的路由定義之間不會出錯；`tests/test_router_helpers.py` 對 `web/routers/` 每一支 router 做結構檢查：`_` 開頭的 callable 不得成為任何路由的 endpoint。
 - **測試絕不可寫 repo 根的真實環境檔**：`finally` 擋得住例外、擋不住行程被殺，要驗載入行為餵 `tempfile`。`tests/conftest.py`（快照並還原 `.env`，變動即讓整個 session 失敗）與 `tests/test_env_loading.py` 是第二道防線，不是許可證。
 - 任何預設寫進 repo 根 `data/` 的新狀態檔，要在 `tests/conftest.py` 以**賦值**（不是 `setdefault`）導向不存在的路徑或 `os.devnull`，比照 `LLM_BREAKER_FILE`、`LLM_USAGE_LOG`。回應隨查詢參數變的 TTL 快取走 `web/ttl_cache.py`（conftest 每題前後 `reset_all()`）；其他模組級快取要在 conftest 加每題前後的重設（比照 `web/routers/monitor.py` 與 `web/stats_snapshot.py` 的快取），否則測試互相污染。
-- `tests/conftest.py` 刻意強制 `LLM_PROVIDER=deepseek`、金鑰為空、端點不可達（測試不打付費 API：漏了假物件的呼叫在送出前就以 auth 失敗，而且可能被 fail-open 吞掉，所以要驗 LLM 行為的測試自己裝 `httpx.MockTransport` 或 patch 呼叫層）；要驗預設值的測試自己移除該鍵。
+- `tests/conftest.py` 刻意強制金鑰為空、端點不可達（測試不打付費 API：漏了假物件的呼叫在送出前就以 auth 失敗，而且可能被 fail-open 吞掉，所以要驗 LLM 行為的測試自己裝 `httpx.MockTransport` 或 patch 呼叫層）；要驗預設值的測試自己移除該鍵。
 - 帳號：`tests/conftest.py` 整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`，預設一位 tester／testpass **管理員**），既有測試照常 POST `/login`。要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份；只需要「已登入」用 `session_cookies()`。conftest 也預設把問答的擁有權檢查（`deps.conversation_is_foreign`／`deps.qa_is_foreign`）stub 成「不是別人的」，要驗 404 的測試自行覆寫。其他每題預設：功能旗標讀成「沒有 DB 覆寫」（所以 `ask.web_search` 關）、`deps.quota.charge` 放行不計數、追問建議與查詢規劃回空；預設的 tester 是管理員但**不是** super，測 super 限定端點要自己建帳號。改了 `app/services/accounts.py` 的語意要同步改假物件——`tests/test_accounts_db.py` 同一組情境兩邊各跑一次。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉相依，不是加豁免。Dependabot 自動更新 PR 已停用，相依更新改由人工審查；更新 `torch` 時須確認 CPU-only wheel、FlagEmbedding／transformers 相容性並跑 eval，`@embedpdf/*` 必須整組升版並人眼驗證 PDF 選取與複製。
 - 測試裡的假祕密用 `fixed-test-secret-` 開頭（`.gitleaks.toml` 的 allowlist 只認 `[0-9a-z]`），其他形狀在執行期組字串。gitleaks 以完整歷史掃所有遠端分支，誤報推上去後每個 PR 都會紅。例外要精確並寫明出處：已在歷史裡的假值用 `.gitleaksignore` 的完整 commit 指紋；不是祕密的參數名稱，照 `.gitleaks.toml` 的說明逐字加 stopword。不改寫歷史，也不以路徑放行（例如整個 `tests/`；`tests/test_secret_scan_config.py` 守設定）。
 - 契約類測試（例如 `tests/test_docs_contract.py`、`tests/test_visibility_guard.py`、`tests/test_authz.py`；改了別處就紅的對帳或結構測試）：紅了是修程式或文件，不放寬 allowlist 或豁免清單。
-- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定的語料快照；快照 ID 見 README「開發與測試」）；舊的 `eval/baselines/baseline-2026-09-02.json` 是 haiku judge 系譜，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。現行 judge 系譜是 `gpt-6-luna-2026-11`，**新基準線尚未產出**；`eval/baselines/` 裡的舊基準線（`baseline-2026-09-29-jdsflash-gdsflash.json`、`baseline-2026-09-02.json`）是舊 judge 系譜的歷史紀錄，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
 
 ## 改動對照表（改了 A 就要動 B）
 
@@ -107,7 +107,7 @@ uv run python scripts/ingest_all.py
 | `ops_agent/` 或 `deploy/ops/services.*.toml` | 代理只用標準庫、不 import `app.*`（`tests/test_ops_agent.py` 守）；新增 action 要同時改 `ops_agent/protocol.py` 的 `KNOWN_ACTIONS`／`OPS` 與 `web/routers/admin_ops.py` 的 `Action`。部署時：代理從 root 擁有的 `/opt/report-mark-ops/` 執行（docker 群組等同 root，不從 repo 跑），要重新 `install` 到那裡、`--check` 後重啟該主機的代理（測試環境 `report-mark-ops-agent.service`、正式環境 `report-mark-ops-agent-staging.service`；步驟見 `docs/production_resilience.md`「維運代理」） |
 | sync 殼的來源段（NAS 掛載、rsync、inbox 推送）、`data/.sync_feed_state` 的鍵，或主機信標的狀態詞彙 | 殼寫、`app/services/host_beacon.py` 讀：鍵名與詞彙兩端一起改（`tests/test_pipeline_heartbeat.py` 的 FeedStateTests 以真的殼對帳）。信標是**跨主機、跨版本**的契約（辦公室主機發布、EC2 判讀，兩台不會同時升級）：加欄位用可缺的鍵，改到舊版讀不懂才升 `SCHEMA_VERSION`，而且先升級判讀那一端。新增告警狀態要同時改 `ALERT_STATES`、`web/routers/admin_ops.py` 的 `RemoteState`／`RemoteAlert`（重跑 `scripts/gen_admin_client.py`）、`scripts/check_feed_health.sh` 的 `case` 與前端 `remoteHostLabels.ts`（`tests/test_host_beacon.py`、`tests/test_feed_health_probe.py` 對帳前三者）。處置見 `docs/production_resilience.md`「來源主機信標」 |
 | `deploy/systemd/` 的 unit 與 `report-mark-web.service.d/` | 改 repo 裡的真相來源，不要只改機器上的副本（`tests/test_deploy_units.py` 守 unit 檔）。部署到主機時才安裝；repo 裡的 unit 是辦公室主機的字面值（`User=kashionz` 與其路徑）。**EC2**：一律 `sudo deploy/install_units.sh --user <使用者> --root <repo 根> <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；只複製與 `daemon-reload`，不 enable；EC2 不裝的 unit 見 README 的 EC2 一節）。**辦公室主機**：`sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；`*.env.example` 對應 `/etc/default/`（`report-mark-llm` 必須 `install -m 0640 -o root -g kashionz`，`cp` 會讓金鑰全員可讀），`*.sudoers` 以 `install -m 0440` 裝進 `/etc/sudoers.d/` 且目的檔名不帶副檔名（sudo 忽略含 `.` 的檔名），`mount-nas-*` 裝到 `/usr/local/sbin/`，`report-mark-alert.sh` 就地執行。`deploy/docker-compose.yml`、`deploy/nginx.conf` 走 `make up-edge`／`edge-reload` |
-| DeepSeek 金鑰，或切換 `LLM_PROVIDER`（`opencode_go` 備援） | repo 根 `.env` 與 `/etc/default/report-mark-llm`（辦公室主機為 0640 root:kashionz，只有 sync 與上傳 worker 的 unit 載入）逐字相同，`OPENCODE_GO_API_KEY` 與 `LLM_PROVIDER` 也是（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`，provider 兩份不同也回 1）；改完重啟 web，不需 `daemon-reload`。輪替與切換見 `docs/production_resilience.md` |
+| LLM 金鑰，或 `LLM_PROVIDER` | 同一顆模型 `gpt-6-luna`，`LLM_PROVIDER` 只決定送達路徑：正式環境（EC2）`openai`＋`OPENAI_API_KEY`，測試環境（辦公室主機）`opencode_go`＋`OPENCODE_GO_API_KEY`，兩台不共用金鑰。每台的 repo 根 `.env` 與 `/etc/default/report-mark-llm`（辦公室主機為 0640 root:kashionz，只有 sync 與上傳 worker 的 unit 載入）金鑰與 `LLM_PROVIDER` 都逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`，provider 兩份不同也回 1）；改完重啟 web，不需 `daemon-reload`。見 `docs/production_resilience.md`「LLM 供應商與金鑰」 |
 | 新的 LLM 批次或評測入口 | `sys.path.insert` 之後第一個專案 import 必須是 `scripts._llm_env`、緊接 `load_llm_env()`；`require_llm_key(...)` 在取鎖之前（`tests/test_llm_env_loading.py` 掃描入口檔釘住，只 import `answer`／`retrieval_pipeline` 等間接層的入口也算；不呼叫 LLM 的列在該檔 `NON_LLM_ENTRIES` 並逐一核對取用的名稱）；批次傳 `{任務: 模型}`（缺金鑰時說得出是哪個旋鈕），評測傳模型名清單。會呼叫 LLM 的批次還要加進 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS` 並取鎖 |
 | 新增批次 LLM 呼叫點（`run_claude`） | 帶 `max_tokens` 與 `meta={"task", "file_hash", "report_id"}`（簡報只需 `task`），值由 `tests/test_claude_cli.py` 的 `EXPECTED` 表逐點釘住，改值要同步改表並說明理由；重試迴圈加 `if res.text is None and not is_retryable(res): break`（`API[...]` 已在傳輸層處理，解析失敗才在腳本層重試），跳過名單的 reason 用 `failure_kind(res)` |
 | 新增 `stream_completion` 呼叫點（線上與評測） | 帶 `max_tokens` 與 `task`（`tests/test_llm.py` 的 `EXPECTED` 表逐點釘住）；同步更新所有假物件簽章；model 只用白名單（`llm_models.HTTP_MODELS`），其他名稱在送出前就以 `kind=config` 失敗 |
@@ -137,7 +137,7 @@ uv run python scripts/ingest_all.py
 
 ### LLM（§2.2 `llm.py` 列、§9）
 - 模型名一律經 `llm_models.resolve_model`，不寫死；`LLM_PROVIDER` 的預設與拼錯時的行為見 §9。
-- 改 `llm.py`、`llm_http.py` 或 `/api/ask` 的錯誤訊息前，先讀 §2.2 的 `llm.py` 列（分派、重試、逾時與截斷語意）與 `web/routers/ask.py` 的 `_LLM_ERROR_DETAILS` 註解。內容審查**沒有備援後端**；402 只有**手動**備援 `LLM_PROVIDER=opencode_go`（同一顆模型改經 OpenCode Go，差異只在 `llm_http.py`；不做自動 failover，步驟與風險見 `docs/production_resilience.md`「切換到 OpenCode Go」）。
+- 改 `llm.py`、`llm_http.py` 或 `/api/ask` 的錯誤訊息前，先讀 §2.2 的 `llm.py` 列（分派、重試、逾時與截斷語意）與 `web/routers/ask.py` 的 `_LLM_ERROR_DETAILS` 註解。**沒有備援後端**：`LLM_PROVIDER` 是每台主機固定的送達路徑（同一顆模型，差異只在 `llm_http.py`），不是 failover。兩條路徑都沒有餘額 API，`/healthz/llm` 沒有用完前的預警，503 一律是探針退出碼 8（OpenAI 的預算告警在 OpenAI 後台設定；處置見 `docs/production_resilience.md`「LLM 帳號告警與處置」）。
 
 ### 閱讀頁、雷達、簡報（讀取路徑零 LLM；§6）
 - 閱讀頁：正典文字是 `clean_extracted(full_text)`，錨點有效與否只在後端判；`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性，不要清。`PdfViewer.tsx` 的 `PagePointerProvider` 要在 `Rotate` 之內，複製走 `frontend/src/lib/clipboard.ts`（理由在各自的註解）。

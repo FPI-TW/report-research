@@ -73,7 +73,7 @@ python3 scripts/analyze_resource_usage.py --bench data/metrics/bench-ask-<stamp>
 
 ### 單條問答的成本（rerank 50 候選；2026-08-28、2026-09-02）
 
-兩次都在乾淨窗期（批次路徑 0 核）、取樣間隔 20 秒，題目取自凍結題集。當時 `ASK_RERANK_CANDIDATES` 是 50、LLM 是本機 spawn 的 CLI（現在是 DeepSeek HTTP 呼叫、候選 16）；**改成 16 候選之後沒有重量核心秒**，下表是上限估計。
+兩次都在乾淨窗期（批次路徑 0 核）、取樣間隔 20 秒，題目取自凍結題集。當時 `ASK_RERANK_CANDIDATES` 是 50、LLM 是本機 spawn 的 CLI（現在是遠端 LLM 的 HTTP 呼叫、候選 16）；**改成 16 候選之後沒有重量核心秒**，下表是上限估計。
 
 | | 併發 1（4 條） | 併發 3（8 條） |
 |---|---|---|
@@ -94,7 +94,7 @@ python3 scripts/analyze_resource_usage.py --bench data/metrics/bench-ask-<stamp>
 
 ### rerank 候選數：50 → 16（2026-09-29）
 
-`ASK_RERANK_CANDIDATES` 的預設 16 是這次量出來的。做法：從辦公室主機的語料庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離的 PostgreSQL，啟動單 worker API、載入既有 DeepSeek 設定，對凍結題集前 8 題各送一次真實登入後的 `/api/ask` SSE 請求；依序量單併發、三併發，再把候選數從 50 改為 16 重跑，其餘設定、語料與主機不變（秒）：
+`ASK_RERANK_CANDIDATES` 的預設 16 是這次量出來的。做法：從辦公室主機的語料庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離的 PostgreSQL，啟動單 worker API、載入當時的 LLM 設定（前一顆模型），對凍結題集前 8 題各送一次真實登入後的 `/api/ask` SSE 請求；依序量單併發、三併發，再把候選數從 50 改為 16 重跑，其餘設定、語料與主機不變（秒）：
 
 | 指標 | 50 候選，併發 1 | 16 候選，併發 1 | 50 候選，併發 3 | 16 候選，併發 3 |
 |---|---:|---:|---:|---:|
@@ -104,7 +104,7 @@ python3 scripts/analyze_resource_usage.py --bench data/metrics/bench-ask-<stamp>
 | 首 token p50 | 39.71 | 14.85 | 66.47 | 26.87 |
 
 - 50 候選的首輪重排約需 36–54 秒，補查重排有兩筆耗盡 90 秒期限；三併發觀察到首輪重排逾時、退回融合排序（fail-open，等於 rerank 靜默關掉）。16 候選的 16 筆請求首輪重排全數實際套用，沒有逾時。
-- 品質沒有劣化：相同快照、前 8 題、`--agentic` 與 DeepSeek judge，50 候選 F/CP/AR = 0.984/0.849/0.686、檢索加生成平均 54.9 秒；16 候選 0.968/0.852/0.713、平均 23.2 秒。`make eval-compare` 退出碼 0，三項仍過既定門檻。
+- 品質沒有劣化：相同快照、前 8 題、`--agentic` 與當時的 judge（前一顆模型，換到 `gpt-6-luna` 後尚未重量），50 候選 F/CP/AR = 0.984/0.849/0.686、檢索加生成平均 54.9 秒；16 候選 0.968/0.852/0.713、平均 23.2 秒。`make eval-compare` 退出碼 0，三項仍過既定門檻。
 - 效力邊界：這是 8 題、單次重跑的探索性對照（正式 18 題×3 次品質基準刻意關閉重排與補查，兩者不可混成一個分數）；這一輪沒有同步採樣 cgroup，**不能從延遲推算核心秒、吞吐量或雲端機型**。
 
 `qa_timing` 把 rerank semaphore 排隊（`rerank_queue_ms`）與交給執行緒後的耗時（`rerank_compute_ms`）分開，另記 `rerank_applied` 與 `rerank_timed_out`。`compute_ms` 含 `asyncio.to_thread` 的排程等待；已逾時的那一筆，背景推論可能在 log 之後才結束，欄位可能為空。這些欄位只涵蓋首輪檢索，agentic 補查沒有累計進來。
@@ -132,7 +132,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run python scripts/bench_load.py \
 1. **量測主機是 WSL2，不是雲端 Linux。** PSI 的 `io.some` 常態就有數個百分點（實測 p99 達 39%），不能外推成 EBS 需求。CPU 的量測不受影響，但**記憶體會**：WSL2 會主動把閒置的 anon 頁換出去還給 Windows——2026-08-28 上午 swap 從 0.31 GiB 漲到 3.22 GiB，同期 `MemAvailable` 維持 14–17 GiB（不是記憶體壓力），`web` 的 anon 一度從 0.94 GiB 掉到 0.10 GiB。所以 **anon 的分位數會低估常駐工作集**，選 RAM 時要一併看 cgroup 的 `memory.peak`。
 2. **量測主機同時是開發機。** 分析器已經把非服務負載扣掉，但開發負載仍會透過快取競爭與 I/O 排隊間接影響量測值；要最乾淨的數字，取無人使用的時段。
 3. **被動監控只量得到「閒置＋批次」。** 真實問答量很低（2026-08-28 查 `qa_log`，近 21 天只有 7 次），問答的尖峰只能靠受控負載量；沒有這一步，vCPU 的結論會嚴重低估。
-4. **模型成本不在任何 CPU 數字裡。** 問答與批次的 LLM 是遠端 DeepSeek API，屬 token／API 成本；本機 CPU 幾乎全是 BGE-M3 嵌入與 cross-encoder rerank（`torch` CPU-only），那才是選機型的變數。兩者不可互相推論。
+4. **模型成本不在任何 CPU 數字裡。** 問答與批次的 LLM 是遠端 LLM API，屬 token／API 成本；本機 CPU 幾乎全是 BGE-M3 嵌入與 cross-encoder rerank（`torch` CPU-only），那才是選機型的變數。兩者不可互相推論。
 
 ## 常駐元件：ClamAV
 

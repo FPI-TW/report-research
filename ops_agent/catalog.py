@@ -147,7 +147,7 @@ class Service:
 
 @dataclass(frozen=True)
 class External:
-    """外部依賴（R2、DeepSeek、NAS、對外入口……）：只是依賴圖的節點，代理不對它執行任何指令。"""
+    """外部依賴（R2、LLM 供應商、NAS、對外入口……）：只是依賴圖的節點，代理不對它執行任何指令。"""
 
     name: str
     tier: str

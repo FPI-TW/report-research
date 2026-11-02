@@ -32,13 +32,13 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.ask_max_stale_reports, 4)
         self.assertFalse(s.ask_enable_web)  # PR-M：網搜沒有後端，預設關
         # intent
-        self.assertEqual(s.ask_intent_model, "deepseek-flash")
+        self.assertEqual(s.ask_intent_model, "gpt-6-luna")
         self.assertEqual(s.ask_intent_timeout, 20.0)
-        self.assertEqual(s.ask_condense_model, "deepseek-flash")
+        self.assertEqual(s.ask_condense_model, "gpt-6-luna")
         self.assertEqual(s.ask_condense_timeout, 20.0)
 
     def test_ask_web_defaults_m11(self):
-        """總閘預設關（PR-M：claude CLI 的 WebSearch 已移除、DeepSeek 網搜延後到 P9，開著只會讓時效題婉拒、
+        """總閘預設關（網搜沒有後端，開著只會讓時效題婉拒、
         開了網搜的主答以設定錯誤失敗）。打開時是「允許使用者開」而非「一律開」——真正的開關在每個請求的
         web 欄位（tests/test_ask_web_search.py）。"""
         s = get_settings()
@@ -60,7 +60,7 @@ class SettingsDefaultsTests(unittest.TestCase):
     def test_query_planner_defaults_m5(self):
         # agentic_qa / query_planner（M5 區段；M5 里程碑只在本方法內加斷言）
         s = get_settings()
-        self.assertEqual(s.qa_planner_model, "deepseek-flash")
+        self.assertEqual(s.qa_planner_model, "gpt-6-luna")
         self.assertEqual(s.qa_planner_timeout, 45.0)
         self.assertEqual(s.qa_planner_max_subqueries, 3)
         self.assertEqual(s.qa_max_rounds, 2)
@@ -78,7 +78,7 @@ class SettingsDefaultsTests(unittest.TestCase):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pypdf")
 
     def test_llm_http_total_timeout(self):
-        """DeepSeek 串流的牆鐘總時限：預設 600 秒；0、負數、非數字、nan／inf 退回預設（0 會讓每次都立刻逾時）。"""
+        """串流的牆鐘總時限：預設 600 秒；0、負數、非數字、nan／inf 退回預設（0 會讓每次都立刻逾時）。"""
         self.assertEqual(get_settings().llm_http_total_timeout, 600.0)
         for raw, want in (("300", 300.0), ("", 600.0), ("0", 600.0), ("-5", 600.0), ("abc", 600.0),
                           ("nan", 600.0), ("inf", 600.0), ("-inf", 600.0), ("NaN", 600.0)):
@@ -86,35 +86,35 @@ class SettingsDefaultsTests(unittest.TestCase):
                 self.assertEqual(_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0), want)
 
     def test_llm_model_defaults(self):
-        """conftest 強制 LLM_PROVIDER=deepseek（唯一合法值）：線上任務解析到 deepseek-flash、網搜沒有模型。"""
+        """conftest 強制 LLM_PROVIDER=openai（預設值）：線上任務解析到 gpt-6-luna、網搜沒有模型。"""
         s = get_settings()
-        self.assertEqual(s.llm_provider, "deepseek")
-        self.assertEqual(s.ask_answer_model, "deepseek-flash")
+        self.assertEqual(s.llm_provider, "openai")
+        self.assertEqual(s.ask_answer_model, "gpt-6-luna")
         self.assertEqual(s.ask_web_model, "")
-        self.assertEqual(s.faithfulness_model, "deepseek-flash")
+        self.assertEqual(s.faithfulness_model, "gpt-6-luna")
 
-    def test_llm_provider_unset_or_retired_resolves_to_deepseek(self):
-        """LLM_PROVIDER 沒設、或設成 PR-M 退役的值，Settings 都解析為 deepseek（退役值另記 ERROR，見
-        tests/test_llm_models.py）；生產忠實度 judge 是 deepseek-flash，網搜沒有模型。"""
+    def test_llm_provider_unset_or_retired_resolves_to_openai(self):
+        """LLM_PROVIDER 沒設、或設成退役的值，Settings 都解析為 openai（退役值另記 ERROR，見
+        tests/test_llm_models.py）；生產忠實度 judge 是 gpt-6-luna，網搜沒有模型。"""
         from app import config
 
-        for value in (None, "claude_cli", "claude_only"):
+        for value in (None, "deepseek", "claude_cli", "claude_only"):
             with self.subTest(value=value), mock.patch.dict(os.environ, {}):
                 os.environ.pop("LLM_PROVIDER", None)
                 if value is not None:
                     os.environ["LLM_PROVIDER"] = value
                 s = config._load()
-                self.assertEqual(s.llm_provider, "deepseek")
-                self.assertEqual(s.ask_answer_model, "deepseek-flash")
-                self.assertEqual(s.ask_intent_model, "deepseek-flash")
-                self.assertEqual(s.ask_condense_model, "deepseek-flash")
-                self.assertEqual(s.qa_planner_model, "deepseek-flash")
+                self.assertEqual(s.llm_provider, "openai")
+                self.assertEqual(s.ask_answer_model, "gpt-6-luna")
+                self.assertEqual(s.ask_intent_model, "gpt-6-luna")
+                self.assertEqual(s.ask_condense_model, "gpt-6-luna")
+                self.assertEqual(s.qa_planner_model, "gpt-6-luna")
                 self.assertEqual(s.ask_web_model, "")
-                self.assertEqual(s.faithfulness_model, "deepseek-flash")
+                self.assertEqual(s.faithfulness_model, "gpt-6-luna")
         # dataclass 欄位預設與預設表一致（直接建構時不自相矛盾）
         fields = config.Settings.__dataclass_fields__
-        self.assertEqual(fields["llm_provider"].default, "deepseek")
-        self.assertEqual(fields["ask_answer_model"].default, "deepseek-flash")
+        self.assertEqual(fields["llm_provider"].default, "openai")
+        self.assertEqual(fields["ask_answer_model"].default, "gpt-6-luna")
         self.assertEqual(fields["ask_web_model"].default, "")
 
     def test_singleton(self):

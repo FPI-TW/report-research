@@ -1,7 +1,7 @@
 """RAG 問答服務：重用混合檢索組裝帶編號的引用脈絡，串流回答並寫 qa_log。
 
 流程：embed_query_cached → hybrid_search → build_context（編號脈絡 + 來源清單）→
-stream_completion（DeepSeek HTTP；白名單外的 model 拋 config 錯誤）→ 解析回答中的 [n] 求實際引用 → 寫 research.qa_log。
+stream_completion（LLM HTTP；白名單外的 model 拋 config 錯誤）→ 解析回答中的 [n] 求實際引用 → 寫 research.qa_log。
 
 answer_question() 為傳輸無關的事件產生器，逐筆 yield ("sources"|"token"|"done", payload)，
 由 web 層轉成 SSE。DB 連線不橫跨 LLM 串流：檢索用一個短連線、寫 log 另開連線。
@@ -89,7 +89,7 @@ ASK_FAITHFULNESS_ENABLED = _S.ask_faithfulness_enabled
 ASK_FAITHFULNESS_SAMPLE_RATE = _S.ask_faithfulness_sample_rate
 FAITHFULNESS_MODEL = _S.faithfulness_model
 # 開網搜那一輪的模型（ASK_WEB_MODEL）。與主答分開一顆旋鈕，時效題網搜與「主答且 web_on」兩處共用。
-# **目前網搜沒有後端**（PR-M 移除 claude CLI 的 WebSearch，DeepSeek 網搜延後到 P9）：預設是空字串，
+# **目前網搜沒有後端**：預設是空字串，
 # `stream_completion(allow_web=True)` 不論這裡是什麼都拋 config 錯誤——時效題退回 M4 婉拒、開了網搜的
 # 主答回「設定有誤」。`ASK_ENABLE_WEB` 預設關，所以正常情況走不到這兩處。
 ASK_WEB_MODEL = _S.ask_web_model
@@ -394,7 +394,7 @@ _TRUNCATION_NOTES = {
         "Answer cut off here: the output reached its length limit",
     ),
     # 我們自己的時限到了，不是連線斷掉：不能套下面「連線中斷」那句。meta 只有 `truncated=True`、
-    # 沒帶原因時也落這裡（PR-M 前 CLI 的單一 Task 逾時是這個形狀；現在的 HTTP 路徑一律帶原因）。
+    # 沒帶原因時也落這裡（HTTP 路徑一律帶原因，這裡是防禦性的）。
     "timeout": (
         "回答在此中斷：模型輸出超過時限",
         "Answer cut off here: the model output exceeded the time limit",
@@ -484,12 +484,12 @@ RESEARCH_ONLY_POLICY = (
 
 # M11：網搜改為**每題由使用者決定**（/api/ask 的 web 欄位）。此常數是伺服器端總閘：
 # 設 ASK_ENABLE_WEB=0 即使前端送 web=true 也一律關閉，不必改前端就能整站停用。
-# 開著＝「允許使用者開」，不是「一律開」——請求沒帶 web 時仍是關的。預設關（PR-M 起網搜沒有後端，
+# 開著＝「允許使用者開」，不是「一律開」——請求沒帶 web 時仍是關的。預設關（網搜沒有後端，
 # 見 ASK_WEB_MODEL 的註解與 app/config.py）。
 ASK_ENABLE_WEB = _S.ask_enable_web
 # 開網搜那一輪的主 LLM 逾時（不開網搜的路徑維持 llm.py 的 120s 預設，零回歸）。
 # **語意是「第一個輸出」的期限，不是總時限**：/api/ask 經 `web.deps._with_heartbeat` 驅動，
-# 它每次 `__anext__` 都開新 Task，而 PR-M 前 CLI 路徑的 `asyncio.timeout` 跨越 yield、綁在進入時的
+# 它每次 `__anext__` 都開新 Task，而舊 CLI 路徑的 `asyncio.timeout` 跨越 yield、綁在進入時的
 # Task 上——第一個 yield（文字或網搜標記 SEARCH_EVENT）之後那個 Task 就結束了，逾時不再
 # 生效（2026-09-24 以假 CLI 實測：timeout=0.5、每 0.3 秒一段共 6 段，直接迭代 0.5 秒被截斷，
 # 經 _with_heartbeat 1.8 秒全數吐完）。所以放寬它防的是「搜尋很久才出第一個字」被誤判逾時，
@@ -1164,10 +1164,9 @@ def history_item(row) -> dict:
 # LLM 失敗的分類（`filters.llm_error`）。這個欄位最初要回答的問題只有一個——**這是
 # 上游過載還是我們的 bug**——而那正是先前完全分不出來的事（兩者都是「什麼紀錄都沒有」）。
 # 例外自帶 `kind`（`llm_http` 依狀態碼與 finish_reason 決定、`stream_completion` 對白名單外的 model
-# 與網搜填 config，都不解析文字），直接採用：quota／auth／content_filter 在 DeepSeek 上各有不同的處置，
+# 與網搜填 config，都不解析文字），直接採用：quota／auth／content_filter 各有不同的處置，
 # 混成一類就量不出來。沒有 kind（非 LLMUnavailableError 的例外，或外部建構沒給）一律 other——
-# 不能猜成 overloaded，那會把我們的 bug 記成上游問題。PR-M 前 CLI 路徑另有一段看 `API Error`／
-# `Overloaded` 字樣的文字判斷，隨 CLI 一起移除。
+# 不能猜成 overloaded，那會把我們的 bug 記成上游問題。
 def _llm_error_kind(exc: Exception) -> str:
     kind = getattr(exc, "kind", None)
     return kind if isinstance(kind, str) and kind else "other"
@@ -1774,7 +1773,7 @@ def _background_inflight(prefix: str) -> int:
     """名稱以 `prefix` 開頭、仍在跑的背景任務數。
 
     脫離 `/api/ask` 併發閘之後，背景抽查唯一的上限就在這裡：每一次抽查要跑兩個 judge 階段
-    （最多 6 個 DeepSeek 請求），沒有這個數字，連續問答會讓它們無上界地累積。
+    （最多 6 個 LLM 請求），沒有這個數字，連續問答會讓它們無上界地累積。
     """
     return sum(1 for t in _BACKGROUND_TASKS if not t.done() and t.get_name().startswith(prefix))
 
@@ -2296,7 +2295,7 @@ async def answer_question(
     conversation_id 與 created_at；新列成功寫入時才把該輪及其後全部標 inactive（截斷後續對話），
     再以編輯後新問題作答為全新輪次（不進版本群組，new_root 維持 None）。
     web 為真且伺服器總閘 ASK_ENABLE_WEB 開啟時（M11）：主答要求網搜（`allow_web=True`）、
-    系統提示換上網路那組規則，時效題也改由網搜作答（受信任 adapter 仍優先）。**PR-M 起網搜沒有
+    系統提示換上網路那組規則，時效題也改由網搜作答（受信任 adapter 仍優先）。**目前網搜沒有
     後端**（見 ASK_WEB_MODEL 的註解）：時效題退回 M4 婉拒、主答以 config 錯誤失敗並落遙測列；
     總閘預設關。
     未帶或總閘關閉 → 行為與 M4 起的既有路徑完全相同。overview 與 off_topic 不受影響。

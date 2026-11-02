@@ -1263,7 +1263,7 @@ export const SchemaSectionSchema = z.object({
 export type SchemaSection = z.infer<typeof SchemaSectionSchema>
 
 export const SecretsPresentSchema = z.object({
-  deepseek_api_key: z.boolean(),
+  openai_api_key: z.boolean().nullable().optional(),
   opencode_go_api_key: z.boolean().nullable().optional(),
   session_secret: z.boolean(),
   edge_secret: z.boolean(),

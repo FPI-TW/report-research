@@ -43,7 +43,7 @@ _SNAPSHOT = {
     "evaluation": {
         "qa": {"total": 40, "checked": 5, "judge_checked": 3, "degraded": 1, "below_min": 1,
                "avg_score": 0.5634, "avg_n": 2, "latest": "2026-09-30",
-               "judge_model": "deepseek-flash", "judge_since": "2026-09-25", "other_judge_checked": 2},
+               "judge_model": "gpt-6-luna", "judge_since": "2026-09-25", "other_judge_checked": 2},
         "min_score": 0.9,
     },
     "extraction": None,
@@ -152,7 +152,7 @@ class JudgeScaleAuthzTests(_Base):
         """回應只有 evaluation.qa 的三個鍵：不含 runtime、管線，也不含覆蓋率與分數統計。"""
         r = self._client("root").get("/api/review/judge-scale")
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json(), {"judge_model": "deepseek-flash", "judge_since": "2026-09-25",
+        self.assertEqual(r.json(), {"judge_model": "gpt-6-luna", "judge_since": "2026-09-25",
                                     "other_judge_checked": 2})
         self.assertLessEqual(set(r.json()), set(_SNAPSHOT["evaluation"]["qa"]))
         self.assertEqual(self.runtime_calls, 0)

@@ -258,7 +258,7 @@ async def _process_one(ctx: Ctx, session, item: uw.CleanItem, storage, hashes: l
         pre_upsert=uw.draft_hook(uid), on_committed=hashes.append,
     )
     if out.failure_kind:
-        # DeepSeek 的內容型失敗（審查、截斷、空回應、400）照 sync 記入跳過名單（make llm-blocked 列得出來）。
+        # LLM 的內容型失敗（審查、截斷、空回應、400）照 sync 記入跳過名單（make llm-blocked 列得出來）。
         rec = await recorder.get()
         if rec is not None:
             await rec.record(out.file_hash, out.failure_kind)

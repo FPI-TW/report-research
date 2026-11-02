@@ -270,7 +270,7 @@ class StagingCatalogTests(unittest.TestCase):
         self.assertEqual({n: a for n, a in writes.items() if a},
                          {"web": ["restart"], "freshness": ["run"], "audit": ["run"],
                           "db-snapshot": ["run"], "analytics-rollup": ["run"]})
-        self.assertNotIn("run", staging.get("sync").actions)  # 共用 DeepSeek 金鑰：手動多跑一輪就是多一份費用
+        self.assertNotIn("run", staging.get("sync").actions)  # 共用 LLM 金鑰：手動多跑一輪就是多一份費用
         self.assertNotIn("run", staging.get("r2-reconcile").actions)  # 共用 bucket
         self.assertEqual([s.name for s in staging.services if s.kind == "container"], [])
 
@@ -319,24 +319,21 @@ class DependencyGraphTests(unittest.TestCase):
 
     def test_repo_catalogs_declare_dependencies(self):
         prod = load_catalog(PROD_TOML, resolve_user=_uid)
-        self.assertEqual(set(prod.get("web").depends_on), {"postgres", "r2", "deepseek"})
+        self.assertEqual(set(prod.get("web").depends_on), {"postgres", "r2", "llm"})
         self.assertEqual({e.name for e in prod.externals},
-                         {"r2", "deepseek", "nas", "slack", "public-edge", "linebot"})
+                         {"r2", "llm", "nas", "slack", "public-edge", "linebot"})
         self.assertIn("nas", prod.get("sync").depends_on)
         dev = load_catalog(DEV_TOML, resolve_user=_uid)
         self.assertEqual(dev.get("dev-web").depends_on, ("devdb",))
         staging = load_catalog(STAGING_TOML, resolve_user=_uid)
-        self.assertEqual(set(staging.get("web").depends_on), {"rds", "r2", "deepseek"})
+        self.assertEqual(set(staging.get("web").depends_on), {"rds", "r2", "llm"})
 
     def test_web_probe_exit_codes_follow_the_probe_priority(self):
-        """scripts/check_web_health.sh 的優先序是 8→6→7：被蓋住的那項判斷不出來，但沒被蓋住的要判得出來。
-
-        2026-10-22：DeepSeek 餘額低（7）時 r2 顯示「不明」——7 只在 R2 沒問題時才會出現，r2 卻沒把它當正常。
-        """
-        expected = {  # 退出碼 → (r2, deepseek)
+        """scripts/check_web_health.sh 的優先序是 8→6：被蓋住的那項判斷不出來。5、7 已退役，沒有依賴認得它們。"""
+        expected = {  # 退出碼 → (r2, llm)
             0: ("ok", "ok"),
-            6: ("down", "unknown"),     # 6 蓋住 7：餘額低與否看不出來
-            7: ("ok", "degraded"),
+            6: ("down", "ok"),          # 8 優先於 6：回 6 就代表 LLM 沒問題
+            7: ("unknown", "unknown"),  # 已退役：舊版探針殘留，不是任何發現
             8: ("unknown", "down"),     # 8 蓋住 6
         }
 
@@ -350,10 +347,11 @@ class DependencyGraphTests(unittest.TestCase):
         for toml in (PROD_TOML, STAGING_TOML):
             cat = load_catalog(toml, resolve_user=_uid)
             exts = {e.name: e for e in cat.externals if e.probe == "health"}
-            self.assertEqual(set(exts), {"r2", "deepseek"})
-            for code, (r2, deepseek) in expected.items():
+            self.assertEqual(set(exts), {"r2", "llm"})
+            self.assertEqual(exts["r2"].ok_exit_codes, (0,), "r2 回到預設：7 退役後沒有要當正常的退出碼")
+            for code, (r2, llm) in expected.items():
                 with self.subTest(catalog=toml.name, code=code):
-                    self.assertEqual((judge(exts["r2"], code), judge(exts["deepseek"], code)), (r2, deepseek))
+                    self.assertEqual((judge(exts["r2"], code), judge(exts["llm"], code)), (r2, llm))
 
     def test_valid_graph_with_externals(self):
         cat = self._parse([_svc("web", ["r2"]), _svc("health")],
@@ -442,7 +440,7 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertIn("externals=6", out.getvalue())
         with tempfile.TemporaryDirectory() as tmp:
             toml = Path(tmp) / "c.toml"
-            web_deps = 'depends_on = ["rds", "r2", "deepseek"]\ndescription = "Web'
+            web_deps = 'depends_on = ["rds", "r2", "llm"]\ndescription = "Web'
             text = STAGING_TOML.read_text(encoding="utf-8")
             self.assertIn(web_deps, text)
             toml.write_text(text.replace(web_deps, 'depends_on = ["nginx"]\ndescription = "Web'), encoding="utf-8")
@@ -747,7 +745,7 @@ class AgentRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(resp["result"]["truncated"])
 
     async def test_secrets_in_log_lines_are_redacted(self):
-        raw = ("DEEPSEEK_API_KEY=sk-abcdefghijklmnopqrstuvwx\n"
+        raw = ("OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx\n"
                "connect postgresql+asyncpg://postgres:hunter2@localhost:5436/research\n"
                "header Authorization: Bearer abcdefghijklmnop\n"
                "X-Edge-Secret: s3cr3tvalue\n"

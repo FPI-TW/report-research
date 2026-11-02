@@ -391,8 +391,8 @@ class MainAgenticFlagTests(unittest.TestCase):
             captured.update(kwargs)
             return {"summary": {}, "cases": []}
 
-        # 預設模型是 deepseek-flash，預檢要金鑰：只給假值（run 已換成假的，不會送出任何請求）
-        env = mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"})
+        # 預設模型是 gpt-6-luna，預檢要金鑰：只給假值（run 已換成假的，不會送出任何請求）
+        env = mock.patch.dict(os.environ, {"OPENAI_API_KEY": "fixed-test-secret-openai0"})
         env.start()
         self.addCleanup(env.stop)
         saved = _install_fakes(["run"])
@@ -409,7 +409,7 @@ class MainAgenticFlagTests(unittest.TestCase):
         self.assertTrue(captured["agentic"])
 
 
-# ── 量尺可追溯（DeepSeek 遷移 PR-06）──────────────────────────────────────
+# ── 量尺可追溯──────────────────────────────────────
 
 
 async def _one_ctx_retrieve(question, *, filters=None, **params):
@@ -528,11 +528,11 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
             rr.stream_completion = stream
             await rr.eval_question(
                 {"id": "q1", "question": "x"}, judge=_metrics_judge, embed=_flat_embed,
-                retrieval_params={}, gen_model="deepseek-flash",
+                retrieval_params={}, gen_model="gpt-6-luna",
             )
         finally:
             _restore(saved)
-        self.assertEqual(seen, {"model": "deepseek-flash", "timeout": rr.GEN_TIMEOUT})
+        self.assertEqual(seen, {"model": "gpt-6-luna", "timeout": rr.GEN_TIMEOUT})
 
 
 class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
@@ -723,7 +723,7 @@ class MergeRepeatsTests(unittest.TestCase):
 class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
     """run() 的結果檔：summary 的三個 META 鍵、config 快照、repeat 與 --dump-io。"""
 
-    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="deepseek-v4-pro"):
+    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="gpt-6-luna"):
         questions = [
             {"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"},
             {"id": "q002", "question": "聯發科成長動能如何", "filters": {}, "scope": "corpus_qa"},
@@ -748,7 +748,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             rr.eval_question = fake_eval_question
             report = await rr.run(
                 ds, out_path=Path(td) / "out.json", concurrency=1, repeat=repeat,
-                generator_model="deepseek-flash", judge_model=judge_model,
+                generator_model="gpt-6-luna", judge_model=judge_model,
                 dump_dir=(Path(td) / "frozen") if dump else None, agentic=agentic,
             )
         finally:
@@ -759,7 +759,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as td:
             report, _seen, _ds = await self._run_with(td)
         s = report["summary"]
-        self.assertEqual(s["judge_model"], "deepseek-v4-pro")
+        self.assertEqual(s["judge_model"], "gpt-6-luna")
         self.assertEqual(s["judge_prompt_sha"], rr.judge_prompt_sha())
         self.assertEqual(len(s["judge_prompt_sha"]), 64)
         self.assertEqual(s["judge_schema_version"], rr.JUDGE_SCHEMA_VERSION)
@@ -773,15 +773,15 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             written = json.loads((Path(td) / "out.json").read_text(encoding="utf-8"))
         cfg = report["config"]
         self.assertEqual(written["config"], cfg)
-        self.assertEqual(seen["gen_model"], ["deepseek-flash", "deepseek-flash"])
-        self.assertEqual(cfg["gen_model"], "deepseek-flash")
-        self.assertEqual(cfg["models"]["generate"], "deepseek-flash")
+        self.assertEqual(seen["gen_model"], ["gpt-6-luna", "gpt-6-luna"])
+        self.assertEqual(cfg["gen_model"], "gpt-6-luna")
+        self.assertEqual(cfg["models"]["generate"], "gpt-6-luna")
         for task in ("judge_decompose", "judge_ground", "judge_context_precision", "judge_answer_relevancy"):
-            self.assertEqual(cfg["models"][task], "deepseek-v4-pro")
+            self.assertEqual(cfg["models"][task], "gpt-6-luna")
         self.assertIn("agentic_plan", cfg["models"])     # agentic 才會觸發規劃與評估步
         self.assertIn("agentic_evaluate", cfg["models"])
-        self.assertEqual(cfg["judge"]["model"], "deepseek-v4-pro")
-        self.assertEqual(cfg["judge"]["provider"], "deepseek_http")
+        self.assertEqual(cfg["judge"]["model"], "gpt-6-luna")
+        self.assertEqual(cfg["judge"]["provider"], "llm_http")
         self.assertEqual(cfg["queryset_sha256"], expected_sha)
         self.assertIn("commit", cfg)
         self.assertTrue(cfg["agentic"])
@@ -809,8 +809,8 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             doc = json.loads((Path(td) / "frozen" / "q001-r1.json").read_text(encoding="utf-8"))
         self.assertEqual(files, ["q001-r1.json", "q001-r2.json", "q002-r1.json", "q002-r2.json"])
         self.assertEqual(doc["answer"], "答 [1]")
-        self.assertEqual(doc["gen_model"], "deepseek-flash")
-        self.assertEqual(doc["judge_model"], "deepseek-v4-pro")
+        self.assertEqual(doc["gen_model"], "gpt-6-luna")
+        self.assertEqual(doc["judge_model"], "gpt-6-luna")
         self.assertEqual(len(doc["sha256"]), 64)
         self.assertIn("judge_calls", doc)
         self.assertTrue(all("_io" not in r for c in report["cases"] for r in c["runs"]))
@@ -909,7 +909,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         cfg["judge"] = {key: None for key in (
             "provider", "model", "timeout", "retries", "prompt_sha", "schema_version", "lineage", "max_tokens",
         )}
-        cfg["judge"].update(model="deepseek-flash", prompt_sha="a")
+        cfg["judge"].update(model="gpt-6-luna", prompt_sha="a")
         rr.check_baseline_config({"config": cfg}, cfg)
         changed = json.loads(json.dumps(cfg))
         changed["corpus_id"] = "snapshot-2"
@@ -924,9 +924,9 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             rr.require_complete(report, 2)
 
     async def test_judge_lineage_is_labelled_in_config_and_notes_without_warning(self):
-        """PR-26/27：DeepSeek judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在
+        """現行 judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在
         config.judge.lineage 與頂層 notes（eval_compare 會印），不進 summary（否則要在 METRIC_SPECS 分類）。"""
-        for judge, provider, lineage in (("deepseek-flash", "deepseek_http", "deepseek-2026-09"),
+        for judge, provider, lineage in (("gpt-6-luna", "llm_http", "gpt-6-luna-2026-11"),
                                          ("claude-haiku-4-5", "unsupported", "claude-haiku")):
             with self.subTest(judge=judge), tempfile.TemporaryDirectory() as td:
                 err = io.StringIO()
@@ -943,10 +943,18 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(lineage, report["notes"][0])
                 self.assertNotIn("WARNING", err.getvalue())
 
-    def test_deepseek_notes_say_old_baseline_is_not_comparable(self):
-        note = rr.lineage_notes("deepseek-flash")[0]
-        self.assertIn("baseline-2026-09-02.json", note)
+    def test_luna_notes_say_old_baselines_are_not_comparable(self):
+        note = rr.lineage_notes("gpt-6-luna")[0]
+        self.assertIn("gpt-6-luna-2026-11", note)
+        self.assertIn("eval/baselines/", note)
         self.assertIn("回 2", note)
+
+    def test_old_judge_notes_say_they_are_the_old_scale(self):
+        for model, lineage in (("deepseek-flash", "deepseek-2026-09"), ("claude-haiku-4-5", "claude-haiku")):
+            with self.subTest(model=model):
+                note = rr.lineage_notes(model)[0]
+                self.assertIn(lineage, note)
+                self.assertIn("舊量尺", note)
 
 
 class JudgeProviderTests(unittest.TestCase):
@@ -955,9 +963,11 @@ class JudgeProviderTests(unittest.TestCase):
 
         for model in sorted(HTTP_MODELS):
             with self.subTest(model=model):
-                self.assertEqual(rr.judge_provider(model), "deepseek_http")
-                self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_DEEPSEEK)
-        # PR-M：白名單外沒有 backend（判 unsupported）；系譜函式照舊把它們歸 Claude 時代（讀舊結果檔用）
+                self.assertEqual(rr.judge_provider(model), "llm_http")
+                self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_LUNA)
+        # 白名單外沒有 backend（判 unsupported）；系譜函式把它們歸到歷史系譜（讀舊結果檔用）
+        self.assertEqual(rr.judge_provider("deepseek-flash"), "unsupported")
+        self.assertEqual(rr.judge_lineage("deepseek-flash"), "deepseek-2026-09")
         for model in ("claude-haiku-4-5", "claude-sonnet-5"):
             with self.subTest(model=model):
                 self.assertEqual(rr.judge_provider(model), "unsupported")
@@ -969,13 +979,13 @@ class JudgeProviderTests(unittest.TestCase):
         summary = {
             "faithfulness": 0.9, "context_precision": 0.8, "answer_relevancy": 0.6,
             "n": 1, "n_errors": 0, "n_no_context": 0, "thresholds_pass": True,
-            "judge_model": "deepseek-flash", "judge_schema_version": 2, "judge_prompt_sha": "x" * 64,
+            "judge_model": "gpt-6-luna", "judge_schema_version": 2, "judge_prompt_sha": "x" * 64,
         }
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rr._print_summary({"summary": summary})
         self.assertEqual(err.getvalue(), "")
-        self.assertIn("系譜 deepseek-2026-09", out.getvalue())
+        self.assertIn("系譜 gpt-6-luna-2026-11", out.getvalue())
 
 
 class MainNewFlagsTests(unittest.TestCase):
@@ -1008,14 +1018,14 @@ class MainNewFlagsTests(unittest.TestCase):
         self.assertIsNone(kw["dump_dir"])
 
     def test_flags_are_passed_through(self):
-        kw = self._main(["--generator-model", "deepseek-flash", "--repeat", "3", "--dump-io", "data/eval_frozen/x"])
-        self.assertEqual(kw["generator_model"], "deepseek-flash")
+        kw = self._main(["--generator-model", "gpt-6-luna", "--repeat", "3", "--dump-io", "data/eval_frozen/x"])
+        self.assertEqual(kw["generator_model"], "gpt-6-luna")
         self.assertEqual(kw["repeat"], 3)
         self.assertEqual(kw["dump_dir"], "data/eval_frozen/x")
 
     def test_key_precheck_covers_generator_and_judge(self):
-        kw = self._main(["--generator-model", "deepseek-flash"])
-        self.assertEqual(kw["_required_models"], ["deepseek-flash", rr.DEFAULT_JUDGE_MODEL])
+        kw = self._main(["--generator-model", "gpt-6-luna"])
+        self.assertEqual(kw["_required_models"], ["gpt-6-luna", rr.DEFAULT_JUDGE_MODEL])
 
 
 if __name__ == "__main__":

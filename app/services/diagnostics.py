@@ -3,7 +3,7 @@
 出問題時管理員一頁看完，並把整份 JSON（診斷包）貼給維運。所以兩條鐵律：
 
 1. **便宜**：不跑子行程（web 不一定能跑 git）、不打付費 API。DB 只送 `SELECT 1`、`SHOW server_version`
-   與讀 `public.alembic_version`；R2 與 DeepSeek 只**被動**讀 healthz 上一次的結論
+   與讀 `public.alembic_version`；R2 與 LLM 只**被動**讀 healthz 上一次的結論
    （`web/routers/health.storage_snapshot`、`llm_health.cached_snapshot`，都不觸發探測）；維運代理問一次
    `list`（逾時壓到 `OPS_TIMEOUT`）。路由層整份 TTL 快取 30 秒。
 2. **不含任何祕密**：設定值一律白名單（`config_section` 逐鍵列出，沒有「把 Settings 整份倒出來」）；
@@ -443,7 +443,7 @@ def config_section() -> dict:
             "dev_no_auth": _flag("DEV_NO_AUTH"),
         },
         "secrets_present": {
-            "deepseek_api_key": _present("DEEPSEEK_API_KEY"),
+            "openai_api_key": _present("OPENAI_API_KEY"),
             "opencode_go_api_key": _present("OPENCODE_GO_API_KEY"),
             "session_secret": _present("REPORT_MARK_SESSION_SECRET"),
             "edge_secret": _present("REPORT_MARK_EDGE_SECRET"),

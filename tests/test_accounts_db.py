@@ -444,7 +444,7 @@ async def _seed_usage(api, user_id: str) -> None:
         await session.execute(text("INSERT INTO research.user_quota (user_id, kind, daily_limit, reason) "
                                    "VALUES (:uid, 'ask', 50, 'r')"), params)
         await session.execute(text("INSERT INTO research.llm_usage_daily (day, user_id, task, model, calls) "
-                                   "VALUES (DATE '2026-10-07', :uid, 'ask_answer', 'deepseek-flash', 2)"), params)
+                                   "VALUES (DATE '2026-10-07', :uid, 'ask_answer', 'gpt-6-luna', 2)"), params)
         await session.commit()
 
 

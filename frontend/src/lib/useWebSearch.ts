@@ -16,7 +16,7 @@ const KEY = 'tf.webSearch'
  * 網搜是否暫停中＝功能旗標 `ask.web_search` 對目前使用者不是開的（`GET /api/features`，Admin v2）。
  *
  * 後端的實際值是伺服器總閘 `ASK_ENABLE_WEB`（環境變數上限，預設關）AND 管理員在功能開關頁的覆寫，前後端同一個
- * 來源。網搜原本走 claude CLI 的 WebSearch，CLI 已於 PR-M 移除，所以目前沒有後端：就算總閘與旗標都打開，後端
+ * 來源。網搜原本走 claude CLI 的 WebSearch，CLI 已移除，所以目前沒有後端：就算總閘與旗標都打開，後端
  * 也以設定錯誤拒絕網搜（時效題退回婉拒）。還沒抓到 `/api/features` 或抓失敗也當成暫停。
  * 暫停期間：
  * - 問答輸入框不列網搜開關（`ComposerTools` 的 `useTools()`）。
@@ -25,7 +25,7 @@ const KEY = 'tf.webSearch'
  *   localStorage 裡殘留的 `web=true` 不刪、也不送：送了會被總閘擋掉，但 `qa_log.filters.web`
  *   會記到一個使用者看不到的開關狀態。偏好留著，恢復後使用者原本的選擇照舊生效。
  *
- * **接回點**：DeepSeek 版網搜（計畫 P9，Tavily 工具迴圈）完成後，環境檔設 `ASK_ENABLE_WEB=1`（上限打開），
+ * **接回點**：網搜後端接上後，環境檔設 `ASK_ENABLE_WEB=1`（上限打開），
  * 再到功能開關頁覆寫開啟（可限定給部分使用者試用）；前端不必改。
  */
 export function useWebSearchPaused(): boolean {

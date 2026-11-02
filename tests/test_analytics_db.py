@@ -38,7 +38,7 @@ TODAY = date(2001, 3, 31)
 D1 = date(2001, 3, 10)        # 即時段（live_since＝2001-01-01）
 D2 = date(2001, 3, 11)
 OLD = date(2000, 12, 15)      # 彙總段
-JUDGE = "deepseek-flash"
+JUDGE = "gpt-6-luna"
 PARAMS = analytics.Params(min_users=3, live_days=90, judge_model=JUDGE, faithfulness_min=0.9)
 
 

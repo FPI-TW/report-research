@@ -1,10 +1,10 @@
-"""app/services/llm_http.py 的 `complete_json`：judge 用的非串流 JSON 模式（DeepSeek 遷移 PR-18）。
+"""app/services/llm_http.py 的 `complete_json`：judge 用的非串流 JSON 模式。
 
 全程不連網：`httpx.MockTransport` 注入（`llm_http._transport`），金鑰只用 gitleaks allowlist 內的假值，
-以 `mock.patch.dict` 限定在單一測試內（conftest 把 `DEEPSEEK_API_KEY` 強制成空字串）。
+以 `mock.patch.dict` 限定在單一測試內（conftest 把 `OPENAI_API_KEY` 強制成空字串）。
 
 釘住的契約：
-- 請求：`stream=false`、`response_format=json_object`、`temperature=0`、thinking 兩個開關都關、`user_id`、
+- 請求：`stream=false`、`response_format=json_object`、`temperature=0`、推理關（`reasoning_effort=none`）、
   呼叫端給的 `max_tokens`，沒有 `stream_options`。
 - 回應：`finish_reason` 必須是 stop 且 content 是 JSON 物件／陣列；記下 `model` 與 `system_fingerprint`。
 - 重試最多 `JSON_MAX_ATTEMPTS`（2）個請求，只給截斷（2 倍 max_tokens）、空 content、暫時性錯誤；
@@ -27,13 +27,13 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm_http as lh  # noqa: E402
 
-FAKE_KEY = "fixed-test-secret-deepseek0"
-ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
+FAKE_KEY = "fixed-test-secret-openai0"
+ENV = {"OPENAI_API_KEY": FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
 USAGE = {"prompt_tokens": 100, "completion_tokens": 20, "prompt_cache_hit_tokens": 0,
          "prompt_cache_miss_tokens": 100}
 
 
-def completion(content='{"ok": true}', finish="stop", *, usage=USAGE, fp="fp_test_1", model="deepseek-v4.1-flash",
+def completion(content='{"ok": true}', finish="stop", *, usage=USAGE, fp="fp_test_1", model="gpt-6-luna",
                reasoning=None) -> dict:
     message = {"role": "assistant", "content": content}
     if reasoning is not None:
@@ -87,7 +87,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         kw.setdefault("max_tokens", 2048)
         kw.setdefault("timeout", 5.0)
         kw.setdefault("sleep", fake_sleep)
-        return await lh.complete_json("deepseek-flash", "主張：…", system="只輸出 JSON", task="t", **kw)
+        return await lh.complete_json("gpt-6-luna", "主張：…", system="只輸出 JSON", task="t", **kw)
 
 
 class RequestShapeTests(_Base):
@@ -100,17 +100,17 @@ class RequestShapeTests(_Base):
         self.assertNotIn("stream_options", body)
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(body["temperature"], 0)
-        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertNotIn("thinking", body)
         self.assertEqual(body["reasoning_effort"], "none")
-        self.assertEqual(body["user_id"], "web-faithfulness")
-        self.assertEqual(body["max_tokens"], 2048)
+        self.assertNotIn("user_id", body)
+        self.assertEqual(body["max_completion_tokens"], 2048)
         self.assertEqual(body["messages"][0], {"role": "system", "content": "只輸出 JSON"})
         self.assertEqual(self.requests[0].headers["accept"], "application/json")
         self.assertEqual(self.requests[0].headers["authorization"], f"Bearer {FAKE_KEY}")
 
     def test_streaming_body_is_unchanged_by_the_new_options(self):
         """新參數預設不送：串流路徑（問答、批次）的請求一個位元組都不變。"""
-        body = lh.build_body("deepseek-flash", "p", max_tokens=16)
+        body = lh.build_body("gpt-6-luna", "p", max_tokens=16)
         self.assertNotIn("temperature", body)
         self.assertNotIn("response_format", body)
 
@@ -121,7 +121,7 @@ class SuccessTests(_Base):
         res = await self.call()
         self.assertEqual(res.data, {"verdicts": [{"idx": 0, "supported": True}]})
         self.assertEqual(res.attempts, 1)
-        self.assertEqual(res.outcome.model_resp, "deepseek-v4.1-flash")
+        self.assertEqual(res.outcome.model_resp, "gpt-6-luna")
         self.assertEqual(res.outcome.system_fingerprint, "fp_test_1")
         self.assertEqual(res.usage["prompt_tokens"], 100)
         self.assertIsNone(res.error)
@@ -149,7 +149,7 @@ class RetryTests(_Base):
         res = await self.call(max_tokens=1024)
         self.assertIsNone(res.kind)
         self.assertEqual(res.attempts, 2)
-        self.assertEqual([self.body(i)["max_tokens"] for i in range(2)], [1024, 2048])
+        self.assertEqual([self.body(i)["max_completion_tokens"] for i in range(2)], [1024, 2048])
         self.assertEqual(res.max_tokens, 2048)
         self.assertEqual(res.usage["prompt_tokens"], 200, "兩次嘗試都計費，usage 要加總")
 
@@ -234,8 +234,22 @@ class NoRetryTests(_Base):
     async def test_finish_content_filter(self):
         await self._once(ok(completion("", "content_filter")), lh.CONTENT_FILTER)
 
-    async def test_content_exists_risk_400(self):
-        await self._once(httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}), lh.CONTENT_FILTER)
+    async def test_content_policy_400(self):
+        await self._once(httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}),
+                         lh.CONTENT_FILTER)
+        await self._once(httpx.Response(400, json={"error": {"message": "x", "code": "content_policy_violation"}}),
+                         lh.CONTENT_FILTER)
+
+    async def test_refusal_is_content_filter(self):
+        """模型拒答（message.refusal）即使 finish_reason=stop 也不是答案，不重試。"""
+        body = {"model": "gpt-6-luna", "choices": [{"index": 0, "finish_reason": "stop",
+                                                   "message": {"role": "assistant", "content": None,
+                                                               "refusal": "I can't help with that."}}]}
+        res = await self._once(ok(body), lh.CONTENT_FILTER)
+        self.assertIn("refusal", res.detail)
+
+    async def test_429_insufficient_quota_is_not_retried(self):
+        await self._once(httpx.Response(429, json={"error": {"message": "x", "code": "insufficient_quota"}}), lh.QUOTA)
 
     async def test_quota_402_marks_quota_seen(self):
         before = lh.last_quota_at()
@@ -264,7 +278,7 @@ class NoRetryTests(_Base):
 
     async def test_missing_key_sends_nothing(self):
         self.install(ok(completion()))
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             res = await self.call()
         self.assertEqual(res.kind, lh.AUTH)
         self.assertEqual(self.requests, [])
@@ -333,7 +347,7 @@ class TruncationRetryTimeTests(_Base):
         self.install(slowish_truncated, ok(completion()))
         res = await self.call(timeout=5, max_tokens=1024)
         self.assertEqual((res.kind, len(self.requests)), (None, 2))
-        self.assertEqual(self.body(1)["max_tokens"], 2048)
+        self.assertEqual(self.body(1)["max_completion_tokens"], 2048)
 
 
 if __name__ == "__main__":

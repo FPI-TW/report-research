@@ -9,14 +9,14 @@
 - 1：寬鬆解讀。缺 idx、型別不符的 verdict 靜默記為 unsupported／不相關；`statements`
   是字串時逐字迭代（每個字變成一條主張）；AR 取不到問題記 0.0。這些全都**不報錯、只壓低
   分數**——量尺壞掉的樣子和品質變差一模一樣。
-- 2（DeepSeek 遷移 PR-08）：嚴格驗證，見下方 `parse_*`。違反一律拋 `JudgeSchemaError`，
+- 2：嚴格驗證，見下方 `parse_*`。違反一律拋 `JudgeSchemaError`，
   由 `call_validated` 重試 1 次；仍不合格時離線記該指標 None（run_ragas 的 judge_errors），
   生產記 `degraded_reason="schema"`。唯一的寬鬆例外是**生產端的 grounding 缺 idx**：仍計為
   unsupported、另記 WARNING，缺幾條記進 `evaluation.n_missing_verdicts`（審查 L19——改成
   degraded 等於那一題沒查，方向是漏抓）；但**全部缺漏**仍是 schema 錯（見 `parse_verdicts`）。
   CP 的候選片段同時改為 1 起編號、與脈絡本身的 `[n]` 及答案的引用一致（審查 M12）。
 
-**judge 身分**：`qa_log.evaluation` 自 DeepSeek 遷移 PR-07 起帶 `judge_model`。讀分數的三處
+**judge 身分**：`qa_log.evaluation` 帶 `judge_model`（更早的舊列沒有，見下）。讀分數的三處
 （監控卡 `web/stats_snapshot.py`、待複核佇列 `web/routers/review.py`、離線彙總
 `scripts/eval_faithfulness.py`）**只計現行 judge 的分數**，一律經本模組的 SQL 片段或
 `is_current_judge`，不各寫一份——換 judge 之後舊尺的 0.85 與新尺的 0.85 不是同一件事，
@@ -155,14 +155,14 @@ def parse_questions(res) -> list[str]:
 
 SCHEMA_RETRIES = 1
 
-# ── HTTP judge 的單層重試預算（DeepSeek 遷移 PR-18）────────────────────────────
+# ── HTTP judge 的單層重試預算────────────────────────────
 # 一個階段（一次 call_validated：拆解、grounding、CP 或反推問題）在 HTTP 路徑上最多送出的請求數。
 # 三種重試共用這個預算、不相乘：call_validated 的 schema 重試（1 次）、`llm_http.complete_json` 的
 # 截斷／空回應／暫時性重試（每次呼叫最多 2 個請求）、`eval.judge.judge_json` 的暫時性重試（HTTP 路徑
 # 不跑）。首次 judge 呼叫最多用 2 個，schema 重試只拿得到剩下的，所以一個階段最壞 3 個請求。
 # 預算以 contextvar 傳遞：judge 契約是 `judge(system, user)`，不能為了它改所有假 judge 的簽章；
 # call_validated 與 judge 在同一個 Task 裡 await，contextvar 天然界定「這一個階段」。
-# PR-M 起 judge 只剩 DeepSeek（HTTP），這份預算涵蓋全部 judge 呼叫。
+# judge 只走 HTTP，這份預算涵蓋全部 judge 呼叫。
 HTTP_STAGE_MAX_REQUESTS = 3
 _stage_requests: ContextVar[list[int] | None] = ContextVar("judge_stage_requests", default=None)
 

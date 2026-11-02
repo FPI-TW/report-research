@@ -191,7 +191,7 @@ class LabelTests(unittest.TestCase):
 
 # ── 端點 ──────────────────────────────────────────────────────────
 
-class DeepSeekModelTests(unittest.TestCase):
+class HttpModelTests(unittest.TestCase):
     """簡報交給 `run_claude`（遷移 PR-12；PR-M 起簡報自己的 CLI 版刪除）：不 spawn 子行程；帳號層級錯誤
     與白名單外的 model，main 回 rc=2、不寫 brief_failures.log（那是「這一天產生失敗」的紀錄）。"""
 
@@ -212,7 +212,7 @@ class DeepSeekModelTests(unittest.TestCase):
         lh._reset_clients()
         self.addCleanup(lambda: (setattr(lh, "_transport", None), lh._reset_clients()))
 
-    _ENV = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
+    _ENV = {"OPENAI_API_KEY": "fixed-test-secret-openai0", "OPENAI_BASE_URL": "https://api.example.test"}
 
     def test_preflight_rejects_missing_key_before_anything_runs(self):
         import contextlib
@@ -220,11 +220,11 @@ class DeepSeekModelTests(unittest.TestCase):
         from unittest import mock
 
         with mock.patch.object(generate_brief, "generate") as gen, \
-             mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}), \
+             mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}), \
              contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as ctx:
-            self._main(["--model", "deepseek-flash"])
+            self._main(["--model", "gpt-6-luna"])
         self.assertEqual(ctx.exception.code, 2)
-        self.assertIn("DEEPSEEK_API_KEY", err.getvalue())
+        self.assertIn("OPENAI_API_KEY", err.getvalue())
         gen.assert_not_called()
 
     def test_http_path_does_not_spawn(self):
@@ -235,7 +235,7 @@ class DeepSeekModelTests(unittest.TestCase):
         self._transport(httpx.Response(401, json={"error": {"message": "Authentication Fails"}}))
         with mock.patch.dict(os.environ, self._ENV), mock.patch("subprocess.run") as run:
             with self.assertRaises(generate_brief.CliNotFoundError):
-                generate_brief.call_cli("素材", "deepseek-flash")
+                generate_brief.call_cli("素材", "gpt-6-luna")
         run.assert_not_called()
         self.assertFalse(hasattr(generate_brief, "build_cli_args"))
         self.assertFalse(hasattr(generate_brief, "_spawn_cli"))
@@ -251,7 +251,7 @@ class DeepSeekModelTests(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as ctx:
             self._main(["--model", "claude-sonnet-5"])
         self.assertEqual(ctx.exception.code, 2)
-        self.assertIn("不在 DeepSeek 白名單", err.getvalue())
+        self.assertIn("不在白名單", err.getvalue())
         gen.assert_not_called()
 
         async def fake_generate(args):
@@ -284,7 +284,7 @@ class DeepSeekModelTests(unittest.TestCase):
              mock.patch.object(generate_brief, "generate", side_effect=fake_generate), \
              mock.patch.object(generate_brief, "record_failure") as rec, \
              contextlib.redirect_stderr(io.StringIO()) as err:
-            rc = self._main(["--model", "deepseek-flash"])
+            rc = self._main(["--model", "gpt-6-luna"])
         self.assertEqual(rc, 2)
         self.assertIn("API[quota]", err.getvalue())
         rec.assert_not_called()

@@ -63,7 +63,7 @@ const ROUTES = {
 }
 
 const QUALITY = {
-  range: RANGE, judge_model: 'deepseek-flash', faithfulness_min: 0.9, other_judge_checked: 4,
+  range: RANGE, judge_model: 'gpt-6-luna', faithfulness_min: 0.9, other_judge_checked: 4,
   weeks: [{ week_start: '2026-10-05', partial: true, questions: 30, checked_all: 12, judge_checked: 10, degraded: 1,
     below_min: 2, avg_score: 0.9123, score_n: 9, likes: 3, dislikes: 1 }],
 }

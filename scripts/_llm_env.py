@@ -1,8 +1,8 @@
-"""LLM 批次與評測入口的環境載入與金鑰預檢（DeepSeek 遷移 PR-10）。
+"""LLM 批次與評測入口的環境載入與金鑰預檢。
 
 ## 為什麼需要這支
 
-DeepSeek 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 root:kashionz），
+LLM 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 root:kashionz），
 **只有** `report-mark-sync.service` 與 `report-mark-upload.service`（上傳 worker）以 `EnvironmentFile=`
 載入它——讓「環境變數裡有金鑰的行程」從十幾支 unit 縮到兩支（白名單由 tests/test_deploy_units.py 釘住）。
 手動跑批次（`make summaries`、`uv run python scripts/…`）不經過 systemd，所以每個會呼叫 LLM 的入口要自己讀
@@ -23,18 +23,18 @@ DeepSeek 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0
   「跑了也白跑」，後者要先說）。以下情況印出原因並 `SystemExit(2)`：
   - 環境檔裡有重複的鍵（審查 L8）：`load_env_file` 先到先贏、systemd 的 EnvironmentFile 後者
     覆蓋——輪替金鑰時新舊兩行並存，sync unit 與手動批次會拿到**不同**的金鑰。
-  - `LLM_PROVIDER` 非空卻不是合法值（唯一合法值是 `deepseek`）：印出原始值拒跑（審查 L1）。含 PR-M 退役的
-    `claude_cli`／`claude_only`（`llm_models.RETIRED_PROVIDERS`，訊息另外說明已退役）。web 對同樣的值是退回
-    deepseek＋ERROR（線上要容錯、不能因一個拼字整站停擺）；批次刻意不同——批次不需要容錯，拒跑不花錢，而設了
-    退役值的人多半是想「讓 LLM 停下來」（PR-M 前 `claude_cli` 實際上就是這個開關），退回 deepseek 就變成照常計費。
-  - 有不在 DeepSeek 白名單的模型名（含 `claude-*`、CLI 別名 `sonnet`、打錯字）：PR-M 起沒有其他 backend，
-    這些名稱在 `run_claude` 也會整批 rc=2，這裡在取鎖前先擋。
+  - `LLM_PROVIDER` 非空卻不是合法值（`llm_models.PROVIDERS`）：印出原始值拒跑（審查 L1）。含退役值
+    （`llm_models.RETIRED_PROVIDERS`，訊息另外說明已退役）。web 對同樣的值是退回預設 provider＋ERROR（線上要容錯、
+    不能因一個拼字整站停擺）；批次刻意不同——批次不需要容錯，拒跑不花錢，而設了退役值的人多半是想「讓 LLM 停下來」，
+    退回預設就變成照常計費。
+  - 有不在模型白名單的名稱（含舊模型名、打錯字）：沒有其他 backend，這些名稱在 `run_claude` 也會整批 rc=2，
+    這裡在取鎖前先擋。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
-    評測（`stream_completion`）都只走 DeepSeek，所以兩種入口同一套規則。
+    評測（`stream_completion`）走同一個供應商，所以兩種入口同一套規則。
   - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
-    還有效：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
+    還有效：前一段剛因供應商大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
     「有效」的定義見下一節。
 
 ## 斷路器標記綁定 sync 輪次（審查中4）
@@ -46,11 +46,11 @@ DeepSeek 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0
     開頭就是匯入），delta 得靠人工重放——所以跨輪一律放行，下一輪若仍過載，斷路器會再跳一次。
   - 任一方沒有輪次 id（手動執行、或手動執行寫的標記）：維持 `BREAKER_TTL_S`（30 分鐘）規則。
   - 空標記檔（寫到一半被清空之類）沒有輪次 id，照 30 分鐘規則擋，訊息寫「標記是空的」。
-  環境檔缺失時：`LLM_PROVIDER` 未設＝deepseek，而批次不讀 repo 根 `.env`，所以是「缺金鑰 rc=2＋安裝提示」的
+  環境檔缺失時：`LLM_PROVIDER` 未設＝openai，而批次不讀 repo 根 `.env`，所以是「缺金鑰 rc=2＋安裝提示」的
   明確失敗。
   通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否一致，**永遠不印金鑰本身**。
 
-`LLM_PROVIDER=opencode_go`（402 時的手動備援）時檢查的是 `OPENCODE_GO_API_KEY`，通過時印 `OpenCode Go 金鑰 fp=…`。
+`LLM_PROVIDER=opencode_go`（測試環境）時檢查的是 `OPENCODE_GO_API_KEY`，通過時印 `OpenCode Go 金鑰 fp=…`。
 
 另有 `python -m scripts._llm_env <環境檔> …`（`main`）：比對幾份環境檔的金鑰指紋與 `LLM_PROVIDER`，與上面同一套
 解析（`file_key_fingerprint`），輪替後核對 `.env` 與 llm 檔用（docs/production_resilience.md）。
@@ -83,13 +83,13 @@ from web.env_loader import _parse_line, load_env_file
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LLM_ENV_FILE = "/etc/default/report-mark-llm"
 EXAMPLE = "deploy/systemd/report-mark-llm.env.example"
-KEY = "DEEPSEEK_API_KEY"
+KEY = "OPENAI_API_KEY"
 GO_KEY = "OPENCODE_GO_API_KEY"
 # `main` 逐份比對的鍵：兩個金鑰，加上 `LLM_PROVIDER`——web 讀 repo 根 .env、批次讀這份環境檔，provider
-# 不一致時兩邊會走不同的供應商（一邊花 DeepSeek、一邊花 Go），而且各自的金鑰檢查都會通過。
+# 不一致時兩邊會走不同的供應商（一邊花 OpenAI、一邊花 Go），而且各自的金鑰檢查都會通過。
 PROVIDER_KEY = "LLM_PROVIDER"
 RC_CONFIG = 2
-# 斷路器標記的有效期（沒有 sync 輪次 id 時）：之內其他用到 DeepSeek 的段預檢拒跑。排程裡的段
+# 斷路器標記的有效期（沒有 sync 輪次 id 時）：之內其他用到 LLM 的段預檢拒跑。排程裡的段
 # 改看輪次 id（見模組 docstring「斷路器標記綁定 sync 輪次」），這個值只管手動執行。
 BREAKER_TTL_S = 30 * 60
 # sync 殼每輪 export 的輪次 id（scripts/sync_new_reports.sh 的 ROUND_TS）；手動執行沒有。
@@ -199,7 +199,7 @@ def fingerprint(key: str) -> str:
 
 
 def file_key_fingerprint(path: Path | str, key: str = KEY) -> str | None:
-    """環境檔裡 `key`（預設 `DEEPSEEK_API_KEY`）的指紋（前 8 碼）；沒有這個鍵或值為空回 None。
+    """環境檔裡 `key`（預設 `OPENAI_API_KEY`）的指紋（前 8 碼）；沒有這個鍵或值為空回 None。
 
     與預檢、web 看到的值同一套解析（`web.env_loader._parse_line`：去 `export `、去成對引號、
     strip），所以引號、尾隨空白、CRLF 都不會讓兩份其實相同的金鑰算出不同指紋。重複鍵取第一行
@@ -304,11 +304,11 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
     if bad_provider is not None:
         retired = bad_provider.strip().lower() in RETIRED_PROVIDERS
         why = (
-            "已隨 claude CLI 退役（PR-M），沒有可回退的後端"
+            "已退役，沒有對應的後端"
             if retired else f"不是合法值（可用：{'/'.join(PROVIDERS)}）"
         )
         _fail(
-            f"LLM_PROVIDER={bad_provider!r} {why}。批次不猜：web 對這個值會退回 deepseek 照常計費，但設了它的人"
+            f"LLM_PROVIDER={bad_provider!r} {why}。批次不猜：web 對這個值會退回預設 provider 照常計費，但設了它的人"
             "多半是想讓 LLM 停下來，拒跑才不會變成照常計費（它不是停止開關：要停批次請停 report-mark-sync.timer，"
             "要停問答見 docs/production_resilience.md「刻意讓 LLM 停下來」）。"
             f"檢查 shell、unit 的 Environment= 與 {path}，改正後再執行"
@@ -316,7 +316,8 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
     unknown = [m for m in names if not is_http_model(m)]
     if unknown:
         _fail(
-            f"模型名不在 DeepSeek 白名單：{', '.join(unknown)}（claude CLI 已於 PR-M 移除，沒有其他 backend；"
+            f"模型名不在白名單：{', '.join(unknown)}（只接受 {'、'.join(sorted(llm_models.HTTP_MODELS))}，"
+            "沒有其他 backend；"
             f"來源：{'、'.join(sorted({_model_source(t, m) for t, m in pairs if not is_http_model(m)}))}）"
         )
     _warn_if_not_deploy_root()
@@ -327,7 +328,7 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
         when = f"本輪 sync（{sync_round_id()}）" if sync_round_id() else f"{BREAKER_TTL_S // 60} 分鐘內"
         _fail(
             f"批次斷路器{when}跳脫過（{breaker_path()}：{tripped}）。"
-            f"本段要用 {', '.join(names)}，先不跑；確認 DeepSeek 恢復後刪除該檔，或等標記過期"
+            f"本段要用 {', '.join(names)}，先不跑；確認供應商恢復後刪除該檔，或等標記過期"
         )
     key_name = _key_name()
     key = (os.environ.get(key_name) or "").strip()
@@ -345,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     """比對幾份環境檔的金鑰指紋與 `LLM_PROVIDER`（輪替或切換後核對兩份是否一致；只印前 8 碼，不印金鑰）。
 
     用法：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`
-    rc=0：每份都有值且指紋相同；rc=1：有缺值、讀不到、不一致，或某份檔裡 `DEEPSEEK_API_KEY`
+    rc=0：目前 provider 的金鑰每份都有值且指紋相同；rc=1：有缺值、讀不到、不一致，或某份檔裡金鑰
     不只一行——systemd 的 EnvironmentFile 取最後一行、`load_env_file` 先到先贏，兩邊會拿到
     不同的值（同 `require_llm_key` 的重複鍵拒跑），只比第一行會誤報一致。
     """
@@ -369,8 +370,13 @@ def main(argv: list[str] | None = None) -> int:
     readable = {p: kv for p, kv in texts.items() if kv is not None}
     ok = len(readable) == len(paths)
     duplicated = False
-    # DeepSeek 金鑰一律要比；Go 金鑰只在有任何一份填了時才比（沒切過 Go 的主機兩份都沒有，是正常的）。
-    keys = [KEY] + ([GO_KEY] if any(v for kv in readable.values() for k, v in kv if k == GO_KEY) else [])
+    # 目前 provider 的金鑰一律要比；另一把只在有任何一份填了時才比（正式環境沒有 Go 金鑰、測試環境沒有 OpenAI 金鑰，
+    # 都是正常的）。provider 以第一份讀得到的檔為準，兩份不一致由下面的 provider 比對回報。
+    first = next(iter(readable.values()), [])
+    first_prov = next((v for k, v in first if k == PROVIDER_KEY), "")
+    current = llm_models.key_env({PROVIDER_KEY: first_prov})
+    filled = {k for kv in readable.values() for k, v in kv if k in (KEY, GO_KEY) and v}
+    keys = [current] + [k for k in (KEY, GO_KEY) if k != current and k in filled]
     for key in keys:
         fps: set[str | None] = set()
         for p, kv in readable.items():
@@ -386,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                     "程式（load_env_file）取第一行，兩邊會用不同的金鑰；刪掉多餘的行再核對"
                 )
         ok = ok and None not in fps and len(fps) == 1
-    # provider 以正規化後的值比（未設＝deepseek）：web 與批次走不同供應商時，兩邊的金鑰檢查各自都會通過。
+    # provider 以正規化後的值比（未設＝openai）：web 與批次走不同供應商時，兩邊的金鑰檢查各自都會通過。
     provs: set[str] = set()
     for p, kv in readable.items():
         values = [v for k, v in kv if k == PROVIDER_KEY]

@@ -15,7 +15,7 @@ LOG="data/sync_run_${DATE}.log"
 # 本輪時間戳。delta 與（下游中止時）保留的 hashes 共用同一個，讓人一眼對得上是哪一輪。
 ROUND_TS=$(date +%Y%m%d_%H%M%S)
 # 本輪的輪次 id：LLM 批次斷路器的標記以它綁定輪次（scripts/_llm_env.py「斷路器標記綁定 sync 輪次」）——
-# 同一輪後面用到 DeepSeek 的段拒跑，下一輪的匯入不會被上一輪末段的標記擋下。
+# 同一輪後面用到 LLM 的段拒跑，下一輪的匯入不會被上一輪末段的標記擋下。
 export SYNC_ROUND_ID="$ROUND_TS"
 DELTA="data/sync_delta_${ROUND_TS}.txt"
 # 本輪成功入庫的 file_hash（importer 每輪覆寫），驅動下游摘要、標題、摘錄。
@@ -37,7 +37,7 @@ ROUND_STATE="data/sync_round_state"
 # 因為處置完全不同（前者下一輪自然重試，後者要人去看）。
 LOCK_BUSY_RC=75
 
-# 帳號／環境型中止（批次以 SystemExit(2) 收場，例如 DeepSeek 401／402、缺金鑰、白名單外的模型名、斷路器）。與 rc=1 分開：
+# 帳號／環境型中止（批次以 SystemExit(2) 收場，例如 401、額度用完、缺金鑰、白名單外的模型名、斷路器）。與 rc=1 分開：
 # 這類中止是**整批一篇都沒做**，而且不寫 data/sync_failures.log、也不進
 # research.llm_task_failure，所以 failures_to_delta.py 撈不到、下一輪也不會自己補。
 # 處置見 docs/production_resilience.md「整批中止後的重放」。
@@ -561,12 +561,12 @@ fi
 # 重跑結果不會變，failures_to_delta.py 預設也不撈它，要人手處理（只列清單、不做新入庫路徑）。
 if BLOCKED=$(read_stat skip_blocked) && [ "$BLOCKED" -gt 0 ]; then
   log "  其中 ${BLOCKED} 篇的標註被模型供應商的內容審查擋下（skip_blocked）：重跑不會變，不會自動補"
-  log "  → make llm-blocked 列出；人工處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」"
+  log "  → make llm-blocked 列出；人工處置見 docs/production_resilience.md「LLM 批次的失敗處置」"
 fi
 # 截斷的標註（skip_truncated）同理：同一份輸入、同一個 max_tokens 重送結果不變，上面的補救指令也不撈它。
 if TRUNCATED=$(read_stat skip_truncated) && [ "$TRUNCATED" -gt 0 ]; then
   log "  其中 ${TRUNCATED} 篇的標註輸出被截斷（skip_truncated）：重跑不會變，不會自動補"
-  log "  → make llm-blocked 列出；處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」"
+  log "  → make llm-blocked 列出；處置見 docs/production_resilience.md「LLM 批次的失敗處置」"
 fi
 # 抽取快取寫入失敗：研報已入庫、已記進 hashes，下游照常，所以**不算異常、不擋心跳**
 # （分類理由見 sync_new_reports.py 的 ABNORMAL_COUNTERS 註解）。只印出來：持續出現多半是

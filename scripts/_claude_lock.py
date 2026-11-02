@@ -1,7 +1,7 @@
 """LLM 批次的跨進程互斥鎖——**只給 scripts/ 底下的離線批次用**。
 
 **名稱是歷史遺留**：檔名、`claude_cli_lock_or_exit`、鎖檔 `data/.claude_cli.lock`、逃生口
-`CLAUDE_LOCK_DISABLE` 都是 claude CLI 時代的名字。遷移終局 PR-M 移除了 CLI backend，刻意**不改名**：
+`CLAUDE_LOCK_DISABLE` 都是 claude CLI 時代的名字；CLI backend 已移除，刻意**不改名**：
 LOCKED_SCRIPTS（tests/test_claude_lock.py）、各批次的呼叫點、文件契約與生產機上既有的鎖檔路徑都認這些
 名字，改名的連動遠大於它帶來的清楚。
 

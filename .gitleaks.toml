@@ -22,7 +22,7 @@
 [extend]
 useDefault = true
 
-# DeepSeek API 金鑰（`sk-` ＋ 32 個小寫 hex）。**內建規則集沒有它**：OpenAI 規則靠
+# DeepSeek API 金鑰（`sk-` ＋ 32 個小寫 hex）。已不再使用，但舊金鑰仍要抓得到。**內建規則集沒有它**：OpenAI 規則靠
 # 特定標記比對、對不上這個形狀；`generic-api-key` 只在 `KEY=值` 這類指派語境下才
 # 可能命中，貼在 JSON、log、`Authorization: Bearer` 裡的裸值會漏——而除錯時把請求
 # 內容、錯誤回應或 header 貼進測試、文件、issue，正是這種祕密外洩最常見的路徑。

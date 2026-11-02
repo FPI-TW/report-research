@@ -161,7 +161,7 @@ class FakeAccounts:
         uid = str(user_id)
         self.usage_counters[(uid, "2026-10-07", "search")] = 3
         self.user_quotas[(uid, "ask")] = 50
-        self.llm_usage[("2026-10-07", uid, "ask_answer", "deepseek-flash")] = 2
+        self.llm_usage[("2026-10-07", uid, "ask_answer", "gpt-6-luna")] = 2
 
     def seed_qa_log(self, user_id: str, *, with_review: bool = False) -> str:
         qid = str(uuid.uuid4())

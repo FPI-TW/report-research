@@ -10,7 +10,7 @@
   所以這裡**刻意不放任何安全閘門**：DB 遺失時旗標會退回預設，安全邊界不能因此被放寬。管理員 TOTP 強制是
   環境變數 `ADMIN_MFA_REQUIRED`（`web/authz.py`），
   `DEV_NO_AUTH`、`REPORT_MARK_*`、CSRF、模型與儲存設定、併發閘、上傳的安全上限也都不在這裡（設計 §1.4）。
-- 批次腳本不讀旗標（設計 §1.4）：旗標只在 web 的請求路徑上判斷，`scripts/judge_agreement.py`、`eval/` 照舊只看
+- 批次腳本不讀旗標（設計 §1.4）：旗標只在 web 的請求路徑上判斷，`eval/` 照舊只看
   環境變數，所以線上降級不會靜默改掉評測的設定。
 
 **快取（定案 12）**：DB 覆寫整張讀進來快取 `FEATURE_FLAG_CACHE_SECONDS`（5）秒；同一行程的寫入（`set_override`／

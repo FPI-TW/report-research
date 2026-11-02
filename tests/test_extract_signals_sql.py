@@ -207,7 +207,7 @@ class WorklistTextLoadingTests(unittest.IsolatedAsyncioTestCase):
 
     def _args(self, **kw):
         base = dict(min_brokers=3, min_reports=5, top_n=50, workers=1, limit=None, excerpt=16000,
-                    model="deepseek-flash", dry_run=False, reextract=False, retry_blocked=False)
+                    model="gpt-6-luna", dry_run=False, reextract=False, retry_blocked=False)
         base.update(kw)
         return mock.Mock(**base)
 
@@ -276,15 +276,15 @@ class RawPayloadModelFlowTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(es, "call_cli", side_effect=lambda *a, **k: next(it)), \
              mock.patch.object(es, "build_rows", side_effect=fake_build_rows), \
              mock.patch.object(es, "_upsert_rows", new=mock.AsyncMock()):
-            await es.extract_one(asyncio.Semaphore(1), item, 16000, "deepseek-flash", 1)
+            await es.extract_one(asyncio.Semaphore(1), item, 16000, "gpt-6-luna", 1)
         return captured.get("model")
 
     async def test_response_model_wins(self):
-        ok = es.CliResult('{"signals": []}', None, "deepseek-flash-0925")
-        self.assertEqual(await self._run([ok]), "deepseek-flash-0925")
+        ok = es.CliResult('{"signals": []}', None, "gpt-6-luna-0925")
+        self.assertEqual(await self._run([ok]), "gpt-6-luna-0925")
 
     async def test_falls_back_to_requested_model(self):
-        self.assertEqual(await self._run([es.CliResult('{"signals": []}', None)]), "deepseek-flash")
+        self.assertEqual(await self._run([es.CliResult('{"signals": []}', None)]), "gpt-6-luna")
 
     async def test_no_response_no_model(self):
         err = es.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))

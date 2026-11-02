@@ -94,10 +94,9 @@ worklist:  ## ③ 產工作清單 + 分批（resume-aware）
 prep: sample extract worklist  ## ①②③ 一次跑完（停在 LLM 標註前）
 
 tag-info:  ## ④ 印出 LLM 標註步驟說明
-	@echo "④ 市場標註走 DeepSeek 批次（非 make）："
+	@echo "④ 市場標註走 LLM 批次（非 make）："
 	@echo "   uv run python scripts/extract_all.py && uv run python scripts/tag_all_cli.py --workers 8"
-	@echo "   （tag_all_cli 讀 extract_all 的 data/extracted/<hash>.json 快取；抽樣原型的 worklist 分批檔"
-	@echo "    原本給 Claude Code workflow 用，已隨 PR-M 移除）"
+	@echo "   （tag_all_cli 讀 extract_all 的 data/extracted/<hash>.json 快取）"
 	@echo "   產出 data/tags/<file_hash>.json，完成後執行：make ingest"
 
 # ───── 管線（LLM 標註後）─────
@@ -121,7 +120,7 @@ boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語
 	uv run python scripts/build_boilerplate.py
 
 # ───── LLM 批次（互斥）─────
-# 下面五支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（DeepSeek HTTP；名稱裡的
+# 下面五支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（HTTP；名稱裡的
 # claude 是 CLI 時代的遺留），互斥防的是重複計費、摘錄 DELETE+INSERT 互撞與 DB 連線數。
 # 互斥由 scripts/_claude_lock.py 的 flock 跨進程鎖強制（清單見 tests/test_claude_lock.py 的
 # LOCKED_SCRIPTS）：撞車時後啟動者會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，
@@ -178,7 +177,7 @@ stats:  ## 看 DB 市場分佈與筆數
 	  -c "select count(*) chunks from research.report_chunk;"
 
 # ───── 離線評測 ─────
-# 刻意**不**接進 CI：跑一輪 RAGAS 會呼叫付費 API（生成與 judge 預設都是 DeepSeek），CI 不連網。
+# 刻意**不**接進 CI：跑一輪 RAGAS 會呼叫付費 API（生成與 judge 預設都是 gpt-6-luna），CI 不連網。
 # 它不取批次 flock（那把鎖刻意不含 llm.py，而 eval 走 llm.py）。
 # 這是本機／手動工具：改檢索或生成品質時前後各跑一次，再用 eval-compare 比。
 eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣化即非零退出）

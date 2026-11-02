@@ -93,8 +93,8 @@ async def ask_rerank_top_m(configured: int, user_id: str | None = None) -> int:
     """問答路徑這一題的 rerank 候選數：`configured`（`answer.ASK_RERANK_TOP_M`，環境變數 `ASK_RERANK_ENABLED`
     關時為 0＝上限關）AND 功能旗標 `ask.rerank`（Admin v2 的降級開關；DB 沒有覆寫或讀不到＝開，行為不變）。
 
-    只給問答路徑用：`retrieve_context` 本身不讀旗標——評測（`eval/run_ragas.py`）與 `scripts/judge_agreement.py`
-    以 `rerank_top_m` 明確指定 rerank 開關，線上降級不可以靜默改掉它們的設定（批次不讀 web 的旗標，設計 §1.4）。
+    只給問答路徑用：`retrieve_context` 本身不讀旗標——評測（`eval/run_ragas.py`）
+    以 `rerank_top_m` 明確指定 rerank 開關，線上降級不可以靜默改掉它的設定（批次不讀 web 的旗標，設計 §1.4）。
     """
     if configured <= 0:
         return 0

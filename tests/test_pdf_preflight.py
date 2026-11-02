@@ -117,14 +117,14 @@ class SubprocessTests(_Tmp):
     def test_child_env_carries_no_secrets(self):
         src = {
             "PATH": "/usr/bin", "HOME": "/home/x", "EXTRACTOR": "pdfplumber", "EXTRACTION_REVIEW_MIN": "0.5",
-            "DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "R2_SECRET_ACCESS_KEY": "s",
+            "OPENAI_API_KEY": "fixed-test-secret-openai0", "R2_SECRET_ACCESS_KEY": "s",
             "REPORT_MARK_DB_URL": "postgresql://x", "REPORT_MARK_ALERT_WEBHOOK": "https://hooks.example/x",
             "REPORT_MARK_SESSION_SECRET": "s", "UPLOAD_WORKER_LOCK_FD": "9",
         }
         env = pf.child_env(src)
         self.assertEqual(env["EXTRACTOR"], "pdfplumber")
         self.assertEqual(env["EXTRACTION_REVIEW_MIN"], "0.5")
-        for key in ("DEEPSEEK_API_KEY", "R2_SECRET_ACCESS_KEY", "REPORT_MARK_DB_URL", "REPORT_MARK_ALERT_WEBHOOK",
+        for key in ("OPENAI_API_KEY", "R2_SECRET_ACCESS_KEY", "REPORT_MARK_DB_URL", "REPORT_MARK_ALERT_WEBHOOK",
                     "REPORT_MARK_SESSION_SECRET", "UPLOAD_WORKER_LOCK_FD"):
             self.assertNotIn(key, env)
 
@@ -136,10 +136,10 @@ class SubprocessTests(_Tmp):
             seen.update(kw)
             raise pf.subprocess.TimeoutExpired(argv, 1)
 
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"}), \
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "fixed-test-secret-openai0"}), \
                 mock.patch.object(pf.subprocess, "run", fake_run):
             pf.run_preflight(self.dir / "x.bin")
-        self.assertNotIn("DEEPSEEK_API_KEY", seen["env"])
+        self.assertNotIn("OPENAI_API_KEY", seen["env"])
         self.assertTrue(seen["close_fds"])
         self.assertEqual(seen["cwd"], pf.REPO_ROOT)
 

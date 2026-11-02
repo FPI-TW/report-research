@@ -1,8 +1,7 @@
 """批次共用的 LLM 呼叫層：**失敗原因必須說得出口**。
 
 **名稱是歷史遺留**：檔名 `_claude_cli.py`、函式 `run_claude`、結果型別 `CliResult`、例外基底
-`CliNotFoundError` 都是 claude CLI 時代的名字。遷移終局 PR-M 移除了 CLI backend（CLI 的 OAuth 自
-2026-09-23 過期、不再修復，計畫 D-C），現在只剩 DeepSeek（`llm_http.complete_chat`）。刻意**不改名**：
+`CliNotFoundError` 都是 claude CLI 時代的名字；CLI backend 已移除，現在只走 `llm_http.complete_chat`。刻意**不改名**：
 呼叫端、測試 patch 點、`tests/test_claude_lock.py` 的 LOCKED_SCRIPTS 與文件契約都認這些名字，改名的
 連動遠大於它帶來的清楚。
 
@@ -18,21 +17,19 @@
 `skip_untagged` ⇒ 研報不入庫，而排程 log 只印一行「本次無新研報入庫」，與「NAS 真的
 沒有新檔」在畫面上一模一樣。
 
-那次教訓換到 DeepSeek 上仍然成立，**兩類失敗刻意分流**：
+那次教訓換到 HTTP 上仍然成立，**兩類失敗刻意分流**：
   - **整批中止**（`CliNotFoundError` 家族，各批次 main 接住後 rc=2）：每一篇都會踩到、重試與續跑都沒有
-    意義的失敗——帳號層級（401／402／config，`LlmEnvironmentError`）、斷路器跳脫、400 升級
-    （`BadRequestEscalation`），以及 **model 不在白名單**（含 `claude-*`；PR-M 起沒有其他 backend，
+    意義的失敗——帳號層級（auth／quota／config，`LlmEnvironmentError`）、斷路器跳脫、400 升級
+    （`BadRequestEscalation`），以及 **model 不在白名單**（含 `claude-*`；沒有其他 backend，
     絕不送到付費端點）。「跑完 549 次註定失敗的呼叫、印 ok=0 rejected=549、然後 exit 0」是最糟的結局。
   - 其餘回 `CliResult(None, "API[<kind>] …")`，讓各自的 *_failures.log 說得出真因。
 
-PR-M 前這裡另有 CLI 路徑（CLI 子行程、`--tools ""`／`--strict-mcp-config` 旗標、ENOENT／ENOEXEC
-的 errno 判定、CLI 認證失效的整批中止）；歷史細節見 git log（`scripts/_claude_cli.py`，PR-M 之前）。
 
 ## 呼叫規則（第二版計畫 §4.3、§4.6）
 
-`run_claude` 只接受 DeepSeek 白名單（`llm_models.is_http_model`）；其他名稱在送出前拋 `LlmEnvironmentError`。
+`run_claude` 只接受模型白名單（`llm_models.is_http_model`）；其他名稱在送出前拋 `LlmEnvironmentError`。
 
-  - 只送一則 user 訊息、prompt 原樣不動（A/B 只有一個變因）；thinking 兩個開關都關由
+  - 只送一則 user 訊息、prompt 原樣不動（A/B 只有一個變因）；推理關（`reasoning_effort=none`）由
     `llm_http.build_body` 負責；`max_tokens` 由每個呼叫點帶（值見第二版 §8，
     tests/test_claude_cli.py 逐點釘住），沒帶是程式錯誤、直接拋 `ValueError`。
   - `timeout` 沿用各批次現行值，是**涵蓋傳輸層重試的總期限**（`complete_chat`
@@ -41,11 +38,11 @@ PR-M 前這裡另有 CLI 路徑（CLI 子行程、`--tools ""`／`--strict-mcp-c
     沒吐字就到期才是 `timeout`。真正的 `finish_reason=length` 才是 `truncated`（1 次就跳過）。
   - 失敗回 `CliResult(None, "API[<kind>] <固定措辭>：<細節>")`（`llm_http.error_string`，單行、
     不含 TAB）。前綴 `API[` 是契約：`is_retryable` 靠它分辨「傳輸層已重試過」。
-  - **帳號層級（401 auth／402 quota／config：404 或模型不存在）拋 `LlmEnvironmentError`**
+  - **帳號層級（401 auth／402、429 insufficient_quota 的 quota／config：404 或模型不存在）拋 `LlmEnvironmentError`**
     （`CliNotFoundError` 的子類），沿用各批次 main「接 `CliNotFoundError` → 整批 rc=2」的接法。
     這類錯誤每一篇都會踩到，記成 N 筆單篇失敗後 exit 0 正是四天停擺的型態；它們也**不記**
-    `research.llm_task_failure`（那不是研報的問題）。402 的處置是儲值（docs/production_resilience.md
-    「整批中止後的重放」）；PR-M 起也沒有 Claude 可以改走。
+    `research.llm_task_failure`（那不是研報的問題）。quota 的處置見 docs/production_resilience.md
+    「整批中止後的重放」；沒有其他 backend 可以改走。
 
 ## 重試分層（第二版計畫 §4.7）
 
@@ -68,13 +65,12 @@ network）回 None——那不是研報的問題。`timeout_streamed` 兩邊都�
 
 ## 斷路器
 
-DeepSeek 整體變慢或過載時，每篇都要等到總期限才失敗，一段批次可以拖上數小時、每篇還記一筆
+供應商整體變慢或過載時，每篇都要等到總期限才失敗，一段批次可以拖上數小時、每篇還記一筆
 「單篇失敗」。行程範圍的斷路器看**最近 `BREAKER_WINDOW` 次 HTTP 呼叫**，其中逾時（含已吐字後逾時
 `timeout_streamed`）／過載／網路（`BREAKER_KINDS`）達 `BREAKER_TRIP` 次就拋 `LlmEnvironmentError`（整批 rc=2），並寫
 `data/.llm_breaker`（帶 sync 輪次 id `round=`，審查中4）；同一輪 sync 其餘會用到 HTTP model
 的段（手動執行：30 分鐘內）在 `require_llm_key` 就以 rc=2 拒跑，下一輪不受影響
-（`scripts/_llm_env.py`）。PR-M 前 CLI 呼叫不進窗（審查 L9：還在用 Claude 的段不該因 DeepSeek 出事而停），
-CLI 移除後每次呼叫都進窗。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
+（`scripts/_llm_env.py`）。每次呼叫都進窗。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
 
 ## 400 升級（審查 H2）
 
@@ -94,7 +90,7 @@ CLI 移除後每次呼叫都進窗。有執行緒鎖（批次以 `asyncio.to_thr
 （`outcome.status` 有值）的；本機編碼就失敗的 `bad_request`（`UnicodeError`）是單篇輸入，不參與。
 
 比對鍵是**正規化**的訊息（`_escalation_key`）：小寫、長 hex／request id 換成 `<id>`、數字換成 `#`。
-逐字比對的話，DeepSeek 反序列化錯誤帶的 `at line 1 column N`（N 隨 prompt 長度變）會讓全面性的
+逐字比對的話，供應商反序列化錯誤帶的 `at line 1 column N`（N 隨 prompt 長度變）會讓全面性的
 400 永遠湊不到兩篇相同，連續 3 輪後把整個工作集打進跳過名單。反過來，**本質上是單篇輸入造成的
 訊息**（上下文長度、輸入過長：`_INPUT_SPECIFIC`）不參與升級——兩篇超長研報正規化後是同一句，
 升級會讓整批為了兩篇研報中止。
@@ -104,14 +100,14 @@ CLI 移除後每次呼叫都進窗。有執行緒鎖（批次以 `asyncio.to_thr
 每次送出的呼叫追加一行 JSON 到 `data/llm_usage.jsonl`（ROOT 錨點；`LLM_USAGE_LOG`
 只給測試用）：`ts, task, file_hash, report_id, backend, model_req, model_resp, prompt_sha256,
 tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, total_ms`。
-摘要、標題、標籤不在 DB 記產出模型，靠這裡的 `file_hash` 回溯；費用真值看餘額差分，這份只拿來
+摘要、標題、標籤不在 DB 記產出模型，靠這裡的 `file_hash` 回溯；費用真值看供應商後台，這份只拿來
 歸因。規則：
-  - `backend` 現在一律是 `http`；PR-M 前的舊行有 `cli`（`tokens` 為 null，`kind` 是 `timeout`、
-    `unrunnable`、`auth` 或 `cli_error`），讀舊檔的工具（eval/observe_switch.py）照舊認得。白名單外的
+  - `backend` 現在一律是 `http`；舊行有 `cli`（`tokens` 為 null，`kind` 是 `timeout`、
+    `unrunnable`、`auth` 或 `cli_error`）。白名單外的
     model 不送出、也不記。
   - 沒收到 usage（失敗在第一個 chunk 之前）時 `tokens` 為 null；收到了但沒有
-    `completion_tokens_details`（thinking 關時就是這樣，9/24 探測實測）時 `reasoning` 記 **0**
-    ——thinking 關著，推理 token 就是 0，不是「不知道」。
+    `completion_tokens_details` 時 `reasoning` 記 **0**
+    ——推理關著（`reasoning_effort=none`），推理 token 就是 0，不是「不知道」。
   - 不記 prompt 本身，只記 sha256（研報全文不外流到 log）。
   - 有執行緒鎖（一行一次 write，行不交錯）；寫入失敗 fail-open，只警告一次。
 """
@@ -135,14 +131,14 @@ class CliNotFoundError(RuntimeError):
     """整批中止型失敗的基底：每一篇都會踩到，由 main 提早中止（各批次 main 接它 → rc=2）。
 
     **名稱是歷史值**（見模組 docstring）：原本專指「`claude` 無法執行」（不在 PATH 的 ENOENT、2026-08-20
-    自我更新後佔位腳本的 ENOEXEC）。PR-M 移除 CLI 後本類別不再直接拋出，只當基底——子類別
+    自我更新後佔位腳本的 ENOEXEC）。CLI 移除後本類別不再直接拋出，只當基底——子類別
     `LlmEnvironmentError`、`BadRequestEscalation` 沿用各批次 main 既有的 `except CliNotFoundError` 接法。
     """
 
 
 class LlmEnvironmentError(CliNotFoundError):
-    """帳號或設定層級的失敗：金鑰無效（401）、餘額不足（402）、模型或端點設定錯（config）、model 不在
-    白名單（不送出）、斷路器跳脫。
+    """帳號或設定層級的失敗：金鑰無效（401）、額度用完（402、429 insufficient_quota）、
+    模型或端點設定錯（config）、model 不在白名單（不送出）、斷路器跳脫。
 
     每一篇都會踩到，重試與續跑都沒有意義。繼承 `CliNotFoundError` 是為了讓各批次 main 既有的
     `except CliNotFoundError → rc=2` 原封不動地接住，不必逐支加分支。
@@ -178,23 +174,15 @@ _http_sleep = time.sleep
 
 # 帳號層級錯誤的處置提示（接在 `API[<kind>]` 錯誤字串後面，一起印進中止訊息），依 `LLM_PROVIDER` 分兩套。
 _ACCOUNT_HINTS = {
-    llm_models.PROVIDER_DEEPSEEK: {
-        llm_http.AUTH: "檢查 DEEPSEEK_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
-        llm_http.QUOTA: (
-            "儲值後重跑；等不及儲值時可依 docs/production_resilience.md「切換到 OpenCode Go」手動切換"
-            "（不要把 model 改成白名單外的名稱繞過）"
-        ),
-        llm_http.CONFIG: "檢查模型名與 DEEPSEEK_BASE_URL",
+    llm_models.PROVIDER_OPENAI: {
+        llm_http.AUTH: "檢查 OPENAI_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+        llm_http.QUOTA: "到 OpenAI 後台確認餘額與專案用量上限，補足後重跑（不要把 model 改成白名單外的名稱繞過）",
+        llm_http.CONFIG: "檢查模型名與 OPENAI_BASE_URL",
     },
     llm_models.PROVIDER_OPENCODE_GO: {
         llm_http.AUTH: "檢查 OPENCODE_GO_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
-        llm_http.QUOTA: (
-            "OpenCode Go 額度用完（5 小時／每週／每月上限）：等額度窗重置後重跑，或 DeepSeek 儲值後切回"
-            " LLM_PROVIDER=deepseek（docs/production_resilience.md「切換到 OpenCode Go」）"
-        ),
-        llm_http.CONFIG: (
-            "檢查模型名、OPENCODE_GO_BASE_URL，以及 Go 主控台的 Regions 是否開了 Global（DeepSeek 模型需要）"
-        ),
+        llm_http.QUOTA: "OpenCode Go 額度用完（5 小時／每週／每月上限）：等額度窗重置後重跑",
+        llm_http.CONFIG: "檢查模型名、OPENCODE_GO_BASE_URL，以及 Go 主控台的 Regions 設定",
     },
 }
 
@@ -211,7 +199,7 @@ _FAILURE_REASONS = {
     llm_http.EMPTY: llm_failures.EMPTY,
     llm_http.BAD_REQUEST: llm_failures.BAD_REQUEST,
     # 期限型截斷歸回「可重放」的類別（連續 3 輪才跳過），**不要**併進 TRUNCATED：那會 1 次就跳過，
-    # 行內標註還會進 `tag_truncated`（failures_to_delta 預設不撈）——DeepSeek 暫時變慢就全進跳過名單。
+    # 行內標註還會進 `tag_truncated`（failures_to_delta 預設不撈）——供應商暫時變慢就全進跳過名單。
     llm_http.TIMEOUT_STREAMED: llm_failures.TIMEOUT_STREAMED,
 }
 
@@ -295,9 +283,9 @@ class _Breaker:
             if bad < BREAKER_TRIP:
                 return
             self._tripped = message = (
-                f"LLM 斷路器：最近 {len(self._recent)} 次 DeepSeek 呼叫有 {bad} 次逾時／過載／連線失敗，"
+                f"LLM 斷路器：最近 {len(self._recent)} 次 LLM 呼叫有 {bad} 次逾時／過載／連線失敗，"
                 f"中止本段。{'本輪 sync' if sync_round_id() else f'{BREAKER_TTL_S // 60} 分鐘內'}"
-                f"其他用到 DeepSeek 的段預檢會拒跑（標記 {breaker_path()}）；"
+                f"其他用到 LLM 的段預檢會拒跑（標記 {breaker_path()}）；"
                 "確認供應商恢復後可刪除標記"
             )
         _write_breaker_marker(message)
@@ -433,7 +421,7 @@ def _tokens(usage: Optional[dict]) -> Optional[dict]:
         "hit": usage.get("prompt_cache_hit_tokens"),
         "miss": usage.get("prompt_cache_miss_tokens"),
         "completion": usage.get("completion_tokens"),
-        # thinking 關時 DeepSeek 不回 completion_tokens_details：推理 token 就是 0（見模組 docstring）
+        # 推理關時可能不回 completion_tokens_details：推理 token 就是 0（見模組 docstring）
         "reasoning": int(details.get("reasoning_tokens") or 0),
     }
 
@@ -470,7 +458,7 @@ def record_usage(
             "attempts": attempts,
             "ttft_ms": ttft_ms,
             "total_ms": total_ms,
-            # 走哪個供應商（費用歸因：Go 是訂閱額度、DeepSeek 是按量計費；欄位放末尾，舊列沒有＝deepseek）
+            # 走哪個供應商（費用歸因：Go 是訂閱額度、OpenAI 是按量計費；欄位放末尾，舊列沒有＝當時的 deepseek）
             "provider": llm_models.provider(),
         }
         line = json.dumps(row, ensure_ascii=False, default=str) + "\n"
@@ -493,19 +481,18 @@ def run_claude(
     max_tokens: Optional[int] = None,
     meta: Optional[dict] = None,
 ) -> CliResult:
-    """呼叫 DeepSeek。回 (text, None) 或 (None, 可辨識的失敗原因)；整批中止型失敗往上拋。
+    """呼叫 LLM。回 (text, None) 或 (None, 可辨識的失敗原因)；整批中止型失敗往上拋。
 
     名稱是歷史值（見模組 docstring）。`model` 不在白名單（含 `claude-*`）→ 不送出、拋
-    `LlmEnvironmentError`（整批 rc=2）：PR-M 起沒有其他 backend，而入口預檢
+    `LlmEnvironmentError`（整批 rc=2）：沒有其他 backend，而入口預檢
     （`scripts/_llm_env.require_llm_key`）照理已先擋下，走到這裡代表 `--model` 之類繞過了預檢。
     `max_tokens` 必填（沒帶拋 `ValueError`）。`meta`：`{"task", "file_hash", "report_id"}`，`task` 標
-    log 與 `user_id`，`file_hash` 參與 400 升級。PR-M 前的 `cwd` 參數（避免 CLI 載入專案 CLAUDE.md）
-    隨 CLI 移除。
+    log 與 `user_id`，`file_hash` 參與 400 升級。
     """
     meta = dict(meta or {})
     if not is_http_model(model):
         raise LlmEnvironmentError(
-            f"model={model!r} 不在 DeepSeek 白名單（{'、'.join(sorted(HTTP_MODELS))}）；claude CLI 已於 PR-M 移除，"
+            f"model={model!r} 不在模型白名單（{'、'.join(sorted(HTTP_MODELS))}），"
             "沒有其他 backend。檢查該批次的模型旋鈕或 --model"
         )
     return _run_http(prompt, model, timeout, max_tokens, meta)

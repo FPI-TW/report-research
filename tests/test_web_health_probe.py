@@ -37,8 +37,7 @@ TIMER = SYSTEMD_DIR / "report-mark-health.timer"
 
 EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING = 0, 1, 2, 3, 4
 EXIT_STORAGE = 6
-EXIT_LLM = 7        # 只有 llm_low：餘額低於門檻、尚未停擺
-EXIT_LLM_DOWN = 8   # low 以外的 503：帳號不可用或判斷不出來
+EXIT_LLM_DOWN = 8   # /healthz/llm 的 503：帳號不可用或判斷不出來
 
 # stdout 契約：P5 消費的欄位。少一個都會讓告警分級失準且無症狀。
 REQUIRED_FIELDS = ("ts", "component", "probe", "status", "http_code", "latency_ms", "reason")
@@ -323,7 +322,6 @@ class RetiredDependencyCheckTests(unittest.TestCase):
         cases = (
             ({"storage_status": 503}, EXIT_STORAGE, "storage_unreachable"),
             ({"llm_status": 503, "llm_body": b'{"llm":"exhausted"}'}, EXIT_LLM_DOWN, "llm_exhausted"),
-            ({"llm_status": 503, "llm_body": b'{"llm":"low"}'}, EXIT_LLM, "llm_low"),
         )
         for kw, rc, reason in cases:
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp, _Server(200, **kw) as s:
@@ -398,20 +396,18 @@ class StorageCheckTests(unittest.TestCase):
 
 
 class LlmCheckTests(unittest.TestCase):
-    """L3：/healthz 綠不代表 LLM 帳號能用（402、401、連不上、餘額低於門檻）。
+    """L3：/healthz 綠不代表 LLM 帳號能用（額度用完、401、連不上）。
 
-    餘額查詢由 web 行程做，探針只讀 `/healthz/llm` 的狀態碼，**只認 503**；503 本體的 state
-    併進 reason（封閉詞彙 `llm_<小寫與底線>`，其餘 `llm_unavailable`）。退出碼依 state 分兩種：
-    只有 `llm_low`（尚未停擺）是 7，其餘（含讀不懂的本體）是 8。多項 L3 同時成立時一行帶出全部
-    reason，退出碼取 8 → 6 → 7 最前面的（8 是最重的故障；審查 M15：7 不得遮蔽 6）。PR-M 前 8 與 6 之間
-    還有 5（claude CLI 相依），已退役。
+    端點探測由 web 行程做，探針只讀 `/healthz/llm` 的狀態碼，**只認 503**；503 本體的 state
+    併進 reason（封閉詞彙 `llm_<小寫與底線>`，其餘 `llm_unavailable`）。所有 503 都是 8（含讀不懂的本體）。
+    多項 L3 同時成立時一行帶出全部 reason，退出碼取 8 → 6 最前面的。5 與 7 已退役、編號不重用。
     """
 
     def test_llm_down_states_are_exit_8_with_state_in_reason(self):
-        """`/healthz/llm` 會回的每一種 503（low 除外）都是 8——從 `llm_health.FAILING` 取，新 state 自動涵蓋。"""
+        """`/healthz/llm` 會回的每一種 503 都是 8——從 `llm_health.FAILING` 取，新 state 自動涵蓋。"""
         from app.services import llm_health
 
-        states = sorted(llm_health.FAILING - {llm_health.LOW})
+        states = sorted(llm_health.FAILING)
         self.assertIn("misconfigured", states, "主答模型設定有誤＝問答停擺，要開 CRITICAL 事件")
         for state in states:
             with self.subTest(state=state), _FakeSystemd(state="inactive") as sd, \
@@ -423,20 +419,19 @@ class LlmCheckTests(unittest.TestCase):
             self.assertEqual((f["status"], f["http_code"], f["reason"]), ("degraded", "200", f"llm_{state}"))
             self.assertEqual(calls, [], "LLM 檢查不得呼叫 systemctl")
             self.assertIn("LLM 帳號不可用", p.stderr)
-            self.assertNotIn("餘額低於門檻", p.stderr)
 
-    def test_low_is_exit_7(self):
-        """餘額低於門檻、尚未停擺：7（incident handler 記 WARNING），訊息不得說成停擺。"""
-        with _FakeSystemd(state="inactive") as sd, _Server(200, llm_status=503, llm_body=b'{"llm":"low"}') as s:
-            p = run_probe({"HEALTH_URL": s.url, **sd.env})
-        self.assertEqual(p.returncode, EXIT_LLM, p.stdout + p.stderr)
-        f = parse(p.stdout)
-        self.assertEqual((f["status"], f["http_code"], f["reason"]), ("degraded", "200", "llm_low"))
-        self.assertIn("餘額低於門檻", p.stderr)
-        self.assertNotIn("LLM 帳號不可用", p.stderr)
+    def test_exit_7_is_retired(self):
+        """舊版 web 還可能回 `low`（部署站序錯開）：一樣是 503＝8，探針不再有 7 這個結局。"""
+        with _Server(200, llm_status=503, llm_body=b'{"llm":"low"}') as s:
+            p = run_probe({"HEALTH_URL": s.url})
+        self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "llm_low")
+        source = PROBE.read_text(encoding="utf-8")
+        self.assertNotIn("EXIT_LLM=", source)
+        self.assertIsNone(re.search(r"^\s*exit 7\b", source, re.M))
 
-    def test_only_exact_low_is_exit_7(self):
-        """字首相同的其他 state（未來新增、或 PR-M 前的 `_unused` 誤回 503）不是 low：當停擺處理。"""
+    def test_unknown_states_are_exit_8(self):
+        """詞彙內的未知 state 也是 503：當停擺處理。"""
         for state in (b"low_unused", b"lowish", b"below", b"unknown"):
             with self.subTest(state=state), _Server(200, llm_status=503, llm_body=b'{"llm":"%s"}' % state) as s:
                 p = run_probe({"HEALTH_URL": s.url})
@@ -444,7 +439,7 @@ class LlmCheckTests(unittest.TestCase):
             self.assertEqual(parse(p.stdout)["reason"], "llm_" + state.decode())
 
     def test_unparseable_or_hostile_body_is_llm_unavailable(self):
-        """判斷不出來就當停擺（8）：503 已經說了有事，讀不懂本體不能降成「只是餘額低」。"""
+        """判斷不出來就當停擺（8）：503 已經說了有事。"""
         for body in (b"", b"<html>oops</html>", b'{"llm":"ok; rm -rf /"}', b'{"llm":"EXHAUSTED"}',
                      b'{"llm":"' + b"a" * 40 + b'"}', b'{"llm":"low reason=forged"}', b'{"llm":"LOW"}'):
             with self.subTest(body=body), _Server(200, llm_status=503, llm_body=body) as s:
@@ -477,17 +472,8 @@ class LlmCheckTests(unittest.TestCase):
             self.assertNotIn("/healthz/llm", s.paths)
         self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
 
-    def test_storage_beats_low_and_both_reasons_are_reported(self):
-        with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
-            p = run_probe({"HEALTH_URL": s.url})
-            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"])
-        self.assertEqual(p.returncode, EXIT_STORAGE, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_low")
-        self.assertIn("物件儲存", p.stderr)
-        self.assertIn("餘額低於門檻", p.stderr)
-
     def test_llm_down_beats_storage_and_both_reasons_are_reported(self):
-        """R2 故障期間 DeepSeek 用罄：要以 8（CRITICAL）出現，不能被 6（WARNING）蓋成「只是 R2」。"""
+        """R2 故障期間額度用完：要以 8（CRITICAL）出現，不能被 6（WARNING）蓋成「只是 R2」。"""
         with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"auth_failed"}') as s:
             p = run_probe({"HEALTH_URL": s.url})
         self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
@@ -502,13 +488,6 @@ class LlmCheckTests(unittest.TestCase):
         self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_exhausted")
         self.assertEqual(len(p.stdout.strip().splitlines()), 1, "一行帶出全部 reason")
-
-    def test_storage_beats_low(self):
-        """low 最低：它會持續到儲值為止，不得遮蔽 6（審查 M15）。"""
-        with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
-            p = run_probe({"HEALTH_URL": s.url})
-        self.assertEqual(p.returncode, EXIT_STORAGE, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_low")
 
     def test_worst_case_duration_fits_the_unit_timeout(self):
         """三次探測 × 逾時 ＋ 兩次等待 ＋ L3 兩支各一次逾時，必須小於 unit 的 TimeoutStartSec。"""

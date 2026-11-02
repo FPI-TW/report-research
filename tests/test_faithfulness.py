@@ -364,11 +364,11 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
     """預設 judge 的失敗原因要落到 evaluation.degraded_reason：「服務掛了」與「回了看不懂
     的東西」一個是可用性問題、一個是量尺問題，監控與校準都要分得開。
 
-    PR-M 起預設 judge 只走 DeepSeek（`llm_http.complete_json`），這裡以假 `complete_json` 回各種 kind；
+    預設 judge 只走 `llm_http.complete_json`，這裡以假 `complete_json` 回各種 kind；
     端到端（MockTransport）的版本在 tests/test_judge_http.py。PR-M 前這組測的是 CLI judge（drain 串流、
     逾時截斷記 truncated），詞彙沿用。"""
 
-    async def _check(self, kind, *, data=None, model="deepseek-flash"):
+    async def _check(self, kind, *, data=None, model="gpt-6-luna"):
         from unittest import mock
 
         from app.services import llm_http
@@ -401,7 +401,7 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(r.degraded_reason, want)
                 ev = r.to_evaluation()
                 self.assertEqual(ev["degraded_reason"], want)
-                self.assertEqual(ev["judge_model"], "deepseek-flash")
+                self.assertEqual(ev["judge_model"], "gpt-6-luna")
 
     async def test_non_whitelisted_model_is_account_without_calling(self):
         """PR-M：claude-* 不再走 CLI——不呼叫 complete_json、記 account（與 404 模型不存在同一類）。"""

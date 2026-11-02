@@ -236,7 +236,7 @@ class QuotaDbTests(unittest.TestCase):
                 await s.execute(text(
                     "INSERT INTO research.llm_usage_daily (day, user_id, task, model, calls, prompt_hit_tokens, "
                     "prompt_miss_tokens, completion_tokens) "
-                    "VALUES (:d, :a, 'ask_answer', 'deepseek-flash', 3, 10, 20, 5)"
+                    "VALUES (:d, :a, 'ask_answer', 'gpt-6-luna', 3, 10, 20, 5)"
                 ), {"a": a, "d": today})
                 await s.commit()
 
@@ -293,9 +293,9 @@ class QuotaDbTests(unittest.TestCase):
                 await s.execute(text(
                     "INSERT INTO research.llm_usage_daily (day, user_id, task, model, calls, failures, "
                     "prompt_hit_tokens, completion_tokens, total_ms) VALUES "
-                    "(:d, :a, 'ask_answer', 'deepseek-flash', 3, 1, 10, 5, 300), "
-                    "(:d, NULL, 'ask_answer', 'deepseek-flash', 2, 0, 1, 1, 100), "
-                    "(:d, :a, 'faithfulness', 'deepseek-flash', 1, 0, 0, 0, 50)"), {"d": day, "a": a})
+                    "(:d, :a, 'ask_answer', 'gpt-6-luna', 3, 1, 10, 5, 300), "
+                    "(:d, NULL, 'ask_answer', 'gpt-6-luna', 2, 0, 1, 1, 100), "
+                    "(:d, :a, 'faithfulness', 'gpt-6-luna', 1, 0, 0, 0, 50)"), {"d": day, "a": a})
                 await s.commit()
             from datetime import datetime, timezone
 

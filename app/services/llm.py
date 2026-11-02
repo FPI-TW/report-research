@@ -1,13 +1,11 @@
-"""統一 LLM 串流客戶端：DeepSeek（`llm_http`）是唯一的 backend。
+"""統一 LLM 串流客戶端：`llm_http` 是唯一的 backend。
 
 `stream_completion` 只接受 `llm_models.HTTP_MODELS` 白名單內的 model，交給
 `llm_http.astream_chat`（首字期限、錯誤 kind、partial，見 `_stream_http`）。其他名稱（含 `claude-*`、
 CLI 別名、打錯字、空字串）一律拋 `LLMUnavailableError(kind="config")`，`allow_web=True` 也是——
 不會被送到付費端點，也沒有備援可以改走。
 
-claude CLI backend（CLI 子行程、stream-json 解析、529 重試、`--tools` 旗標）已於遷移終局
-PR-M 移除：CLI 的 OAuth 自 2026-09-23 過期、不再修復（計畫 D-C）。**網搜因此暫時沒有後端**：CLI 的
-WebSearch 隨之消失，DeepSeek 網搜（Tavily 工具迴圈）延後到 P9。時效題在 `allow_web=True` 拿到 config
+**網搜目前沒有後端**（原本靠已移除的 claude CLI 的 WebSearch）。時效題在 `allow_web=True` 拿到 config
 錯誤時退回 M4 婉拒（`answer._answer_time_sensitive_web`），`ASK_ENABLE_WEB` 預設關閉。
 """
 
@@ -24,14 +22,14 @@ from app.services.llm_models import TASK_ASK_ANSWER, is_http_model, resolve_mode
 
 logger = logging.getLogger(__name__)
 
-# 主答模型（ASK_ANSWER_MODEL，未設時查預設表：deepseek-flash）。
+# 主答模型（ASK_ANSWER_MODEL，未設時查預設表）。
 # 名稱保留：answer.py 的總覽／主答、faithfulness 的預設參數、eval/run_ragas 的生成端都讀它。
 # import 期解析：web/server.py 在本模組被 import 之前就先載入 repo 根 .env；批次與評測入口則先呼叫
 # scripts/_llm_env.load_llm_env()（/etc/default/report-mark-llm）。
 DEFAULT_MODEL = resolve_model(TASK_ASK_ANSWER)
 
 # 串流中表示「模型開始網搜」的控制標記（NUL 包夾，模型文字不可能等於它）。**目前沒有 backend 會送出**：
-# 原本由 CLI 的 WebSearch 工具起點觸發，隨 PR-M 移除；保留給 P9 的 DeepSeek 網搜（Tavily 工具迴圈）
+# 原本由已移除的 CLI WebSearch 工具起點觸發；保留給日後接上的網搜後端
 # 沿用同一個契約——answer.py 的三條串流路徑與前端的「正在搜尋網路」階段都接在它上面。
 SEARCH_EVENT = "\x00WEBSEARCH\x00"
 
@@ -73,9 +71,9 @@ class LLMUnavailableError(RuntimeError):
         self.partial = partial
 
 
-# ── HTTP 路徑（DeepSeek，白名單內的 model）───────────────────────────────────
+# ── HTTP 路徑（白名單內的 model）───────────────────────────────────
 # 呼叫端沒給 max_tokens 時的保底。每個呼叫點都該自己給（tests/test_llm.py 靜態釘住），
-# 這裡只防漏網：不設的話官方非 thinking 預設上限 8K，與這個值相同，行為不會更差。
+# 這裡只防漏網。
 _HTTP_FALLBACK_MAX_TOKENS = 8192
 # 外層重試的等待：優先照 Retry-After，但線上有人在等，上限 10 秒；沒有就 1.5／3 秒。
 _HTTP_RETRY_AFTER_CAP = 10.0
@@ -219,10 +217,10 @@ async def stream_completion(
     max_tokens: int | None = None,
     task: str | None = None,
 ) -> AsyncIterator[str]:
-    """串流呼叫 DeepSeek，逐段 yield 回答文字（語意見 `_stream_http`）。
+    """串流呼叫 LLM，逐段 yield 回答文字（語意見 `_stream_http`）。
 
     送出前就拋 `LLMUnavailableError(kind="config")`（一個字都不會 yield，呼叫端照「未吐字失敗」處理）：
-    - `allow_web=True`：網搜沒有後端（claude CLI 已移除、DeepSeek 網搜延後到 P9）。先於 model 檢查，
+    - `allow_web=True`：網搜沒有後端。先於 model 檢查，
       所以 `ASK_WEB_MODEL` 填什麼都一樣。時效題據此退回 M4 婉拒。
     - model 不在白名單（`llm_models.is_http_model`）：含 `claude-*`、CLI 別名、打錯字、空字串。
 
@@ -238,14 +236,12 @@ async def stream_completion(
     """
     if allow_web:
         raise LLMUnavailableError(
-            f"網搜沒有可用的後端（task={task or '-'} model={model!r}）：claude CLI 已於 PR-M 移除，"
-            "DeepSeek 網搜延後到 P9；ASK_ENABLE_WEB 應為 0",
+            f"網搜沒有可用的後端（task={task or '-'} model={model!r}）：ASK_ENABLE_WEB 應為 0",
             reason=UNAVAILABLE_API_ERROR, kind=llm_http.CONFIG,
         )
     if not is_http_model(model):
         raise LLMUnavailableError(
-            f"model={model!r} 不在 DeepSeek 白名單（task={task or '-'}；claude CLI 已於 PR-M 移除，"
-            "沒有其他 backend）：檢查該任務的模型旋鈕",
+            f"model={model!r} 不在模型白名單（task={task or '-'}；沒有其他 backend）：檢查該任務的模型旋鈕",
             reason=UNAVAILABLE_API_ERROR, kind=llm_http.CONFIG,
         )
     # aclosing：呼叫端在兩段文字之間 aclose 本產生器（`_with_heartbeat` 的用戶端中斷）時，

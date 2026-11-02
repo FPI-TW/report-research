@@ -32,9 +32,9 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 #    runner 沒有金鑰、永遠看不到這個差異。
 # 端點指到不可達的本機埠是第二道防線。需要金鑰的測試用 mock.patch.dict 在自己的範圍內給假值。
 # 守門：tests/test_llm_http.py 的 ConftestGuardTests（含靜態釘住「賦值而非 setdefault」）。
-os.environ["DEEPSEEK_API_KEY"] = ""
-os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
-# OpenCode Go（`LLM_PROVIDER=opencode_go` 的手動備援）同一套兩道防線：切到 Go 的測試自己 patch 假金鑰與 transport。
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["OPENAI_BASE_URL"] = "http://127.0.0.1:9"
+# OpenCode Go（`LLM_PROVIDER=opencode_go`）同一套兩道防線：切到 Go 的測試自己 patch 假金鑰與 transport。
 os.environ["OPENCODE_GO_API_KEY"] = ""
 os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
 
@@ -42,15 +42,15 @@ os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
 # 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
 # 所以測試永遠拿到預設表的值，與誰的機器、誰的環境檔無關。這一條與 `resolve_model` 的
 # 「空字串＝未設」寫法必須同進同退：只有前者，模組會拿到空字串的模型名。
-# `LLM_PROVIDER` 強制成唯一合法值 `deepseek`（PR-M 移除 claude CLI 之前這裡強制 `claude_cli`，讓測試走
-# CLI 假子程序）：擋住部署目錄 `.env` 或 shell 裡的退役值（`claude_only` 等）讓 import 期的 ERROR 日誌
-# 依機器而變。**預設表因此解析到 DeepSeek 白名單模型**：漏了假物件的測試會走 HTTP 路徑，而上面兩道
+# `LLM_PROVIDER` 強制成預設值 `openai`：擋住部署目錄 `.env` 或 shell 裡的退役值（`deepseek`、`claude_only` 等）
+# 讓 import 期的 ERROR 日誌依機器而變，也擋住 `opencode_go` 讓金鑰鍵名依機器而變。
+# **預設表因此解析到白名單模型**：漏了假物件的測試會走 HTTP 路徑，而上面兩道
 # 防線（金鑰強制空、端點不可達）讓它在送出前就以 auth 失敗、絕不打到付費端點——代價是失敗型態可能被
 # fail-open 吞掉，所以要驗 LLM 行為的測試一律自己裝 `httpx.MockTransport` 或 patch 呼叫層。
 # `LLM_ENV_FILE` 指到不存在的路徑：批次在 import 期載入 LLM 專用環境檔，測試不得讀到本機
 # 真的 `/etc/default/report-mark-llm`。
 # 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
-os.environ["LLM_PROVIDER"] = "deepseek"
+os.environ["LLM_PROVIDER"] = "openai"
 os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
 for _knob in (
     "ASK_ANSWER_MODEL", "ASK_WEB_MODEL", "ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL",
@@ -58,12 +58,8 @@ for _knob in (
     "TAG_MODEL", "SUMMARY_MODEL", "TITLE_MODEL", "TAKEAWAY_MODEL", "SIGNAL_MODEL", "BRIEF_MODEL",
 ):
     os.environ[_knob] = ""
-# DeepSeek 串流的牆鐘總時限：空字串＝預設 600（app/config._positive_float），部署目錄 `.env` 的值不滲進測試。
+# 串流的牆鐘總時限：空字串＝預設 600（app/config._positive_float），部署目錄 `.env` 的值不滲進測試。
 os.environ["LLM_HTTP_TOTAL_TIMEOUT"] = ""
-# /healthz/llm 的預算幣別與門檻（app/config.py）：同上，空字串＝預設（CNY、70），部署目錄 `.env` 的值
-# 不滲進測試（否則 ok／low 的邊界測試會依機器而變）。守門：tests/test_healthz_llm.py 的 KnobTests。
-os.environ["LLM_BUDGET_CURRENCY"] = ""
-os.environ["LLM_BALANCE_FLOOR"] = ""
 # 批次斷路器的標記（scripts/_llm_env.breaker_path）：預設落在 repo 根的 data/，而 repo 根就是部署
 # 目錄——測試讓斷路器跳脫時寫進去，生產排程會 30 分鐘拒跑。指到不存在的目錄：寫入 fail-open
 # 失敗、讀取當作沒有。要驗標記的測試用 mock.patch.dict 指到自己的 tempfile。

@@ -484,9 +484,10 @@ class IngestGateTests(_Tmp):
 
         self.require.stop()
         cases = (
-            ("缺金鑰", {"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": ""}, "deepseek-flash"),
-            ("provider 拼錯", {"LLM_PROVIDER": "deepseek-x"}, "deepseek-flash"),
-            ("未知模型", {"LLM_PROVIDER": "deepseek"}, "gpt-4o"),
+            ("缺金鑰", {"LLM_PROVIDER": "openai", "OPENAI_API_KEY": ""}, "gpt-6-luna"),
+            ("provider 拼錯", {"LLM_PROVIDER": "opnai"}, "gpt-6-luna"),
+            ("退役 provider", {"LLM_PROVIDER": "deepseek"}, "gpt-6-luna"),
+            ("未知模型", {"LLM_PROVIDER": "openai"}, "gpt-4o"),
         )
         for label, env, model in cases:
             with self.subTest(case=label):

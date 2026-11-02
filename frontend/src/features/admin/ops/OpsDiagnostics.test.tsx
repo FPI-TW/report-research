@@ -43,12 +43,12 @@ const DIAG = {
     python_executable: '/srv/report-mark/.venv/bin/python3', error: null,
   },
   config: {
-    db_target: 'localhost:5436/research', object_storage_mode: 'r2', llm_provider: 'deepseek',
-    models: { ask_answer: 'deepseek-flash' }, extractor: 'pypdf', log_level: 'INFO', ops_agent_environment: 'production',
+    db_target: 'localhost:5436/research', object_storage_mode: 'r2', llm_provider: 'openai',
+    models: { ask_answer: 'gpt-6-luna' }, extractor: 'pypdf', log_level: 'INFO', ops_agent_environment: 'production',
     ops_agent_socket: '/run/report-mark-ops/agent.sock',
     flags: { ask_enable_web: false, ask_rerank_enabled: true, qa_agentic_enabled: true, ask_faithfulness_enabled: true,
       trusted_data_enabled: true, skip_warmup: false, dev_no_auth: false },
-    secrets_present: { deepseek_api_key: true, session_secret: true, edge_secret: false, r2_credentials: true, alert_webhook: true },
+    secrets_present: { openai_api_key: true, session_secret: true, edge_secret: false, r2_credentials: true, alert_webhook: true },
     limits: { db_pool_size: 5, db_max_overflow: 15, db_pool_timeout_s: 10, db_statement_timeout_ms: 60000,
       db_idle_tx_timeout_ms: 0, embed_max_concurrency: 1, ask_faithfulness_sample_rate: 1, ask_faithfulness_max_inflight: 2 },
     error: null,
@@ -60,7 +60,7 @@ const DIAG = {
   checks: {
     db: { ok: true, latency_ms: 1.2, server_version: '16.4', error: null },
     storage: { state: 'ok', consecutive_failures: 0, last_probe_age_s: 120, last_probe_ok: true, error: null },
-    llm: { state: 'low', key_configured: true, ask_uses_http: true, consecutive_failures: 0, last_check_age_s: 30, quota_latched: false, error: null },
+    llm: { state: 'exhausted', key_configured: true, ask_uses_http: true, consecutive_failures: 0, last_check_age_s: 30, quota_latched: false, error: null },
     ops_agent: { ok: false, latency_ms: null, services: null, error: 'OpsAgentUnavailable' },
   },
 }
@@ -98,7 +98,7 @@ test('診斷頁：分區顯示摘要、版本、schema、連通性', async () =>
   expect(within(summary).getAllByRole('listitem')).toHaveLength(6)
   expect(within(summary).getByText('DB 落後')).toBeInTheDocument()
   expect(within(summary).getByText('待重啟')).toBeInTheDocument()
-  expect(within(summary).getByText('餘額偏低')).toBeInTheDocument()
+  expect(within(summary).getByText('額度用完')).toBeInTheDocument()
   expect(within(summary).getByText('OpsAgentUnavailable')).toBeInTheDocument()
 
   expect(screen.getByText(/程式已更新但 web 還沒重啟/)).toBeInTheDocument()
@@ -123,7 +123,7 @@ test('診斷頁：每一區的每一項都還在（連通性、每日檢查、�
   expect(checks.getByText(/診斷頁不會另外呼叫（計費）/)).toBeInTheDocument()
   expect(field(checks, '連通性', '資料庫')).toHaveTextContent('正常 SELECT 1 1.2 ms；PostgreSQL 16.4')
   expect(field(checks, '連通性', '物件儲存')).toHaveTextContent('正常 上次探測 2 分鐘前')
-  expect(field(checks, '連通性', 'DeepSeek')).toHaveTextContent('餘額偏低 上次查詢 30 秒前')
+  expect(field(checks, '連通性', 'LLM')).toHaveTextContent('額度用完 上次查詢 30 秒前')
   expect(field(checks, '連通性', '維運代理')).toHaveTextContent('連不上 OpsAgentUnavailable')
 
   const schema = await region('Schema')
@@ -160,14 +160,14 @@ test('診斷頁：每一區的每一項都還在（連通性、每日檢查、�
   const config = await region('設定（白名單）')
   expect(field(config, '設定', '資料庫')).toHaveTextContent('localhost:5436/research')
   expect(field(config, '設定', '物件儲存')).toHaveTextContent('r2')
-  expect(field(config, '設定', 'LLM 供應商')).toHaveTextContent('deepseek')
+  expect(field(config, '設定', 'LLM 供應商')).toHaveTextContent('openai')
   expect(field(config, '設定', '抽取器')).toHaveTextContent('pypdf')
   expect(field(config, '設定', '日誌等級')).toHaveTextContent('INFO')
   expect(field(config, '設定', '維運代理')).toHaveTextContent('production /run/report-mark-ops/agent.sock')
-  expect(field(config, '模型', 'ask_answer')).toHaveTextContent('deepseek-flash')
+  expect(field(config, '模型', 'ask_answer')).toHaveTextContent('gpt-6-luna')
   expect(field(config, '功能旗標', 'ask_enable_web')).toHaveTextContent('關')
   expect(field(config, '功能旗標', 'ask_rerank_enabled')).toHaveTextContent('開')
-  expect(field(config, '祕密', 'deepseek_api_key')).toHaveTextContent('已設')
+  expect(field(config, '祕密', 'openai_api_key')).toHaveTextContent('已設')
   expect(field(config, '上限', 'db_statement_timeout_ms')).toHaveTextContent('60000')
 })
 

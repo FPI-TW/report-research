@@ -1,4 +1,4 @@
-"""scripts/_llm_env.py：LLM 專用環境檔的載入順序與金鑰預檢（DeepSeek 遷移 PR-10）。
+"""scripts/_llm_env.py：LLM 專用環境檔的載入順序與金鑰預檢。
 
 全程只碰 `tempfile` 產生的檔案，不碰 `/etc/default/report-mark-llm`，也不碰 repo 根 `.env`；
 環境變數的改動都包在 `mock.patch.dict(os.environ)` 裡。金鑰一律是 gitleaks allowlist 內的假值。
@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import _llm_env as le  # noqa: E402
 
-FAKE_KEY = "fixed-test-secret-deepseek0"
+FAKE_KEY = "fixed-test-secret-openai0"
 PROJECT_ROOTS = {"app", "web", "scripts", "eval"}
 
 # 「會呼叫 LLM」的判準：import 了呼叫層（線上串流、HTTP 客戶端、批次 CLI 包裝、批次鎖、評測 judge）。
@@ -272,7 +272,7 @@ class _EnvFileCase(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {"LLM_ENV_FILE": str(self.path)})
         patcher.start()
         self.addCleanup(patcher.stop)
-        os.environ.pop("DEEPSEEK_API_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
         le._STATE.clear()
         self.addCleanup(le._STATE.clear)
         # 不讓 worktree 警告干擾輸出斷言（另有專門的測試）
@@ -296,12 +296,12 @@ class _EnvFileCase(unittest.TestCase):
 
 class LoadTests(_EnvFileCase):
     def test_only_fills_missing_keys(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\nSUMMARY_MODEL=deepseek-flash\nTITLE_MODEL=deepseek-flash\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\nSUMMARY_MODEL=gpt-6-luna\nTITLE_MODEL=gpt-6-luna\n")
         os.environ["TITLE_MODEL"] = "claude-sonnet-5"
         os.environ.pop("SUMMARY_MODEL", None)
         le.load_llm_env()
-        self.assertEqual(os.environ["DEEPSEEK_API_KEY"], FAKE_KEY)
-        self.assertEqual(os.environ["SUMMARY_MODEL"], "deepseek-flash")
+        self.assertEqual(os.environ["OPENAI_API_KEY"], FAKE_KEY)
+        self.assertEqual(os.environ["SUMMARY_MODEL"], "gpt-6-luna")
         self.assertEqual(os.environ["TITLE_MODEL"], "claude-sonnet-5", "shell 顯式設的值優先")
 
     def test_missing_file_is_not_an_error_at_load(self):
@@ -309,100 +309,100 @@ class LoadTests(_EnvFileCase):
         self.assertEqual(le._STATE["error"], "missing")
 
     def test_permission_error_is_recorded_not_raised(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
             le.load_llm_env()
         self.assertEqual(le._STATE["error"], "permission")
-        self.assertNotIn("DEEPSEEK_API_KEY", os.environ)
+        self.assertNotIn("OPENAI_API_KEY", os.environ)
 
     def test_duplicate_keys_are_not_loaded(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\nDEEPSEEK_API_KEY=fixed-test-secret-deepseek1\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\nOPENAI_API_KEY=fixed-test-secret-openai1\n")
         le.load_llm_env()
-        self.assertEqual(le._STATE["duplicates"], ["DEEPSEEK_API_KEY"])
-        self.assertNotIn("DEEPSEEK_API_KEY", os.environ)
+        self.assertEqual(le._STATE["duplicates"], ["OPENAI_API_KEY"])
+        self.assertNotIn("OPENAI_API_KEY", os.environ)
 
 
 class RequireTests(_EnvFileCase):
     def test_claude_models_are_rc2_even_with_key(self):
         """PR-M：claude-* 沒有 backend（CLI 已移除）——與打錯字同樣 rc=2，不再「不要求金鑰、只警告」。"""
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
-        for models in (["claude-sonnet-5", "claude-haiku-4-5"], ["deepseek-flash", "claude-sonnet-5"]):
+        for models in (["claude-sonnet-5", "claude-haiku-4-5"], ["gpt-6-luna", "claude-sonnet-5"]):
             with self.subTest(models=models):
                 code, out = self.require(models)
                 self.assertEqual(code, 2)
-                self.assertIn("不在 DeepSeek 白名單", out)
+                self.assertIn("不在白名單", out)
                 self.assertIn("claude-sonnet-5", out)
                 self.assertNotIn("fp=", out, "拒跑要在印金鑰指紋、放行之前")
 
     def test_key_present_prints_fingerprint_never_the_key(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
-        code, out = self.require(["deepseek-flash", "deepseek-v4-pro"])
+        code, out = self.require(["gpt-6-luna"])
         self.assertIsNone(code)
         self.assertIn(f"fp={hashlib.sha256(FAKE_KEY.encode()).hexdigest()[:8]}", out)
         self.assertNotIn(FAKE_KEY, out)
 
     def test_duplicate_keys_rc2(self):
         """重複鍵可能是模型旋鈕本身：哪一行生效取決於讀的人，任何情況都拒跑。"""
-        self.write("SUMMARY_MODEL=deepseek-v4-pro\nSUMMARY_MODEL=deepseek-flash\n")
+        self.write("SUMMARY_MODEL=gpt-other\nSUMMARY_MODEL=gpt-6-luna\n")
         le.load_llm_env()
-        code, out = self.require(["deepseek-flash"])
+        code, out = self.require(["gpt-6-luna"])
         self.assertEqual(code, 2)
         self.assertIn("SUMMARY_MODEL", out)
 
     def test_unknown_model_rc2(self):
         le.load_llm_env()
-        for name in ("sonnet", "deepseek-flsh", "claude-haiku-4-5"):
+        for name in ("sonnet", "deepseek-flash", "gpt-6-lun", "claude-haiku-4-5"):
             code, out = self.require([name])
             self.assertEqual(code, 2, name)
-            self.assertIn("不在 DeepSeek 白名單", out)
+            self.assertIn("不在白名單", out)
 
     def test_permission_error_rc2_hints_kashionz_without_leaking_key(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
             le.load_llm_env()
-        code, out = self.require(["deepseek-flash"])
+        code, out = self.require(["gpt-6-luna"])
         self.assertEqual(code, 2)
         self.assertIn("kashionz", out)
         self.assertNotIn(FAKE_KEY, out)
 
     def test_empty_env_value_blocks_file_and_hints_unset(self):
         """shell 裡 export 了空值：只補不存在的鍵，所以檔裡的金鑰進不來。"""
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
-        os.environ["DEEPSEEK_API_KEY"] = ""
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
+        os.environ["OPENAI_API_KEY"] = ""
         le.load_llm_env()
-        code, out = self.require(["deepseek-flash"])
+        code, out = self.require(["gpt-6-luna"])
         self.assertEqual(code, 2)
-        self.assertIn("unset DEEPSEEK_API_KEY", out)
+        self.assertIn("unset OPENAI_API_KEY", out)
         self.assertNotIn(FAKE_KEY, out)
 
     def test_missing_file_hints_install(self):
         le.load_llm_env()
-        code, out = self.require(["deepseek-flash"])
+        code, out = self.require(["gpt-6-luna"])
         self.assertEqual(code, 2)
         self.assertIn("report-mark-llm.env.example", out)
 
     def test_file_without_key_hints_sudoedit(self):
-        self.write("DEEPSEEK_API_KEY=\n")
+        self.write("OPENAI_API_KEY=\n")
         le.load_llm_env()
-        code, out = self.require(["deepseek-flash"])
+        code, out = self.require(["gpt-6-luna"])
         self.assertEqual(code, 2)
         self.assertIn("sudoedit", out)
 
 
 class InvalidProviderTests(_EnvFileCase):
-    """審查 L1：`LLM_PROVIDER` 非空且不合法時批次預檢 rc=2 並印原始值（web 才退回 deepseek＋ERROR）。
+    """審查 L1：`LLM_PROVIDER` 非空且不合法時批次預檢 rc=2 並印原始值（web 才退回 openai＋ERROR）。
 
-    PR-M 起唯一合法值是 `deepseek`；退役的 `claude_cli`／`claude_only`（PR-M 前實際上是「讓 LLM 停下來」的
-    開關）與拼錯的值若照 web 的規則退回 deepseek，就變成照常計費——而批次拒跑不花錢，沒有容錯的理由。"""
+    合法值是 `openai`、`opencode_go`；退役的 `deepseek`、`claude_cli`、`claude_only` 與拼錯的值若照 web 的規則退回
+    openai，就變成照常計費——而批次拒跑不花錢，沒有容錯的理由。"""
 
     def test_invalid_provider_is_rc2_with_raw_value_even_with_key(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
-        for raw in ("claude-cli", "DeepSeek-v4", " claude cli "):
+        for raw in ("claude-cli", "OpenAI-v2", " claude cli "):
             with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
-                code, out = self.require({"summary": "deepseek-flash"})
+                code, out = self.require({"summary": "gpt-6-luna"})
                 self.assertEqual(code, 2)
                 self.assertIn(f"LLM_PROVIDER={raw!r}", out)
                 self.assertNotIn("fp=", out, "拒跑要在印金鑰指紋、放行之前")
@@ -410,10 +410,10 @@ class InvalidProviderTests(_EnvFileCase):
     def test_invalid_provider_from_the_env_file_is_rc2(self):
         """值寫在 /etc/default/report-mark-llm 裡同樣拒跑（load_llm_env 把它補進 os.environ）。"""
         os.environ.pop("LLM_PROVIDER", None)
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\nLLM_PROVIDER=claude-cli\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\nLLM_PROVIDER=claude-cli\n")
         le.load_llm_env()
         try:
-            code, out = self.require(["deepseek-flash"])
+            code, out = self.require(["gpt-6-luna"])
         finally:
             os.environ.pop("LLM_PROVIDER", None)
         self.assertEqual(code, 2)
@@ -421,43 +421,46 @@ class InvalidProviderTests(_EnvFileCase):
 
     def test_valid_spellings_pass(self):
         """合法值（含大小寫、前後空白，與 llm_models.provider 的正規化一致）與空值照常放行。"""
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
-        for raw in ("deepseek", "DeepSeek", " deepseek ", ""):
-            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
-                code, out = self.require({"summary": "deepseek-flash"})
+        for raw in ("openai", "OpenAI", " openai ", "opencode_go", " OpenCode_Go ", ""):
+            with self.subTest(raw=raw), mock.patch.dict(
+                os.environ, {"LLM_PROVIDER": raw, "OPENCODE_GO_API_KEY": FAKE_KEY},
+            ):
+                code, out = self.require({"summary": "gpt-6-luna"})
                 self.assertIsNone(code, out)
 
     def test_retired_providers_are_rc2_and_say_so(self):
-        """PR-M 退役的值：rc=2、印原始值、說明「已退役、沒有可回退的後端」，也告訴人怎麼真的停下批次。"""
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        """退役值：rc=2、印原始值、說明「已退役」，也告訴人怎麼真的停下批次。金鑰填了也一樣（不得照常計費）。"""
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
-        for raw in ("claude_cli", "claude_only", " Claude_Only "):
+        for raw in ("deepseek", " DeepSeek ", "claude_cli", "claude_only", " Claude_Only "):
             with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
-                code, out = self.require({"summary": "deepseek-flash"})
+                code, out = self.require({"summary": "gpt-6-luna"})
                 self.assertEqual(code, 2)
                 self.assertIn(f"LLM_PROVIDER={raw!r}", out)
-                self.assertIn("已隨 claude CLI 退役", out)
+                self.assertIn("已退役", out)
                 self.assertIn("report-mark-sync.timer", out)
                 self.assertNotIn("fp=", out)
 
     def test_web_still_falls_back_for_the_same_value(self):
-        """對照：線上解析（llm_models.provider）對同一個值仍是退回 deepseek，不拋。"""
+        """對照：線上解析（llm_models.provider）對同一個值仍是退回 openai，不拋。"""
         from app.services import llm_models
 
-        self.assertEqual(llm_models.provider({"LLM_PROVIDER": "claude-cli"}), llm_models.PROVIDER_DEEPSEEK)
+        self.assertEqual(llm_models.provider({"LLM_PROVIDER": "claude-cli"}), llm_models.PROVIDER_OPENAI)
+        self.assertEqual(llm_models.provider({"LLM_PROVIDER": "deepseek"}), llm_models.PROVIDER_OPENAI)
 
     def test_model_source_prints_the_raw_provider_value(self):
-        with mock.patch.dict(os.environ, {"LLM_PROVIDER": " DeepSeek ", "SUMMARY_MODEL": ""}):
-            self.assertEqual(le._model_source("summary", "deepseek-flash"),
-                             "LLM_PROVIDER=DeepSeek 的 summary 預設 deepseek-flash")
+        with mock.patch.dict(os.environ, {"LLM_PROVIDER": " OpenAI ", "SUMMARY_MODEL": ""}):
+            self.assertEqual(le._model_source("summary", "gpt-6-luna"),
+                             "LLM_PROVIDER=OpenAI 的 summary 預設 gpt-6-luna")
 
 
 class DefaultProviderMissingFileTests(_EnvFileCase):
     """PR-28 的目的：`/etc/default/report-mark-llm` 缺檔時批次不得退回已失效的 CLI（PR-M 起 CLI 已不存在，
     這條照樣成立：缺檔＝缺金鑰的明確失敗）。
 
-    LLM_PROVIDER 未設＝deepseek → 模型解析成 deepseek-flash → 批次不讀 repo 根 `.env`、拿不到金鑰 →
+    LLM_PROVIDER 未設＝openai → 模型解析成 gpt-6-luna → 批次不讀 repo 根 `.env`、拿不到金鑰 →
     預檢 rc=2 並提示安裝（sync 殼把 rc=2 當帳號／環境型中止告警）。"""
 
     def test_unset_provider_and_missing_file_is_rc2(self):
@@ -467,17 +470,17 @@ class DefaultProviderMissingFileTests(_EnvFileCase):
             os.environ.pop("LLM_PROVIDER", None)
             le.load_llm_env()  # 檔案不存在
             models = {"summary": resolve_model("summary"), "title": resolve_model("title")}
-            self.assertEqual(models, {"summary": "deepseek-flash", "title": "deepseek-flash"})
+            self.assertEqual(models, {"summary": "gpt-6-luna", "title": "gpt-6-luna"})
             code, out = self.require(models)
         self.assertEqual(code, 2)
-        self.assertIn("DEEPSEEK_API_KEY", out)
+        self.assertIn("OPENAI_API_KEY", out)
         self.assertIn("report-mark-llm.env.example", out)
-        self.assertIn("LLM_PROVIDER（未設，預設 deepseek）", out)
+        self.assertIn("LLM_PROVIDER（未設，預設 openai）", out)
         self.assertNotIn("WARNING", out)
 
 
 class HttpModelPrecheckTests(_EnvFileCase):
-    """批次與評測都依白名單分派（遷移 PR-12 起）：DeepSeek 名稱只要有金鑰就放行；缺金鑰時 rc=2，
+    """批次與評測都依白名單分派：白名單名稱只要有金鑰就放行；缺金鑰時 rc=2，
     並說出是哪個旋鈕（或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。"""
 
     def setUp(self):
@@ -486,33 +489,33 @@ class HttpModelPrecheckTests(_EnvFileCase):
             os.environ[k] = ""
 
     def test_batch_http_model_with_key_passes(self):
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
-        code, out = self.require({"title": "deepseek-flash", "tag": "deepseek-v4-pro"})
+        code, out = self.require({"title": "gpt-6-luna", "tag": "gpt-6-luna"})
         self.assertIsNone(code, out)
         self.assertIn("fp=", out)
         self.assertNotIn(FAKE_KEY, out)
 
     def test_missing_key_names_the_knob(self):
-        os.environ["TITLE_MODEL"] = "deepseek-flash"
+        os.environ["TITLE_MODEL"] = "gpt-6-luna"
         le.load_llm_env()
-        code, out = self.require({"title": "deepseek-flash"})
+        code, out = self.require({"title": "gpt-6-luna"})
         self.assertEqual(code, 2)
-        self.assertIn("TITLE_MODEL=deepseek-flash", out)
-        self.assertIn("DEEPSEEK_API_KEY", out)
+        self.assertIn("TITLE_MODEL=gpt-6-luna", out)
+        self.assertIn("OPENAI_API_KEY", out)
 
     def test_missing_key_names_provider_default(self):
-        os.environ["LLM_PROVIDER"] = "deepseek"
+        os.environ["LLM_PROVIDER"] = "openai"
         le.load_llm_env()
-        code, out = self.require({"tag": "deepseek-flash"})
+        code, out = self.require({"tag": "gpt-6-luna"})
         self.assertEqual(code, 2)
-        self.assertIn("LLM_PROVIDER=deepseek", out)
+        self.assertIn("LLM_PROVIDER=openai", out)
 
     def test_missing_key_names_cli_flag(self):
         le.load_llm_env()
-        code, out = self.require({"signal": "deepseek-v4-pro"})
+        code, out = self.require({"signal": "gpt-other"})
         self.assertEqual(code, 2)
-        self.assertIn("--model deepseek-v4-pro", out)
+        self.assertIn("--model gpt-other", out)
 
     def test_no_entry_passes_http_dispatch_any_more(self):
         """PR-12 前的 `http_dispatch` 參數已移除：批次與評測同一套規則，傳了會 TypeError。"""
@@ -524,7 +527,7 @@ class HttpModelPrecheckTests(_EnvFileCase):
 
 
 class BreakerMarkerPrecheckTests(_EnvFileCase):
-    """斷路器標記（`data/.llm_breaker`）30 分鐘內：用到 DeepSeek 的段 rc=2；全用 Claude 的段照跑（L9）。"""
+    """斷路器標記（`data/.llm_breaker`）30 分鐘內：用到白名單模型的段 rc=2。"""
 
     def setUp(self):
         super().setUp()
@@ -532,7 +535,7 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
         env = mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": str(self.marker)})
         env.start()
         self.addCleanup(env.stop)
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
 
     def _mark(self, age_s: float, round_id: str | None = None, text: str | None = None) -> None:
@@ -556,7 +559,7 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
     def test_previous_round_marker_does_not_block_next_round(self):
         """審查中4：上一輪末段跳脫的標記（10 分鐘前）不得擋下一輪的匯入。"""
         self._mark(600, round_id="20260924_090000")
-        code, out = self.require_in_round("20260924_120000", {"tag": "deepseek-flash"})
+        code, out = self.require_in_round("20260924_120000", {"tag": "gpt-6-luna"})
         self.assertIsNone(code, out)
 
     def test_same_round_marker_blocks_regardless_of_age(self):
@@ -564,7 +567,7 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
         for age in (60, le.BREAKER_TTL_S + 5, 3 * 3600):
             with self.subTest(age=age):
                 self._mark(age, round_id="20260924_090000")
-                code, out = self.require_in_round("20260924_090000", {"summary": "deepseek-flash"})
+                code, out = self.require_in_round("20260924_090000", {"summary": "gpt-6-luna"})
                 self.assertEqual(code, 2, out)
                 self.assertIn("本輪 sync", out)
 
@@ -573,20 +576,20 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
         for round_id in ("20260924_090000", None):
             with self.subTest(marker_round=round_id):
                 self._mark(60, round_id=round_id)
-                code, out = self.require_in_round(None, {"summary": "deepseek-flash"})
+                code, out = self.require_in_round(None, {"summary": "gpt-6-luna"})
                 self.assertEqual(code, 2, out)
                 self.assertIn("30 分鐘內", out)
                 self._mark(le.BREAKER_TTL_S + 5, round_id=round_id)
-                code, out = self.require_in_round(None, {"summary": "deepseek-flash"})
+                code, out = self.require_in_round(None, {"summary": "gpt-6-luna"})
                 self.assertIsNone(code, out)
 
     def test_roundless_marker_in_a_round_keeps_thirty_minute_rule(self):
         """排程輪次讀到手動執行寫的標記（沒有輪次 id）：照 30 分鐘規則。"""
         self._mark(60)
-        code, _ = self.require_in_round("20260924_120000", {"summary": "deepseek-flash"})
+        code, _ = self.require_in_round("20260924_120000", {"summary": "gpt-6-luna"})
         self.assertEqual(code, 2)
         self._mark(le.BREAKER_TTL_S + 5)
-        code, out = self.require_in_round("20260924_120000", {"summary": "deepseek-flash"})
+        code, out = self.require_in_round("20260924_120000", {"summary": "gpt-6-luna"})
         self.assertIsNone(code, out)
 
     def test_empty_marker_blocks_within_ttl(self):
@@ -594,11 +597,11 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
         for round_id in (None, "20260924_120000"):
             with self.subTest(current_round=round_id):
                 self._mark(60, text="")
-                code, out = self.require_in_round(round_id, {"summary": "deepseek-flash"})
+                code, out = self.require_in_round(round_id, {"summary": "gpt-6-luna"})
                 self.assertEqual(code, 2, out)
                 self.assertIn("標記是空的", out)
                 self._mark(le.BREAKER_TTL_S + 5, text="")
-                code, out = self.require_in_round(round_id, {"summary": "deepseek-flash"})
+                code, out = self.require_in_round(round_id, {"summary": "gpt-6-luna"})
                 self.assertIsNone(code, out)
 
     def test_round_id_is_single_line(self):
@@ -609,35 +612,35 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
 
     def test_fresh_marker_blocks_http_segment(self):
         self._mark(60)
-        code, out = self.require({"summary": "deepseek-flash"})
+        code, out = self.require({"summary": "gpt-6-luna"})
         self.assertEqual(code, 2)
         self.assertIn("斷路器", out)
         self.assertIn("5 次逾時", out, "要帶出標記內容")
         self.assertNotIn(FAKE_KEY, out)
 
     def test_fresh_marker_blocks_every_model_segment(self):
-        """PR-M 前「全部用 Claude 的段不受標記影響」（審查 L9）；CLI 移除後每個有模型的段都走 DeepSeek，
-        而 claude-* 在更前面就以白名單外 rc=2，所以不會有繞過標記的段。沒有模型的段（--dry-run 之類）照常。"""
+        """每個有模型的段都走同一個供應商，白名單外的名稱在更前面就 rc=2，所以不會有繞過標記的段。
+        沒有模型的段（--dry-run 之類）照常。"""
         self._mark(60)
         code, out = self.require({"summary": "claude-sonnet-5"})
         self.assertEqual(code, 2)
-        self.assertIn("不在 DeepSeek 白名單", out)
+        self.assertIn("不在白名單", out)
         code, out = self.require({"brief": None})
         self.assertIsNone(code, out)
 
     def test_marker_expires_after_ttl(self):
         self._mark(le.BREAKER_TTL_S + 5)
-        code, out = self.require({"summary": "deepseek-flash"})
+        code, out = self.require({"summary": "gpt-6-luna"})
         self.assertIsNone(code, out)
         self._mark(le.BREAKER_TTL_S - 5)
-        code, _ = self.require({"summary": "deepseek-flash"})
+        code, _ = self.require({"summary": "gpt-6-luna"})
         self.assertEqual(code, 2)
 
     def test_ttl_is_thirty_minutes(self):
         self.assertEqual(le.BREAKER_TTL_S, 30 * 60)
 
     def test_no_marker_passes(self):
-        code, out = self.require({"summary": "deepseek-flash"})
+        code, out = self.require({"summary": "gpt-6-luna"})
         self.assertIsNone(code, out)
 
     def test_default_path_is_repo_data(self):
@@ -661,28 +664,28 @@ class FileKeyFingerprintTests(unittest.TestCase):
     def test_quotes_whitespace_and_crlf_do_not_change_fingerprint(self):
         want = le.fingerprint(FAKE_KEY)
         for text in (
-            f"DEEPSEEK_API_KEY={FAKE_KEY}\n",
-            f'DEEPSEEK_API_KEY="{FAKE_KEY}"\n',
-            f"DEEPSEEK_API_KEY='{FAKE_KEY}'\n",
-            f"DEEPSEEK_API_KEY={FAKE_KEY}   \n",
-            f"DEEPSEEK_API_KEY={FAKE_KEY}\r\n",
-            f"export DEEPSEEK_API_KEY={FAKE_KEY}\n",
-            f"# 註解\nOTHER=1\nDEEPSEEK_API_KEY={FAKE_KEY}",
+            f"OPENAI_API_KEY={FAKE_KEY}\n",
+            f'OPENAI_API_KEY="{FAKE_KEY}"\n',
+            f"OPENAI_API_KEY='{FAKE_KEY}'\n",
+            f"OPENAI_API_KEY={FAKE_KEY}   \n",
+            f"OPENAI_API_KEY={FAKE_KEY}\r\n",
+            f"export OPENAI_API_KEY={FAKE_KEY}\n",
+            f"# 註解\nOTHER=1\nOPENAI_API_KEY={FAKE_KEY}",
         ):
             with self.subTest(text=text):
                 self.assertEqual(self._fp(text), want)
 
     def test_missing_or_empty_key_is_none(self):
         self.assertIsNone(self._fp("OTHER=1\n"))
-        self.assertIsNone(self._fp("DEEPSEEK_API_KEY=\n"))
-        self.assertIsNone(self._fp('DEEPSEEK_API_KEY=""\n'))
+        self.assertIsNone(self._fp("OPENAI_API_KEY=\n"))
+        self.assertIsNone(self._fp('OPENAI_API_KEY=""\n'))
 
     def test_cli_prints_only_prefix_and_rc_reflects_match(self):
         with tempfile.TemporaryDirectory() as d:
             a, b, c = Path(d) / "web-copy", Path(d) / "llm-copy", Path(d) / "other-copy"
-            a.write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
-            b.write_text(f'DEEPSEEK_API_KEY="{FAKE_KEY}"\r\n', encoding="utf-8")
-            c.write_text("DEEPSEEK_API_KEY=fixed-test-secret-deepseek1\n", encoding="utf-8")
+            a.write_text(f"OPENAI_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+            b.write_text(f'OPENAI_API_KEY="{FAKE_KEY}"\r\n', encoding="utf-8")
+            c.write_text("OPENAI_API_KEY=fixed-test-secret-openai1\n", encoding="utf-8")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 self.assertEqual(le.main([str(a), str(b)]), 0)
@@ -694,14 +697,14 @@ class FileKeyFingerprintTests(unittest.TestCase):
 
 
     def test_cli_duplicate_key_lines_warn_and_fail(self):
-        """檔內重複的 DEEPSEEK_API_KEY：systemd 取最後一行、load_env_file 取第一行，只比第一行會
+        """檔內重複的 OPENAI_API_KEY：systemd 取最後一行、load_env_file 取第一行，只比第一行會
         誤報一致。即使兩行相同也回 rc=1（多餘的行是輪替時忘了刪的舊行，遲早會分歧）。"""
-        other = "fixed-test-secret-deepseek1"
+        other = "fixed-test-secret-openai1"
         with tempfile.TemporaryDirectory() as d:
             web, llm = Path(d) / "web-copy", Path(d) / "llm-copy"
-            web.write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
-            for text in (f"DEEPSEEK_API_KEY={FAKE_KEY}\nDEEPSEEK_API_KEY={other}\n",
-                         f"DEEPSEEK_API_KEY={FAKE_KEY}\nexport DEEPSEEK_API_KEY='{FAKE_KEY}'\n"):
+            web.write_text(f"OPENAI_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+            for text in (f"OPENAI_API_KEY={FAKE_KEY}\nOPENAI_API_KEY={other}\n",
+                         f"OPENAI_API_KEY={FAKE_KEY}\nexport OPENAI_API_KEY='{FAKE_KEY}'\n"):
                 with self.subTest(text=text):
                     llm.write_text(text, encoding="utf-8")
                     out = io.StringIO()
@@ -714,7 +717,7 @@ class FileKeyFingerprintTests(unittest.TestCase):
                     self.assertNotIn(FAKE_KEY, printed)
                     self.assertNotIn(other, printed)
             # 單份檔沒有重複：照舊只看指紋
-            llm.write_text(f"OTHER=1\nDEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+            llm.write_text(f"OTHER=1\nOPENAI_API_KEY={FAKE_KEY}\n", encoding="utf-8")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(le.main([str(web), str(llm)]), 0)
 

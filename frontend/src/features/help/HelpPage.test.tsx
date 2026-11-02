@@ -124,7 +124,7 @@ test('快捷鍵表涵蓋全站、研報庫、研究助理與閱讀頁，非 Mac 
   }
 })
 
-// DeepSeek 條款要求向終端使用者揭露 AI 生成（遷移 PR-U）：說明頁要列出生成的功能與資料去向。
+// 要向終端使用者揭露 AI 生成：說明頁要列出生成的功能與資料去向。
 test('說明頁揭露 AI 生成內容與資料送往模型供應商', () => {
   renderHelp()
   expect(within(screen.getByRole('navigation', { name: '說明目錄' })).getByRole('button', { name: 'AI 生成內容' })).toBeInTheDocument()
@@ -132,9 +132,10 @@ test('說明頁揭露 AI 生成內容與資料送往模型供應商', () => {
   for (const word of ['研究助理', '摘要', '標題', '重點摘錄', '標註', '券商共識', '每日簡報', '可能有誤']) {
     expect(section.textContent).toContain(word)
   }
-  // 既有語料多半是遷移前由 Claude 產出：供應商寫成「目前為」，不說全部出自 DeepSeek
-  expect(section.textContent).toMatch(/大型語言模型（目前為 DeepSeek）自動生成/)
-  expect(section.textContent).toMatch(/提問、回答與相關的研報內容會送往模型供應商（目前為 DeepSeek）處理/)
+  // 既有語料多半由先前的模型產出：供應商寫成「目前為」，不說全部出自現行模型
+  expect(section.textContent).toMatch(/大型語言模型（目前為 OpenAI 的 GPT-6 Luna）自動生成/)
+  expect(section.textContent).toMatch(/提問、回答與相關的研報內容會送往模型供應商（目前為 OpenAI）處理/)
+  expect(section.textContent).not.toContain('DeepSeek')
 })
 
 // 網搜由功能旗標 ask.web_search 控制（還沒抓到或沒開＝暫停，輸入框不列「＋」裡的網搜）：說明不能教一顆看不到的開關。

@@ -1,7 +1,7 @@
 import { Link } from 'react-router'
 import { Card, Chip } from '../../../../components/console'
 import c from '../../../../components/console/Console.module.css'
-import { isNewDeepSeekScale, newScaleText } from '../../../../lib/judgeScale'
+import { isNewScale, newScaleText } from '../../../../lib/judgeScale'
 import type { EvalSource, Evaluation, Extraction } from '../../../../lib/progressSchema'
 import { Bar, Count, Row } from './parts'
 import { fmtInt } from './rate'
@@ -20,7 +20,7 @@ function fmtScore(v: number | null): string {
 function JudgeScale({ d }: { d: EvalSource }) {
   if (!d.judge_model) return null
   const other = d.other_judge_checked ?? 0
-  const since = isNewDeepSeekScale(d) ? '' : d.judge_since ? `，自 ${d.judge_since} 起` : ''
+  const since = isNewScale(d) ? '' : d.judge_since ? `，自 ${d.judge_since} 起` : ''
   const counts = [
     d.judge_checked !== undefined ? `該尺已查核 ${fmtInt(d.judge_checked)}` : null,
     d.avg_n !== undefined ? `平均樣本數 ${fmtInt(d.avg_n)}` : null,
@@ -70,7 +70,7 @@ export function FaithfulnessCard({ evaluation }: { evaluation: Evaluation | unde
               <Row label="平均分數">
                 <div className={styles.line}>
                   <span className={c.num}><b>{fmtScore(qa.avg_score)}</b></span>
-                  {isNewDeepSeekScale(qa) && <Chip tone="gold">{newScaleText(qa)}</Chip>}
+                  {isNewScale(qa) && <Chip tone="gold">{newScaleText(qa)}</Chip>}
                 </div>
               </Row>
               <Row label="最後查核">

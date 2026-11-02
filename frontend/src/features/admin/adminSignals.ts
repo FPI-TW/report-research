@@ -14,7 +14,7 @@ import { STATE_LABELS } from './security/securityLabels'
  *
  *   服務      有服務失敗或找不到（核心層不在運作中也算，`opsLabels.needsAttention`）→ bad；
  *             維運代理連不上 → warn（狀態不明不等於正常）。排程服務兩次執行之間的「閒置」是正常。
- *   依賴圖    外部依賴（R2、DeepSeek、NAS…）的健康判讀由後端算好：down → bad、degraded → warn。
+ *   依賴圖    外部依賴（R2、LLM、NAS…）的健康判讀由後端算好：down → bad、degraded → warn。
  *             沒有探針的外部依賴是 unknown（未監控），不亮。內部服務壞掉算在「服務」，這裡不重複計。
  *   來源主機  把新研報推上來的那台主機：後端判讀出原因（失聯、同步停擺、推送失敗…）→ bad。
  *             沒設定要監看、或判斷不出來（R2 讀不到）不亮——後者由物件儲存那一組告警。

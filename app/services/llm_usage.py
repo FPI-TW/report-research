@@ -1,13 +1,13 @@
 """LLM 用量記錄（`data/llm_usage.jsonl`）的位置與彙總，給管理後台的 `GET /api/admin/llm-usage`。
 
-寫入端是 `scripts/_claude_cli.record_usage`：**批次**每次 LLM 呼叫（DeepSeek HTTP）追加一行 JSON
+寫入端是 `scripts/_claude_cli.record_usage`：**批次**每次 LLM 呼叫（HTTP）追加一行 JSON
 （欄位見那支模組的 docstring）。線上問答（`app/services/llm.py` 的 `stream_completion`）不寫這份檔。費用真值看
-DeepSeek 餘額差分；這份是**歸因**依據（哪個任務、哪個模型花了多少 token）。
+供應商後台（OpenAI 儀表板；OpenCode Go 是訂閱額度）；這份是**歸因**依據（哪個任務、哪個模型花了多少 token）。
 
 **兩個來源**（Admin v2）：
 
 - 批次：`data/llm_usage.jsonl`（`summarize`，同步、讀檔）。
-- 線上：`research.llm_usage_daily`（`summarize_online`，async、讀 DB）。web 行程的 DeepSeek 呼叫經 `llm_http` 的
+- 線上：`research.llm_usage_daily`（`summarize_online`，async、讀 DB）。web 行程的 LLM 呼叫經 `llm_http` 的
   observer → `usage_events` 累加器 → 每 60 秒 upsert（`web/server.py` 的 lifespan 註冊，本模組不寫）。只有
   metadata（任務、模型、成敗、token、耗時），不記問題與答案。粒度是**台北日**：窗期的頭尾兩天整天計入；
   尚未 flush 的最後一分鐘看不到。這裡**不出個人維度**（只回歸因到的不重複人數與未歸因的呼叫數）——單一使用者的

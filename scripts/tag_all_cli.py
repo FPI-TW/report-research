@@ -1,4 +1,4 @@
-"""用 LLM（`resolve_model(TASK_TAG)`，預設 DeepSeek flash）對全量候選研報做市場/標的分類 → data/tags/<hash>.json
+"""用 LLM（`resolve_model(TASK_TAG)`，預設 gpt-6-luna）對全量候選研報做市場/標的分類 → data/tags/<hash>.json
 
 - 來源:data/extracted/<hash>.json（per-hash 快取，E1c）,濾掉 is_admin / scanned 後為候選
 - 每篇經 `run_claude`（依白名單分派；名稱是 CLI 時代的遺留）分類,parse_tags() 正規化後寫檔
@@ -57,7 +57,7 @@ def build_prompt(file_name: str, text: str, excerpt: int) -> str:
 
 
 def call_cli(prompt: str, timeout: int = 150, *, file_hash: str | None = None) -> CliResult:
-    """呼叫 LLM（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 scripts/_claude_cli.py（全批次共用）。標註失敗特別值得說得出原因：
     它會讓該檔在匯入時被記成 `skip_untagged` 而**不入庫**，而排程 log 只印一行

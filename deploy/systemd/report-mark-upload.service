@@ -23,9 +23,9 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=EMBED_TORCH_THREADS=4
 # 共用環境檔：REPORT_MARK_ROOT、SYNC_PATH_EXTRA（找 uv）、EXTRACTOR、R2 憑證、DB 連線（不在本機時）。
 EnvironmentFile=-/etc/default/report-mark-sync
-# LLM 專用環境檔（DeepSeek 金鑰與批次模型旋鈕，0640 root:kashionz）。白名單只有 sync 與這支
+# LLM 專用環境檔（LLM 金鑰與批次模型旋鈕，0640 root:kashionz）。白名單只有 sync 與這支
 # （設計決策 4；tests/test_deploy_units.py 釘住）：入庫段的行內標註與下游的摘要、標題、摘錄都要它。
-# 排在共用檔之後；`-`：還沒安裝時 unit 仍能啟動，用到 DeepSeek 的段在取鎖前以 rc=2 說出缺什麼。
+# 排在共用檔之後；`-`：還沒安裝時 unit 仍能啟動，用到 LLM 的段在取鎖前以 rc=2 說出缺什麼。
 EnvironmentFile=-/etc/default/report-mark-llm
 # 告警 webhook（0600 root:root，只放 secret）：偵測到感染時 worker 自己送一則（設計決策 17），
 # URL 經 stdin 給 curl、不進 argv。`-`：沒設就只寫稽核與 journal ERROR。

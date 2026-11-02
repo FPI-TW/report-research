@@ -591,7 +591,7 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NoWebBackendTests(unittest.IsolatedAsyncioTestCase):
-    """PR-M：網搜沒有後端（claude CLI 的 WebSearch 已移除、DeepSeek 網搜延後到 P9）。
+    """網搜沒有後端。
 
     這裡**不替換** `stream_completion`——用真的那一支，驗證 `allow_web=True` 在送出任何請求之前就拋
     config 錯誤，而呼叫端安全收場：時效題退回 M4 婉拒並落 `llm_error=config`；主答以 config 錯誤失敗、
@@ -642,7 +642,7 @@ class NoWebBackendTests(unittest.IsolatedAsyncioTestCase):
         ) = self._orig
 
     async def test_time_sensitive_web_falls_back_to_m4_notice_for_any_web_model(self):
-        for model in ("", "deepseek-flash", "claude-sonnet-5"):
+        for model in ("", "gpt-6-luna", "claude-sonnet-5"):
             with self.subTest(model=model):
                 self.logged.clear()
                 ans.ASK_WEB_MODEL = model

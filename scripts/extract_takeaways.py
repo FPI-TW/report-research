@@ -13,7 +13,7 @@ _claude_lock 的 flock。**不要因為「沒有消費端」就把第 4 步拿�
 1. 撈工作集：近 --since-days 天、有全文的研究報告。
 2. checkpoint-resume：該報告已有列、且 extraction_version 與 text_sha256 皆相符、
    且狀態 ∈ (valid, partial) → 跳過。
-3. 逐報告呼叫 LLM（DeepSeek）依固定 schema 擷取 {claim, quote}。
+3. 逐報告呼叫 LLM 依固定 schema 擷取 {claim, quote}。
 4. Python 端用 reading/anchor.locate_quote 把引文確定性錨回正典文字（LLM 不給 offset）。
 5. 每份報告在單一 transaction 內 DELETE + 全量 INSERT（**不是 upsert**，見 _replace_rows）。
 6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。**例外**：
@@ -45,7 +45,7 @@ excerpt 取它的前 N 字、text_sha256 是它的 sha256、locate_quote 也搜�
 故預設不跑全量；要補歷史請自行放大 --since-days 並有心理準備。
 
 注意：--workers 預設壓到 2（見 generate_summaries.py 註）。**且不可與其他 LLM 批次同時跑**——
-CLI 時代併發搶 claude CLI 曾導致擷取大量被誤判 rejected；PR-M 後理由改為重複付費、本檔的
+CLI 時代併發搶 claude CLI 曾導致擷取大量被誤判 rejected；現在的理由是重複付費、本檔的
 DELETE + INSERT 互踩與 DB 連線數（見 scripts/_claude_lock.py）。這條規約由跨進程 flock 強制：撞車時
 本腳本會印出持有者並以 rc=75 結束，不會產出壞資料。
 """
@@ -461,7 +461,7 @@ def call_cli(
     prompt: str, model: str, timeout: int = 180, *,
     file_hash: Optional[str] = None, report_id: Optional[str] = None,
 ) -> CliResult:
-    """呼叫 LLM（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
 
     實作已抽到 `scripts/_claude_cli.py` 供所有批次共用——這個「失敗原因必須可區分」
     的設計最早長在這裡，抽出去是為了讓下一支腳本抄得到對的那份（其餘四支曾經各自

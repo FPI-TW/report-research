@@ -340,7 +340,7 @@ class LlmUsageOnlineTests(_Base):
         self.online = {
             "available": True, "error": None, "since_day": "2026-10-01", "until_day": "2026-10-07",
             "totals": _totals(4), "by_day": [{"day": "2026-10-06", **_totals(4)}],
-            "by_task": [{"task": "ask_answer", **_totals(4)}], "by_model": [{"model": "deepseek-flash", **_totals(4)}],
+            "by_task": [{"task": "ask_answer", **_totals(4)}], "by_model": [{"model": "gpt-6-luna", **_totals(4)}],
             "rows": [], "rows_truncated": False, "attributed_users": 2, "unattributed_calls": 1,
             "cost_available": False,
         }

@@ -2,7 +2,7 @@ import { Lamp, PageHeader, Segmented, Tabs, toast } from '../../components/conso
 import { ApiError } from '../../lib/api'
 import c from '../../components/console/Console.module.css'
 import type { JudgeScale, ReviewItem } from '../../lib/reviewSchemas'
-import { isNewDeepSeekScale, newScaleText } from '../../lib/judgeScale'
+import { isNewScale, newScaleText } from '../../lib/judgeScale'
 import { ReviewDetail, type ReviewUpdate } from './reviews/ReviewDetail'
 import {
   KIND_TABS, STATUS_FILTERS, STATUS_LABEL, STATUS_TONE, VERIFY_LABEL, hintText, itemId, metaLine, subjectOf,
@@ -28,7 +28,7 @@ import styles from './ReviewQueue.module.css'
  * 清單裡（已處理、在後面的分頁）就用單筆端點取來，右欄照樣顯示它（清單不動，註明它不在清單裡）；
  * 取不到（已不在佇列、超過 30 天、屬於另一個分頁，或舊版後端沒有那支端點）才顯示第一筆。
  *
- * `scale` 是 `/api/review/judge-scale` 的判定尺（與管線分頁的忠實度卡同一份快照）：判定尺剛換成 DeepSeek、
+ * `scale` 是 `/api/review/judge-scale` 的判定尺（與管線分頁的忠實度卡同一份快照）：判定尺剛換過、
  * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
  * 會被讀成「低分變少了」。佇列本身仍自己取數、不跟 5 秒輪詢（理由見 useReviewQueue）。
  */
@@ -128,7 +128,7 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
             {pinned && <p role="status">連結指的這一筆不在目前載入的清單裡（已處理，或在後面的分頁）；詳情在右邊。</p>}
             {gone && <p role="status">連結指的那一筆已不在這個分頁的佇列裡（或已超過 30 天）{q.items.length > 0 ? '，右邊顯示第一筆' : ''}。</p>}
             <p>{hintText(kind, q.minScore)}</p>
-            {kind === 'faithfulness' && scale && isNewDeepSeekScale(scale) && (
+            {kind === 'faithfulness' && scale && isNewScale(scale) && (
               <p>{`判定尺 ${scale.judge_model} 是${newScaleText(scale)}：分數與換尺前的不可直接比較`}</p>
             )}
           </div>

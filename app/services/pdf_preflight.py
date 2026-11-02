@@ -22,7 +22,7 @@
    上傳量很小，划算。
    - 子行程逾時 → `extract_timeout`（可由管理員重試）；吃滿記憶體（`MemoryError`）或被訊號砍掉 → `extract_error`。
 
-子行程的環境是**白名單**（`child_env`）：不帶 DeepSeek 金鑰、R2 憑證、DB 連線字串與告警 webhook——
+子行程的環境是**白名單**（`child_env`）：不帶 LLM 金鑰、R2 憑證、DB 連線字串與告警 webhook——
 解析不可信檔案的行程什麼祕密都不該拿得到。它也不連 DB、不寫任何檔案（試抽字的 `.pdf` 符號連結放在自己的
 暫存目錄；抽取器依副檔名分派，而隔離區的檔名一律是 `<upload_id>.bin`）。
 

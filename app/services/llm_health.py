@@ -1,63 +1,47 @@
-"""`/healthz/llm` 的判定：DeepSeek 帳號此刻能不能用（餘額、金鑰、連線）。
+"""`/healthz/llm` 的判定：LLM 帳號此刻能不能用（金鑰、端點、額度）。
 
 ## 為什麼需要它
 
-Claude CLI 已於 2026-09-23 永久放棄（OAuth 過期、D-C），遷移終局 PR-M 移除了 CLI backend 與 `claude_only`
-回退：問答與批次的 LLM 段全部走 DeepSeek，沒有備援。
-帳號層級的失效（402 餘額不足、401 金鑰失效、連不上）會讓問答每一題失敗、sync 整批 rc=2，
-而 `/healthz` 只探 DB 照樣綠。這支判定讓本機探針（`scripts/check_web_health.sh`）在幾分鐘內知道，並在
-**用罄之前**就告警（餘額低於門檻）。探針依 state 分兩個退出碼：`low` 是 7（WARNING、尚未停擺），其餘 503
-是 8（CRITICAL、停擺或判斷不出來）；回應格式不因此改變。
+問答與批次的 LLM 段全部走同一個供應商（`LLM_PROVIDER`，`app/services/llm_models.py`），沒有自動備援。
+帳號層級的失效（額度用完、401 金鑰失效、連不上）會讓問答每一題失敗、sync 整批 rc=2，而 `/healthz` 只探 DB 照樣綠。
+這支判定讓本機探針（`scripts/check_web_health.sh`）在幾分鐘內知道：503 一律是退出碼 8（CRITICAL）。
 
-## 狀態（`/healthz/llm` 只回 `{"llm": state}`，**不回任何金額**）
+## 狀態（`/healthz/llm` 只回 `{"llm": state}`）
 
 | state | HTTP | 意義 |
 |---|---|---|
-| `unknown` | 200 | 還沒有完成過任何一次查詢（或第一次連不上） |
-| `ok` | 200 | 預算幣別的餘額 ≥ 門檻，`is_available=true` |
-| `low` | 503 | 餘額 > 0 但低於門檻（預設 ¥70，約兩週用量）：還能用，但要儲值 |
-| `exhausted` | 503 | 餘額查詢回 402、`is_available=false`、餘額 ≤ 0，或本行程的真實請求收過 402（見下） |
-| `auth_failed` | 503 | 餘額查詢回 401；或問答主答走 DeepSeek 卻沒有金鑰 |
+| `unknown` | 200 | 還沒有完成過任何一次探測（或第一次連不上） |
+| `ok` | 200 | `GET /models` 回 200：端點與金鑰可用 |
+| `exhausted` | 503 | 探測回額度用完，或本行程的真實請求碰過額度用完、之後還沒有成功的請求（見下） |
+| `auth_failed` | 503 | 探測回 401；或沒有目前 provider 的金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx）；單次不算 |
-| `indeterminate` | 503 | 判斷不出來：缺預算幣別那一筆、其他幣別有非零餘額（幣別不符）、金額不是數字、 |
-| | | 同幣別重複、端點設定錯（404 等）、回應不是 JSON 物件 |
+| `indeterminate` | 503 | 判斷不出來：端點設定錯（404 等）、其他未預期的回應 |
 | `misconfigured` | 503 | 問答主答（`ASK_ANSWER` 任務）解析到白名單外的名稱：每題都回「設定有誤」（見下） |
 
-- **幣別只看一筆**（D-O）：`balance_infos` 的順序不固定（9/24 實測 USD、CNY 兩筆會對調），一律依
-  `currency` 取值，不靠索引。其他幣別出現非零餘額代表帳戶計價與假設不符，這時「CNY 夠不夠」回答不了
-  帳戶夠不夠，所以不猜、直接告警。
-- **主答設定錯誤＝`misconfigured`（503）**：判定粒度是問答主答（`ASK_ANSWER` 任務，審查 M15）。PR-M 起
-  沒有其他 backend，主答解析到白名單外的名稱（`claude-*`、打錯字）時 `llm.stream_completion` 對每一題都拋
-  config 錯誤——問答停擺，跟帳號壞掉一樣要開事件（探針 reason `llm_misconfigured`、退出碼 8）。這時**不查
-  餘額**、直接回 `misconfigured`：帳號狀態回答不了「問答能不能用」，修好設定後下一次查詢自然會說出帳號狀態
-  （同樣是退出碼 8，事件不會因此斷開）。PR-M 前這種情況回 200＋`_unused` 後綴——那時主答不走 DeepSeek
-  代表它走 Claude CLI、問答照常，現在這條路已不存在，後綴與「沒有金鑰也不用 DeepSeek」的 `disabled` 一併
-  移除。**只看主答**：其他線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）全部 fail-open，
-  它們解析到什麼都不影響這支端點；網搜沒有後端（`llm.py` 對 `allow_web=True` 直接拋 config），同樣不算。
-  要讓線上 LLM 刻意停下來時把 `ASK_ANSWER_MODEL` 設成白名單外名稱，這個 503 是預期的（見
-  `docs/production_resilience.md`）。
-- **402 閂鎖**：本行程任何一次真實請求收到 402（`llm_http.last_quota_at`），就立刻回 `exhausted`，
-  直到一次**開始於那次 402 之後**、成功（HTTP 200）且判定不是 exhausted 的餘額查詢才解除。閂鎖期間
-  快取以失敗 TTL 計，所以最慢 60 秒就會重查。401 的結論優先於閂鎖（金鑰壞了是更直接的原因）。
-  「開始於之後」以查詢**開始**的時刻為界、不是結束：查詢進行中才收到的 402，那次查詢的 ok 不能解除它。
+- **沒有餘額可查，所以沒有「快用完」的預警**：OpenAI 與 OpenCode Go 都沒有查餘額的 API，額度用完只有真實請求碰到才
+  知道。OpenAI 的預算告警請在 OpenAI 後台設定（`docs/production_resilience.md`）。
+- **額度閂鎖**：本行程任何一次真實請求碰到額度用完（`llm_http.last_quota_at`），就立刻回 `exhausted`，直到之後有一次
+  **真實請求成功**（`llm_http.last_ok_at`）才解除——`/models` 回 200 說明不了額度回來了沒。401 的結論優先於閂鎖
+  （金鑰壞了是更直接的原因）。閂鎖期間快取以失敗 TTL 計。
+- **主答設定錯誤＝`misconfigured`（503）**：判定粒度是問答主答（`ASK_ANSWER` 任務，審查 M15）。沒有其他 backend，
+  主答解析到白名單外的名稱時 `llm.stream_completion` 對每一題都拋 config 錯誤——問答停擺，跟帳號壞掉一樣要開事件
+  （探針 reason `llm_misconfigured`、退出碼 8）。這時**不探端點**、直接回 `misconfigured`：帳號狀態回答不了「問答能不能
+  用」。**只看主答**：其他線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）全部 fail-open，它們解析到
+  什麼都不影響這支端點；網搜沒有後端（`llm.py` 對 `allow_web=True` 直接拋 config），同樣不算。要讓線上 LLM 刻意停下來時
+  把 `ASK_ANSWER_MODEL` 設成白名單外名稱，這個 503 是預期的（見 `docs/production_resilience.md`）。
 
-## 已知限制：web 重啟可能閃一次 RESOLVED（PR-13 審查低1，刻意不修）
+## 已知限制
 
-狀態只在行程記憶體裡。web 重啟後回到 `unknown`（200），第一次查詢若剛好碰上單次連不上，仍是 `unknown`
-（連續 2 次才算 unreachable）→ 探針回 0 → 進行中的 LLM 事件被送出 RESOLVED，下一輪查詢若仍連不上才
-重新 FIRING。402／401／餘額 ≤ 0 不受影響（重啟後第一次查詢本身就回 exhausted／auth_failed）。刻意不把
-「重啟後第一次失敗」改回 503：那會讓每一次重啟碰上 DeepSeek 的單次抖動都開一個假事件，而現在的代價只是
-真停擺期間重啟時多一則 RESOLVED＋FIRING，不會漏報。
+- **web 重啟可能閃一次 RESOLVED**（刻意不修）：狀態只在行程記憶體裡。web 重啟後回到 `unknown`（200），第一次探測若剛好
+  碰上單次連不上，仍是 `unknown`（連續 2 次才算 unreachable）→ 探針回 0 → 進行中的 LLM 事件被送出 RESOLVED，下一輪若仍
+  連不上才重新 FIRING。刻意不把「重啟後第一次失敗」改回 503：那會讓每一次重啟碰上單次抖動都開一個假事件。
+- **批次的額度用完，web 不會知道**：閂鎖只記本行程。批次本來就以整批 rc=2 → `OnFailure` 立即告警；刻意不做跨行程的標記檔
+  （要落在 repo 根的 `data/`，任何觸發額度錯誤的測試都會把部署目錄的 web 翻成 exhausted 並開事件）。
 
 ## 快取與有界
 
-- `ok` 快取 600 秒，其餘（含單次連不上）60 秒；每次最多等 4 秒，等不到就回上一次的結論（查詢在背景
-  跑完會自己更新）。探針每 ~130 秒問一次，一天約 700 次查詢以內（官方查詢不扣費，9/24 實測）。
-- **已知延遲（審查 L15）**：批次行程碰到 402 時，web 要等自己的快取到期（ok 最長 600 秒）才看得到。
-  刻意不做跨行程的標記檔：批次的 402 本來就以整批 rc=2 → `OnFailure` 立即告警；而標記檔要落在 repo 根
-  的 `data/`——這台機器上那就是部署目錄，任何觸發 402 的測試都會把生產 web 翻成 exhausted 並開事件
-  （`LLM_BREAKER_FILE`／`LLM_USAGE_LOG` 都得在 conftest 另外封住，就是同一類風險）。低餘額門檻會在
-  用罄前幾週就告警，402 正常情況不該是第一個訊號。
+`ok` 快取 600 秒，其餘（含單次連不上）60 秒；每次最多等 4 秒，等不到就回上一次的結論（探測在背景跑完會自己更新）。
+探針每 ~130 秒問一次，`GET /models` 不計費。
 """
 
 from __future__ import annotations
@@ -65,7 +49,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from decimal import Decimal, InvalidOperation
 from typing import NamedTuple
 
 from app.services import llm_http, llm_models
@@ -74,21 +57,20 @@ logger = logging.getLogger(__name__)
 
 UNKNOWN = "unknown"
 OK = "ok"
-LOW = "low"
 EXHAUSTED = "exhausted"
 AUTH_FAILED = "auth_failed"
 UNREACHABLE = "unreachable"
 INDETERMINATE = "indeterminate"
 MISCONFIGURED = "misconfigured"
-# 回 503 的狀態。探針：LOW 是 7，其餘是 8
-FAILING = frozenset({LOW, EXHAUSTED, AUTH_FAILED, UNREACHABLE, INDETERMINATE, MISCONFIGURED})
+# 回 503 的狀態（探針退出碼 8）
+FAILING = frozenset({EXHAUSTED, AUTH_FAILED, UNREACHABLE, INDETERMINATE, MISCONFIGURED})
 
 OK_TTL = 600.0
 FAIL_TTL = 60.0
 # 三個期限必須嚴格遞增：FETCH_TIMEOUT < WAIT < 探針的 curl `HEALTH_TIMEOUT`（5 秒）。
 # WAIT 比探針短，這支端點才一定在探針放棄之前回答（否則 curl 逾時＝判不出來、不開事件，停擺被靜默）；
-# 查詢自己的期限比 WAIT 短，逾時的那一次在同一個請求裡就有結論（計入連續失敗），而不是等 WAIT 先到、
-# 回上一次的結論，再讓背景的查詢事後才更新。tests/test_healthz_llm.py 釘住這個關係。
+# 探測自己的期限比 WAIT 短，逾時的那一次在同一個請求裡就有結論（計入連續失敗），而不是等 WAIT 先到、
+# 回上一次的結論，再讓背景的探測事後才更新。tests/test_healthz_llm.py 釘住這個關係。
 WAIT = 4.0
 FETCH_TIMEOUT = 3.5
 FAILS_TO_UNREACHABLE = 2
@@ -101,12 +83,11 @@ class _Snapshot(NamedTuple):
     state: str
     consecutive_failures: int
     expires_at: float   # monotonic；到期就重查
-    checked_at: float   # 產生這個結論的那次查詢開始的時刻（monotonic；0＝從未查過）
-    cleared_at: float   # 最近一次「成功且不是 exhausted」的查詢開始的時刻：402 閂鎖以它為界
+    checked_at: float   # 產生這個結論的那次探測開始的時刻（monotonic；0＝從未查過）
     detail: str         # 只進日誌
 
 
-_INITIAL = _Snapshot(UNKNOWN, 0, 0.0, 0.0, 0.0, "")
+_INITIAL = _Snapshot(UNKNOWN, 0, 0.0, 0.0, "")
 _snap: _Snapshot = _INITIAL
 _task: asyncio.Task | None = None
 _last_reported: str | None = None
@@ -118,74 +99,24 @@ def reset() -> None:
     _snap, _task, _last_reported = _INITIAL, None, None
 
 
-def judge_balance(body: dict, *, currency: str, floor: float) -> tuple[str, str]:
-    """HTTP 200 的餘額本體 → (state, 給日誌的原因)。純函式。
-
-    判斷順序：`is_available=false` → exhausted（帳戶層級說不能用，金額不必看）；結構或金額讀不懂、缺預算
-    幣別、其他幣別非零 → indeterminate；預算幣別 ≤ 0 → exhausted；< 門檻 → low；其餘 ok。
-
-    - 幣別代碼先去空白、轉大寫再比（`" cny"` 與 `CNY` 是同一筆）；金額接受字串與 JSON 數字（int／float），
-      布林、None、物件都不算數字。
-    - 「其他幣別非零」含負數：負的他幣餘額（欠款）同樣說明帳戶計價與假設不符。
-    - 預算幣別 ≤ 0 而其他幣別非零時是 **indeterminate，不是 exhausted**：帳戶可能已改以那個幣別計價、其實
-      還能用，這時斷言「用罄」是猜的；而兩者在探針端都是退出碼 8，告警不會因此變輕。
-    """
-    available = body.get("is_available")
-    if available is False:
-        return EXHAUSTED, "is_available=false"
-    if available is not True:
-        return INDETERMINATE, f"is_available 不是布林值：{available!r}"
-    infos = body.get("balance_infos")
-    if not isinstance(infos, list):
-        return INDETERMINATE, "缺 balance_infos"
-    totals: dict[str, Decimal] = {}
-    for info in infos:
-        if not isinstance(info, dict) or not isinstance(info.get("currency"), str):
-            return INDETERMINATE, "balance_infos 有無法辨識的項目"
-        cur = info["currency"].strip().upper()
-        raw = info.get("total_balance")
-        try:
-            amount = Decimal(str(raw).strip()) if isinstance(raw, (str, int, float)) else None
-        except InvalidOperation:
-            amount = None
-        if amount is None or not amount.is_finite():
-            return INDETERMINATE, f"{cur} 的 total_balance 不是數字：{raw!r}"
-        if cur in totals:
-            return INDETERMINATE, f"{cur} 出現不只一筆"
-        totals[cur] = amount
-    if currency not in totals:
-        return INDETERMINATE, f"缺 {currency} 那一筆（幣別：{'、'.join(sorted(totals)) or '無'}）"
-    others = sorted(c for c, v in totals.items() if c != currency and v != 0)
-    if others:
-        return INDETERMINATE, f"{'、'.join(others)} 有非零餘額，與預算幣別 {currency} 不符"
-    amount = totals[currency]
-    if amount <= 0:
-        return EXHAUSTED, f"{currency} 餘額 {amount} ≤ 0"
-    if amount < Decimal(str(floor)):
-        return LOW, f"{currency} 餘額 {amount} 低於門檻 {floor:g}"
-    return OK, f"{currency} 餘額 {amount}"
+def _quota_latched() -> bool:
+    return llm_http.last_quota_at() > llm_http.last_ok_at()
 
 
-async def _refresh(currency: str, floor: float) -> None:
-    """查一次並更新 `_snap`。永不拋例外（它是 fire-and-forget 的 task）。"""
+async def _refresh() -> None:
+    """探一次並更新 `_snap`。永不拋例外（它是 fire-and-forget 的 task）。"""
     global _snap
     started = time.monotonic()
     try:
-        res = await llm_http.fetch_balance(FETCH_TIMEOUT)
+        res = await llm_http.probe_endpoint(FETCH_TIMEOUT)
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # fetch_balance 本身不拋；這裡只是讓 task 永遠會更新狀態
-        res = llm_http.BalanceResult(llm_http.OTHER, f"{type(exc).__name__}: {exc}")
+    except Exception as exc:  # probe_endpoint 本身不拋；這裡只是讓 task 永遠會更新狀態
+        res = llm_http.ProbeResult(llm_http.OTHER, f"{type(exc).__name__}: {exc}")
     prev = _snap
     fails = 0
-    cleared = prev.cleared_at
-    if res.kind is None and res.provider == llm_models.PROVIDER_OPENCODE_GO:
-        # Go 沒有餘額：端點與金鑰可用就是 ok，但不解除閂鎖（見模組 docstring「OpenCode Go」）
-        state, detail = OK, "OpenCode Go 端點可用（沒有餘額可查）"
-    elif res.kind is None:
-        state, detail = judge_balance(res.body or {}, currency=currency, floor=floor)
-        if state != EXHAUSTED:
-            cleared = started
+    if res.kind is None:
+        state, detail = OK, f"{llm_http.provider_label()} 端點可用"
     elif res.kind == llm_http.AUTH:
         state, detail = AUTH_FAILED, res.detail
     elif res.kind == llm_http.QUOTA:
@@ -196,8 +127,8 @@ async def _refresh(currency: str, floor: float) -> None:
         detail = f"{res.detail}（連續第 {fails} 次）"
     else:
         state, detail = INDETERMINATE, res.detail
-    ttl = OK_TTL if res.kind is None and state == OK else FAIL_TTL
-    _snap = _Snapshot(state, fails, time.monotonic() + ttl, started, cleared, detail)
+    ttl = OK_TTL if res.kind is None else FAIL_TTL
+    _snap = _Snapshot(state, fails, time.monotonic() + ttl, started, detail)
 
 
 # 問答停擺與否只取決於這些任務（審查 M15 的判定粒度）：主答。其餘線上任務都 fail-open，見模組 docstring。
@@ -210,41 +141,31 @@ def misconfigured_tasks(env=None) -> dict[str, str]:
     return {t: m for t, m in resolved.items() if not llm_models.is_http_model(m)}
 
 
-async def _account_state(*, currency: str, floor: float) -> tuple[str, str]:
+async def _account_state() -> tuple[str, str]:
     """帳號狀態與給日誌的原因（主答設定正常時才會問到這裡）。"""
     global _task
     if not llm_http.api_key_configured():
         return AUTH_FAILED, f"問答主答走 {llm_http.provider_label()} 但 {llm_models.key_env()} 為空"
     now = time.monotonic()
-    latched = llm_http.last_quota_at() > _cleared_at()
-    if now >= _snap.expires_at or (latched and now >= _snap.checked_at + FAIL_TTL):
+    if now >= _snap.expires_at or (_quota_latched() and now >= _snap.checked_at + FAIL_TTL):
         # 換過 event loop（測試每個 TestClient 一個 loop）時舊 task 永遠不會完成，不能沿用
         if _task is None or _task.done() or _task.get_loop() is not asyncio.get_running_loop():
-            _task = asyncio.create_task(_refresh(currency, floor), name="healthz-llm-balance")
+            _task = asyncio.create_task(_refresh(), name="healthz-llm-probe")
         try:
             await asyncio.wait_for(asyncio.shield(_task), timeout=WAIT)
         except asyncio.TimeoutError:
             pass
-    if llm_http.last_quota_at() > _cleared_at() and _snap.state != AUTH_FAILED:
-        if llm_models.provider() == llm_models.PROVIDER_OPENCODE_GO:
-            return EXHAUSTED, "本行程的請求碰到 OpenCode Go 額度上限，尚無之後成功的請求"
-        return EXHAUSTED, "本行程的請求收到 402，尚無之後開始的成功餘額查詢"
+    if _quota_latched() and _snap.state != AUTH_FAILED:
+        return EXHAUSTED, f"本行程的請求碰到 {llm_http.provider_label()} 額度用完，尚無之後成功的請求"
     return _snap.state, _snap.detail
 
 
-def _cleared_at() -> float:
-    """閂鎖的解除點：DeepSeek＝之後開始的成功餘額查詢；Go＝之後成功的真實請求（沒有餘額可查）。"""
-    if llm_models.provider() == llm_models.PROVIDER_OPENCODE_GO:
-        return llm_http.last_ok_at()
-    return _snap.cleared_at
-
-
 def cached_snapshot() -> dict:
-    """上一次餘額查詢的**被動**讀取（給 `/api/admin/diagnostics`）：不觸發查詢、不回金額與原因字串。
+    """上一次探測的**被動**讀取（給 `/api/admin/diagnostics`）：不觸發探測、不回原因字串。
 
-    `detail` 含金額（只進日誌），所以刻意不給；`state` 是帳號狀態，主答設定錯誤（`misconfigured`）不反映在這裡，
-    看 `ask_uses_http`。鍵名沿用 CLI 時代的說法（管理頁與產生的 admin client 在讀）：現在的意思是「問答主答
-    解析到白名單內的 DeepSeek 模型」，False＝`/healthz/llm` 會回 `misconfigured`。
+    `state` 是帳號狀態，主答設定錯誤（`misconfigured`）不反映在這裡，看 `ask_uses_http`。鍵名沿用 CLI 時代的說法
+    （管理頁與產生的 admin client 在讀）：現在的意思是「問答主答解析到白名單內的模型」，False＝`/healthz/llm` 會回
+    `misconfigured`。
     """
     snap = _snap
     return {
@@ -253,19 +174,19 @@ def cached_snapshot() -> dict:
         "ask_uses_http": not misconfigured_tasks(),
         "consecutive_failures": snap.consecutive_failures,
         "last_check_age_s": round(time.monotonic() - snap.checked_at, 1) if snap.checked_at else None,
-        "quota_latched": llm_http.last_quota_at() > snap.cleared_at,
+        "quota_latched": _quota_latched(),
     }
 
 
-async def report(*, currency: str, floor: float) -> tuple[str, int]:
-    """(回應的 state, HTTP 狀態碼)。狀態改變時記一行 WARNING（含原因與金額；回應本身不含）。"""
+async def report() -> tuple[str, int]:
+    """(回應的 state, HTTP 狀態碼)。狀態改變時記一行 WARNING（含原因；回應本身不含）。"""
     global _last_reported
     bad = misconfigured_tasks()
     if bad:
         state = MISCONFIGURED
-        detail = "、".join(f"{t}={m!r}" for t, m in bad.items()) + " 不在 DeepSeek 白名單，每題都會回設定有誤"
+        detail = "、".join(f"{t}={m!r}" for t, m in bad.items()) + " 不在模型白名單，每題都會回設定有誤"
     else:
-        state, detail = await _account_state(currency=currency, floor=floor)
+        state, detail = await _account_state()
     if state != _last_reported:
         _last_reported = state
         logger.warning("healthz LLM 狀態：%s（%s）", state, detail or "-")

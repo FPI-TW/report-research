@@ -4,7 +4,7 @@
 
 - **usage middleware**（`web/server.py` 的 `UsageMiddleware`，純 ASGI、只計回 200 的請求）呼叫 `record_request`：
   `/api/reading/{hash}`（閱讀頁）、`/api/report/{id}/file`（原檔）、`/api/search`、`/api/ask`。
-- **llm_http 的 observer**（web 在 lifespan 註冊 `observe_llm_call`）：線上 DeepSeek 呼叫的 metadata，
+- **llm_http 的 observer**（web 在 lifespan 註冊 `observe_llm_call`）：線上 LLM 呼叫的 metadata，
   以 `app.request_context.current_user_id()` 歸到人。
 - 寫入由 `UsageFlusher`（lifespan 啟停）定期呼叫 `flush`；關機時再 flush 一次。
 

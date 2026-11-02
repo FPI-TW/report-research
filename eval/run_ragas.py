@@ -1,14 +1,14 @@
 """M1 eval 編排：讀題集 → 逐題 retrieve→generate→三指標 → aggregate → 寫基準線。
 
 生成端刻意用 build_user_prompt + stream_completion（非 answer_question）以隔離檢索與
-生成、避開 qa_log 寫入/overview/off-topic。有界併發（限制同時的 DeepSeek 請求數）、逐題
+生成、避開 qa_log 寫入/overview/off-topic。有界併發（限制同時的 LLM 請求數）、逐題
 fail-open（任一階段異常記 error、不計均值、不中斷批次）。
 
 M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--agentic 走 agentic
 迴圈評測（plan 並行→run_agentic 合併，記 rounds/subqueries_run/skipped 歸因欄位，
 補查全部排同一個 rerank semaphore，故一律強制 concurrency=1）。
 
-**量尺可追溯**（DeepSeek 遷移 PR-06）：
+**量尺可追溯**：
 - 結果檔的 `config` 記錄生成端（`gen_model`）、每個會觸發 LLM 的任務實際用的 model
   （`models`）、judge 描述、git commit、題集 sha256、rerank／agentic 設定與起訖時間。
   config 只供 `eval_compare` 印差異，不參與判定。
@@ -16,7 +16,7 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
   的雜湊）、`judge_schema_version`。兩份結果只要量尺不同、或只有一邊有記錄，`eval_compare`
   一律回 2。**所以在新基準線產出之前，拿新結果比 `eval/baselines/baseline-2026-09-02.json`
   （沒有這三個鍵）一律回 2**——那是預期，不是壞掉；要比就兩邊都用本版重跑。
-- **量尺系譜**（PR-26/27）：judge 預設自 2026-09 起是 DeepSeek（`deepseek-2026-09` 系譜），`config.judge`
+- **量尺系譜**：judge 預設是 `gpt-6-luna`（`gpt-6-luna-2026-11` 系譜），`config.judge`
   記 `lineage`、結果檔頂層 `notes` 寫明跟誰不可比（`judge_lineage`）。新系譜的第一份結果就是它的起點。
 - **judge 出錯只讓該指標記為 None**，不讓整題記為 error：錯誤訊息記在 case 的
   `judge_errors`，summary 的 `n_judge_errors` 計總數（只列出、不判方向：那是量尺故障，不是
@@ -77,7 +77,7 @@ from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, s
 from app.services.llm_http import ACCOUNT_KINDS  # noqa: E402
 from app.services.llm_models import (  # noqa: E402
     JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
-    JUDGE_LINEAGE_DEEPSEEK,
+    JUDGE_LINEAGE_LUNA,
     is_http_model,
     judge_lineage,
 )
@@ -538,12 +538,12 @@ def _sha256_file(path) -> str:
 
 
 def judge_provider(model: str) -> str:
-    """judge 走哪個 backend。白名單外的 model 已沒有 backend（PR-M 移除 claude CLI；judge 對它拋
-    `JudgeAccountError`、入口預檢先擋），記 `unsupported`。舊結果檔裡的 `claude_cli` 是 CLI 時代的值。"""
-    return "deepseek_http" if is_http_model(model) else "unsupported"
+    """judge 走哪個 backend。白名單外的 model 沒有 backend（judge 對它拋
+    `JudgeAccountError`、入口預檢先擋），記 `unsupported`。舊結果檔裡的 `claude_cli`、`deepseek_http` 是歷史值。"""
+    return "llm_http" if is_http_model(model) else "unsupported"
 
 
-# 量尺系譜（PR-26/27；`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
+# 量尺系譜（`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
 # scripts/eval_faithfulness.py 共用，這裡以原名匯入）。記進 config.judge.lineage 與結果檔頂層 notes
 # （eval_compare 會印出 notes）；**刻意不放進 summary**：summary 的每個鍵都要在 METRIC_SPECS 分類，而跨系譜
 # 的比較早已由 META 鍵 judge_model 擋下（回 2），再加一個 META 鍵只是重複。
@@ -552,12 +552,12 @@ def judge_provider(model: str) -> str:
 def lineage_notes(model: str) -> list[str]:
     """結果檔頂層 notes：說出這份結果屬於哪個系譜、跟誰不可比。"""
     lineage = judge_lineage(model)
-    if lineage == JUDGE_LINEAGE_DEEPSEEK:
+    if lineage == JUDGE_LINEAGE_LUNA:
         return [
-            f"judge 系譜 {lineage}（judge={model}，自 2026-09 起的新量尺）：與 Claude haiku judge 的結果"
-            "（含 eval/baselines/baseline-2026-09-02.json）不可比，eval_compare 回 2 是預期；門檻數值不變。"
+            f"judge 系譜 {lineage}（judge={model}，自 2026-11 起的新量尺）：與舊系譜的結果"
+            "（eval/baselines/ 裡 2026-11 之前的基準線）不可比，eval_compare 回 2 是預期；門檻數值不變。"
         ]
-    return [f"judge 系譜 {lineage}（judge={model}，Claude 時代的舊量尺）：與 DeepSeek judge 的結果不可比。"]
+    return [f"judge 系譜 {lineage}（judge={model}，舊量尺）：與現行 judge 的結果不可比。"]
 
 
 def build_config(

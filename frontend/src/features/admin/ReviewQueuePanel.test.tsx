@@ -379,18 +379,18 @@ test('以現行門檻已不需複核的研報要說出來，不留一格空白',
 })
 
 // /api/review/judge-scale 的回應（`/api/progress` 的 evaluation.qa 子集）
-const scaleBase: JudgeScale = { judge_model: 'deepseek-flash', judge_since: '2026-09-25', other_judge_checked: 6 }
+const scaleBase: JudgeScale = { judge_model: 'gpt-6-luna', judge_since: '2026-09-25', other_judge_checked: 6 }
 
-test('判定尺剛換成 DeepSeek、窗期內還有舊尺 → 忠實度分頁比照監控卡標新量尺', async () => {
+test('判定尺剛換、窗期內還有舊尺 → 忠實度分頁比照監控卡標新量尺', async () => {
   mount(() => ({ body: page('faithfulness', [qa(1)]) }), { scale: scaleBase })
   await findRow('問答 qa1')
-  expect(screen.getByText(/判定尺 deepseek-flash 是新量尺（自 2026-09-25 起，DeepSeek）/)).toBeInTheDocument()
+  expect(screen.getByText(/判定尺 gpt-6-luna 是新量尺（自 2026-09-25 起，gpt-6-luna）/)).toBeInTheDocument()
 })
 
 test('新尺尚無查核 → 新量尺但不編日期', async () => {
   mount(() => ({ body: page('faithfulness', []) }), { scale: { ...scaleBase, judge_since: null } })
   await screen.findByText('目前沒有項目')
-  expect(screen.getByText(/新量尺（尚無查核，DeepSeek）/)).toBeInTheDocument()
+  expect(screen.getByText(/新量尺（尚無查核，gpt-6-luna）/)).toBeInTheDocument()
 })
 
 test('窗期內已全是新尺、或沒有量尺資料 → 不標新量尺', async () => {

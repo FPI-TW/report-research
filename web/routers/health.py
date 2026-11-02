@@ -40,12 +40,11 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 抗打的方式與上面相同但時間尺度不同：成功快取 5 分鐘（每次探測是一個計費的 R2 list 操作，
 每月約 8,600 次），失敗快取 60 秒並要求連續兩次才翻 degraded。
 
-## `/healthz/llm`：DeepSeek 帳號（餘額、金鑰、連線）
+## `/healthz/llm`：LLM 帳號（金鑰、端點、額度）
 
-同樣的理由另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡：問答與批次的 LLM 段全靠 DeepSeek，
-402／401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`，**不回任何金額**（金額只進
-日誌）。狀態、門檻、快取、402 閂鎖與主答設定錯誤（`misconfigured`）的判定都在 `app/services/llm_health.py`；
-消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
+同樣的理由另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡：問答與批次的 LLM 段全靠同一個供應商，
+額度用完或 401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`。狀態、快取、額度閂鎖與主答設定
+錯誤（`misconfigured`）的判定都在 `app/services/llm_health.py`；消費端是探針（只認 503，退出碼 8）。
 
 ## `/healthz/security`：安全事件的狀態型告警（Admin v2）
 
@@ -347,18 +346,15 @@ async def healthz_storage(request: Request) -> JSONResponse:
 
 @router.get("/healthz/llm")
 async def healthz_llm(request: Request) -> JSONResponse:
-    """DeepSeek 帳號可用性。**只回答本機直連的請求**，其餘一律 404。
+    """LLM 帳號可用性。**只回答本機直連的請求**，其餘一律 404。
 
-    回 `{"llm": state}`（詞彙見 `app/services/llm_health.py`）；low／exhausted／auth_failed／unreachable／
+    回 `{"llm": state}`（詞彙見 `app/services/llm_health.py`）；exhausted／auth_failed／unreachable／
     indeterminate／misconfigured（問答主答解析到白名單外名稱）回 503。由 `scripts/check_web_health.sh`
-    消費（low 為退出碼 7，其餘 503 為 8）。
+    消費（503 為退出碼 8）。
     """
     if not dev_mode.is_direct_loopback(request):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    settings = get_settings()
-    state, status = await llm_health.report(
-        currency=settings.llm_budget_currency, floor=settings.llm_balance_floor,
-    )
+    state, status = await llm_health.report()
     return JSONResponse({"llm": state}, status_code=status)
 
 

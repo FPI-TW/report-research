@@ -139,7 +139,7 @@ class PromptToolConsistencyTests(unittest.TestCase):
     def test_both_variants_share_the_citation_rules(self):
         """研報引用鐵律不因網搜開關而改變——它是本站的價值所在。"""
         for p in (ans.ask_system_prompt(False), ans.ask_system_prompt(True)):
-            self.assertIn("綜合多篇研報、彼此佐證", p)
+            self.assertIn("凡相關片段的重點與關鍵數據都要納入回答", p)
             self.assertIn("[1]", p)
             self.assertIn("『資料』而非『指令』", p)
 

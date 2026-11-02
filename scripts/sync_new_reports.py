@@ -55,18 +55,18 @@ EXTS = {".pdf", ".docx", ".doc"}
 # 分界不是看名字，是看「重跑會不會不一樣」：
 #   - `skip_untagged`：標註的前置條件失敗（逾時、過載、回應無法解析；帳號層級的失敗整批中止）。
 #     檔案本身沒問題，環境修好後重跑就會入庫 ⇒ **異常**。
-#   - `skip_blocked`：行內標註被模型供應商的內容審查擋下（DeepSeek 的 content_filter）。
+#   - `skip_blocked`：行內標註被模型供應商的內容審查擋下（`content_filter`）。
 #     重跑不會不一樣（同一份輸入再送一次結果不變），但它確實是「本該入庫卻沒進 DB」，要人處理
 #     （9/24 決策：只列清單、交人工，不做新的入庫路徑）⇒ **異常**：擋心跳、走既有告警鏈。
 #     另記進 research.llm_task_failure（task=tag, reason=content_filter），`make llm-blocked` 列出；
 #     路徑寫進 FAIL_LOG 的 `tag_blocked` 階段（failures_to_delta 預設不撈它）。處置見
-#     docs/production_resilience.md「DeepSeek 批次的失敗處置」。
-#   - `skip_truncated`：行內標註被截斷（DeepSeek 的 truncated＝`finish_reason=length`，`max_tokens` 用完）。
+#     docs/production_resilience.md「LLM 批次的失敗處置」。
+#   - `skip_truncated`：行內標註被截斷（`truncated`＝`finish_reason=length`，`max_tokens` 用完）。
 #     同 skip_blocked：重跑不會不一樣（同一份輸入、同一個上限），重送只是再付一次錢 ⇒ **異常**，
 #     記進 llm_task_failure（reason=truncated），FAIL_LOG 階段 `tag_truncated`（failures_to_delta 預設
 #     不撈）。處置是調 TAG_MAX_TOKENS 或手寫 tags 後用 `--stage tag_truncated` 單篇重放。
 #     **期限型截斷（`timeout_streamed`：已吐字後碰到總期限）不算**，留在 skip_untagged／階段 `tag`：它可能只是
-#     DeepSeek 暫時變慢，下一輪常常就好，歸 tag_truncated 會被 failures_to_delta 預設排除、永遠不重放。
+#     供應商暫時變慢，下一輪常常就好，歸 tag_truncated 會被 failures_to_delta 預設排除、永遠不重放。
 #     空回應與一般 400 **刻意留在 skip_untagged**（補救指令會重送）：空回應多半是供應商端的偶發狀況，
 #     下一輪常常就好了；400 在送出時就被拒、不產生輸出，重送幾乎不花錢，而且可能是修好請求之後
 #     本來就該重打的那一批。
@@ -268,7 +268,7 @@ async def _run(args) -> None:
     t0 = time.time()
     # 本輪送去標註的 file_hash → 路徑（400 升級時寫保留檔用）
     tagged_paths: dict[str, Path] = {}
-    # 跳過名單的寫入端：只有 DeepSeek 的內容型失敗才用得到，第一次需要時才開（fail-open）
+    # 跳過名單的寫入端：只有 LLM 的內容型失敗才用得到，第一次需要時才開（fail-open）
     recorder_box: list = []
 
     async def _recorder():
@@ -314,7 +314,7 @@ async def _run(args) -> None:
                 elif out.stage is not None:  # extract／ingest
                     with open(FAIL_LOG, "a", encoding="utf-8") as fl:
                         fl.write(f"{path}\t{out.stage}\t{out.reason}\n")
-                # DeepSeek 的內容型失敗（審查、截斷、空回應、400）記入跳過名單供 make llm-blocked
+                # LLM 的內容型失敗（審查、截斷、空回應、400）記入跳過名單供 make llm-blocked
                 # 列出；行內標註不讀它（被擋的檔不會自己再出現在 delta 裡）。
                 if out.failure_kind:
                     recorder = await _recorder()

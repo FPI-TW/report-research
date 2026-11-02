@@ -17,7 +17,7 @@
      0.35 顆核心。這是為了讓數字可以直接對到雲端機型的 vCPU，不必再乘上
      本機核心數換算——百分比在 20 核機器上量到的 5%，換到 2 vCPU 機型是 50%。
   2. 分元件用的是 **cgroup v2**，不是掃 `/proc/<pid>`：批次腳本會 fork 出
-     BGE-M3 子行程（PR-M 前還有 `claude` CLI），按 PID 掃一定會漏掉它們，而那正是尖峰的
+     BGE-M3 子行程（以前還有 `claude` CLI），按 PID 掃一定會漏掉它們，而那正是尖峰的
      來源。cgroup 天然把子孫行程算進父 unit。
   3. **`user.slice` 也要量並且獨立記錄**。這台機器同時是開發機（Claude Code
      session、Chrome、MCP server 都在 user.slice），不切出來的話「全機 CPU」

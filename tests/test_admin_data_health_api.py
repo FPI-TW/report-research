@@ -212,7 +212,7 @@ class DataHealthTests(_Base):
 
 def _line(ts: str, **kw) -> str:
     row = {"ts": ts, "task": "summary", "file_hash": "f" * 64, "report_id": "11111111-2222-3333-4444-555555555555",
-           "backend": "http", "model_req": "deepseek-flash", "model_resp": "deepseek-chat",
+           "backend": "http", "model_req": "gpt-6-luna", "model_resp": "deepseek-chat",
            "prompt_sha256": "c0ffee" * 10 + "abcd", "tokens": {"hit": 10, "miss": 90, "completion": 20, "reasoning": 0},
            "finish_reason": "stop", "kind": None, "attempts": 1, "ttft_ms": 100, "total_ms": 1000}
     row.update(kw)
@@ -268,7 +268,7 @@ class LlmUsageApiTests(_Base):
         self.assertEqual([(d["day"], d["calls"]) for d in body["by_day"]], [("2026-10-05", 1), ("2026-10-06", 2)])
         self.assertEqual({x["task"]: x["calls"] for x in body["by_task"]}, {"summary": 2, "title": 1})
         self.assertEqual({x["model"]: x["calls"] for x in body["by_model"]},
-                         {"deepseek-flash": 2, "claude-haiku-4-5": 1})
+                         {"gpt-6-luna": 2, "claude-haiku-4-5": 1})
         self.assertEqual(len(body["rows"]), 3)
         text = r.text
         for secret in ("f" * 64, "11111111-2222", "c0ffee", "prompt_sha256", "file_hash", "report_id"):

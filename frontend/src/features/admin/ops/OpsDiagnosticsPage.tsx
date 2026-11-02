@@ -19,7 +19,7 @@ const STORAGE_LABELS: Record<string, [string, Tone]> = {
   ok: ['正常', 'ok'], degraded: ['異常', 'fail'], unknown: ['尚未探測', 'idle'], disabled: ['未啟用（local）', 'idle'],
 }
 const LLM_LABELS: Record<string, [string, Tone]> = {
-  ok: ['正常', 'ok'], low: ['餘額偏低', 'warn'], exhausted: ['已用罄', 'fail'], auth_failed: ['金鑰失效', 'fail'],
+  ok: ['正常', 'ok'], exhausted: ['額度用完', 'fail'], auth_failed: ['金鑰失效', 'fail'],
   unreachable: ['連不上', 'fail'], indeterminate: ['判斷不出', 'fail'], unknown: ['尚未查詢', 'idle'],
   disabled: ['未使用', 'idle'],
 }
@@ -138,7 +138,7 @@ function Summary({ d }: { d: DiagnosticsResponse }) {
     ['Schema 版本', <Pill tone={schemaTone}>{schemaLabel}</Pill>,
       `DB ${d.schema_info.db_revisions.join(',') || '—'}／程式 ${d.schema_info.code_heads.join(',') || '—'}`],
     ['物件儲存', <Pill tone={storageTone}>{storageLabel}</Pill>, d.config.object_storage_mode ?? ''],
-    ['DeepSeek', <Pill tone={llmTone}>{llmLabel}</Pill>, d.checks.llm.key_configured ? '已設金鑰' : '未設金鑰'],
+    ['LLM', <Pill tone={llmTone}>{llmLabel}</Pill>, d.checks.llm.key_configured ? '已設金鑰' : '未設金鑰'],
     ['維運代理', <Pill tone={d.checks.ops_agent.ok ? 'ok' : 'warn'}>{d.checks.ops_agent.ok ? '連得上' : '連不上'}</Pill>,
       d.checks.ops_agent.ok ? `${d.checks.ops_agent.services ?? '—'} 個服務` : (d.checks.ops_agent.error ?? '')],
     ['程式版本', git?.restart_pending
@@ -231,7 +231,7 @@ function ChecksCard({ d }: { d: DiagnosticsResponse }) {
   const [llmLabel, llmTone] = LLM_LABELS[ck.llm.state] ?? [ck.llm.state, 'warn']
   return (
     <Card id="diag-checks" title="連通性">
-      <p className={c.meta}>R2 與 DeepSeek 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</p>
+      <p className={c.meta}>R2 與 LLM 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</p>
       <KV label="連通性" rows={[
         ['資料庫', <><Pill tone={ck.db.ok ? 'ok' : 'fail'}>{ck.db.ok ? '正常' : '失敗'}</Pill>{' '}
           {ck.db.ok ? `SELECT 1 ${fmtMs(ck.db.latency_ms)}；PostgreSQL ${ck.db.server_version ?? '—'}` : ck.db.error}</>],
@@ -239,10 +239,10 @@ function ChecksCard({ d }: { d: DiagnosticsResponse }) {
           {ck.storage.last_probe_age_s != null ? `上次探測 ${fmtDuration(ck.storage.last_probe_age_s)}前` : ''}
           {ck.storage.consecutive_failures ? `；連續失敗 ${ck.storage.consecutive_failures} 次` : ''}
           {ck.storage.error ? `（${ck.storage.error}）` : ''}</>],
-        ['DeepSeek', <><Pill tone={llmTone}>{llmLabel}</Pill>{' '}
+        ['LLM', <><Pill tone={llmTone}>{llmLabel}</Pill>{' '}
           {ck.llm.last_check_age_s != null ? `上次查詢 ${fmtDuration(ck.llm.last_check_age_s)}前` : ''}
-          {ck.llm.quota_latched ? '；本行程收過 402' : ''}
-          {!ck.llm.ask_uses_http ? '；問答主答未走 DeepSeek' : ''}
+          {ck.llm.quota_latched ? '；本行程碰過額度用完' : ''}
+          {!ck.llm.ask_uses_http ? '；問答主答模型不在白名單' : ''}
           {ck.llm.error ? `（${ck.llm.error}）` : ''}</>],
         ['維運代理', <><Pill tone={ck.ops_agent.ok ? 'ok' : 'warn'}>{ck.ops_agent.ok ? '正常' : '連不上'}</Pill>{' '}
           {ck.ops_agent.ok ? `${fmtMs(ck.ops_agent.latency_ms)}；${ck.ops_agent.services ?? '—'} 個服務` : ck.ops_agent.error}</>],
@@ -340,7 +340,7 @@ export default function OpsDiagnosticsPage() {
         <>
           程式版本比對行程啟動時與磁碟上的 commit，兩者不同表示程式已更新、等著重新啟動；前端讀 frontend/dist 的建置時間；
           schema 比對 DB 的 alembic 版本與程式的 head，並附每日檢查最後一次的結果。設定只列白名單裡的項目，祕密只顯示有沒有設。
-          R2 與 DeepSeek 只讀健康檢查上一次的結論，不會另外呼叫。「複製診斷包」複製整份 JSON（不含祕密），可以直接貼給維運。
+          R2 與 LLM 只讀健康檢查上一次的結論，不會另外呼叫。「複製診斷包」複製整份 JSON（不含祕密），可以直接貼給維運。
         </>
       )}
       actions={q.data && (

@@ -201,7 +201,7 @@ class EntryPointTests(unittest.TestCase):
              mock.patch.object(es, "FAIL_LOG", Path(tmp) / "signal.log"), \
              mock.patch.object(es, "build_signal_prompt", fake_build):
             with self.assertRaises(_Stop):
-                asyncio.run(es.extract_one(asyncio.Semaphore(1), item, 16000, "deepseek-flash", 1))
+                asyncio.run(es.extract_one(asyncio.Semaphore(1), item, 16000, "gpt-6-luna", 1))
         self.assertNotIn("2049上銀", sent[0])
         self.assertIn(YUANTA_BODY, sent[0])
 

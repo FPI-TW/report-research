@@ -1,4 +1,4 @@
-"""批次經 `scripts/_claude_cli.run_claude` 分派到 DeepSeek（遷移 PR-12）：逐支批次走到 main。
+"""批次經 `scripts/_claude_cli.run_claude` 分派到 HTTP：逐支批次走到 main。
 
 `tests/test_claude_cli.py` 測呼叫層本身；這裡測「接上批次之後」的行為——帳號層級錯誤要從單篇
 函式一路拋到各批次 main、以 rc=2 中止整批，不記跳過名單、不寫單篇失敗紀錄、不 spawn CLI。
@@ -28,11 +28,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm_failures as lf  # noqa: E402
 from app.services import llm_http as lh  # noqa: E402
+from app.services import llm_models  # noqa: E402
 from scripts import _claude_cli as cc  # noqa: E402
 
-FAKE_KEY = "fixed-test-secret-deepseek0"
-ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
-DS = "deepseek-flash"
+FAKE_KEY = "fixed-test-secret-openai0"
+ENV = {"OPENAI_API_KEY": FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
+DS = "gpt-6-luna"
 N_ITEMS = 5  # 批次 main 的工作量：帳號錯誤時只該打到第一篇
 
 
@@ -293,7 +294,7 @@ PARALLEL = ("summaries", "titles", "takeaways", "signals")
 class AccountErrorAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
     """401／402／模型不存在：`LlmEnvironmentError`（`CliNotFoundError` 子類）→ 各批次 main 整批 rc=2。
 
-    記成 N 筆單篇失敗後 exit 0 是四天停擺的型態；記進跳過名單會讓研報以 DeepSeek 的 model 名被擋在
+    記成 N 筆單篇失敗後 exit 0 是四天停擺的型態；記進跳過名單會讓研報以現行 model 名被擋在
     外面（那不是研報的問題）；改走 Claude 等於繞過預算。三件事都不能發生。
     """
 
@@ -337,7 +338,7 @@ class NonWhitelistAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
                 code, rec, out = self.main_rc(name)
                 self.assertEqual(code, 2, out)
                 self.assertEqual(rec.recorded, [], "設定錯誤不記跳過名單")
-                self.assertIn("不在 DeepSeek 白名單", out)
+                self.assertIn("不在模型白名單", out)
                 self.assertIn(CLAUDE, out)
                 self.assertEqual(self.requests, [])
                 logs = [p for p in self.tmp.glob("*.log") if p.stat().st_size]
@@ -345,25 +346,25 @@ class NonWhitelistAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
 
 
 class HttpSuccessThroughBatchesTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
-    """成功路徑：各批次拿到的是 DeepSeek 的文字，且請求帶的是該呼叫點的 max_tokens 與 task。"""
+    """成功路徑：各批次拿到的是模型的文字，且請求帶的是該呼叫點的 max_tokens 與 task。"""
 
     async def test_summary_title_takeaway_signal_tag(self):
         self.install(ok('{"summary": "先進製程需求強勁，上修全年營收預估。"}'))
         rec = await self.run_title_or_summary(gs, "summarize_one")
         self.assertEqual(rec.cleared, ["h1"])
-        self.assertEqual(self.body()["max_tokens"], gs.MAX_TOKENS)
-        self.assertEqual(self.body()["user_id"], "batch-summary")
+        self.assertEqual(self.body()["max_completion_tokens"], gs.MAX_TOKENS)
+        self.assertNotIn("user_id", self.body())
 
         self.install(ok('{"title": "台積電：先進製程需求強勁", "title_original": null, "title_source": "extracted"}'))
         rec = await self.run_title_or_summary(gt, "title_one")
         self.assertEqual(rec.cleared, ["h1"])
-        self.assertEqual(self.body()["user_id"], "batch-title")
+        self.assertNotIn("user_id", self.body())
 
         tag = ('{"market":"TW","is_research":true,"confidence":0.9,"instrument_types":["equity"],'
                '"relates_stock":true,"relates_futures":false,"stock_targets":["2330"],"futures_targets":[]}')
         self.install(ok(tag))
         self.assertEqual(self.run_tag_all(), "ok")
-        self.assertEqual(self.body()["user_id"], "batch-tag")
+        self.assertNotIn("user_id", self.body())
         self.assertEqual(self.body()["messages"], [{"role": "user", "content": self.body()["messages"][0]["content"]}])
 
     def test_sync_inline_tag_and_brief(self):
@@ -373,18 +374,18 @@ class HttpSuccessThroughBatchesTests(HttpMixin, unittest.IsolatedAsyncioTestCase
         got, err = ic._tag_via_cli("x.pdf", "內文", model=DS, file_hash="h1")
         self.assertIsNotNone(got)
         self.assertIsNone(err)
-        self.assertEqual(self.body()["max_tokens"], ic.TAG_MAX_TOKENS)
+        self.assertEqual(self.body()["max_completion_tokens"], ic.TAG_MAX_TOKENS)
 
         self.install(ok("## 今日重點\n- 一"))
         raw, err = gb.call_cli("素材", DS)
         self.assertEqual((raw, err), ("## 今日重點\n- 一", None))
-        self.assertEqual(self.body()["max_tokens"], gb.MAX_TOKENS)
-        self.assertEqual(self.body()["user_id"], "batch-brief")
+        self.assertEqual(self.body()["max_completion_tokens"], gb.MAX_TOKENS)
+        self.assertNotIn("user_id", self.body())
 
 
 # HTTP 單篇失敗：傳輸層已處理，腳本層一律只打 1 次（第二版 §4.7）。值是跳過名單該記的 reason。
 PER_FILE_FAILURES = {
-    "content_filter": (status(400, "Content Exists Risk"), lf.CONTENT_FILTER),
+    "content_filter": (status(400, "Rejected by our safety system"), lf.CONTENT_FILTER),
     "truncated": (lambda req: httpx.Response(
         200, content=sse(chunk(content="{\"半"), chunk(content="", finish="length"))), lf.TRUNCATED),
     "empty": (lambda req: httpx.Response(200, content=sse(chunk(content="", finish="stop"))), lf.EMPTY),
@@ -543,7 +544,7 @@ class BilledRequestsPerFileTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase
 
     async def test_deadline_after_text_records_timeout_streamed(self):
         """已吐字後才到總期限＝期限型截斷：記 timeout_streamed（連續 3 輪才跳過、不是 truncated 的 1 次就跳過），
-        而且**計入斷路器**——DeepSeek 暫時變慢時整段中止，而不是整批研報一輪就進跳過名單。"""
+        而且**計入斷路器**——供應商暫時變慢時整段中止，而不是整批研報一輪就進跳過名單。"""
         clock = {"t": 1000.0}
 
         def drip(req):
@@ -571,7 +572,7 @@ class BilledRequestsPerFileTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase
 
 
 class SummaryPlainTextFallbackTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
-    """審查 D11：DeepSeek 不守 JSON 格式＝解析失敗（多半是閒聊或拒答）。純文字 fallback 原本只給 CLI，
+    """審查 D11：模型不守 JSON 格式＝解析失敗（多半是閒聊或拒答）。純文字 fallback 原本只給 CLI，
     PR-M 起批次一律不用（解析器的預設值留給直接呼叫的工具）。"""
 
     def test_parse_summary_flag(self):
@@ -627,7 +628,7 @@ def _unique_400():
 
 
 def _serde_422(req):
-    """DeepSeek 反序列化錯誤的形狀：`column N` 隨請求 body 長度變（審查實驗 [2]）。"""
+    """供應商反序列化錯誤的形狀：`column N` 隨請求 body 長度變（審查實驗 [2]）。"""
     return httpx.Response(422, json={"error": {"message": (
         "Failed to deserialize the JSON body into the target type: reasoning_effort: unknown variant `none`, "
         f"expected one of `low`, `medium`, `high` at line 1 column {len(req.content)}")}})
@@ -807,7 +808,7 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         return dict(ln.split("=", 1) for ln in (self.tmp / "stats").read_text(encoding="utf-8").splitlines())
 
     async def test_content_filter_is_skip_blocked(self):
-        self.install(status(400, "Content Exists Risk"))
+        self.install(status(400, "Rejected by our safety system"))
         rec = await self._run()
         st = self.stats()
         self.assertEqual(st["skip_blocked"], "2")
@@ -825,14 +826,14 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_recorder_is_opened_for_task_tag(self):
         """N11：行內標註的跳過名單要記在 task=tag、以行內標註的模型為鍵（記到別的 task 會擋錯批次）。"""
-        self.install(status(400, "Content Exists Risk"))
+        self.install(status(400, "Rejected by our safety system"))
         await self._run(n=1)
         self.open_recorder.assert_awaited_once()
         self.assertEqual(self.open_recorder.await_args.args[:2], (lf.TASK_TAG, snr.TAG_MODEL))
 
     async def test_no_failure_table_keeps_classifying(self):
         """表不存在（recorder 為 None）：照樣分流計數、寫 FAIL_LOG，只是不記跳過名單。"""
-        self.install(status(400, "Content Exists Risk"))
+        self.install(status(400, "Rejected by our safety system"))
         rec = await self._run(no_table=True)
         self.assertEqual(self.stats()["skip_blocked"], "2")
         self.assertEqual(rec.recorded, [])
@@ -861,7 +862,7 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_deadline_truncation_stays_untagged_and_replayable(self):
         """期限型截斷（timeout_streamed）不是 skip_truncated：記 skip_untagged、階段 tag（補救指令會撈），
-        跳過名單記 timeout_streamed。歸 tag_truncated 的話 DeepSeek 暫時變慢一次，那幾篇就永遠不重放。"""
+        跳過名單記 timeout_streamed。歸 tag_truncated 的話供應商暫時變慢一次，那幾篇就永遠不重放。"""
         timed_out = cc.CliResult(None, lh.error_string(lh.TIMEOUT_STREAMED, "已吐字 12 字後超過總期限"))
         with mock.patch.object(ic, "run_claude", return_value=timed_out):
             rec = await self._run()
@@ -979,7 +980,7 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
         return rc, upsert, record, err.getvalue()
 
     def test_content_filter_skips_with_nonzero_rc(self):
-        self.install(status(400, "Content Exists Risk"))
+        self.install(status(400, "Rejected by our safety system"))
         rc, upsert, record, err = self._generate()
         self.assertNotEqual(rc, 0)
         upsert.assert_not_awaited()
@@ -996,7 +997,7 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
 
     def test_blocked_today_is_not_called_again(self):
         """審查低4：同一天同一個 model 已被審查擋過 → 之後的輪次不再呼叫、rc 仍非 0、訊息說明。"""
-        self.install(status(400, "Content Exists Risk"))
+        self.install(status(400, "Rejected by our safety system"))
         rc, _, _, _ = self._generate(force=False, real_log=True)
         self.assertEqual((rc, len(self.requests)), (1, 1))
         line = (self.tmp / "brief_failures.log").read_text(encoding="utf-8").splitlines()[0].split("\t")
@@ -1010,12 +1011,14 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
 
     def test_blocked_today_scope(self):
         """只擋「同一天、同一個 model、內容審查」：換 model、--force、別天、別種失敗都照打。"""
-        self.install(status(400, "Content Exists Risk"))
+        self.install(status(400, "Rejected by our safety system"))
         self._generate(force=False, real_log=True)
         self.assertEqual(len(self.requests), 1)
         self._generate(force=True, real_log=True)
         self.assertEqual(len(self.requests), 2, "--force 照打")
-        self._generate(force=False, real_log=True, model="deepseek-v4-pro")
+        # 白名單只有一顆：另一個名稱要暫時放進白名單才走得到送出那一步
+        with mock.patch.object(llm_models, "HTTP_MODELS", frozenset({*llm_models.HTTP_MODELS, "gpt-other"})):
+            self._generate(force=False, real_log=True, model="gpt-other")
         self.assertEqual(len(self.requests), 3, "換 model 照打")
         self._generate(force=False, real_log=True, date="2020-01-01")
         self.assertEqual(len(self.requests), 4, "別天照打")

@@ -148,17 +148,6 @@ def _positive_int(name: str, default: int, *, upper: int | None = None) -> int:
     return value
 
 
-def _budget_currency() -> str:
-    """`/healthz/llm` 只讀 `balance_infos` 裡這個幣別的那一筆；三個英文字母，其餘退回 CNY 並警告。"""
-    raw = (os.getenv("LLM_BUDGET_CURRENCY") or "").strip().upper()
-    if not raw:
-        return "CNY"
-    if len(raw) != 3 or not raw.isascii() or not raw.isalpha():
-        logging.getLogger(__name__).warning("LLM_BUDGET_CURRENCY=%r 不是三碼幣別，退回 CNY", raw)
-        return "CNY"
-    return raw
-
-
 # 維運代理（ops_agent/）每個環境固定的 socket 路徑。與 `ops_agent/protocol.py` 的 `CANONICAL_SOCKETS`
 # 逐字相同（tests/test_admin_ops_api.py 釘住）；這裡不 import ops_agent，是為了讓設定層不依賴代理套件。
 _OPS_SOCKETS = {
@@ -237,10 +226,7 @@ ASK_FAITHFULNESS_TIMEOUT_HTTP = 90.0
 
 
 def _ask_faithfulness_timeout() -> float:
-    """`ASK_FAITHFULNESS_TIMEOUT` 有設就用它；沒設時 90（DeepSeek judge）。空字串視同未設。
-
-    PR-M 前預設值依 judge 走哪條路而分（Claude CLI judge 240）；CLI 移除後 judge 只剩 DeepSeek。
-    """
+    """`ASK_FAITHFULNESS_TIMEOUT` 有設就用它；沒設時 90（依據見 `_load` 的註解）。空字串視同未設。"""
     raw = (os.getenv("ASK_FAITHFULNESS_TIMEOUT") or "").strip()
     if raw:
         return float(raw)
@@ -292,8 +278,8 @@ class Settings:
     ask_stale_age_days: int
     ask_max_stale_reports: int
     # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）。
-    # 預設關（PR-M）：網搜沒有後端（claude CLI 已移除、DeepSeek 網搜延後到 P9），開著只會讓時效題
-    # 退回婉拒、開了網搜的主答以設定錯誤失敗（啟動自檢記 ERROR）。P9 接上 Tavily 時改回開。
+    # 預設關：網搜沒有後端，開著只會讓時效題
+    # 退回婉拒、開了網搜的主答以設定錯誤失敗（啟動自檢記 ERROR）。接上後端時才改回開。
     ask_enable_web: bool
     # 開啟網搜那一輪的主 LLM 逾時。經 /api/ask（_with_heartbeat 驅動）時語意是「第一個輸出
     # （文字或網搜標記）」的期限、不是總時限（理由見 answer.py 的 ASK_WEB_TIMEOUT 註解）：
@@ -372,16 +358,11 @@ class Settings:
     llm_provider: str = DEFAULT_PROVIDER
     ask_answer_model: str = default_model(TASK_ASK_ANSWER)   # 總覽、主答（不開網搜）、評測生成
     ask_web_model: str = default_model(TASK_ASK_WEB)         # 時效題網搜、主答開網搜
-    # DeepSeek 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
+    # LLM 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
     # 只是最後一道上限：首字前有首字期限，吐字後正常靠 max_tokens 與 read 逾時收尾；伺服器
     # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
     # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。
     llm_http_total_timeout: float = 600.0
-    # DeepSeek 餘額告警（web/routers/health.py 的 /healthz/llm；只有 web 讀，設在 repo 根 .env）。
-    # 只看 `LLM_BUDGET_CURRENCY` 那一筆（D-O：帳戶以人民幣儲值）；低於門檻回 503 → 探針退出碼 7（用罄等停擺是 8）。
-    # 月上限 ¥350 是儲值紀律（docs/production_resilience.md），刻意不寫成程式旋鈕。
-    llm_budget_currency: str = "CNY"
-    llm_balance_floor: float = 70.0
     # 維運代理（web/ops_client.py → ops_agent/ 的 Unix socket）。環境空字串＝停用；socket 預設跟著環境。
     # 逾時涵蓋連線＋一來一回，要大於代理的 request_timeout（catalog 預設 15 秒），否則代理還在算就先斷線。
     ops_agent_environment: str = "production"
@@ -509,7 +490,7 @@ def _load() -> Settings:
         # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查預設表；
         # 空字串視同未設（tests/conftest.py 把全部旋鈕強制成 ""）。
         # 改寫前 ASK_CONDENSE_MODEL／QA_PLANNER_MODEL 未設時會跟著 ASK_INTENT_MODEL 走；
-        # 現在各自查表（三者同為 deepseek-flash，生產環境檔沒有設這三個鍵）。
+        # 現在各自查表（三者是同一顆模型）。
         # 理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
         ask_intent_model=resolve_model(TASK_ASK_INTENT),
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
@@ -536,8 +517,8 @@ def _load() -> Settings:
         qa_planner_model=resolve_model(TASK_QA_PLANNER),
         # 20 秒過緊：prod 實測 claude CLI 光冷啟動的 ttft 就約 10s（每次呼叫都重付
         # ~24K token 系統提示），規劃 prompt 比分類長，於是每一題都逾時 →
-        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。（CLI 時代的量測；改走
-        # DeepSeek 後未重量，調低前先量。）
+        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。（CLI 時代的量測；之後
+        # 換過模型都沒有重量，調低前先量。）
         qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "45")),
         qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
         qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
@@ -554,10 +535,10 @@ def _load() -> Settings:
         ask_faithfulness_sample_rate=float(
             os.getenv("ASK_FAITHFULNESS_SAMPLE_RATE", "1.0")
         ),
-        # 生產忠實度 judge。**刻意不再沿用 ASK_INTENT_MODEL**（DeepSeek 遷移 PR-07）：
+        # 生產忠實度 judge。**刻意不沿用 ASK_INTENT_MODEL**：
         # 先前未設時跟著 intent 走，而生產環境檔沒有覆寫——只要哪天把路由模型換掉，
         # judge 就在同一刻被靜默換掉，監控卡上的分數從此是另一把尺量的，卻沒有任何
-        # 記號。空字串視同未設。預設表裡這列自 PR-26/27 起是 deepseek-flash（新量尺系譜）。
+        # 記號。空字串視同未設。量尺系譜見 llm_models.judge_lineage。
         # 換 judge 時連帶看 app/services/judge_schema.py：
         # 讀分數的三處只計現行 judge，舊尺的列歸「其他 judge」。
         faithfulness_model=resolve_model(TASK_FAITHFULNESS),
@@ -568,20 +549,20 @@ def _load() -> Settings:
         # 問答抽查的逾時（每次 judge 呼叫＝一個階段的一次 `llm_http.complete_json`，涵蓋其內
         # 最多 2 個請求與退避的總期限），與 `faithfulness_timeout` 分開。
         # 預設 90（`_ask_faithfulness_timeout`）；顯式設了 ASK_FAITHFULNESS_TIMEOUT 就照設的值。
-        # DeepSeek 的 90 是 PR-26/27 重訂的（第二版計畫 §6.4：max(ceil(3×p99), 60)，沒有 judge 的 p99
-        # 就用探測資料保守估）：
-        #   - 9/24 探測 deepseek-flash、thinking 關：問答（輸入同為 ≤20k 字脈絡、輸出 ~1k token，
+        # 90 依 max(ceil(3×p99), 60) 訂，沒有 judge 的 p99 就用探測資料保守估。**以下是前一顆模型的量測，
+        # 換到 gpt-6-luna 後尚未重量**：
+        #   - 9/24 探測前一顆模型、推理關：問答（輸入同為 ≤20k 字脈絡、輸出 ~1k token，
         #     與 grounding 的 payload 同量級）p50 5.6／p95 7.0 秒；judge 非串流、輸出更短。
         #   - 沒有 p99：保守取 p99≈2×p95＝14 秒；一次呼叫最多 2 個請求（截斷重試的輸出上限加倍），
         #     單次上限≈2×14＝28 秒；×3＝84 → 取整 90，且 > FAITHFULNESS_TIMEOUT（60）。
-        # 上線後以日誌 `llm_call task=faithfulness` 的 `total_ms` 重量（每次 judge 呼叫一行，正是這個
+        # 重量時看日誌 `llm_call task=faithfulness` 的 `total_ms` 重量（每次 judge 呼叫一行，正是這個
         # 期限涵蓋的範圍；那一行的 total_ms 是最後一個請求的耗時，`attempts=1` 時即整次呼叫，
         # `attempts=2` 的行要另外看），照同一條公式重訂。**不要拿 `evaluation.elapsed_ms`**：它是
         # 整次抽查（拆解＋grounding 兩次 judge 呼叫、加上兩者之間的處理），約是單次的兩倍，會把期限估大。
         # 抽查是背景任務、不佔 `/api/ask` 名額，逾時只會記 degraded(timeout)，不是低分。
         ask_faithfulness_timeout=_ask_faithfulness_timeout(),
         # 抽查改成背景任務後就不再受 `/api/ask` 的併發閘保護：每次抽查要跑兩個 judge 階段
-        # （CLI 時代每次 spawn 一個 `claude` 跑 48–142 秒；DeepSeek 下最多 6 個請求），抽樣率預設
+        # （最多 6 個 LLM 請求），抽樣率預設
         # 1.0，連續問答時背景任務數會無上界地累積。這裡給它自己的上限——超過就**跳過該次抽查**而不是排隊：抽查本來就是
         # 抽樣的 best-effort，少查一題與抽樣率沒抽中是同一件事，排隊反而會讓抽查對象
         # 與抽查時間脫節。
@@ -632,7 +613,7 @@ def _load() -> Settings:
         db_statement_timeout_ms=int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "60000")),
         # **預設 0（關）是刻意的，不是漏設。** 批次匯入會在交易開著的情況下做長時間
         # 的非 DB 工作：scripts/sync_new_reports.py 先 report_exists() 開了交易，接著
-        # 才做 LLM 標註（預設 DeepSeek HTTP）與 BGE-M3 嵌入（大檔可達數分鐘），
+        # 才做 LLM 標註（HTTP）與 BGE-M3 嵌入（大檔可達數分鐘），
         # 中間完全沒有 commit。設了這個值＝生產每 3 小時一次的同步會把報告靜默丟進
         # FAIL_LOG。web 行程沒有這個形態（2026-07-29 的 AST 複驗：44 個
         # `async with SessionFactory()` 區塊沒有一個含 yield 或 LLM 串流），所以要開就
@@ -650,8 +631,6 @@ def _load() -> Settings:
         ask_answer_model=resolve_model(TASK_ASK_ANSWER),
         ask_web_model=resolve_model(TASK_ASK_WEB),
         llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
-        llm_budget_currency=_budget_currency(),
-        llm_balance_floor=_positive_float("LLM_BALANCE_FLOOR", 70.0),
         ops_agent_environment=(ops_env := _ops_agent_environment()),
         ops_agent_socket=_ops_agent_socket(ops_env),
         ops_agent_timeout=_positive_float("OPS_AGENT_TIMEOUT", 20.0),

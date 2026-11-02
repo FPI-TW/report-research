@@ -88,16 +88,16 @@ class UsageEventsDbTests(unittest.TestCase):
             acc.record_hit("reading", subject, alive, day=DAY)
             acc.record_hit("reading", subject, other, day=DAY)
             acc.record_hit("reading", subject, gone, day=DAY)
-            acc.record_llm({"task": task, "model": "deepseek-flash", "kind": None, "total_ms": 100,
+            acc.record_llm({"task": task, "model": "gpt-6-luna", "kind": None, "total_ms": 100,
                             "tokens": {"hit": 1, "miss": 2, "completion": 3, "reasoning": 0}}, alive, day=DAY)
-            acc.record_llm({"task": task, "model": "deepseek-flash", "kind": "timeout", "total_ms": 50,
+            acc.record_llm({"task": task, "model": "gpt-6-luna", "kind": "timeout", "total_ms": 50,
                             "tokens": None}, None, day=DAY)
-            acc.record_llm({"task": task, "model": "deepseek-flash", "kind": None, "total_ms": 10,
+            acc.record_llm({"task": task, "model": "gpt-6-luna", "kind": None, "total_ms": 10,
                             "tokens": None}, gone, day=DAY)
             self.assertTrue(await usage_events.flush(acc, session_factory=factory))
             # 第二輪：同一格再一次（同一人）＋ NULL 使用者再一次
             acc.record_hit("reading", subject, alive, day=DAY)
-            acc.record_llm({"task": task, "model": "deepseek-flash", "kind": None, "total_ms": 7,
+            acc.record_llm({"task": task, "model": "gpt-6-luna", "kind": None, "total_ms": 7,
                             "tokens": None}, None, day=DAY)
             self.assertTrue(await usage_events.flush(acc, session_factory=factory))
 

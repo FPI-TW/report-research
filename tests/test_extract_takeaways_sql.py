@@ -459,10 +459,11 @@ class RowToParamsTests(unittest.TestCase):
 # 任一方式錨上都算成功，分母是有 quote 的條目數）決定——9/24 探測同批研報：deepseek-flash
 # 190/200 條＝95.0%、Claude 既有摘錄 180/198 條＝90.9%（分母是各自有 quote 的條目數，不是篇數；
 # exact 只當觀測值：86.0% vs 39.9%）。
-# 這張表只收**量過錨定率**的模型。要換成其他模型（包括 haiku 這類更小的模型、或 v4-pro），先依
+# 這張表只收**量過錨定率**的模型。要換成其他模型（包括 haiku 這類更小的模型），先依
 # D-A 在探測集上量錨定成功率、差值 ≥ −5pp（D-N），再把結果寫進這張表——不要只為了讓測試綠而加。
 ANCHOR_APPROVED_TAKEAWAY_MODELS = {
-    "deepseek-flash": "9/24 探測：任一方式錨定 95.0%（190/200）",
+    "gpt-6-luna": "2026-11-02 探測（60 篇、內文上限 24000 字）：任一方式錨定 95.8%（276/288）",
+    "deepseek-flash": "9/24 探測：任一方式錨定 95.0%（190/200）；歷史模型",
     "claude-sonnet-5": "9/24 探測：同批研報既有摘錄任一方式錨定 90.9%（180/198）；遷移前的基準",
 }
 
@@ -478,12 +479,19 @@ class CliArgsTests(unittest.TestCase):
         self.assertIn(et.TAKEAWAY_MODEL_DEFAULT, ANCHOR_APPROVED_TAKEAWAY_MODELS)
         self.assertIn(lm.default_model(lm.TASK_TAKEAWAY), ANCHOR_APPROVED_TAKEAWAY_MODELS)
 
-    def test_production_default_takeaway_model_is_flash(self):
-        """生產預設（LLM_PROVIDER 未設＝deepseek）下的摘錄模型：D6 依探測與 D-A 定為 flash。"""
+    def test_anchor_rate_of_the_default_model_is_measured(self):
+        """上面那條只查「在表裡」；這條要求現行模型寫得出實測的成功率與分子分母。"""
+        from app.services import llm_models as lm
+
+        note = ANCHOR_APPROVED_TAKEAWAY_MODELS[lm.default_model(lm.TASK_TAKEAWAY)]
+        self.assertRegex(note, r"\d+(?:\.\d+)?%（\d+/\d+）", "要寫成功率與分子分母")
+
+    def test_production_default_takeaway_model(self):
+        """預設（任務旋鈕未設）下的摘錄模型。"""
         from app.services import llm_models as lm
 
         env = {k: "" for k in lm.TASK_ENV.values()}
-        self.assertEqual(lm.resolve_model(lm.TASK_TAKEAWAY, env=env), "deepseek-flash")
+        self.assertEqual(lm.resolve_model(lm.TASK_TAKEAWAY, env=env), "gpt-6-luna")
 
 
 class PromptTests(unittest.TestCase):
@@ -517,8 +525,8 @@ class CliFailureTests(unittest.TestCase):
     def test_call_cli_delegates_to_the_shared_layer(self):
         res = cc.CliResult(None, "API[timeout] x")
         with mock.patch.object(et, "run_claude", return_value=res) as run:
-            self.assertIs(et.call_cli("prompt", "deepseek-flash", file_hash="h1", report_id="r1"), res)
-        self.assertEqual(run.call_args.args[:2], ("prompt", "deepseek-flash"))
+            self.assertIs(et.call_cli("prompt", "gpt-6-luna", file_hash="h1", report_id="r1"), res)
+        self.assertEqual(run.call_args.args[:2], ("prompt", "gpt-6-luna"))
 
     def test_non_whitelisted_model_raises_batch_abort(self):
         with mock.patch("subprocess.run", side_effect=AssertionError("不得 spawn")):
@@ -561,9 +569,9 @@ class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
 
     def test_build_rows_records_model_and_keeps_quote(self):
         rows = et.build_rows("r1", CANONICAL, SHA, _parsed({"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM}),
-                             model="deepseek-flash")
+                             model="gpt-6-luna")
         self.assertEqual(rows[0].raw_payload, {"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM,
-                                               "model": "deepseek-flash"})
+                                               "model": "gpt-6-luna"})
 
     def test_build_rows_without_model_has_no_key(self):
         rows = et.build_rows("r1", CANONICAL, SHA, _parsed({"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM}))
@@ -582,16 +590,16 @@ class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(et, "call_cli", side_effect=lambda *a, **k: next(it)), \
              mock.patch.object(et, "build_rows", side_effect=fake_build_rows):
             item = et.WorkItem("rep-1", "f.pdf", None, "券商甲", CANONICAL, SHA)
-            await et.extract_one(asyncio.Semaphore(1), item, 24000, "deepseek-flash", 1)
+            await et.extract_one(asyncio.Semaphore(1), item, 24000, "gpt-6-luna", 1)
         return captured.get("model")
 
     async def test_response_model_wins(self):
-        ok = et.CliResult('{"takeaways": []}', None, "deepseek-flash-0925")
-        self.assertEqual(await self._run([ok]), "deepseek-flash-0925")
+        ok = et.CliResult('{"takeaways": []}', None, "gpt-6-luna-0925")
+        self.assertEqual(await self._run([ok]), "gpt-6-luna-0925")
 
     async def test_falls_back_to_requested_model(self):
         ok = et.CliResult('{"takeaways": []}', None)  # 回應沒有 model 欄
-        self.assertEqual(await self._run([ok]), "deepseek-flash")
+        self.assertEqual(await self._run([ok]), "gpt-6-luna")
 
     async def test_no_response_no_model(self):
         err = et.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))

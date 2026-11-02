@@ -231,10 +231,10 @@ class AskTimeoutKnobTests(unittest.TestCase):
         self.assertGreater(A.ASK_FAITHFULNESS_TIMEOUT, A.FAITHFULNESS_TIMEOUT)
 
     def test_ask_knob_covers_the_measured_range(self):
-        """下限依 DeepSeek 的實測重寫（PR-26/27；CLI 時代的依據是 ground 單次 48–142 秒、下限 150）。
+        """下限依實測重寫（CLI 時代的依據是 ground 單次 48–142 秒、下限 150）。
 
         第二版計畫 §6.4 的規則 `max(ceil(3×p99), 60)`；judge 還沒有自己的 p99，用 9/24 探測的問答
-        （deepseek-flash、thinking 關，脈絡 ≤20k 字，與 grounding payload 同量級）p95＝7.0 秒保守估：
+        （當時的 judge deepseek-flash、推理關，脈絡 ≤20k 字，與 grounding payload 同量級）p95＝7.0 秒保守估：
         p99≈2×p95，一次 judge 呼叫最多 `llm_http.JSON_MAX_ATTEMPTS` 個請求，都算在同一個總期限內。
         上線後以 evaluation.elapsed_ms 的真 p99 重量、照同一條公式改這裡。"""
         import math
@@ -246,20 +246,20 @@ class AskTimeoutKnobTests(unittest.TestCase):
         required = max(math.ceil(3 * llm_http.JSON_MAX_ATTEMPTS * p99_est), 60)
         self.assertGreaterEqual(A.ASK_FAITHFULNESS_TIMEOUT, required)
 
-    def test_ask_knob_default_is_the_deepseek_value(self):
-        """DeepSeek judge 預設 90：夠寬（上一條），也不再是 CLI 時代的 240——後者讓一次卡住的抽查佔住
+    def test_ask_knob_default_is_the_http_judge_value(self):
+        """HTTP judge 預設 90：夠寬（上一條），也不再是 CLI 時代的 240——後者讓一次卡住的抽查佔住
         inflight 名額 4 分鐘，而 inflight 上限只有 2。"""
         from app.config import _load
 
-        with patch.dict(os.environ, {"ASK_FAITHFULNESS_TIMEOUT": "", "LLM_PROVIDER": "deepseek"}):
+        with patch.dict(os.environ, {"ASK_FAITHFULNESS_TIMEOUT": "", "LLM_PROVIDER": "openai"}):
             os.environ.pop("ASK_FAITHFULNESS_TIMEOUT")
             os.environ.pop("FAITHFULNESS_MODEL", None)
             s = _load()
-            self.assertEqual(s.faithfulness_model, "deepseek-flash")
+            self.assertEqual(s.faithfulness_model, "gpt-6-luna")
             self.assertEqual(s.ask_faithfulness_timeout, 90.0)
 
     def test_ask_knob_default_is_90_and_explicit_value_wins(self):
-        """預設 90（PR-M 起 judge 只剩 DeepSeek；CLI 時代依 judge 分 90／240 的規則隨 CLI 移除，judge 設成
+        """預設 90（judge 只走 HTTP；CLI 時代依 judge 分 90／240 的規則隨 CLI 移除，judge 設成
         claude-* 也不會再拿到 240）；空字串視同未設；顯式設值一律優先。"""
         from app.config import _load
 

@@ -114,13 +114,14 @@ test('網搜暫停中：沒有工具鈕、殘留的開啟偏好不讓文案提�
   setWebSearch(false)
 })
 
-// AI 生成揭露（DeepSeek 遷移 PR-U）：條款要求標示 AI 生成。空狀態的中央輸入框是第一題送出前
+// AI 生成揭露：要標示 AI 生成（供應商寫在使用說明）。空狀態的中央輸入框是第一題送出前
 // 唯一看得到的那個，所以兩個變體都要有。
-test.each(['center', 'bottom'] as const)('%s 變體揭露回答由 AI（DeepSeek）生成、可能有誤', (variant) => {
+test.each(['center', 'bottom'] as const)('%s 變體揭露回答由 AI 生成、可能有誤，不寫供應商', (variant) => {
   setWebSearch(false)
   render(<Composer value="" onChange={() => {}} onSubmit={() => {}} variant={variant} />)
   expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
-  expect(AI_NOTE).toMatch(/AI（DeepSeek）/)
+  expect(AI_NOTE).toMatch(/回答由 AI 依/)
+  expect(AI_NOTE).not.toMatch(/DeepSeek|OpenAI|GPT/)
   expect(AI_NOTE).toMatch(/可能有誤/)
   expect(AI_NOTE).toMatch(/原始研報/)
 })

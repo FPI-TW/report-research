@@ -1,7 +1,7 @@
 """為缺摘要的研報產生 2-3 句中文摘要 → research_report.summary
 
 - 來源：DB 既有 full_text（語料已導入，無須重跑 ingest）
-- 每篇呼叫 LLM（DeepSeek，`scripts/_claude_cli.run_claude`）產出 JSON {"summary": "..."}，parse_summary() 解析
+- 每篇呼叫 LLM（`scripts/_claude_cli.run_claude`）產出 JSON {"summary": "..."}，parse_summary() 解析
 - 冪等可續傳：只挑 summary IS NULL 者；重跑天然跳過已補的
 - 並發用 asyncio.Semaphore 控制同時的 LLM 呼叫數；失敗重試，壞檔記 data/summary_failures.log
 - 回應解析不出摘要的研報記入 research.llm_task_failure，連續 3 輪後不再重打
@@ -9,8 +9,7 @@
 
 用法：uv run python scripts/generate_summaries.py [--workers 2] [--limit N] [--excerpt 12000]
 
-注意：workers 預設壓到 2。CLI 時代是因為每篇冷啟動一個 claude 子行程、頂滿磁碟小檔 I/O；
-PR-M 後不再 spawn 子行程，低併發留著控制 DeepSeek 的請求速率與 DB 連線數。
+注意：workers 預設壓到 2：低併發用來控制 LLM 的請求速率與 DB 連線數。
 """
 
 from __future__ import annotations
@@ -83,9 +82,9 @@ def parse_summary(raw: str, *, allow_plain_text: bool = True) -> Optional[str]:
     優先解析 {"summary": "..."} JSON（容忍 ``` 圍欄與前後雜訊）；
     若回應根本沒有大括號則退而把整段文字當摘要。JSON 在但解析失敗 → None。
 
-    `allow_plain_text=False`（DeepSeek 路徑，審查 D11）：沒有大括號也算解析失敗。純文字 fallback
-    是給 CLI 時代偶爾不守格式的 Claude 用的；DeepSeek 不守 JSON 格式時多半是在閒聊或拒答
-    （「抱歉，我無法……」），把那段話當摘要寫進 DB 比沒有摘要更糟。PR-M 移除 CLI 後批次一律傳 False；
+    `allow_plain_text=False`（審查 D11）：沒有大括號也算解析失敗。純文字 fallback
+    是給 CLI 時代偶爾不守格式的 Claude 用的；模型不守 JSON 格式時多半是在閒聊或拒答
+    （「抱歉，我無法……」），把那段話當摘要寫進 DB 比沒有摘要更糟。批次一律傳 False；
     預設值 True 留給直接呼叫解析器的工具與測試。
     """
     if not raw:
@@ -120,7 +119,7 @@ def parse_summary(raw: str, *, allow_plain_text: bool = True) -> Optional[str]:
 def call_cli(
     prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
 ) -> CliResult:
-    """呼叫 LLM（`run_claude`，DeepSeek）。回 (text, None) 或 (None, 失敗原因)。名稱是 CLI 時代的歷史值。
+    """呼叫 LLM（`run_claude`）。回 (text, None) 或 (None, 失敗原因)。名稱是 CLI 時代的歷史值。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None`——那個
     tuple 的第二項讓第一項完全沒有意義（Exception 已涵蓋 TimeoutExpired），

@@ -4,7 +4,7 @@
 1. 依券商覆蓋度選「高覆蓋標的」子集（每個 (market, code) 的券商數/報告數達門檻，取 top-N）。
 2. 撈涵蓋子集標的的研報；每份 requested_codes = report.stock_targets ∩ 該 market 子集。
 3. checkpoint-resume：某報告的所有 requested 標的皆已有 valid/partial 列且版本相符 → 跳過。
-4. 逐報告呼叫 LLM（DeepSeek）依固定 schema 擷取；Python 正規化（signal_extract）。
+4. 逐報告呼叫 LLM 依固定 schema 擷取；Python 正規化（signal_extract）。
 5. ON CONFLICT upsert；單筆失敗只寫 data/signal_failures.log，不中斷、不影響檢索/問答。
 6. 有回應卻全數 rejected 的研報記入 research.llm_task_failure，同一 model 連續 3 輪後
    跳過，不再每輪重打（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
@@ -203,7 +203,7 @@ def call_cli(
     prompt: str, model: str, timeout: int = 180, *,
     file_hash: Optional[str] = None, report_id: Optional[str] = None,
 ) -> CliResult:
-    """呼叫 LLM（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 `scripts/_claude_cli.py`（全批次共用）。這裡原本是
     `except Exception: return None`，於是所有失敗都被寫成同一句「CLI 無回應或逾時」

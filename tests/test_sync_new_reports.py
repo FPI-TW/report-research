@@ -57,7 +57,7 @@ class SyncNewReportsTests(unittest.TestCase):
 
     def test_skip_after_tag(self):
         self.assertEqual(ic.skip_after_tag(None), "skip_untagged")
-        # DeepSeek 的內容審查 → skip_blocked、截斷 → skip_truncated（審查低1：重送結果不變）；
+        # 內容審查 → skip_blocked、截斷 → skip_truncated（審查低1：重送結果不變）；
         # 其他失敗（含 CLI、400、空回應）仍是 skip_untagged（補救指令會重送）
         self.assertEqual(ic.skip_after_tag(None, "API[content_filter] 觸發供應商內容審查：HTTP 400"), "skip_blocked")
         self.assertEqual(ic.skip_after_tag(None, "API[truncated] 輸出截斷：max_tokens=1024"), "skip_truncated")
@@ -233,7 +233,7 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
             with self.assertRaises(cc.CliNotFoundError):
                 ic._tag_via_cli("x.pdf", "內文")
 
-    def test_deepseek_account_error_aborts_instead_of_skip_untagged(self):
+    def test_account_error_aborts_instead_of_skip_untagged(self):
         """401／402／模型不存在往上拋（rc=2），不 spawn 任何子行程、
         也不讓每一篇變成 skip_untagged（其餘批次的同一條在 tests/test_batch_http_dispatch.py）。"""
         import httpx
@@ -243,10 +243,10 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
         lh._transport = httpx.MockTransport(lambda req: httpx.Response(402, json={"error": {"message": "x"}}))
         lh._reset_clients()
         self.addCleanup(lambda: (setattr(lh, "_transport", None), lh._reset_clients()))
-        env = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
+        env = {"OPENAI_API_KEY": "fixed-test-secret-openai0", "OPENAI_BASE_URL": "https://api.example.test"}
         with mock.patch.dict(os.environ, env), mock.patch("subprocess.run") as run:
             with self.assertRaises(cc.LlmEnvironmentError) as ctx:
-                ic._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
+                ic._tag_via_cli("x.pdf", "內文", model="gpt-6-luna", file_hash="h1")
         run.assert_not_called()
         self.assertTrue(str(ctx.exception).startswith("API[quota]"))
         self.assertIsInstance(ctx.exception, cc.CliNotFoundError)

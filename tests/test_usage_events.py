@@ -244,13 +244,13 @@ class LlmObserverTests(unittest.TestCase):
         self.acc = usage_events.reset()
 
     def _chat(self, kind=None, usage=None):
-        return llm_http.ChatOutcome(kind=kind, usage=usage, total_ms=1200, model_resp="deepseek-v4-flash")
+        return llm_http.ChatOutcome(kind=kind, usage=usage, total_ms=1200, model_resp="gpt-6-luna")
 
     def test_metadata_has_no_prompt_or_answer(self):
         seen = []
         llm_http.add_observer(seen.append)
         try:
-            llm_http._log_call("ask_answer", "deepseek-flash", self._chat(usage={
+            llm_http._log_call("ask_answer", "gpt-6-luna", self._chat(usage={
                 "prompt_cache_hit_tokens": 10, "prompt_cache_miss_tokens": 20, "completion_tokens": 30,
                 "completion_tokens_details": {"reasoning_tokens": 0}}))
         finally:
@@ -268,7 +268,7 @@ class LlmObserverTests(unittest.TestCase):
         try:
             with self.assertLogs("app.services.llm_http", "WARNING"):
                 llm_http._observer_warned = False
-                llm_http._log_call("ask_answer", "deepseek-flash", self._chat())
+                llm_http._log_call("ask_answer", "gpt-6-luna", self._chat())
         finally:
             llm_http.remove_observer(boom)
 
@@ -276,12 +276,12 @@ class LlmObserverTests(unittest.TestCase):
         token = request_context.set_user_id(U1)
         try:
             usage_events.observe_llm_call(llm_http.call_metadata(
-                "faithfulness", "deepseek-flash", self._chat(usage={"completion_tokens": 5})))
+                "faithfulness", "gpt-6-luna", self._chat(usage={"completion_tokens": 5})))
             usage_events.observe_llm_call({**llm_http.call_metadata(
-                "faithfulness", "deepseek-flash", self._chat(kind="timeout")), "prompt": SECRET})
+                "faithfulness", "gpt-6-luna", self._chat(kind="timeout")), "prompt": SECRET})
         finally:
             request_context.reset_user_id(token)
-        usage_events.observe_llm_call(llm_http.call_metadata("ask_answer", "deepseek-flash", self._chat()))
+        usage_events.observe_llm_call(llm_http.call_metadata("ask_answer", "gpt-6-luna", self._chat()))
         batch = self.acc.drain()
         rows = {(uid, task): cell for _d, uid, task, _m, cell in batch.llm}
         mine = rows[(U1, "faithfulness")]

@@ -29,7 +29,7 @@ systemd 的 `EnvironmentFile` 不做 shell 解析，而有的值含括號：不�
 - `OBJECT_STORAGE_MODE` 與 `R2_*`：與 repo 根 `.env` 的同名設定一致。
 - `SYNC_INBOX_PUSH=1`：每輪 rsync 完把新檔推到 R2 `inbox/` 給 EC2 拉；沒設的話 EC2 收不到新研報。搭配 `HOST_BEACON_NAME` 與 `report-mark-beacon.timer` 讓 EC2 監看這一段（`docs/production_resilience.md`「來源主機信標」）。
 
-LLM 批次走 DeepSeek HTTP，金鑰另放 `/etc/default/report-mark-llm`（0640 root:kashionz，只有 sync 與上傳 worker 的 unit 載入），安裝與輪替見 `docs/production_resilience.md`「DeepSeek 金鑰落點與輪替」。
+LLM 批次走 HTTP（這台是 `LLM_PROVIDER=opencode_go`），金鑰另放 `/etc/default/report-mark-llm`（0640 root:kashionz，只有 sync 與上傳 worker 的 unit 載入），安裝與輪替見 `docs/production_resilience.md`「LLM 供應商與金鑰」。
 
 ## 實測 drvfs 掛載（關鍵：確認免密碼讀得到）
 
@@ -73,5 +73,5 @@ make stats            # 確認 reports 篇數有隨新檔增加
 - 線上變慢：匯入與各 LLM 段跑在 `nice -n 19` ＋ `ionice -c3`，不該搶線上服務。觸發時刻不要隨手改：EC2 的 sync 刻意比這台晚 20 分鐘（`deploy/aws/report-mark-sync.timer.d/offset.conf`），這台改了那邊要跟著改。
 - 掛載失敗：service 記 log 並以 rc=1 結束、不跑 rsync、不動 DB；下次 timer 自動再試。先看 NAS 是否在線、Windows 的快取憑證，再跑 `sudo -n /usr/local/sbin/mount-nas-research`。EC2 那端會以來源主機信標的 `source_failed` 告警。
 - 單檔失敗：見 `data/sync_failures.log`；修因後用 `scripts/failures_to_delta.py` 轉 delta 重放，不要 `--all-local`（只有匯入撞鎖或上一輪被砍且 delta 不可靠時才用；整批中止的重放見 `docs/production_resilience.md`「整批中止後的重放」）。
-- LLM 段整批 rc=2：多半是 DeepSeek 金鑰或餘額（401／402），處置見 `docs/production_resilience.md`「DeepSeek 批次的失敗處置」；402 是儲值，沒有備援後端。
+- LLM 段整批 rc=2：多半是金鑰或額度（`API[auth]`／`API[quota]`），處置見 `docs/production_resilience.md`「LLM 批次的失敗處置」與「LLM 帳號告警與處置」；沒有備援後端。
 - service 啟不來：先看 `/etc/default/report-mark-sync` 的 `REPORT_MARK_ROOT` 與 `SYNC_PATH_EXTRA` 是否指到實機正確路徑。

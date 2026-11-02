@@ -64,7 +64,7 @@ export const evalSourceSchema = z.object({
   below_min: z.number(),
   avg_score: z.number().nullable(),
   latest: z.string().nullable(),
-  // 量尺（DeepSeek 遷移 PR-07）：total／checked／latest 計所有 judge（覆蓋率語意，換 judge
+  // 量尺：total／checked／latest 計所有 judge（覆蓋率語意，換 judge
   // 不會驟降）；degraded／below_min／avg_score 與 judge_checked、avg_n（平均的樣本數，不含
   // degraded）只計 judge_model 量的列；其他 judge 的筆數在 other_judge_checked。
   // 舊後端沒有這些鍵，所以 optional。

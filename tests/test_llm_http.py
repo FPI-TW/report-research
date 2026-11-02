@@ -1,13 +1,14 @@
-"""app/services/llm_http.py：DeepSeek HTTP 客戶端。
+"""app/services/llm_http.py：Chat Completions 的 HTTP 客戶端。
 
 全程不連網：一律以 `httpx.MockTransport` 注入（`llm_http._transport`）。金鑰只用 gitleaks
 allowlist 內的假值（`fixed-test-secret-…`），而且以 `mock.patch.dict` 限定在單一測試內——
-conftest 在最上方把 `DEEPSEEK_API_KEY` 強制成空字串，這裡的每一條都要自己給。
+conftest 在最上方把 `OPENAI_API_KEY` 強制成空字串，這裡的每一條都要自己給。
 """
 from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -23,9 +24,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm_http as lh  # noqa: E402
+from app.services import llm_models as lm  # noqa: E402
 
-FAKE_KEY = "fixed-test-secret-deepseek0"
-ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
+FAKE_KEY = "fixed-test-secret-openai0"
+ENV = {"OPENAI_API_KEY": FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
 
 
 def _sse(*events, done: bool = True) -> bytes:
@@ -38,7 +40,7 @@ def _sse(*events, done: bool = True) -> bytes:
     return ("\n".join(out) + "\n").encode("utf-8")
 
 
-def _chunk(content=None, reasoning=None, finish=None, usage=None, model="deepseek-v4.1-flash"):
+def _chunk(content=None, reasoning=None, finish=None, usage=None, model="gpt-6-luna"):
     delta = {}
     if content is not None:
         delta["content"] = content
@@ -79,46 +81,55 @@ class _TransportMixin:
 # ── 純函式 ───────────────────────────────────────────────────────────────────
 class WhitelistTests(unittest.TestCase):
     def test_only_explicit_names_go_http(self):
-        for name in ("deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"):
-            self.assertTrue(lh.is_http_model(name), name)
-        # 打錯字、CLI 別名、Claude 名稱、空值都不得被送到付費端點
-        for name in ("deepseek-flsh", "sonnet", "haiku", "claude-sonnet-5", "", None, "deepseek-chat"):
+        self.assertTrue(lh.is_http_model("gpt-6-luna"))
+        # 打錯字、別名、舊模型名、空值都不得被送到付費端點
+        for name in ("gpt-6-lun", "sonnet", "haiku", "claude-sonnet-5", "", None, "deepseek-flash", "deepseek-chat"):
             self.assertFalse(lh.is_http_model(name), name)
 
 
 class BuildBodyTests(unittest.TestCase):
-    def test_thinking_off_with_both_switches(self):
-        """文件沒寫兩個開關衝突時誰優先，只送一個不保證關得掉。"""
-        body = lh.build_body("deepseek-flash", "q", max_tokens=512)
-        self.assertEqual(body["thinking"], {"type": "disabled"})
+    def test_reasoning_off_without_thinking(self):
+        """推理只靠 `reasoning_effort=none` 關掉；`thinking` 不是 OpenAI 參數，Go 對這顆模型回 400。"""
+        body = lh.build_body("gpt-6-luna", "q", max_tokens=512)
+        self.assertNotIn("thinking", body)
         self.assertEqual(body["reasoning_effort"], "none")
 
     def test_max_tokens_and_usage_option(self):
-        body = lh.build_body("deepseek-flash", "q", max_tokens=16384)
-        self.assertEqual(body["max_tokens"], 16384)
+        body = lh.build_body("gpt-6-luna", "q", max_tokens=16384)
+        self.assertEqual(body["max_completion_tokens"], 16384)
+        self.assertNotIn("max_tokens", body)  # 官方已標為 deprecated
         self.assertTrue(body["stream"])
         self.assertEqual(body["stream_options"], {"include_usage": True})
 
     def test_non_stream_has_no_stream_options(self):
         """官方：stream_options 沒搭配 stream:true 會回 400。"""
-        body = lh.build_body("deepseek-flash", "q", max_tokens=16, stream=False)
+        body = lh.build_body("gpt-6-luna", "q", max_tokens=16, stream=False)
         self.assertNotIn("stream_options", body)
 
     def test_system_optional_and_sanitized(self):
-        body = lh.build_body("deepseek-flash", "a\x00b\ud800", max_tokens=16, system="s\x00ys")
+        body = lh.build_body("gpt-6-luna", "a\x00b\ud800", max_tokens=16, system="s\x00ys")
         self.assertEqual(body["messages"][0], {"role": "system", "content": "sys"})
         self.assertEqual(body["messages"][1]["content"], "ab\ufffd")
-        body = lh.build_body("deepseek-flash", "q", max_tokens=16)
+        body = lh.build_body("gpt-6-luna", "q", max_tokens=16)
         self.assertEqual([m["role"] for m in body["messages"]], ["user"])
 
     def test_sanitized_body_is_utf8_encodable(self):
-        body = lh.build_body("deepseek-flash", "x\udfff", max_tokens=16)
+        body = lh.build_body("gpt-6-luna", "x\udfff", max_tokens=16)
         json.dumps(body, ensure_ascii=False).encode("utf-8")
 
-    def test_user_id_shape(self):
-        body = lh.build_body("deepseek-flash", "q", max_tokens=16, user_id="web ask/主答")
-        self.assertRegex(body["user_id"], r"^[A-Za-z0-9_-]+$")
-        self.assertNotIn("user_id", lh.build_body("deepseek-flash", "q", max_tokens=16))
+    def test_no_provider_specific_fields_in_body(self):
+        """body 兩條路徑一字不差：差異（Go 的 session header）只在 header，不再有 `user_id`、`provider` 參數。"""
+        body = lh.build_body("gpt-6-luna", "q", max_tokens=16)
+        self.assertNotIn("user_id", body)
+        params = inspect.signature(lh.build_body).parameters
+        self.assertNotIn("user_id", params)
+        self.assertNotIn("provider", params)
+
+    def test_session_id_shape(self):
+        self.assertRegex(lh._session_id("web ask/主答"), r"^[A-Za-z0-9_-]+$")
+        self.assertEqual(len(lh._session_id("x" * 600)), 512)
+        self.assertIsNone(lh._session_id(""))
+        self.assertIsNone(lh._session_id(None))
 
 
 class ParseSseTests(unittest.TestCase):
@@ -136,12 +147,12 @@ class ParseSseTests(unittest.TestCase):
 
 class ConnectTimeoutKnobTests(unittest.TestCase):
     def test_invalid_values_fall_back_to_default(self):
-        """`DEEPSEEK_CONNECT_TIMEOUT` 非數字、nan／inf、≤0 退回 10 秒；合法值照用、仍受 cap 約束。"""
+        """`LLM_CONNECT_TIMEOUT` 非數字、nan／inf、≤0 退回 10 秒；合法值照用、仍受 cap 約束。"""
         for raw, want in (("", 10.0), ("3", 3.0), ("abc", 10.0), ("0", 10.0), ("-1", 10.0),
                           ("nan", 10.0), ("inf", 10.0), ("-inf", 10.0)):
-            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"DEEPSEEK_CONNECT_TIMEOUT": raw}):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_CONNECT_TIMEOUT": raw}):
                 self.assertEqual(lh._timeout(60.0).connect, want)
-        with mock.patch.dict(os.environ, {"DEEPSEEK_CONNECT_TIMEOUT": "nan"}):
+        with mock.patch.dict(os.environ, {"LLM_CONNECT_TIMEOUT": "nan"}):
             self.assertEqual(lh._timeout(60.0, cap=2.0).connect, 2.0)
 
 
@@ -151,7 +162,8 @@ class ClassifyStatusTests(unittest.TestCase):
             (401, {"error": {"message": "Authentication Fails"}}, lh.AUTH),
             (402, {"error": {"message": "Insufficient Balance"}}, lh.QUOTA),
             (404, "", lh.CONFIG),
-            (400, {"error": {"message": "Content Exists Risk", "type": "invalid_request_error"}}, lh.CONTENT_FILTER),
+            (400, {"error": {"message": "Rejected by our safety system", "type": "invalid_request_error"}},
+             lh.CONTENT_FILTER),
             (400, {"error": {"message": "Model Not Exist"}}, lh.CONFIG),
             (400, {"error": {"message": "Invalid request: messages[0]"}}, lh.BAD_REQUEST),
             (422, {"error": {"message": "Invalid Parameters"}}, lh.BAD_REQUEST),
@@ -164,6 +176,53 @@ class ClassifyStatusTests(unittest.TestCase):
             raw = json.dumps(payload) if isinstance(payload, dict) else payload
             with self.subTest(status=status, payload=payload):
                 self.assertEqual(lh.classify_status(status, raw)[0], kind)
+
+    def test_quota_codes_win_at_any_status(self):
+        """額度用完不看狀態碼看 `error.code`：OpenAI 的 429 同時代表限流與額度用完，後者重試不會好、要整批中止。"""
+        for prov in lm.PROVIDERS:
+            for code in ("insufficient_quota", "billing_hard_limit_reached"):
+                for status in (429, 400, 403, 500):
+                    with self.subTest(provider=prov, code=code, status=status):
+                        raw = json.dumps({"error": {"message": "You exceeded your current quota", "code": code}})
+                        self.assertEqual(lh.classify_status(status, raw, prov)[0], lh.QUOTA)
+
+    def test_plain_429_is_overloaded_on_both_providers(self):
+        """限流重試就好，不得升級成 QUOTA（會整批中止）；`_is_go_quota` 明確排除「rate limit」。"""
+        for prov in lm.PROVIDERS:
+            for raw in (
+                json.dumps({"error": {"message": "Rate limit reached for requests", "code": "rate_limit_exceeded"}}),
+                json.dumps({"error": {"message": "Rate limit reached"}}),
+                "",
+            ):
+                with self.subTest(provider=prov, raw=raw):
+                    self.assertEqual(lh.classify_status(429, raw, prov)[0], lh.OVERLOADED)
+
+    def test_go_quota_message_only_counts_on_go(self):
+        """Go 沒有 `error.code` 可看才比對訊息；同一句話在 OpenAI 路徑沒有 code，照限流處理。"""
+        raw = json.dumps({"error": {"message": "Monthly usage limit reached for this model"}})
+        self.assertEqual(lh.classify_status(429, raw, lm.PROVIDER_OPENCODE_GO)[0], lh.QUOTA)
+        self.assertEqual(lh.classify_status(429, raw, lm.PROVIDER_OPENAI)[0], lh.OVERLOADED)
+
+    def test_content_policy_codes_and_messages(self):
+        for code in ("content_policy_violation", "content_filter", "moderation_blocked", "invalid_prompt"):
+            with self.subTest(code=code):
+                raw = json.dumps({"error": {"message": "x", "code": code}})
+                self.assertEqual(lh.classify_status(400, raw)[0], lh.CONTENT_FILTER)
+        # 訊息比對接住沒帶 code 的回應（Go 轉送時可能丟掉）
+        for message in ("This request may violate our usage policies.", "Rejected by our safety system",
+                        "filtered due to the content management policy"):
+            with self.subTest(message=message):
+                raw = json.dumps({"error": {"message": message}})
+                self.assertEqual(lh.classify_status(400, raw)[0], lh.CONTENT_FILTER)
+
+    def test_model_not_found_code_is_config(self):
+        raw = json.dumps({"error": {"message": "x", "code": "model_not_found"}})
+        self.assertEqual(lh.classify_status(400, raw)[0], lh.CONFIG)
+
+    def test_deepseek_vocabulary_no_longer_means_anything(self):
+        """舊供應商的審查訊息不在詞彙內：照一般 400 處理。"""
+        raw = json.dumps({"error": {"message": "Content Exists Risk"}})
+        self.assertEqual(lh.classify_status(400, raw)[0], lh.BAD_REQUEST)
 
     def test_detail_redacts_echoed_key(self):
         # 執行期組字串：寫成字面值的話，gitleaks 內建的 generic-api-key 規則會抓這個測試檔
@@ -230,7 +289,7 @@ class AstreamChatTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
     def _stream(self, **kw):
         kw.setdefault("max_tokens", 256)
         kw.setdefault("first_token_timeout", 5.0)
-        return lh.astream_chat("deepseek-flash", "問題", **kw)
+        return lh.astream_chat("gpt-6-luna", "問題", **kw)
 
     async def test_happy_path_filters_reasoning_and_keepalive(self):
         payload = _sse(
@@ -240,7 +299,7 @@ class AstreamChatTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
             ": keep-alive",
             _chunk(content="目標價"),
             _chunk(content="", finish="stop"),
-            {"model": "deepseek-v4.1-flash", "choices": [], "usage": USAGE},
+            {"model": "gpt-6-luna", "choices": [], "usage": USAGE},
         )
         self.install(lambda req: httpx.Response(200, content=payload))
         texts, out = await _collect(self._stream(system="系統", task="t", user_id="web-ask"))
@@ -249,21 +308,21 @@ class AstreamChatTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out.streamed)
         self.assertEqual(out.usage, USAGE)
         self.assertEqual(out.reasoning_chars, len("思考中……"))
-        self.assertEqual(out.model_resp, "deepseek-v4.1-flash")
+        self.assertEqual(out.model_resp, "gpt-6-luna")
         self.assertIsNotNone(out.ttft_ms)
         # 請求形狀
         req = self.requests[0]
         self.assertEqual(str(req.url), "https://api.example.test/chat/completions")
         self.assertEqual(req.headers["authorization"], f"Bearer {FAKE_KEY}")
         body = self.body()
-        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertNotIn("thinking", body)
         self.assertEqual(body["reasoning_effort"], "none")
-        self.assertEqual(body["max_tokens"], 256)
+        self.assertEqual(body["max_completion_tokens"], 256)
         self.assertEqual(body["messages"][0]["content"], "系統")
 
     async def test_missing_key_sends_nothing(self):
         self.install(lambda req: httpx.Response(200, content=_sse()))
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             texts, out = await _collect(self._stream())
         self.assertEqual(texts, [])
         self.assertEqual(out.kind, lh.AUTH)
@@ -273,7 +332,7 @@ class AstreamChatTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         cases = [
             (402, {"error": {"message": "Insufficient Balance"}}, {}, lh.QUOTA, None),
             (429, {"error": {"message": "Rate Limit"}}, {"Retry-After": "5"}, lh.OVERLOADED, 5.0),
-            (400, {"error": {"message": "Content Exists Risk"}}, {}, lh.CONTENT_FILTER, None),
+            (400, {"error": {"message": "Rejected by our safety system"}}, {}, lh.CONTENT_FILTER, None),
             (401, {"error": {"message": "Authentication Fails"}}, {}, lh.AUTH, None),
         ]
         for status, payload, headers, kind, retry_after in cases:
@@ -317,7 +376,7 @@ class AstreamChatTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.kind, lh.NETWORK)
 
     async def test_in_stream_error_objects(self):
-        for message, kind in (("Content Exists Risk", lh.CONTENT_FILTER), ("server error", lh.OVERLOADED)):
+        for message, kind in (("Rejected by our safety system", lh.CONTENT_FILTER), ("server error", lh.OVERLOADED)):
             with self.subTest(message=message):
                 payload = _sse({"error": {"message": message}})
                 self.install(lambda req, p=payload: httpx.Response(200, content=p))
@@ -444,7 +503,7 @@ class EventLoopIsolationTests(_TransportMixin, unittest.TestCase):
         with mock.patch.dict(os.environ, ENV):
             for _ in range(2):
                 texts, out = asyncio.run(_collect(lh.astream_chat(
-                    "deepseek-flash", "q", max_tokens=16, first_token_timeout=5)))
+                    "gpt-6-luna", "q", max_tokens=16, first_token_timeout=5)))
                 self.assertEqual(texts, ["ok"])
                 self.assertIsNone(out.kind)
 
@@ -464,7 +523,7 @@ class CompleteChatTests(_TransportMixin, unittest.TestCase):
         kw.setdefault("max_tokens", 512)
         kw.setdefault("timeout", 30.0)
         kw.setdefault("sleep", self.sleeps.append)
-        return lh.complete_chat("deepseek-flash", "標註這篇", **kw)
+        return lh.complete_chat("gpt-6-luna", "標註這篇", **kw)
 
     def _seq(self, *responses):
         it = iter(responses)
@@ -488,11 +547,11 @@ class CompleteChatTests(_TransportMixin, unittest.TestCase):
         body = self.body()
         self.assertIs(body["stream"], True)
         self.assertEqual(body["stream_options"], {"include_usage": True})
-        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertNotIn("thinking", body)
         self.assertEqual(body["reasoning_effort"], "none")
-        self.assertEqual(body["max_tokens"], 16384)
+        self.assertEqual(body["max_completion_tokens"], 16384)
         self.assertEqual(body["messages"][0], {"role": "system", "content": "系統"})
-        self.assertEqual(body["user_id"], "batch-tag")
+        self.assertNotIn("user_id", body)
 
     def test_transient_retried_with_retry_after(self):
         ok = _sse(_chunk(content="好"), _chunk(content="", finish="stop"))
@@ -516,7 +575,8 @@ class CompleteChatTests(_TransportMixin, unittest.TestCase):
     def test_deterministic_failures_not_retried(self):
         """截斷、審查、空回應、400、402：重打只是再付一次錢，一律只打一次。"""
         cases = [
-            (lambda: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}), "API[content_filter]"),
+            (lambda: httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}),
+             "API[content_filter]"),
             (lambda: httpx.Response(200, content=_sse(_chunk(content="半"), _chunk(content="", finish="length"))),
              "API[truncated]"),
             (lambda: httpx.Response(200, content=_sse(_chunk(reasoning="r"), _chunk(content="", finish="stop"))),
@@ -541,7 +601,7 @@ class CompleteChatTests(_TransportMixin, unittest.TestCase):
 
     def test_missing_key_sends_nothing(self):
         self.install(lambda req: httpx.Response(200, content=_sse()))
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "  "}):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "  "}):
             res = self._call()
         self.assertTrue(res.error.startswith("API[auth]"))
         self.assertEqual(self.requests, [])
@@ -632,7 +692,7 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
     def _stream(self, **kw):
         kw.setdefault("max_tokens", 256)
         kw.setdefault("first_token_timeout", 5.0)
-        return lh.astream_chat("deepseek-flash", "問題", **kw)
+        return lh.astream_chat("gpt-6-luna", "問題", **kw)
 
     async def test_unicode_line_separator_inside_content(self):
         payload = _sse(_chunk(content="甲\u2028乙"), _chunk(content="", finish="stop"))
@@ -641,16 +701,21 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual("".join(texts), "甲\u2028乙")
         self.assertIsNone(out.kind)
 
-    async def test_bad_finish_reasons_after_text(self):
-        """已吐字後才出現的失敗結局，不得落到「成功」：半截回答會被當成完整答案。"""
-        for finish, kind in (("insufficient_system_resource", lh.OVERLOADED), ("aborted", lh.OTHER)):
-            with self.subTest(finish=finish):
-                payload = _sse(_chunk(content="一半"), _chunk(content="", finish=finish))
-                self.install(lambda req, p=payload: httpx.Response(200, content=p))
-                texts, out = await _collect(self._stream())
-                self.assertEqual(texts, ["一半"])
-                self.assertEqual(out.kind, kind)
-                self.assertTrue(out.streamed)
+    async def test_refusal_is_content_filter(self):
+        """模型拒答（delta.refusal）不是內容：歸內容審查，不重試。"""
+        for label, events in (
+            ("refusal_only", [{"model": "gpt-6-luna",
+                               "choices": [{"index": 0, "delta": {"refusal": "I can't"}, "finish_reason": None}]}]),
+            ("after_text", [_chunk(content="一半"),
+                            {"model": "gpt-6-luna",
+                             "choices": [{"index": 0, "delta": {"refusal": "I can't"}, "finish_reason": None}]}]),
+        ):
+            with self.subTest(label):
+                self.install(lambda req, e=events: httpx.Response(200, content=_sse(*e)))
+                _, out = await _collect(self._stream())
+                self.assertEqual(out.kind, lh.CONTENT_FILTER)
+                self.assertIn("refusal", out.detail)
+                self.assertEqual(len(self.requests), 1)
 
     async def test_error_object_after_text(self):
         payload = _sse(_chunk(content="一半"), {"error": {"message": "server error"}})
@@ -817,10 +882,10 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
     async def test_config_errors_become_outcomes(self):
         """設定錯誤一律回帳號層級的 outcome、不往外拋，也不送出請求。"""
         cases = [
-            ({"DEEPSEEK_API_KEY": "\u201c" + FAKE_KEY + "\u201d"}, lh.AUTH),
-            ({"DEEPSEEK_API_KEY": FAKE_KEY + "\u200b"}, lh.AUTH),
-            ({"DEEPSEEK_BASE_URL": "api.deepseek.com"}, lh.CONFIG),
-            ({"DEEPSEEK_BASE_URL": "https://api.deepseek.com:abc"}, lh.CONFIG),
+            ({"OPENAI_API_KEY": "\u201c" + FAKE_KEY + "\u201d"}, lh.AUTH),
+            ({"OPENAI_API_KEY": FAKE_KEY + "\u200b"}, lh.AUTH),
+            ({"OPENAI_BASE_URL": "api.openai.com"}, lh.CONFIG),
+            ({"OPENAI_BASE_URL": "https://api.openai.com:abc"}, lh.CONFIG),
         ]
         for env, kind in cases:
             with self.subTest(env=env):
@@ -836,7 +901,7 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         self.install(lambda req: httpx.Response(200, content=payload))
         with self.assertLogs("app.services.llm_http", "INFO") as logs:
             await _collect(lh.astream_chat(
-                "deepseek-flash", "機密提問內容", max_tokens=16, first_token_timeout=5, task="ask"))
+                "gpt-6-luna", "機密提問內容", max_tokens=16, first_token_timeout=5, task="ask"))
         text = "\n".join(logs.output)
         self.assertIn("llm_call task=ask", text)
         self.assertIn("kind=ok", text)
@@ -857,7 +922,7 @@ class StaleLoopTests(_TransportMixin, unittest.TestCase):
 
         async def one():
             kept.append(asyncio.get_running_loop())  # 模擬「還被引用」的舊 loop
-            await _collect(lh.astream_chat("deepseek-flash", "q", max_tokens=16, first_token_timeout=5))
+            await _collect(lh.astream_chat("gpt-6-luna", "q", max_tokens=16, first_token_timeout=5))
 
         with mock.patch.dict(os.environ, ENV):
             asyncio.run(one())
@@ -880,7 +945,7 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
         kw.setdefault("max_tokens", 512)
         kw.setdefault("timeout", 30.0)
         kw.setdefault("sleep", self.sleeps.append)
-        return lh.complete_chat("deepseek-flash", "標註這篇", **kw)
+        return lh.complete_chat("gpt-6-luna", "標註這篇", **kw)
 
     def test_connect_errors_are_retried_as_network(self):
         for exc in (httpx.ConnectError("refused"), httpx.ConnectTimeout("slow")):
@@ -932,14 +997,31 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
         self.assertEqual(res.text, "完整")
         self.assertEqual(res.attempts, 1)
 
-    def test_bad_finish_reasons_after_text(self):
-        for finish, prefix in (("insufficient_system_resource", "API[overloaded]"), ("aborted", "API[other]")):
-            with self.subTest(finish=finish):
-                payload = _sse(_chunk(content="半"), _chunk(content="", finish=finish))
-                self.install(lambda req, p=payload: httpx.Response(200, content=p))
+    def test_refusal_is_content_filter_and_not_retried(self):
+        payload = _sse({"model": "gpt-6-luna",
+                        "choices": [{"index": 0, "delta": {"refusal": "I can't"}, "finish_reason": None}]})
+        self.install(lambda req: httpx.Response(200, content=payload))
+        res = self._call()
+        self.assertIsNone(res.text)
+        self.assertTrue(res.error.startswith("API[content_filter]"), res.error)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_429_insufficient_quota_aborts_without_retry_but_rate_limit_retries(self):
+        """同樣是 429：額度用完只打 1 次（帳號型、整批中止），限流照舊退避重試。"""
+        for prov, env in (("openai", {}),
+                          ("opencode_go", {"LLM_PROVIDER": "opencode_go", "OPENCODE_GO_API_KEY": FAKE_KEY,
+                                           "OPENCODE_GO_BASE_URL": "https://go.example.test/v1"})):
+            with self.subTest(provider=prov), mock.patch.dict(os.environ, env):
+                self.install(lambda req: httpx.Response(429, json={"error": {
+                    "message": "You exceeded your current quota", "code": "insufficient_quota"}}))
                 res = self._call()
-                self.assertIsNone(res.text)
-                self.assertTrue(res.error.startswith(prefix), res.error)
+                self.assertEqual(res.kind, lh.QUOTA)
+                self.assertEqual(len(self.requests), 1)
+
+                self.install(lambda req: httpx.Response(429, json={"error": {"message": "Rate limit reached"}}))
+                res = self._call()
+                self.assertEqual(res.kind, lh.OVERLOADED)
+                self.assertEqual(len(self.requests), 3)
 
     def test_unicode_line_separator_inside_content(self):
         payload = _sse(_chunk(content='{"s": "甲\u2028乙"}'), _chunk(content="", finish="stop"))
@@ -956,8 +1038,8 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
                 self.assertIn(res.kind, lh.ACCOUNT_KINDS)
 
     def test_config_errors_become_results(self):
-        for env, prefix in (({"DEEPSEEK_API_KEY": FAKE_KEY + "\u200b"}, "API[auth]"),
-                            ({"DEEPSEEK_BASE_URL": "api.deepseek.com"}, "API[config]")):
+        for env, prefix in (({"OPENAI_API_KEY": FAKE_KEY + "\u200b"}, "API[auth]"),
+                            ({"OPENAI_BASE_URL": "api.openai.com"}, "API[config]")):
             with self.subTest(env=env):
                 self.install(lambda req: httpx.Response(200, content=_sse()))
                 with mock.patch.dict(os.environ, env):
@@ -1035,7 +1117,7 @@ class CompleteChatStreamedTests(_TransportMixin, unittest.TestCase):
         kw.setdefault("max_tokens", 512)
         kw.setdefault("timeout", 30.0)
         kw.setdefault("sleep", self.sleeps.append)
-        return lh.complete_chat("deepseek-flash", "標註這篇", **kw)
+        return lh.complete_chat("gpt-6-luna", "標註這篇", **kw)
 
     def test_failures_after_text_are_not_retried(self):
         """中3：每一種「吐了字才出事」都只打 1 次、照 kind 回傳，且 outcome.streamed 為真。"""
@@ -1043,8 +1125,6 @@ class CompleteChatStreamedTests(_TransportMixin, unittest.TestCase):
         cases = {
             "error_object": (lambda: httpx.Response(200, content=text + _sse({"error": {"message": "server error"}},
                                                                              done=False)), "API[overloaded]"),
-            "insufficient_resource": (lambda: httpx.Response(200, content=_sse(
-                _chunk(content="半"), _chunk(content="", finish="insufficient_system_resource"))), "API[overloaded]"),
             "read_error": (lambda: httpx.Response(200, stream=_SyncStream(text, httpx.ReadError("reset"))),
                            "API[network]"),
             "no_done": (lambda: httpx.Response(200, content=text), "API[network]"),
@@ -1065,8 +1145,6 @@ class CompleteChatStreamedTests(_TransportMixin, unittest.TestCase):
         cases = {
             "error_object": lambda: httpx.Response(200, content=_sse({"error": {"message": "server error"}},
                                                                      done=False)),
-            "insufficient_resource": lambda: httpx.Response(200, content=_sse(
-                _chunk(content="", finish="insufficient_system_resource"))),
             "read_error": lambda: httpx.Response(200, stream=_SyncStream(httpx.ReadError("reset"))),
         }
         for name, make in cases.items():
@@ -1172,8 +1250,9 @@ class ConftestGuardTests(unittest.TestCase):
     """
 
     def test_key_and_endpoint_are_neutralized(self):
-        self.assertEqual(os.environ.get("DEEPSEEK_API_KEY"), "")
-        self.assertEqual(os.environ.get("DEEPSEEK_BASE_URL"), "http://127.0.0.1:9")
+        for key, base in (("OPENAI_API_KEY", "OPENAI_BASE_URL"), ("OPENCODE_GO_API_KEY", "OPENCODE_GO_BASE_URL")):
+            self.assertEqual(os.environ.get(key), "")
+            self.assertEqual(os.environ.get(base), "http://127.0.0.1:9")
 
     def test_real_env_file_cannot_override(self):
         from web.env_loader import load_env_file
@@ -1183,13 +1262,13 @@ class ConftestGuardTests(unittest.TestCase):
             # 檔名刻意不叫 `.env`：tests/test_env_loading.py 的 AST 守門依檔名判定寫入目標
             probe = Path(d) / "probe.env"
             probe.write_text(
-                "DEEPSEEK_API_KEY=fixed-test-secret-leaked0\n"
-                "DEEPSEEK_BASE_URL=https://api.deepseek.com\n",
+                "OPENAI_API_KEY=fixed-test-secret-leaked0\n"
+                "OPENAI_BASE_URL=https://api.openai.com\n",
                 encoding="utf-8",
             )
             load_env_file(probe)
-            self.assertEqual(os.environ.get("DEEPSEEK_API_KEY"), "")
-            self.assertEqual(os.environ.get("DEEPSEEK_BASE_URL"), "http://127.0.0.1:9")
+            self.assertEqual(os.environ.get("OPENAI_API_KEY"), "")
+            self.assertEqual(os.environ.get("OPENAI_BASE_URL"), "http://127.0.0.1:9")
 
     def test_conftest_assigns_rather_than_setdefault(self):
         """靜態守門：CI 的 runner 環境裡本來就沒有金鑰，改回 setdefault 時上面兩條照樣綠。
@@ -1209,7 +1288,9 @@ class ConftestGuardTests(unittest.TestCase):
                         and isinstance(target.slice, ast.Constant)
                     ):
                         assigned.add(target.slice.value)
-        self.assertLessEqual({"DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"}, assigned)
+        self.assertLessEqual(
+            {"OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENCODE_GO_API_KEY", "OPENCODE_GO_BASE_URL"}, assigned,
+        )
 
 
 if __name__ == "__main__":

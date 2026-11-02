@@ -71,8 +71,8 @@ describe('導覽燈號', () => {
   it('依賴圖：外部依賴故障 → bad、降級 → warn；未監控（unknown）與內部服務不算', () => {
     expect(deriveSignals({ dependencies: graph(node('r2', 'external', 'down', '探針逾時'), node('nas', 'external', 'degraded')) }).dependencies)
       .toMatchObject({ lamp: 'bad', reason: '1 個外部依賴故障', detail: 'r2（探針逾時）' })
-    expect(deriveSignals({ dependencies: graph(node('deepseek', 'external', 'degraded')) }).dependencies)
-      .toMatchObject({ lamp: 'warn', detail: 'deepseek' })
+    expect(deriveSignals({ dependencies: graph(node('llm', 'external', 'degraded')) }).dependencies)
+      .toMatchObject({ lamp: 'warn', detail: 'llm' })
     expect(deriveSignals({ dependencies: graph(node('slack', 'external', 'unknown'), node('r2', 'external', 'ok')) }).dependencies).toBeUndefined()
     // 內部服務壞掉算在「服務」那一顆，依賴圖不重複亮
     expect(deriveSignals({ dependencies: graph(node('backup', 'systemd', 'down')) }).dependencies).toBeUndefined()

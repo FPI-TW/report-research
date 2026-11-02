@@ -588,7 +588,7 @@ class RepoCatalogWriteTests(unittest.TestCase):
         root = sync.flock_files[0].rsplit("/data/", 1)[0]
         self.assertEqual(upload.flock_files, (f"{root}/{rel}",))
         self.assertEqual(upload.group, "upload")
-        self.assertEqual(set(upload.depends_on), {"postgres", "clamav", "deepseek", "r2"})
+        self.assertEqual(set(upload.depends_on), {"postgres", "clamav", "llm", "r2"})
 
     def test_restart_delay_present(self):
         for path in (PROD_TOML, DEV_TOML):

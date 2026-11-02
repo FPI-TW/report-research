@@ -362,16 +362,16 @@ class RawPayloadModelTests(unittest.TestCase):
 
     def test_model_recorded_on_every_row(self):
         parsed = parse_signal(_raw(_full_signal("2330")), ["2330", "2317"])
-        rows = build_rows(_ctx(["2330", "2317"]), parsed, model="deepseek-flash")
-        self.assertEqual([r.raw_payload["model"] for r in rows], ["deepseek-flash", "deepseek-flash"])
+        rows = build_rows(_ctx(["2330", "2317"]), parsed, model="gpt-6-luna")
+        self.assertEqual([r.raw_payload["model"] for r in rows], ["gpt-6-luna", "gpt-6-luna"])
         self.assertEqual(rows[0].raw_payload["instrument_code"], "2330")  # 原始物件仍在
         self.assertNotIn("model", parsed.signals["2330"])  # 不改動 parse 結果
 
     def test_rejected_row_records_model(self):
         parsed = parse_signal("不是 JSON", ["2330"])
-        r = build_rows(_ctx(["2330"]), parsed, model="deepseek-flash")[0]
+        r = build_rows(_ctx(["2330"]), parsed, model="gpt-6-luna")[0]
         self.assertEqual(r.extraction_status, "rejected")
-        self.assertEqual(r.raw_payload["model"], "deepseek-flash")
+        self.assertEqual(r.raw_payload["model"], "gpt-6-luna")
         self.assertIn("raw_text", r.raw_payload)
 
     def test_no_model_no_key(self):

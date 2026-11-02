@@ -9,7 +9,7 @@
 - generated：內文根本沒有標題（掃描件、純表格日報）→ 依重點自擬一句話標題
 
 - 來源：DB 既有 full_text 的**開頭**（標題在首頁），故摘錄遠比 summaries 短
-- 每篇呼叫 LLM（DeepSeek，`scripts/_claude_cli.run_claude`）產出 JSON，parse_title() 解析
+- 每篇呼叫 LLM（`scripts/_claude_cli.run_claude`）產出 JSON，parse_title() 解析
 - 冪等可續傳：只挑 title IS NULL 者；重跑天然跳過已補的
 - 失敗（含內文抽字損毀而無法辨識）記 data/title_failures.log，title 維持 NULL
   → 前端回退檔名，不會顯示錯的標題
@@ -174,7 +174,7 @@ def parse_title(raw: str, file_name: str = "") -> Optional[TitleResult]:
 def call_cli(
     prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
 ) -> CliResult:
-    """呼叫 LLM（`run_claude`，DeepSeek）。回 (text, None) 或 (None, 失敗原因)。名稱是 CLI 時代的歷史值。
+    """呼叫 LLM（`run_claude`）。回 (text, None) 或 (None, 失敗原因)。名稱是 CLI 時代的歷史值。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None` —— 那個
     tuple 的第二項讓第一項完全沒有意義，所有失敗一律回 None，而 `title_failures.log`

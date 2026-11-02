@@ -2,7 +2,7 @@
 
 限管理員＋`ops.read`，唯讀。內容與「便宜、不含祕密」的兩條鐵律在 `app/services/diagnostics.py`；這裡只做
 授權、TTL 快取（30 秒，`web/ttl_cache.py`）與回應 model。每一段各自帶 `error`（只記例外型別），某段失敗
-整頁照樣 200。R2 與 DeepSeek 只被動讀 healthz 上一次的結論（`health.storage_snapshot`、
+整頁照樣 200。R2 與 LLM 只被動讀 healthz 上一次的結論（`health.storage_snapshot`、
 `llm_health.cached_snapshot`），診斷頁不會多打付費 API。
 
 服務函式經 `deps.diagnostics` 呼叫（測試的替換點）。輔助函式一律放在 `@router` 裝飾器之上。
@@ -110,8 +110,8 @@ class ConfigFlags(BaseModel):
 
 
 class SecretsPresent(BaseModel):
-    deepseek_api_key: bool
-    # 可缺：前後端版本錯開時舊 web 不回這個鍵（OpenCode Go 是 402 時的手動備援）
+    # 兩個都可缺：前後端版本錯開時舊 web 不回。只有目前 provider 的那一把必須有值（`LLM_PROVIDER`）。
+    openai_api_key: bool | None = None
     opencode_go_api_key: bool | None = None
     session_secret: bool
     edge_secret: bool

@@ -28,7 +28,7 @@ export function progressFixture(over: Partial<Progress> = {}): Progress {
       min_score: 0.9,
       qa: {
         total: 1380, checked: 412, degraded: 0, below_min: 3, avg_score: 0.947, latest: '2026-10-07 13:58',
-        judge_model: 'deepseek-flash', judge_since: '2026-09-26', other_judge_checked: 0, judge_checked: 324, avg_n: 318,
+        judge_model: 'gpt-6-luna', judge_since: '2026-09-26', other_judge_checked: 0, judge_checked: 324, avg_n: 318,
       },
     },
     sync: {

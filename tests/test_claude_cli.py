@@ -9,7 +9,7 @@
 「CLI 無回應或逾時」——2026-08-08 起連續四天 100% 失敗，事後完全無法診斷。
 （signal_failures.log 累積 9,273 筆全是那一句。）
 
-PR-M 移除 CLI backend 後，這個意圖改由 DeepSeek 路徑承接（`FailureReasonsTests`：每一種失敗的訊息
+PR-M 移除 CLI backend 後，這個意圖改由 HTTP 路徑承接（`FailureReasonsTests`：每一種失敗的訊息
 互不相同、單行、說得出 kind；帳號與設定層級的失敗整批中止）。CLI 專屬的測試（argv 旗標、errno 判定、
 stderr 尾巴、CLI 認證失效）隨 CLI 一起刪除。
 """
@@ -36,8 +36,8 @@ from app.services import llm_http as lh  # noqa: E402
 from scripts import _claude_cli as cc  # noqa: E402
 from scripts import _llm_env as le  # noqa: E402
 
-FAKE_KEY = "fixed-test-secret-deepseek0"
-ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
+FAKE_KEY = "fixed-test-secret-openai0"
+ENV = {"OPENAI_API_KEY": FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
 
 
 def _sse(*events, done: bool = True) -> bytes:
@@ -49,7 +49,7 @@ def _sse(*events, done: bool = True) -> bytes:
     return ("\n".join(out) + "\n").encode("utf-8")
 
 
-def _chunk(content=None, finish=None, usage=None, model="deepseek-flash"):
+def _chunk(content=None, finish=None, usage=None, model="gpt-6-luna"):
     delta = {} if content is None else {"content": content}
     return {"model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}], "usage": usage}
 
@@ -94,14 +94,14 @@ class _HttpCase(unittest.TestCase):
     def body(self, i: int = 0) -> dict:
         return json.loads(self.requests[i].content)
 
-    def call(self, prompt="標註這篇", model="deepseek-flash", **kw):
+    def call(self, prompt="標註這篇", model="gpt-6-luna", **kw):
         kw.setdefault("max_tokens", 1024)
         kw.setdefault("meta", {"task": "tag", "file_hash": "h1", "report_id": None})
         return cc.run_claude(prompt, model, **kw)
 
 
 class FailureReasonsTests(_HttpCase):
-    """「失敗原因說得出口」（本模組存在的理由）在 DeepSeek 路徑上的版本。
+    """「失敗原因說得出口」（本模組存在的理由）在 HTTP 路徑上的版本。
 
     - 單篇失敗：各 kind 的訊息**互不相同**、`API[<kind>]` 開頭、單行、不含 TAB（*_failures.log 一列一筆）。
     - 整批中止：帳號層級（401／402／404）與白名單外的 model 拋 `LlmEnvironmentError`（被各批次 main 的
@@ -109,7 +109,7 @@ class FailureReasonsTests(_HttpCase):
     """
 
     PER_FILE = {
-        "content_filter": lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}),
+        "content_filter": lambda req: httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}),
         "bad_request": lambda req: httpx.Response(400, json={"error": {"message": "bad input"}}),
         "truncated": lambda req: httpx.Response(
             200, content=_sse(_chunk(content="半"), _chunk(content="", finish="length"))),
@@ -133,7 +133,7 @@ class FailureReasonsTests(_HttpCase):
         self.assertEqual(len(set(errors.values())), len(self.PER_FILE), "失敗原因不得塌縮成同一句")
 
     def test_account_errors_say_what_to_fix(self):
-        hints = {401: "DEEPSEEK_API_KEY", 402: "儲值", 404: "模型名"}
+        hints = {401: "OPENAI_API_KEY", 402: "OpenAI 後台", 404: "模型名"}
         for code, hint in hints.items():
             with self.subTest(code=code):
                 self.install(lambda req, c=code: httpx.Response(c, json={"error": {"message": "x"}}))
@@ -168,28 +168,28 @@ class HttpDispatchTests(_HttpCase):
 
     def test_model_resp_is_response_model(self):
         """`model_resp` 取回應的 model 欄，不是請求的（摘錄與訊號記進 raw_payload.model，PR-15）。"""
-        body = _sse(_chunk(content="ok", model="deepseek-flash-0925"),
-                    _chunk(content="", finish="stop", model="deepseek-flash-0925"))
+        body = _sse(_chunk(content="ok", model="gpt-6-luna-0925"),
+                    _chunk(content="", finish="stop", model="gpt-6-luna-0925"))
         self.install(lambda req: httpx.Response(200, content=body))
         res = self.call()
-        self.assertEqual((res.text, res.model_resp), ("ok", "deepseek-flash-0925"))
+        self.assertEqual((res.text, res.model_resp), ("ok", "gpt-6-luna-0925"))
 
     def test_http_success_request_shape(self):
-        """批次只送一則 user、prompt 原樣不動、thinking 兩個開關都關、max_tokens 照呼叫點給。"""
+        """批次只送一則 user、prompt 原樣不動、推理關、max_completion_tokens 照呼叫點給。"""
         self.install(lambda req: httpx.Response(200, content=_ok('{"a": 1}')))
         prompt = "規則\n\n檔名：x.pdf\n內文"
         res = self.call(prompt, max_tokens=16384, meta={"task": "signal", "file_hash": "h1", "report_id": "r1"})
-        self.assertEqual(res, cc.CliResult('{"a": 1}', None, "deepseek-flash"))
+        self.assertEqual(res, cc.CliResult('{"a": 1}', None, "gpt-6-luna"))
         body = self.body()
         self.assertEqual(body["messages"], [{"role": "user", "content": prompt}])
-        self.assertEqual(body["max_tokens"], 16384)
-        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertEqual(body["max_completion_tokens"], 16384)
+        self.assertNotIn("thinking", body)
         self.assertEqual(body["reasoning_effort"], "none")
-        self.assertEqual(body["user_id"], "batch-signal")
-        self.assertEqual(body["model"], "deepseek-flash")
+        self.assertNotIn("user_id", body)
+        self.assertEqual(body["model"], "gpt-6-luna")
 
     def test_every_whitelisted_name_goes_http(self):
-        for model in ("deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"):
+        for model in sorted(cc.llm_http.HTTP_MODELS):
             with self.subTest(model=model):
                 self.install(lambda req: httpx.Response(200, content=_ok("ok")))
                 self.assertEqual(self.call(model=model).text, "ok")
@@ -202,7 +202,7 @@ class HttpDispatchTests(_HttpCase):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "usage.jsonl"
             with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(log)}):
-                for model in ("claude-haiku-4-5", "claude-sonnet-5", "sonnet", "deepseek-flsh", ""):
+                for model in ("claude-haiku-4-5", "claude-sonnet-5", "sonnet", "deepseek-flash", ""):
                     with self.subTest(model=model):
                         with self.assertRaises(cc.CliNotFoundError) as ctx:
                             cc.run_claude("p", model, max_tokens=1024, meta={"task": "tag", "file_hash": "h1"})
@@ -211,7 +211,7 @@ class HttpDispatchTests(_HttpCase):
                         msg = str(ctx.exception)
                         self.assertIn(repr(model), msg)
                         self.assertIn("白名單", msg)
-                        self.assertIn("deepseek-flash", msg)  # 說得出可以填什麼
+                        self.assertIn("gpt-6-luna", msg)  # 說得出可以填什麼
             self.assertFalse(log.exists(), "沒送出的呼叫不記用量")
         self.assertEqual(self.requests, [])
         self.assertEqual(sum(cc._BREAKER._recent), 0)
@@ -220,7 +220,7 @@ class HttpDispatchTests(_HttpCase):
     def test_http_without_max_tokens_is_a_programming_error(self):
         self.install(lambda req: httpx.Response(200, content=_ok("ok")))
         with self.assertRaises(ValueError):
-            cc.run_claude("p", "deepseek-flash", meta={"task": "tag"})
+            cc.run_claude("p", "gpt-6-luna", meta={"task": "tag"})
         self.assertEqual(self.requests, [])
 
     def test_timeout_is_passed_as_total_deadline(self):
@@ -251,15 +251,31 @@ class HttpDispatchTests(_HttpCase):
                     self.fail("帳號層級錯誤必須拋出")
                 self.assertEqual(len(self.requests), 1, "帳號錯誤不重試")
 
-    def test_quota_hint_never_suggests_claude(self):
+    def test_quota_hint_points_at_the_openai_console(self):
         self.install(lambda req: httpx.Response(402, json={"error": {"message": "Insufficient Balance"}}))
         with self.assertRaises(cc.LlmEnvironmentError) as ctx:
             self.call()
-        self.assertIn("儲值", str(ctx.exception))
+        self.assertIn("OpenAI 後台", str(ctx.exception))
+
+    def test_429_insufficient_quota_aborts_the_batch(self):
+        """OpenAI 的額度用完是 429：要整批中止，不能當限流重試、記成 N 筆單篇失敗。"""
+        self.install(lambda req: httpx.Response(429, json={"error": {
+            "message": "You exceeded your current quota", "code": "insufficient_quota"}}))
+        with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+            self.call()
+        self.assertTrue(str(ctx.exception).startswith("API[quota]"), str(ctx.exception))
+        self.assertEqual(len(self.requests), 1, "帳號錯誤不重試")
+
+    def test_plain_429_is_a_per_file_failure_after_retries(self):
+        self.install(lambda req: httpx.Response(429, json={"error": {"message": "Rate limit reached"}}))
+        res = self.call()
+        self.assertIsNone(res.text)
+        self.assertTrue(res.error.startswith("API[overloaded]"), res.error)
+        self.assertEqual(len(self.requests), 3)
 
     def test_per_file_failures_are_results_with_api_prefix(self):
         cases = [
-            (lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}),
+            (lambda req: httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}),
              "API[content_filter]"),
             (lambda req: httpx.Response(400, json={"error": {"message": "bad\tinput\nhere"}}), "API[bad_request]"),
             (lambda req: httpx.Response(200, content=_sse(_chunk(content="半"), _chunk(content="", finish="length"))),
@@ -280,7 +296,7 @@ class HttpDispatchTests(_HttpCase):
 class BatchCallSiteMaxTokensTests(unittest.TestCase):
     """批次各呼叫點送出的 `max_tokens`（第二版計畫 §8）與 `meta` 逐點釘住。
 
-    值只作用在 HTTP 路徑，CLI 時代完全看不出差別；漏帶則要等某個任務切到 DeepSeek 那天才以
+    值只作用在 HTTP 路徑，CLI 時代完全看不出差別；漏帶則要等某個任務切到 HTTP 那天才以
     `ValueError` 爆開。以該檔模組命名空間求值 `max_tokens` 的運算式，量的是真正會送出的數字。
     表格鍵是（檔案, meta 的 task 原始碼），多一個或少一個呼叫點都會紅。
     """
@@ -377,7 +393,7 @@ def _status(code, message="x", headers=None):
 
 
 def _content_filter(req):
-    return httpx.Response(400, json={"error": {"message": "Content Exists Risk"}})
+    return httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}})
 
 
 def _connect_error(req):
@@ -508,7 +524,7 @@ class BreakerTests(_HttpCase):
         with mock.patch.object(le, "_warn_if_not_deploy_root"), \
              mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()) as err:
             with self.assertRaises(SystemExit) as ctx:
-                le.require_llm_key({"summary": "deepseek-flash"})
+                le.require_llm_key({"summary": "gpt-6-luna"})
             self.assertEqual(ctx.exception.code, 2)
             self.assertIn("斷路器", err.getvalue())
             le.require_llm_key({"summary": None})  # 不拋
@@ -524,9 +540,9 @@ class BreakerTests(_HttpCase):
              mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
             with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "20260924_090000"}), \
                  self.assertRaises(SystemExit):
-                le.require_llm_key({"summary": "deepseek-flash"})
+                le.require_llm_key({"summary": "gpt-6-luna"})
             with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "20260924_120000"}):
-                le.require_llm_key({"tag": "deepseek-flash"})  # 下一輪：不拋
+                le.require_llm_key({"tag": "gpt-6-luna"})  # 下一輪：不拋
 
     def test_marker_without_round_outside_sync(self):
         with mock.patch.dict(os.environ, {}):
@@ -597,15 +613,15 @@ class DeadlineTests(_HttpCase):
             return lh.ChatResult(text="{}", error=None, kind=None)
 
         with mock.patch.object(cc.llm_http, "complete_chat", side_effect=fake), \
-             mock.patch.object(gs, "MODEL", "deepseek-flash"), mock.patch.object(gt, "MODEL", "deepseek-flash"), \
-             mock.patch.object(tac, "MODEL", "deepseek-flash"):
+             mock.patch.object(gs, "MODEL", "gpt-6-luna"), mock.patch.object(gt, "MODEL", "gpt-6-luna"), \
+             mock.patch.object(tac, "MODEL", "gpt-6-luna"):
             gs.call_cli("p")
             gt.call_cli("p")
-            et.call_cli("p", "deepseek-flash")
-            es.call_cli("p", "deepseek-flash")
+            et.call_cli("p", "gpt-6-luna")
+            es.call_cli("p", "gpt-6-luna")
             tac.call_cli("p")
-            ic._tag_via_cli("x.pdf", "t", model="deepseek-flash")
-            gb.call_cli("p", "deepseek-flash")
+            ic._tag_via_cli("x.pdf", "t", model="gpt-6-luna")
+            gb.call_cli("p", "gpt-6-luna")
         self.assertEqual(seen, {
             "summary": 180.0, "title": 180.0, "takeaway": 180.0, "signal": 180.0, "tag": 150.0, "brief": 300.0,
         })
@@ -725,7 +741,7 @@ class BadRequestEscalationTests(_HttpCase):
             self.assertTrue(res.error.startswith("API[bad_request]"))
 
     def test_other_kinds_do_not_escalate(self):
-        self.install(lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}))
+        self.install(lambda req: httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}))
         for h in ("h1", "h2", "h3"):
             self.assertTrue(self.call_for(h).error.startswith("API[content_filter]"))
 
@@ -749,7 +765,7 @@ class BadRequestEscalationTests(_HttpCase):
             async def commit(self):
                 pass
 
-        rec = lf.FailureRecorder("summary", "deepseek-flash", _Session)
+        rec = lf.FailureRecorder("summary", "gpt-6-luna", _Session)
         exc = cc.BadRequestEscalation("API[config] x", ("h1", "h2"))
 
         async def go():
@@ -879,17 +895,17 @@ class UsageLogTests(_HttpCase):
 
     def test_http_success_row(self):
         usage = {"prompt_tokens": 12, "completion_tokens": 3, "prompt_cache_hit_tokens": 2,
-                 "prompt_cache_miss_tokens": 10}  # thinking 關：沒有 completion_tokens_details（9/24 實測）
+                 "prompt_cache_miss_tokens": 10}  # 推理關：沒有 completion_tokens_details（9/24 實測）
         self.install(lambda req: httpx.Response(200, content=_sse(
-            _chunk(content="好", model="deepseek-v4.1-flash"),
-            _chunk(content="", finish="stop", usage=usage, model="deepseek-v4.1-flash"))))
+            _chunk(content="好", model="gpt-6-luna"),
+            _chunk(content="", finish="stop", usage=usage, model="gpt-6-luna"))))
         self.call("提示詞", meta=self.META)
         (row,) = self.rows()
         self.assertEqual(set(row), USAGE_FIELDS)
         self.assertEqual(row["backend"], "http")
-        self.assertEqual(row["provider"], "deepseek")
+        self.assertEqual(row["provider"], "openai")
         self.assertEqual((row["task"], row["file_hash"], row["report_id"]), ("summary", "h1", "r1"))
-        self.assertEqual((row["model_req"], row["model_resp"]), ("deepseek-flash", "deepseek-v4.1-flash"))
+        self.assertEqual((row["model_req"], row["model_resp"]), ("gpt-6-luna", "gpt-6-luna"))
         self.assertEqual(row["prompt_sha256"], __import__("hashlib").sha256("提示詞".encode()).hexdigest())
         self.assertEqual(row["tokens"], {"hit": 2, "miss": 10, "completion": 3, "reasoning": 0})
         self.assertEqual((row["finish_reason"], row["kind"], row["attempts"]), ("stop", None, 1))
@@ -905,7 +921,7 @@ class UsageLogTests(_HttpCase):
         self.assertEqual(self.rows()[0]["tokens"]["reasoning"], 7)
 
     def test_http_failures_are_logged_with_kind_and_attempts(self):
-        self.install(lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}))
+        self.install(lambda req: httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}))
         self.call(meta=self.META)
         self.install(lambda req: httpx.Response(503, text="busy"))
         self.call(meta=self.META)
@@ -923,7 +939,7 @@ class UsageLogTests(_HttpCase):
         def worker(i):
             for j in range(25):
                 cc.record_usage(meta={"task": "tag", "file_hash": f"{i}-{j}"}, backend="http",
-                                model_req="deepseek-flash", prompt="x" * 5000, kind=None, total_ms=1)
+                                model_req="gpt-6-luna", prompt="x" * 5000, kind=None, total_ms=1)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
         for t in threads:

@@ -29,11 +29,11 @@ EXIT_HTTP=1      # L2：HTTP 探測失敗（非 200／連不上／逾時）
 EXIT_PROCESS=2   # L1：unit 不在 active
 EXIT_GRACE=3     # 剛啟動的寬限期內，不視為故障（unit 需宣告 SuccessExitStatus=3）
 EXIT_TOOLING=4   # 探針自己不能執行（缺 curl 等）
-# 5 已退役：PR-M 前是「問答相依的 claude CLI 不在 web unit 的 PATH drop-in 上」。CLI backend 與 drop-in
+# 5 已退役：曾經是「問答相依的 claude CLI 不在 web unit 的 PATH drop-in 上」。CLI backend 與 drop-in
 #   都已移除，整段刪除；編號刻意不重用（incident handler 收到 5 會落「未知退出碼」，舊探針的殘留看得出來）。
 EXIT_STORAGE=6   # L3：HTTP 健康，但物件儲存（R2）連不上——原檔與 PDF 全壞，其餘功能正常
-EXIT_LLM=7       # L3：HTTP 健康，但 DeepSeek 餘額低於門檻（llm_low）——尚未停擺，要儲值
-EXIT_LLM_DOWN=8  # L3：HTTP 健康，但 DeepSeek 帳號不可用或判斷不出來（low 以外的 503）——問答與批次 LLM 段停擺
+# 7 已退役：曾經是「餘額低於門檻」。現行供應商都沒有餘額 API；編號刻意不重用（同 5）。
+EXIT_LLM_DOWN=8  # L3：HTTP 健康，但 LLM 帳號不可用或判斷不出來（/healthz/llm 回 503）——問答與批次 LLM 段停擺
 
 # ── L3：物件儲存檢查的設定 ───────────────────────────────────────────────
 # 為什麼需要它：OBJECT_STORAGE_MODE=r2 時缺 key 即 503 不回退，bucket 或憑證出問題時
@@ -46,14 +46,13 @@ EXIT_LLM_DOWN=8  # L3：HTTP 健康，但 DeepSeek 帳號不可用或判斷不�
 HEALTH_STORAGE_URL="${HEALTH_STORAGE_URL-${HEALTH_URL%/}/storage}"
 
 # ── L3：LLM 帳號檢查的設定 ───────────────────────────────────────────────
-# 為什麼需要它：claude CLI 已放棄（2026-09-23 OAuth 過期），問答與 sync 的 LLM 段全靠 DeepSeek、
-# 沒有備援；402（餘額不足）、401（金鑰失效）、連不上時問答每題失敗、sync 整批 rc=2，/healthz 照樣綠。
-# 餘額查詢由 web 行程做（金鑰在它的 .env），結果經 /healthz/llm 取得——同樣只回答本機直連，
+# 為什麼需要它：問答與 sync 的 LLM 段全靠同一個供應商、沒有自動備援；額度用完、401（金鑰失效）、連不上時
+# 問答每題失敗、sync 整批 rc=2，/healthz 照樣綠。
+# 端點探測由 web 行程做（金鑰在它的 .env），結果經 /healthz/llm 取得——同樣只回答本機直連，
 # 同樣只認 **HTTP 503**（其餘一律當作判不出來或正常）。503 的本體是 {"llm":"<state>"}，
-# state 併進 reason（llm_exhausted、llm_low…；讀不出來就是 llm_unavailable），**不含任何金額**。
-# 退出碼依 state 分兩種：只有 `llm_low`（餘額低於門檻、尚未停擺）是 7；其餘（exhausted／auth_failed／
-# unreachable／indeterminate／misconfigured（問答主答模型設定有誤），以及本體讀不懂的 llm_unavailable）
-# 都是 8——真停擺或判斷不出來，寧可當停擺。
+# state 併進 reason（llm_exhausted、llm_auth_failed…；讀不出來就是 llm_unavailable）。
+# 所有 503（exhausted／auth_failed／unreachable／indeterminate／misconfigured（問答主答模型設定有誤），以及本體
+# 讀不懂的 llm_unavailable）都是 8——真停擺或判斷不出來，寧可當停擺。
 # 設成空字串可整段停用。
 HEALTH_LLM_URL="${HEALTH_LLM_URL-${HEALTH_URL%/}/llm}"
 
@@ -119,15 +118,13 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
     elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
     if [ "$curl_rc" -eq 0 ] && [ "$code" = "200" ]; then
         # L3 兩項**全部都查**，一行帶出全部 reason（逗號分隔），退出碼取優先序最高的那一個：
-        #   8（LLM 停擺）→ 6（R2 連不上）→ 7（LLM 餘額低）。
+        #   8（LLM 停擺）→ 6（R2 連不上）。
         # 依影響面排：8 是問答與批次 LLM 段全停（incident handler 記 CRITICAL），6 是局部降級
         # （WARNING）；8 排第一，事件的嚴重度才等於同時成立的故障裡最重的那一個——6 排在 8 前面的話，
-        # R2 故障期間 DeepSeek 用罄只會以 WARNING 的「R2 連不上」出現。
-        # 7 刻意排最後（審查 M15）：它是「餘額低於門檻」，會持續到儲值為止（可能好幾天），排前面的話這段
-        # 期間 6 永遠開不了事件。被蓋住的那一項 reason 仍在這一行裡（journal 看得到），修好前面那項後
-        # 下一輪退出碼就換成它。已知限制：web 只有一個 incident 元件，FIRING 期間退出碼從 8 換成 6（或 7）
-        # 是降級、不會立刻通知，要等下一則提醒（最多 30 分鐘）；反方向（7／6 → 8）是 WARNING → CRITICAL，
-        # 狀態機立刻送 ESCALATED。PR-M 前這裡還有退出碼 5（claude CLI 相依），排在 8 之後、6 之前。
+        # R2 故障期間額度用完只會以 WARNING 的「R2 連不上」出現。
+        # 被蓋住的那一項 reason 仍在這一行裡（journal 看得到），修好前面那項後下一輪退出碼就換成它。
+        # 已知限制：web 只有一個 incident 元件，FIRING 期間退出碼從 8 換成 6 是降級、不會立刻通知，要等下一則提醒
+        # （最多 30 分鐘）；反方向（6 → 8）是 WARNING → CRITICAL，狀態機立刻送 ESCALATED。
         storage_reason="$(check_storage)"
         llm_reason="$(check_llm)"
         reasons=""
@@ -140,13 +137,9 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
         fi
         emit degraded "$code" "$elapsed_ms" "$attempt" "$reasons"
         [ -n "$storage_reason" ] && echo "check_web_health: /healthz 正常，但物件儲存（R2）連不上（原檔下載與 PDF 檢視會失敗；細節見 web 日誌的「healthz 物件儲存探測失敗」）" >&2
-        llm_down=no
-        [ -n "$llm_reason" ] && [ "$llm_reason" != llm_low ] && llm_down=yes
-        [ "$llm_down" = yes ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用、主答模型設定有誤或判斷不出來，問答停擺（帳號類連批次 LLM 段也停；$llm_reason；細節見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
-        [ "$llm_reason" = llm_low ] && echo "check_web_health: /healthz 正常，但 DeepSeek 餘額低於門檻、尚未停擺（$llm_reason；金額見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
-        [ "$llm_down" = yes ] && exit "$EXIT_LLM_DOWN"
-        [ -n "$storage_reason" ] && exit "$EXIT_STORAGE"
-        exit "$EXIT_LLM"
+        [ -n "$llm_reason" ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用、主答模型設定有誤或判斷不出來，問答停擺（帳號類連批次 LLM 段也停；$llm_reason；細節見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
+        [ -n "$llm_reason" ] && exit "$EXIT_LLM_DOWN"
+        exit "$EXIT_STORAGE"
     fi
     [ "$attempt" -lt "$HEALTH_RETRIES" ] && sleep "$HEALTH_RETRY_WAIT"
 done

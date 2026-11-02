@@ -1,4 +1,4 @@
-"""追問建議：答完後由 LLM（`ASK_FOLLOWUP_MODEL`，預設 DeepSeek flash）產 ≤3 條同語料範疇的財經追問（fail-open）。"""
+"""追問建議：答完後由 LLM（`ASK_FOLLOWUP_MODEL`，預設 gpt-6-luna）產 ≤3 條同語料範疇的財經追問（fail-open）。"""
 from __future__ import annotations
 
 import json
@@ -13,7 +13,7 @@ from app.services.locale import DEFAULT_LOCALE
 
 logger = logging.getLogger(__name__)
 
-# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查預設表（deepseek-flash）。
+# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查預設表。
 FOLLOWUP_MODEL = resolve_model(TASK_ASK_FOLLOWUP, override=os.getenv("ASK_FOLLOWUP_MODEL"))
 FOLLOWUP_TIMEOUT = float(os.getenv("ASK_FOLLOWUP_TIMEOUT", "15"))
 

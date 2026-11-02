@@ -1,7 +1,7 @@
 """每日簡報批次 → research.report_brief（一天一列；閱讀時零 LLM）
 
 素材收集、窗期界定與變動判定全在 app/services/brief.py（純 SQL ＋ 純函式），本檔
-只負責編排：決定要不要跑 → 一次 LLM 呼叫（DeepSeek，見 `call_cli`；鎖只包這一次呼叫）→ 落庫。
+只負責編排：決定要不要跑 → 一次 LLM 呼叫（見 `call_cli`；鎖只包這一次呼叫）→ 落庫。
 
 **一天只有一次 LLM 呼叫**，這是刻意的成本設計：摘要（覆蓋率 100%）與訊號都已經
 批次產好，簡報要做的只是把既有素材組織成一段話，不需要重讀任何全文。
@@ -26,8 +26,8 @@
   uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，重寫當日
   uv run python scripts/generate_brief.py --date 2026-08-05
 
-退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（模型名不在 DeepSeek
-白名單、缺金鑰、DeepSeek 401／402／模型不存在、斷路器）、75 批次鎖被其他批次佔用。
+退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（模型名不在
+白名單、缺金鑰、401／額度用完／模型不存在、斷路器）、75 批次鎖被其他批次佔用。
 """
 
 from __future__ import annotations
@@ -85,8 +85,7 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
 
     交給 `scripts/_claude_cli.run_claude`（與其他批次同一套錯誤分類：失敗回 `API[<kind>] …`，401／402／
     模型不存在、model 不在白名單拋 `LlmEnvironmentError`，main 以 rc=2 收場、不寫 brief_failures.log——
-    那是「這一天產生失敗」的紀錄，帳號與設定問題不是）。PR-M 前本檔另有自己的 CLI 版（claude 不在 PATH
-    記成 rc=1 的單日失敗、CLI 認證失效改拋），隨 CLI 一起移除。
+    那是「這一天產生失敗」的紀錄，帳號與設定問題不是）。
     """
     res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
     return res.text, res.error
@@ -106,7 +105,7 @@ def record_failure(target: date_cls, reason: str, model: str = "") -> None:
 # 同一天同一個 model 出現過就不再重打的失敗 kind（`blocked_today`）。
 #   - content_filter：素材是上一次的超集，幾乎一定再被擋。
 #   - truncated（`finish_reason=length`，撞到 MAX_TOKENS）：素材只會更多，同一個上限只會截得更早。
-# **期限型截斷（`timeout_streamed`）刻意不在這裡**：它可能只是 DeepSeek 暫時變慢，下一輪常常就好。
+# **期限型截斷（`timeout_streamed`）刻意不在這裡**：它可能只是供應商暫時變慢，下一輪常常就好。
 _BLOCKING_KINDS = frozenset({"content_filter", "truncated"})
 
 
@@ -200,7 +199,7 @@ async def generate(args) -> int:
     if not args.force and blocked_today(target, args.model):
         print(
             f"[brief] {target} 今日已被模型供應商的內容審查擋過或輸出被截斷（model={args.model}），略過、不再呼叫"
-            "（要重試加 --force；處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」）",
+            "（要重試加 --force；處置見 docs/production_resilience.md「LLM 批次的失敗處置」）",
             file=sys.stderr,
         )
         return 1

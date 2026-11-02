@@ -45,9 +45,9 @@ class LLMUnavailableErrorTests(unittest.TestCase):
         self.assertNotIn("帳號", ask._llm_error_detail(exc))
 
 
-# ── 白名單分派：HTTP 路徑（DeepSeek）────────────────────────────────────────
+# ── 白名單分派：HTTP 路徑────────────────────────────────────────
 # 全程不連網：`llm_http._transport` 注入 httpx.MockTransport；金鑰是 gitleaks allowlist 內的假值，
-# 以 mock.patch.dict 限定在單一測試內（conftest 把 DEEPSEEK_API_KEY 強制成空字串）。
+# 以 mock.patch.dict 限定在單一測試內（conftest 把 OPENAI_API_KEY 強制成空字串）。
 import ast  # noqa: E402
 import asyncio  # noqa: E402
 import os  # noqa: E402
@@ -58,8 +58,8 @@ import httpx  # noqa: E402
 
 from app.services import llm_http as lh  # noqa: E402
 
-_FAKE_KEY = "fixed-test-secret-deepseek0"
-_ENV = {"DEEPSEEK_API_KEY": _FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
+_FAKE_KEY = "fixed-test-secret-openai0"
+_ENV = {"OPENAI_API_KEY": _FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
 
 
 def _sse(*events, done: bool = True) -> bytes:
@@ -74,7 +74,7 @@ def _sse(*events, done: bool = True) -> bytes:
 
 def _chunk(content=None, finish=None):
     delta = {} if content is None else {"content": content}
-    return {"model": "deepseek-v4.1-flash", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+    return {"model": "gpt-6-luna", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
 
 
 def _ok(*texts) -> bytes:
@@ -118,7 +118,7 @@ class _HttpCase(unittest.IsolatedAsyncioTestCase):
         self.install(lambda req: next(it))
 
     async def collect(self, **kw):
-        kw.setdefault("model", "deepseek-flash")
+        kw.setdefault("model", "gpt-6-luna")
         kw.setdefault("max_tokens", 256)
         kw.setdefault("task", "ask_answer")
         return [c async for c in llm.stream_completion("問題", **kw)]
@@ -130,7 +130,7 @@ class HttpInputSanitizeTests(_HttpCase):
     async def test_prompt_and_system_are_sanitized(self):
         self.install(lambda req: httpx.Response(200, content=_ok("好")))
         chunks = [c async for c in llm.stream_completion(
-            "問\x00題\ud800", model="deepseek-flash", system="系\x00統", max_tokens=64, task="ask_answer")]
+            "問\x00題\ud800", model="gpt-6-luna", system="系\x00統", max_tokens=64, task="ask_answer")]
         self.assertEqual(chunks, ["好"])
         self.assertNotIn(b"\x00", self.requests[0].content)
         body = json.loads(self.requests[0].content)
@@ -154,9 +154,9 @@ class HttpDispatchTests(_HttpCase):
         self.assertEqual(chunks, ["台積電", "展望"])
         self.assertIs(meta["truncated"], False)
         body = json.loads(self.requests[0].content)
-        self.assertEqual(body["model"], "deepseek-flash")
-        self.assertEqual(body["max_tokens"], 4096)
-        self.assertEqual(body["user_id"], "web-ask_overview")
+        self.assertEqual(body["model"], "gpt-6-luna")
+        self.assertEqual(body["max_completion_tokens"], 4096)
+        self.assertNotIn("user_id", body)
         self.assertEqual(body["messages"][0], {"role": "system", "content": "系統"})
 
     async def test_every_whitelisted_name_goes_http(self):
@@ -173,14 +173,14 @@ class HttpDispatchTests(_HttpCase):
         with self.assertLogs("app.services.llm", "WARNING") as logs:
             await self.collect(max_tokens=None)
         self.assertIn("未給 max_tokens", "\n".join(logs.output))
-        self.assertEqual(json.loads(self.requests[0].content)["max_tokens"], llm._HTTP_FALLBACK_MAX_TOKENS)
+        self.assertEqual(json.loads(self.requests[0].content)["max_completion_tokens"], llm._HTTP_FALLBACK_MAX_TOKENS)
 
     async def test_call_log_line_has_task_and_model(self):
         self.install(lambda req: httpx.Response(200, content=_ok("好")))
         with self.assertLogs("app.services.llm_http", "INFO") as logs:
             await self.collect(task="ask_followup", max_tokens=512)
         text = "\n".join(logs.output)
-        self.assertIn("llm_call task=ask_followup model=deepseek-flash", text)
+        self.assertIn("llm_call task=ask_followup model=gpt-6-luna", text)
         self.assertIn("backend=http", text)
         self.assertNotIn(_FAKE_KEY, text)
 
@@ -190,7 +190,7 @@ class NonWhitelistIsConfigErrorTests(_HttpCase):
     不 spawn 任何子行程、一個字都不 yield。"""
 
     NAMES = ("claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "sonnet", "haiku", "",
-             "deepseek-flsh", "DeepSeek-Flash", " deepseek-flash")
+             "deepseek-flash", "GPT-6-Luna", " gpt-6-luna")
 
     def setUp(self):
         super().setUp()
@@ -226,19 +226,19 @@ class NonWhitelistIsConfigErrorTests(_HttpCase):
                 self.assertIn(repr(name), str(exc))
 
     async def test_near_miss_names_are_not_http(self):
-        for name in ("deepseek-flsh", "sonnet", "DeepSeek-Flash"):
+        for name in ("deepseek-flash", "sonnet", "GPT-6-Luna"):
             with self.subTest(name=name):
                 self.assertFalse(llm.is_http_model(name))
 
     async def test_web_search_is_config_error_for_any_model(self):
         """網搜沒有後端：不論 model（白名單、claude-*、空字串＝ASK_WEB_MODEL 的預設）一律 config。"""
-        for name in ("deepseek-flash", "claude-sonnet-5", ""):
+        for name in ("gpt-6-luna", "claude-sonnet-5", ""):
             with self.subTest(name=name):
                 exc = await self._assert_config(model=name, allow_web=True)
                 self.assertIn("網搜", str(exc))
 
     async def test_default_model_is_whitelisted(self):
-        """conftest 強制 deepseek：主答預設是白名單名稱（否則每個走預設的呼叫點都會 config 失敗）。"""
+        """conftest 強制 openai：主答預設是白名單名稱（否則每個走預設的呼叫點都會 config 失敗）。"""
         self.assertTrue(llm.is_http_model(llm.DEFAULT_MODEL))
 
 
@@ -351,8 +351,9 @@ class HttpRetryTests(_HttpCase):
     async def test_account_and_input_errors_are_not_retried(self):
         cases = [
             (402, {"error": {"message": "Insufficient Balance"}}, "quota"),
+            (429, {"error": {"message": "You exceeded your current quota", "code": "insufficient_quota"}}, "quota"),
             (401, {"error": {"message": "Authentication Fails"}}, "auth"),
-            (400, {"error": {"message": "Content Exists Risk"}}, "content_filter"),
+            (400, {"error": {"message": "Rejected by our safety system"}}, "content_filter"),
             (400, {"error": {"message": "bad param"}}, "bad_request"),
         ]
         for status, payload, kind in cases:
@@ -403,7 +404,7 @@ class HttpRetryTests(_HttpCase):
         got: list[str] = []
         with mock.patch.object(lh, "astream_chat", half):
             with self.assertRaises(llm.LLMUnavailableError) as cm:
-                async for c in llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"):
+                async for c in llm.stream_completion("q", model="gpt-6-luna", max_tokens=16, task="t"):
                     got.append(c)
         self.assertEqual(got, ["一半"])
         self.assertIs(cm.exception.partial, True)
@@ -415,7 +416,7 @@ class HttpPartialTests(_HttpCase):
             200, content=_sse(_chunk("部分答案"), _chunk("", finish="content_filter"))))
         got: list[str] = []
         with self.assertRaises(llm.LLMUnavailableError) as cm:
-            async for c in llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"):
+            async for c in llm.stream_completion("q", model="gpt-6-luna", max_tokens=16, task="t"):
                 got.append(c)
         self.assertEqual(got, ["部分答案"], "已吐的字要先送到呼叫端，例外才在最後拋")
         self.assertEqual(cm.exception.kind, "content_filter")
@@ -423,7 +424,8 @@ class HttpPartialTests(_HttpCase):
         self.assertEqual(len(self.requests), 1)
 
     async def test_content_filter_before_text_is_not_partial(self):
-        self.install(lambda req: httpx.Response(200, content=_sse({"error": {"message": "Content Exists Risk"}})))
+        self.install(lambda req: httpx.Response(
+            200, content=_sse({"error": {"message": "Rejected by our safety system"}})))
         with self.assertRaises(llm.LLMUnavailableError) as cm:
             await self.collect()
         self.assertEqual(cm.exception.kind, "content_filter")
@@ -475,7 +477,7 @@ class HttpFirstTokenDeadlineTests(_HttpCase):
         t0 = time.monotonic()
         with self.assertRaises(llm.LLMUnavailableError) as cm:
             await self._drive(llm.stream_completion(
-                "q", model="deepseek-flash", timeout=0.2, retries=2, max_tokens=16, task="t"))
+                "q", model="gpt-6-luna", timeout=0.2, retries=2, max_tokens=16, task="t"))
         self.assertLess(time.monotonic() - t0, 2.0)
         self.assertEqual(cm.exception.kind, "timeout")
         self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_TIMEOUT)
@@ -492,7 +494,7 @@ class HttpFirstTokenDeadlineTests(_HttpCase):
         self.install(lambda req: httpx.Response(200, content=slow_answer()))
         meta: dict = {}
         items = await self._drive(llm.stream_completion(
-            "q", model="deepseek-flash", timeout=0.15, meta=meta, max_tokens=16, task="t"))
+            "q", model="gpt-6-luna", timeout=0.15, meta=meta, max_tokens=16, task="t"))
         self.assertEqual(items, ["第一段", "第二段"])
         self.assertIs(meta["truncated"], False)
 
@@ -535,7 +537,7 @@ class HttpTotalTimeoutTests(_HttpCase):
         t0 = time.monotonic()
         with mock.patch.object(llm, "_http_total_timeout", return_value=0.4):
             items = await self._drive(llm.stream_completion(
-                "q", model="deepseek-flash", timeout=5, retries=2, meta=meta, max_tokens=16, task="t"))
+                "q", model="gpt-6-luna", timeout=5, retries=2, meta=meta, max_tokens=16, task="t"))
         self.assertLess(time.monotonic() - t0, 2.0, "總時限要在新 Task 驅動下照樣生效")
         self.assertTrue(items and items[0] == "段0")
         self.assertLess(len(items), 60)
@@ -548,7 +550,7 @@ class HttpTotalTimeoutTests(_HttpCase):
         meta: dict = {}
         with mock.patch.object(llm, "_http_total_timeout", return_value=30.0):
             items = await self._drive(llm.stream_completion(
-                "q", model="deepseek-flash", timeout=5, meta=meta, max_tokens=16, task="t"))
+                "q", model="gpt-6-luna", timeout=5, meta=meta, max_tokens=16, task="t"))
         self.assertEqual(len(items), 60)
         self.assertIs(meta["truncated"], False)
 
@@ -586,7 +588,7 @@ class HttpCancelTests(_HttpCase):
         self.install(lambda req: httpx.Response(200, stream=self._hanging(closed, started)))
 
         async def consume():
-            async for _ in llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"):
+            async for _ in llm.stream_completion("q", model="gpt-6-luna", max_tokens=16, task="t"):
                 pass
 
         task = asyncio.ensure_future(consume())
@@ -604,7 +606,7 @@ class HttpCancelTests(_HttpCase):
         self.install(lambda req: httpx.Response(
             200, stream=self._hanging(closed, started, first=_sse(_chunk("a"), done=False))))
         hb = deps._with_heartbeat(
-            llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"), interval=0.05)
+            llm.stream_completion("q", model="gpt-6-luna", max_tokens=16, task="t"), interval=0.05)
         first = await hb.__anext__()
         self.assertEqual(first, "a")
         self.assertFalse(closed.is_set())

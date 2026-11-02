@@ -114,7 +114,7 @@ async def _warmup_models() -> None:
 def _check_llm_models() -> None:
     """啟動自檢：線上任務解析到的模型各自需要什麼，缺了就說出來（不擋啟動）。
 
-    `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含 PR-M 前的 `claude-*`）、網搜總閘開著
+    `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含舊的 `claude-*`）、網搜總閘開著
     卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而健康檢查照樣 ok。判準在
     `llm_models.diagnose`（純函式）；金鑰只看有沒有值，不記任何內容。
     """
@@ -201,7 +201,7 @@ async def lifespan(app: FastAPI):
         "pgvector 版本：%s",
         pgvector_version or "查不到（DB 不可用，交由 /healthz 回報）",
     )
-    # LLM 自檢（DeepSeek 金鑰、白名單外的模型名、網搜總閘）：問答壞掉時 /healthz 只探 DB
+    # LLM 自檢（金鑰、白名單外的模型名、網搜總閘）：問答壞掉時 /healthz 只探 DB
     # 照樣回 ok。只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
     _check_llm_models()
     await _check_accounts()
@@ -228,7 +228,7 @@ async def lifespan(app: FastAPI):
                 await flusher.stop()  # 取消背景任務並做最後一次 flush（失敗只記錄，不擋關機）
             except Exception:
                 logger.exception("用量收集最後一次寫入失敗")
-        # DeepSeek 的 AsyncClient 以 event loop 為鍵延遲建立（沒走過 HTTP 路徑就沒有，這行是 no-op）；
+        # LLM 的 AsyncClient 以 event loop 為鍵延遲建立（沒走過 HTTP 路徑就沒有，這行是 no-op）；
         # loop 關閉前收掉連線池，不留給 GC。失敗只記錄，不擋關機。
         try:
             await llm_http.aclose()

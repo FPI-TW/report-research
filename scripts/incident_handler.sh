@@ -1007,11 +1007,11 @@ fi
 
 
 # P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤／
-# （5 已退役：PR-M 前是「問答相依的 claude CLI 不在 web unit 的 PATH 上」；收到它落下面的未知退出碼）
+# （5 已退役：曾經是「問答相依的 claude CLI 不在 web unit 的 PATH 上」；收到它落下面的未知退出碼）
 # 6 服務降級（/healthz 正常但物件儲存 R2 連不上）
-# 7 服務提醒（/healthz 正常但 DeepSeek 餘額低於門檻、尚未停擺：/healthz/llm 回 503 llm_low）
-# 8 服務降級（/healthz 正常但 DeepSeek 帳號不可用或判斷不出來：/healthz/llm 回 low 以外的 503）
-# 多項同時成立時探針回 8→6→7 中最前面那一個（理由見 check_web_health.sh 的 L3 段）。
+# （7 已退役：曾經是「餘額低於門檻」；收到它落下面的未知退出碼）
+# 8 服務降級（/healthz 正常但 LLM 帳號不可用或判斷不出來：/healthz/llm 回 503）
+# 多項同時成立時探針回 8（理由見 check_web_health.sh 的 L3 段）。
 # INCIDENT_HOLD_EXIT_CODES 命中時優先於下面的分級（例如邊緣那一組的 3）。
 case "$HOLD_EXIT_CODES" in
     *" $web_status "*)
@@ -1029,15 +1029,10 @@ case "$web_status" in
     # 檢索、問答、雷達、簡報都不受影響；也同樣不會自己好。
     6)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_6" "$web_obs" web_incident \
              "服務降級：健康端點正常，但物件儲存（R2）連不上，原檔下載與 PDF 檢視會失敗（exit=6 result=$web_result）${web_detail_suffix}" ;;
-    # WARNING：餘額低於門檻、問答與批次都還能跑，但不會自己好（要儲值），而且可能持續好幾天。
-    7)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_7" "$web_obs" web_incident \
-             "DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值（exit=7 result=$web_result；處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
-    # CRITICAL：問答每題失敗、sync 的 LLM 段整批中止，沒有備援（claude CLI 已於 PR-M 移除）。檢索、閱讀、雷達與
-    # 既有簡報的讀取不需要 LLM，但問答是主要功能。與 7 分開、而且嚴重度不同，是為了讓「餘額低」FIRING
-    # 好幾天的期間轉成真停擺時看得出來：同一個 web 事件 WARNING → CRITICAL 會立刻送 ESCALATED
-    # （run_state_machine 的升級分支），不必等 30 分鐘的提醒。判斷不出來（indeterminate、本體讀不懂）也算這裡。
+    # CRITICAL：問答每題失敗、sync 的 LLM 段整批中止，沒有自動備援。檢索、閱讀、雷達與既有簡報的讀取不需要 LLM，
+    # 但問答是主要功能。判斷不出來（indeterminate、本體讀不懂）也算這裡。
     8)   run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_8" "$web_obs" web_incident \
-             "LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常（exit=8 result=$web_result；判斷不出來也歸這裡，處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
+             "LLM 帳號不可用（額度用完／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常（exit=8 result=$web_result；判斷不出來也歸這裡，處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
     # 9＝容器／主機探針「important／supporting tier 連續確認的失敗」（check_container_health.sh、
     # check_host_health.sh）。沒有這一行時 9 落進下面的未知分支，嚴重度同樣是 WARNING——這一行只把
     # 原因與說明換成看得懂的字；web、LineBot、邊緣三支探針從不回 9，行為不變。

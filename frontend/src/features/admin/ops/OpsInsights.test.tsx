@@ -55,7 +55,7 @@ const USAGE = {
   totals: totals(11, { failures: 2 }),
   by_day: [{ day: '2026-10-05', ...totals(5) }, { day: '2026-10-06', ...totals(6) }],
   by_task: [{ task: 'summary', ...totals(8) }, { task: 'title', ...totals(3, { failures: 2 }) }],
-  by_model: [{ model: 'deepseek-flash', ...totals(11) }],
+  by_model: [{ model: 'gpt-6-luna', ...totals(11) }],
   rows: [], rows_truncated: false, cost_available: false,
 }
 
@@ -268,7 +268,7 @@ test('LLM 用量：總計、依任務／模型／日期（分頁籤），截斷�
   const tabs = within(screen.getByRole('tablist', { name: '用量明細' }))
   expect(tabs.getByRole('tab', { name: '依任務' })).toHaveAttribute('aria-selected', 'true')
   fireEvent.click(tabs.getByRole('tab', { name: '依模型' }))
-  expect(row(screen.getByRole('table', { name: '依模型' }))).toEqual(['deepseek-flash'])
+  expect(row(screen.getByRole('table', { name: '依模型' }))).toEqual(['gpt-6-luna'])
   fireEvent.click(tabs.getByRole('tab', { name: '依日期' }))
   expect(row(screen.getByRole('table', { name: '依日期' }))).toEqual(['2026-10-06', '2026-10-05'])
   expect(screen.queryByRole('columnheader', { name: '費用' })).not.toBeInTheDocument()

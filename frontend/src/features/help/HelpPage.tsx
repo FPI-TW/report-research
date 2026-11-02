@@ -285,11 +285,11 @@ export default function HelpPage() {
               </div>
             </Section>
 
-            {/* AI 生成揭露（DeepSeek 遷移 PR-U）：DeepSeek 條款要求向終端使用者揭露並標示 AI 生成。
+            {/* AI 生成揭露：要向終端使用者揭露並標示 AI 生成。
                 只寫確定的事實：哪些功能由它生成、資料會送去哪裡；供應商怎麼處理以其條款為準，這裡不代為承諾。
-                供應商寫成「目前為」：既有的摘要、標題、摘錄與標註多半是遷移前由 Claude 產出，不能說全部出自 DeepSeek。 */}
+                供應商寫成「目前為」：既有的摘要、標題、摘錄與標註多半由先前的模型產出，不能說全部出自現行模型。 */}
             <Section id="ai" title="AI 生成內容">
-              <p className={styles.p}>本站以下內容由大型語言模型（目前為 DeepSeek）自動生成，不是人工撰寫：</p>
+              <p className={styles.p}>本站以下內容由大型語言模型（目前為 OpenAI 的 GPT-6 Luna）自動生成，不是人工撰寫：</p>
               <ul className={styles.list}>
                 <li>研究助理的回答。</li>
                 <li>研報的摘要、標題與重點摘錄的論點。</li>
@@ -297,7 +297,7 @@ export default function HelpPage() {
                 <li>券商共識的評等、目標價、EPS 與觀點擷取。</li>
                 <li>每日簡報。</li>
               </ul>
-              <p className={styles.p}>生成時，提問、回答與相關的研報內容會送往模型供應商（目前為 DeepSeek）處理，並依其服務條款處理。</p>
+              <p className={styles.p}>生成時，提問、回答與相關的研報內容會送往模型供應商（目前為 OpenAI）處理，並依其服務條款處理。</p>
               <p className={styles.p}>
                 AI 生成的內容可能有誤（包括數字與引用），投資決策請以原始研報與公開資訊為準。重點摘錄的引文由 AI 從原文逐字摘出，可在閱讀頁點擊摘錄，對照原始 PDF 核對。
               </p>

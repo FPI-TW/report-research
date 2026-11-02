@@ -1,4 +1,4 @@
-"""DeepSeek Chat Completions 的 HTTP 客戶端（官方 OpenAI 相容端點；備援時改經 OpenCode Go）。
+"""Chat Completions 的 HTTP 客戶端（OpenAI 官方端點，或 OpenCode Go 的 OpenAI 相容端點）。
 
 本模組只負責「打一次 API、把結果與失敗原因說清楚」，不決定哪個任務用哪個模型、也不做
 呼叫端的重試策略——那兩件事分別在分派層（`llm.stream_completion`、`scripts/_claude_cli.
@@ -9,16 +9,16 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
 
 設計要點（每一條都有對應的事故或官方文件，改之前先讀）：
 
-- **thinking 預設是開的**（官方 thinking_mode 指南）。不關的話 TTFT 變長、token 成本上升，
-  `max_tokens` 被推理吃光時 content 會是空的。每個請求都**同時**送兩個開關
-  `thinking.type=disabled` 與 `reasoning_effort=none`：文件沒寫兩者衝突時誰優先，只送一個
-  不保證關得掉。`reasoning_content` 一律丟棄、只記長度（比照 PR-M 前 CLI 路徑忽略 thinking_delta）。
-- **`max_tokens` 由呼叫端逐點給**，沒有預設值：非 thinking 模式不設時上限只有 8K，多標的
-  的訊號擷取會被截斷，而截斷在舊架構裡會被誤判成「JSON 解析失敗」。
-- **錯誤依 HTTP 狀態碼分類**（`classify_status`）。只有兩種情況不得不看訊息文字：審查拒答
-  （400 `Content Exists Risk`，官方錯誤碼表沒列）與模型不存在（400 `Model Not Exist`）。
-  兩者都沒有專屬狀態碼，只能比對字串；其餘一律不解析文字——`answer._llm_error_kind` 的
-  docstring 記載過「分得越細越容易在改版後靜默落到其他」。
+- **推理預設是開的**（`gpt-6-luna` 預設 `reasoning_effort=medium`）。不關的話 TTFT 變長、token 成本上升，
+  上限被推理吃光時 content 會是空的（推理 token 也算進 `max_completion_tokens`）。每個請求都送
+  `reasoning_effort=none`；`temperature` 只有在 `none` 時才可以送（官方 latest-model 指南），judge 靠它固定 t=0。
+  不送 `thinking` 這類非 OpenAI 參數：Go 對這顆模型回 400（2026-11-02 探測）。
+- **`max_tokens` 由呼叫端逐點給**，沒有預設值：多標的的訊號擷取會被截斷，而截斷在舊架構裡會被誤判成
+  「JSON 解析失敗」。送出時的欄位是 `max_completion_tokens`（`max_tokens` 已被官方標為 deprecated）。
+- **錯誤依 HTTP 狀態碼分類**（`classify_status`），但有三類同一個狀態碼底下語意不同，要看本體：內容政策
+  （400，`error.code` 見 `_CONTENT_POLICY_CODES`）、模型不存在（400／404），以及**額度用完**——OpenAI 的 429
+  同時代表限流（重試就好）與 `insufficient_quota`（整批中止），只能看 `error.code`。其餘一律不解析文字——
+  `answer._llm_error_kind` 的 docstring 記載過「分得越細越容易在改版後靜默落到其他」。
 - **逾時語意**：
   - 串流（`astream_chat`）的 `first_token_timeout` 是**首字期限**。在第一個 content 字到達之前，
     每一個 await 各自包 `asyncio.timeout_at`，**絕不跨越 yield**。理由是 `web/deps.py` 的
@@ -27,9 +27,9 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
     一段，經新 Task 驅動時 1.2 秒全吐完）。每個 await 自己包，任何驅動方式下行為都一樣，
     單元測試看到的就是生產行為。
     - 首字之前 httpx 的 read 逾時（伺服器 `_READ_TIMEOUT` 秒沒送任何位元組，連 keep-alive 都沒有）
-      歸 `TIMEOUT` 而不是 `NETWORK`：它和首字期限到了是同一件事——伺服器沒回應，再等一輪無益
-      （PR-M 前的 CLI 路徑也是這個語意：逾時不重試）。歸 NETWORK 的話外層會重試，主答（首字期限 120 秒）最壞
-      要 3×60 秒加退避才失敗。連線逾時（connect）與其他傳輸錯誤仍是 NETWORK。批次（`complete_chat`）
+      歸 `TIMEOUT` 而不是 `NETWORK`：它和首字期限到了是同一件事——伺服器沒回應，再等一輪無益。
+      歸 NETWORK 的話外層會重試，主答（首字期限 120 秒）最壞要 3×60 秒加退避才失敗。
+      連線逾時（connect）與其他傳輸錯誤仍是 NETWORK。批次（`complete_chat`）
       刻意不同：它有涵蓋所有嘗試的總期限兜底，沉默在期限內仍歸 NETWORK 重試（`_timed_out_kind`）。
     - 第一個字之後另有寬鬆的**總時限**（`total_timeout`，從呼叫開始算；呼叫端傳
       `LLM_HTTP_TOTAL_TIMEOUT`），同樣每個 await 各自包 `timeout_at`、不跨 yield。它只是最後一道
@@ -51,17 +51,12 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
   observer。web 在 lifespan 註冊 `app.services.usage_events.observe_llm_call`，把線上用量歸到人
   （`llm_usage_daily`）；批次行程不註冊，行為不變。observer 只能是同步、便宜的函式，例外一律吞掉
   （用量歸因不能讓 LLM 呼叫失敗）。註冊表只用標準庫，本模組仍是葉模組。
-- **provider（`LLM_PROVIDER`）在呼叫時才讀**，與金鑰同一個理由。`opencode_go` 是 402 時的手動備援
-  （`app/services/llm_models.py` docstring）：同一顆模型改送 OpenCode Go 的 OpenAI 相容端點。差異全收在
-  本模組，分派層與呼叫端不知道走哪一條——金鑰與端點換成 `OPENCODE_GO_*`；本體的 `model` 經
-  `llm_models.wire_model` 翻成 Go 的 ID、不送 DeepSeek 專屬的 `user_id`（thinking 兩個開關照送）；header
-  加上 Go 要求的自報 User-Agent 與穩定的 `x-opencode-session`；Go 沒有餘額端點，`fetch_balance` 改打
-  `/models` 只判斷端點與金鑰；Go 的用量上限可能以 429 回應，訊息看得出是額度時歸 `QUOTA`
-  （`_is_go_quota`），否則照舊是 `OVERLOADED`；Go 的 usage 是 OpenAI 格式，`_normalize_usage` 補成 DeepSeek 的
-  hit／miss 鍵（10/28 探測）。log 與 observer 的 metadata 都帶 `provider`，費用才分得出來。
-- **judge 走非串流 JSON 模式**（`complete_json`，遷移 PR-18）：judge 不需要串流，而非串流回應才帶
-  `system_fingerprint`（9/24 探測）。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），呼叫端再依自己的
-  預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
+- **provider（`LLM_PROVIDER`）在呼叫時才讀**，與金鑰同一個理由。兩條路徑是同一顆模型（`app/services/llm_models.py`
+  docstring），差異全收在本模組，分派層與呼叫端不知道走哪一條：金鑰與端點；Go 要求的自報 User-Agent 與穩定的
+  `x-opencode-session`；Go 的用量上限可能以 429 回應，訊息看得出是額度時歸 `QUOTA`（`_is_go_quota`）。兩邊都沒有餘額
+  端點，`probe_endpoint` 打 `/models` 只判斷端點與金鑰。log 與 observer 的 metadata 都帶 `provider`，費用才分得出來。
+- **judge 走非串流 JSON 模式**（`complete_json`）：judge 不需要串流。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），
+  呼叫端再依自己的預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
 """
 
 from __future__ import annotations
@@ -87,29 +82,28 @@ import httpx
 # 形成 config ↔ llm_http 的 import 循環）。這裡以原名重新匯出，既有呼叫端與測試不必改。
 from app.services.llm_models import (  # noqa: F401
     HTTP_MODELS,
-    PROVIDER_DEEPSEEK,
     PROVIDER_KEY_ENV,
     PROVIDER_LABEL,
+    PROVIDER_OPENAI,
     PROVIDER_OPENCODE_GO,
     is_http_model,
-    wire_model,
 )
 from app.services.llm_models import provider as _configured_provider
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_GO_BASE_URL = "https://opencode.ai/inference/go/v1"
 # Go 要求呼叫端自報身分（不要用 SDK／HTTP 函式庫的預設 UA），版本只是辨識用。
 GO_USER_AGENT = "report-mark/1 (+https://research.tingfong.com)"
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
 AUTH = "auth"                      # 缺金鑰或 401
-QUOTA = "quota"                    # 402 餘額不足
+QUOTA = "quota"                    # 額度或餘額用完（402、429 insufficient_quota、Go 的用量上限）
 CONFIG = "config"                  # 404／模型不存在
-CONTENT_FILTER = "content_filter"  # 400 Content Exists Risk、finish_reason=content_filter
+CONTENT_FILTER = "content_filter"  # 內容政策（400）、finish_reason=content_filter、模型拒答（refusal）
 BAD_REQUEST = "bad_request"        # 其他 400／422：多半是單篇輸入造成
-OVERLOADED = "overloaded"          # 429、5xx、insufficient_system_resource
+OVERLOADED = "overloaded"          # 限流（429）、5xx
 NETWORK = "network"                # 連線、DNS、TLS、串流中途斷線
 TIMEOUT = "timeout"                # 首字期限（串流）或總期限（批次）到了
 TRUNCATED = "truncated"            # finish_reason=length（決定性：同一輸入、同一上限重送結果不變）
@@ -125,7 +119,7 @@ TRANSIENT_KINDS = frozenset({OVERLOADED, NETWORK})
 
 _PHRASES = {
     AUTH: "金鑰無效或缺漏",
-    QUOTA: "帳戶餘額不足",
+    QUOTA: "額度或餘額不足",
     CONFIG: "模型或端點設定錯誤",
     CONTENT_FILTER: "觸發供應商內容審查",
     BAD_REQUEST: "請求被拒",
@@ -139,10 +133,10 @@ _PHRASES = {
     OTHER: "未預期錯誤",
 }
 
-# DeepSeek 金鑰是 `sk-…`，OpenCode Go 是 `oc_…`（10/28 探測）。
+# OpenAI 金鑰是 `sk-…`，OpenCode Go 是 `oc_…`（10/28 探測）。
 _KEY_LIKE = re.compile(r"(?:sk-|oc_)[A-Za-z0-9_*-]{4,}")
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
-_USER_ID_BAD = re.compile(r"[^A-Za-z0-9_-]")
+_SESSION_ID_BAD = re.compile(r"[^A-Za-z0-9_-]")
 
 _READ_TIMEOUT = 60.0
 _WRITE_TIMEOUT = 30.0
@@ -175,18 +169,18 @@ def error_string(kind: str, detail: str = "") -> str:
 def sanitize(text: str) -> str:
     """去 NUL、孤立代理字元換成 U+FFFD。
 
-    PDF 抽出的文字偶有 `\\x00`（PR-M 前的 CLI 路徑為了 argv 剝掉；這裡沒有 argv 但仍要剝，
+    PDF 抽出的文字偶有 `\\x00`（舊 CLI 路徑為了 argv 剝掉；這裡沒有 argv 但仍要剝，
     否則同一篇研報與 Claude 時代的輸入不同）；孤立代理字元會讓 UTF-8 編碼直接拋錯。兩者都是
     「單篇輸入造成的失敗」的來源。
     """
     return _LONE_SURROGATE.sub("\ufffd", text.replace("\x00", ""))
 
 
-def _user_id(value: str | None) -> str | None:
-    """官方格式 `[a-zA-Z0-9\\-_]+`、最長 512；用於內容安全、KV cache 與排程的隔離。"""
+def _session_id(value: str | None) -> str | None:
+    """`x-opencode-session` 的值：只留 `[a-zA-Z0-9\\-_]`、最長 512。"""
     if not value:
         return None
-    return _USER_ID_BAD.sub("-", value)[:512] or None
+    return _SESSION_ID_BAD.sub("-", value)[:512] or None
 
 
 def build_body(
@@ -196,27 +190,23 @@ def build_body(
     max_tokens: int,
     system: str | None = None,
     stream: bool = True,
-    user_id: str | None = None,
     temperature: float | None = None,
     response_format: dict | None = None,
-    provider: str = PROVIDER_DEEPSEEK,
 ) -> dict:
-    """組請求 body（純函式）。thinking 一律關：兩個開關都送，見模組 docstring。
+    """組請求 body（純函式）。推理一律關，見模組 docstring。
 
     `temperature`／`response_format` 預設不送（沿用伺服器預設）；judge（`complete_json`）送
-    `temperature=0` 與 `{"type": "json_object"}`。`provider` 是 `opencode_go` 時模型名換成 Go 的 ID、
-    不送 DeepSeek 專屬的 `user_id`。
+    `temperature=0` 與 `{"type": "json_object"}`。
     """
     messages = []
     if system:
         messages.append({"role": "system", "content": sanitize(system)})
     messages.append({"role": "user", "content": sanitize(prompt)})
     body: dict = {
-        "model": wire_model(model, provider),
+        "model": model,
         "messages": messages,
-        "max_tokens": int(max_tokens),
+        "max_completion_tokens": int(max_tokens),
         "stream": stream,
-        "thinking": {"type": "disabled"},
         "reasoning_effort": "none",
     }
     if stream:
@@ -225,9 +215,6 @@ def build_body(
         body["temperature"] = temperature
     if response_format is not None:
         body["response_format"] = response_format
-    uid = _user_id(user_id)
-    if uid and provider == PROVIDER_DEEPSEEK:
-        body["user_id"] = uid
     return body
 
 
@@ -246,8 +233,29 @@ def _error_message(raw: bytes | str) -> str:
     return _one_line(text)[:200]
 
 
-def _is_content_risk(message: str) -> bool:
-    return "content exists risk" in message.lower()
+def _error_code(raw: bytes | str) -> str | None:
+    """錯誤本體的 `error.code`；沒有或讀不懂回 None。"""
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return None
+    err = obj.get("error") if isinstance(obj, dict) else None
+    code = err.get("code") if isinstance(err, dict) else None
+    return code if isinstance(code, str) else None
+
+
+# OpenAI 的內容政策拒絕（400）。詞彙來自官方錯誤碼；訊息比對只是接住沒帶 code 的回應（Go 轉送時可能丟掉）。
+_CONTENT_POLICY_CODES = frozenset({
+    "content_policy_violation", "content_filter", "moderation_blocked", "invalid_prompt",
+})
+_CONTENT_POLICY_RE = re.compile(r"usage polic|safety system|content management policy", re.IGNORECASE)
+# 額度用完的 `error.code`：與限流同樣是 429（`insufficient_quota`），但重試不會好，要整批中止。
+_QUOTA_CODES = frozenset({"insufficient_quota", "billing_hard_limit_reached"})
+
+
+def _is_content_policy(message: str, code: str | None = None) -> bool:
+    return code in _CONTENT_POLICY_CODES or bool(_CONTENT_POLICY_RE.search(message))
 
 
 def _is_model_missing(message: str) -> bool:
@@ -258,12 +266,9 @@ def _is_model_missing(message: str) -> bool:
 
 
 def _normalize_usage(usage: dict) -> dict:
-    """補上 DeepSeek 的 cache 計數鍵。OpenCode Go 回的是 OpenAI 格式（`prompt_tokens`＋
-    `prompt_tokens_details.cached_tokens`，10/28 探測），沒有 `prompt_cache_hit_tokens`／`miss`；不補的話
-    usage log 與 observer 的 hit／miss 都是 None，費用歸因就掉了 input token。只在 Go 模式下換算：DeepSeek 原本就有
-    這兩個鍵，它的 usage 一律原樣保留（judge 的 `evaluation.usage` 會落庫）。"""
-    if _provider() != PROVIDER_OPENCODE_GO:
-        return usage
+    """把 OpenAI 格式的 usage（`prompt_tokens`＋`prompt_tokens_details.cached_tokens`）補上用量紀錄沿用的
+    `prompt_cache_hit_tokens`／`prompt_cache_miss_tokens`：usage log、observer 與 judge 的
+    `evaluation.usage` 讀這兩個鍵，不補的話 hit／miss 都是 None，費用歸因就掉了 input token。"""
     if "prompt_cache_hit_tokens" in usage or "prompt_cache_miss_tokens" in usage:
         return usage
     prompt = usage.get("prompt_tokens")
@@ -276,31 +281,31 @@ def _normalize_usage(usage: dict) -> dict:
 
 
 # Go 的用量上限（5 小時／每週／每月）沒有專屬狀態碼的文件，訊息比對是保守的猜測：比對到才歸 QUOTA
-# （整批中止、問答顯示額度不足），比對不到照舊歸 OVERLOADED（重試、計入斷路器）。第一次真的撞到上限時，
-# 照 usage log 的 detail 修正這組字串。
+# （整批中止、問答顯示額度不足），比對不到照舊歸 OVERLOADED（重試、計入斷路器）。「Rate limit reached」是
+# 上游限流（重試就好）、不是額度，先排除。第一次真的撞到上限時，照 usage log 的 detail 修正這組字串。
 _GO_QUOTA_RE = re.compile(r"usage limit|limit (?:reached|exceeded)|exceeded .*limit|quota|insufficient balance|"
                           r"subscription|upgrade", re.IGNORECASE)
 
 
 def _is_go_quota(message: str) -> bool:
-    return bool(_GO_QUOTA_RE.search(message))
+    return "rate limit" not in message.lower() and bool(_GO_QUOTA_RE.search(message))
 
 
 def classify_status(status: int, raw: bytes | str = b"", provider: str | None = None) -> tuple[str, str]:
-    """非 200 回應 → (kind, 細節)。只有 400／422 會看訊息文字（理由見模組 docstring）；Go 的 429 例外
-    （`_is_go_quota`）。`provider` 省略＝目前的 `LLM_PROVIDER`。"""
+    """非 200 回應 → (kind, 細節)。哪些情況要看本體見模組 docstring。`provider` 省略＝目前的 `LLM_PROVIDER`。"""
     message = _error_message(raw) if raw else ""
+    code = _error_code(raw) if raw else None
     detail = _redact(f"HTTP {status}" + (f" {message}" if message else ""))
     if status == 401:
         return AUTH, detail
-    if status == 402:
+    if status == 402 or code in _QUOTA_CODES:
         return QUOTA, detail
     if status == 404:
         return CONFIG, detail
     if status in (400, 422):
-        if _is_content_risk(message):
+        if _is_content_policy(message, code):
             return CONTENT_FILTER, detail
-        if _is_model_missing(message):
+        if code == "model_not_found" or _is_model_missing(message):
             return CONFIG, detail
         return BAD_REQUEST, detail
     if status == 429 and (provider or _provider()) == PROVIDER_OPENCODE_GO and _is_go_quota(message):
@@ -411,8 +416,9 @@ class _Acc:
         err = obj.get("error")
         if err is not None:
             message = _error_message(json.dumps({"error": err}))
-            # 串流中途的錯誤物件：審查照審查分；其餘多半是伺服端中斷，歸暫時性。
-            kind = CONTENT_FILTER if _is_content_risk(message) else OVERLOADED
+            # 串流中途的錯誤物件：內容政策照內容政策分；其餘多半是伺服端中斷，歸暫時性。
+            code = err.get("code") if isinstance(err, dict) else None
+            kind = CONTENT_FILTER if _is_content_policy(message, code) else OVERLOADED
             self.error = (kind, _redact(f"stream error {message}"))
             return None
         if isinstance(obj.get("model"), str):
@@ -426,6 +432,9 @@ class _Acc:
         if choice.get("finish_reason"):
             self.finish_reason = choice["finish_reason"]
         delta = choice.get("delta") or {}
+        if isinstance(delta.get("refusal"), str) and delta["refusal"]:
+            self.error = (CONTENT_FILTER, "模型拒答（refusal）")
+            return None
         reasoning = delta.get("reasoning_content")
         if isinstance(reasoning, str):
             self.reasoning_chars += len(reasoning)
@@ -464,10 +473,6 @@ def _final_kind(acc: _Acc, got_text: bool) -> tuple[str | None, str]:
         return CONTENT_FILTER, "finish_reason=content_filter"
     if acc.finish_reason == "length":
         return TRUNCATED, "finish_reason=length"
-    if acc.finish_reason == "insufficient_system_resource":
-        return OVERLOADED, "finish_reason=insufficient_system_resource"
-    if acc.finish_reason == "aborted":
-        return OTHER, "finish_reason=aborted"
     if not acc.done and acc.finish_reason is None:
         return NETWORK, "串流未收到結束訊號即中斷"
     if not got_text:
@@ -495,13 +500,12 @@ def _fail(kind: str, detail: str, t0: float, **kw) -> ChatOutcome:
     return ChatOutcome(kind=kind, detail=detail, total_ms=int((time.monotonic() - t0) * 1000), **kw)
 
 
-# 本行程最近一次真實請求收到 402 的時刻（monotonic；0＝從未）。`/healthz/llm` 據此在餘額查詢之間
-# 就翻成 exhausted，直到一次「開始於這個時刻之後」的成功餘額查詢才解除（`app/services/llm_health.py`）。
-# 只記本行程：web 的問答碰到 402 立刻看得到；批次行程的 402 由它自己的整批 rc=2 → OnFailure 告警，
-# web 端等餘額查詢的快取到期才會知道（取捨見 llm_health 的模組 docstring）。
+# 本行程最近一次真實請求碰到額度用完（QUOTA）的時刻（monotonic；0＝從未）。`/healthz/llm` 據此翻成 exhausted，
+# 直到之後有一次真實請求成功才解除（`_ok_seen_at`；`/models` 回 200 說明不了額度回來了沒，
+# `app/services/llm_health.py`）。
+# 只記本行程：web 的問答碰到立刻看得到；批次行程的由它自己的整批 rc=2 → OnFailure 告警。
 _quota_seen_at: float = 0.0
-# 本行程最近一次成功呼叫的時刻（monotonic；0＝從未）。Go 沒有餘額端點，`/models` 回 200 說明不了額度回來了沒，
-# 所以 Go 模式下 402／額度閂鎖改由「之後有一次真實請求成功」解除（llm_health 的「OpenCode Go」一節）。
+# 本行程最近一次成功呼叫的時刻（monotonic；0＝從未）。
 _ok_seen_at: float = 0.0
 
 
@@ -625,7 +629,7 @@ def _key_env() -> str:
 
 
 def _base_url_env() -> str:
-    return "OPENCODE_GO_BASE_URL" if _provider() == PROVIDER_OPENCODE_GO else "DEEPSEEK_BASE_URL"
+    return "OPENCODE_GO_BASE_URL" if _provider() == PROVIDER_OPENCODE_GO else "OPENAI_BASE_URL"
 
 
 def _api_key() -> str:
@@ -649,12 +653,12 @@ def api_key_configured() -> bool:
 def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
     """`cap`＝剩餘期限（批次）：connect／read／write 都不超過它。
 
-    `DEEPSEEK_CONNECT_TIMEOUT` 非數字、nan／inf 或 ≤0 一律退回 10 秒（同 `app.config._positive_float`；
+    `LLM_CONNECT_TIMEOUT` 非數字、nan／inf 或 ≤0 一律退回 10 秒（同 `app.config._positive_float`；
     本模組是葉模組，不 import `app.config`）：`float()` 收 `"nan"`／`"inf"`，而 nan、inf、負數都
     不是合法的 socket 逾時值。
     """
     try:
-        connect = float(os.getenv("DEEPSEEK_CONNECT_TIMEOUT") or 10)
+        connect = float(os.getenv("LLM_CONNECT_TIMEOUT") or 10)
     except ValueError:
         connect = 10.0
     if not math.isfinite(connect) or connect <= 0:
@@ -668,10 +672,10 @@ def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
 
 def _provider_headers(user_id: str | None) -> dict:
     """Go 要求的自報 User-Agent 與每段對話穩定的 `x-opencode-session`。呼叫端傳的 `user_id` 本來就是
-    每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；DeepSeek 不送。"""
+    每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；OpenAI 不送。"""
     if _provider() != PROVIDER_OPENCODE_GO:
         return {}
-    return {"User-Agent": GO_USER_AGENT, "x-opencode-session": _user_id(user_id) or "report-mark"}
+    return {"User-Agent": GO_USER_AGENT, "x-opencode-session": _session_id(user_id) or "report-mark"}
 
 
 def _headers(key: str, user_id: str | None = None) -> dict:
@@ -687,7 +691,7 @@ def _preflight(t0: float) -> tuple[str, str] | ChatOutcome:
     """送出前檢查金鑰與端點；設定錯誤一律回帳號層級的 outcome，不往外拋。
 
     兩種實際會發生的設定錯：金鑰被複製貼上帶進全形引號或零寬空白（`strip()` 去不掉，
-    header 只能是 ASCII，httpx 會拋 UnicodeEncodeError）；`DEEPSEEK_BASE_URL` 少了 scheme
+    header 只能是 ASCII，httpx 會拋 UnicodeEncodeError）；`OPENAI_BASE_URL` 少了 scheme
     （httpx 拋 UnsupportedProtocol，那是 TransportError，會被當成網路錯誤重試——每篇都記
     「連線失敗」、批次卻不中止，正是四天停擺那種型態）。
     """
@@ -773,7 +777,7 @@ def _transport_detail(exc: BaseException) -> str:
 def _silent_detail(exc: BaseException, reasoning_chars: int = 0) -> str:
     """首字前 read 逾時的 detail：說出是伺服器沉默，不是我們的首字期限。
 
-    已收到 reasoning 才沉默時換一種說法：thinking 應已關閉（見模組 docstring），這時伺服器其實
+    已收到 reasoning 才沉默時換一種說法：推理應已關閉（見模組 docstring），這時伺服器其實
     回應過，「未送出任何位元組」會把人帶去查連線。分類不變（TIMEOUT、不重試）。
     """
     if reasoning_chars > 0:
@@ -835,7 +839,7 @@ async def astream_chat(
     try:
         try:
             body = build_body(
-                model, prompt, max_tokens=max_tokens, system=system, user_id=user_id, provider=_provider(),
+                model, prompt, max_tokens=max_tokens, system=system,
             )
             client = _async_client()
             request = client.build_request(
@@ -928,32 +932,23 @@ async def astream_chat(
     yield out
 
 
-# ── 餘額查詢（`/healthz/llm`）────────────────────────────────────────────────
-BALANCE_TIMEOUT = 4.0
+# ── 端點探測（`/healthz/llm`）────────────────────────────────────────────────
+PROBE_TIMEOUT = 4.0
 
 
 @dataclass
-class BalanceResult:
-    """`GET /user/balance` 的結果。
-
-    `kind is None`＝HTTP 200 且本體是 JSON 物件，`body` 原樣交給呼叫端判讀（幣別、門檻是呼叫端的
-    事，這裡不解讀金額）；否則 `kind` 是本模組的錯誤 kind：401→AUTH、402→QUOTA、429／5xx→OVERLOADED、
-    連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG、200 但不是 JSON 物件→OTHER。
-    """
+class ProbeResult:
+    """`GET /models` 的結果。`kind is None`＝HTTP 200，只代表端點與金鑰可用，**不代表額度還有**（兩條路徑都沒有
+    餘額端點；額度用完要等真實請求的 QUOTA，見 `_quota_seen_at`）。否則 `kind` 是本模組的錯誤 kind：
+    401→AUTH、402 與額度碼→QUOTA、429／5xx→OVERLOADED、連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG。"""
 
     kind: str | None
     detail: str = ""
     status: int | None = None
-    body: dict | None = None
-    # `opencode_go`：Go 沒有餘額端點，查的是 `GET /models`；`kind is None` 只代表端點與金鑰可用、`body` 不是餘額。
-    provider: str = PROVIDER_DEEPSEEK
 
 
-async def fetch_balance(timeout: float = BALANCE_TIMEOUT) -> BalanceResult:
-    """查一次帳戶餘額（官方 `GET /user/balance`；9/24 實測不扣費）。任何失敗都轉成結果，不往外拋。
-
-    `LLM_PROVIDER=opencode_go` 時改打 `GET /models`（Go 沒有餘額端點）：只回答「端點與金鑰能不能用」，
-    額度用完要等真實請求的 QUOTA（`_quota_seen_at` 閂鎖）才知道。
+async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
+    """探一次端點與金鑰（`GET /models`，不計費）。任何失敗都轉成結果，不往外拋。
 
     `timeout` 是整次的牆鐘上限（連線、讀取、DNS 全算在內），呼叫端是每 2 分鐘一次的本機探針，
     它的 curl 只等 5 秒。不重試：下一輪探針就是重試，連續失敗的判定在呼叫端。
@@ -961,32 +956,24 @@ async def fetch_balance(timeout: float = BALANCE_TIMEOUT) -> BalanceResult:
     t0 = time.monotonic()
     pre = _preflight(t0)
     if isinstance(pre, ChatOutcome):
-        return BalanceResult(pre.kind, pre.detail)
+        return ProbeResult(pre.kind, pre.detail)
     key, _chat_url = pre
-    prov = _provider()
     headers = {"Authorization": f"Bearer {key}", "Accept": "application/json", **_provider_headers("healthz")}
-    path = "/models" if prov == PROVIDER_OPENCODE_GO else "/user/balance"
     try:
         async with asyncio.timeout(timeout):
             response = await _async_client().get(
-                _base_url() + path, headers=headers, timeout=_timeout(timeout, cap=timeout),
+                _base_url() + "/models", headers=headers, timeout=_timeout(timeout, cap=timeout),
             )
     except (TimeoutError, httpx.TimeoutException) as exc:
-        return BalanceResult(TIMEOUT, f"餘額查詢 {timeout:g}s 內未完成（{type(exc).__name__}）")
+        return ProbeResult(TIMEOUT, f"端點探測 {timeout:g}s 內未完成（{type(exc).__name__}）")
     except httpx.TransportError as exc:
-        return BalanceResult(NETWORK, _transport_detail(exc))
+        return ProbeResult(NETWORK, _transport_detail(exc))
     except (httpx.InvalidURL, ValueError) as exc:
-        return BalanceResult(CONFIG, _transport_detail(exc))
+        return ProbeResult(CONFIG, _transport_detail(exc))
     if response.status_code != 200:
-        kind, detail = classify_status(response.status_code, response.content, prov)
-        return BalanceResult(kind, detail, status=response.status_code, provider=prov)
-    try:
-        body = response.json()
-    except ValueError:
-        return BalanceResult(OTHER, "餘額回應不是 JSON", status=200, provider=prov)
-    if not isinstance(body, dict):
-        return BalanceResult(OTHER, "餘額回應不是 JSON 物件", status=200, provider=prov)
-    return BalanceResult(None, "", status=200, body=body, provider=prov)
+        kind, detail = classify_status(response.status_code, response.content, _provider())
+        return ProbeResult(kind, detail, status=response.status_code)
+    return ProbeResult(None, "", status=200)
 
 
 # ── 批次：同步呼叫 ───────────────────────────────────────────────────────────
@@ -1012,7 +999,7 @@ def _deadline_after_text(acc: _Acc, t0: float, ttft_ms: int | None, chars: int) 
     """已吐字後總期限才到：`TIMEOUT_STREAMED`（期限型截斷、`streamed=True`），不是 `TIMEOUT` 也不是 `TRUNCATED`。
 
     - 不是 `TRUNCATED`：`finish_reason=length` 是決定性的（同一輸入、同一上限重送結果不變，1 次就跳過），
-      期限型不是——「DeepSeek 暫時變慢」時它會落在每一篇上。初版歸 `TRUNCATED`，於是一次變慢就讓整批
+      期限型不是——「供應商暫時變慢」時它會落在每一篇上。初版歸 `TRUNCATED`，於是一次變慢就讓整批
       研報 1 次進跳過名單、行內標註進 `tag_truncated`（`failures_to_delta` 預設不撈），而且斷路器不跳。
     - 不是 `TIMEOUT`：已吐字＝已計費，要記跳過名單（連續 3 輪才跳過，`llm_failures.TIMEOUT_STREAMED`），
       否則真正「每次都寫不完」的那篇每輪都重打、每輪都付一次錢。
@@ -1041,7 +1028,7 @@ def _complete_once(
 
     try:
         body = build_body(
-            model, prompt, max_tokens=max_tokens, system=system, user_id=user_id, provider=_provider(),
+            model, prompt, max_tokens=max_tokens, system=system,
         )
         client = _sync_client()
         # 各項逾時都不超過剩餘期限。逐 chunk 的期限檢查只在收到位元組時才執行，所以伺服器中途
@@ -1141,7 +1128,7 @@ def complete_chat(
     - 只對暫時性錯誤（429、5xx、網路）退避重試，最多 `retries` 次：優先照 `Retry-After`
       （上限 60 秒），否則 2／6 秒加抖動；等待會超過期限就不等了。
     - **已吐字（`outcome.streamed`）就不在傳輸層重試**，不管 kind 是什麼：那一次已經計費，串流中途
-      的錯誤物件、`insufficient_system_resource`、中途斷線照 kind 回傳，批次當單篇失敗（`API[` 前綴，
+      的錯誤物件、中途斷線照 kind 回傳，批次當單篇失敗（`API[` 前綴，
       腳本層也不重試）。否則一篇一輪最多 3（傳輸）×3（腳本層的解析重試）＝9 個已計費請求（審查中3）。
       線上路徑（`astream_chat`）本來就是已吐字不重試。
     - 截斷、審查、空回應、400、帳號錯誤一律不重試：重打同一個 prompt 只是再付一次錢。
@@ -1181,7 +1168,7 @@ def complete_chat(
     )
 
 
-# ── judge：非串流 JSON 模式（DeepSeek 遷移 PR-18）──────────────────────────────
+# ── judge：非串流 JSON 模式 ──────────────────────────────
 # 一次 `complete_json` 最多送出的請求數（首次＋1 次重試）。三種可重試的結局共用這 1 次：
 # finish_reason=length（以 2 倍 max_tokens 重送）、空 content（官方文件記載 JSON 模式偶發）、暫時性錯誤
 # （429／5xx／網路）。呼叫端可再壓低（`max_attempts`）：judge 的「單層重試」就是由呼叫端依剩餘預算
@@ -1235,7 +1222,7 @@ def _add_usage(total: dict, usage: dict | None) -> None:
 def _parse_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
     """HTTP 200 的本體 → (outcome, data)。finish_reason 必須是 stop 且 content 是合法 JSON 才算成功。"""
     try:
-        # 伺服器排隊時在本體前送空行保持連線（官方文件）；JSON 允許前導空白，不必先剝。
+        # 伺服器排隊時在本體前送空行保持連線；JSON 允許前導空白，不必先剝。
         obj = json.loads(raw)
     except ValueError:
         return _fail(OTHER, "回應本體不是 JSON", t0, status=200), None
@@ -1243,7 +1230,8 @@ def _parse_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
         return _fail(OTHER, "回應本體不是 JSON 物件", t0, status=200), None
     if obj.get("error") is not None:
         message = _error_message(json.dumps({"error": obj["error"]}))
-        kind = CONTENT_FILTER if _is_content_risk(message) else OVERLOADED
+        code = obj["error"].get("code") if isinstance(obj["error"], dict) else None
+        kind = CONTENT_FILTER if _is_content_policy(message, code) else OVERLOADED
         return _fail(kind, _redact(f"response error {message}"), t0, status=200), None
     choices = obj.get("choices") or []
     choice = choices[0] if choices and isinstance(choices[0], dict) else {}
@@ -1261,10 +1249,10 @@ def _parse_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
     )
     if finish == "content_filter":
         return _fail(CONTENT_FILTER, "finish_reason=content_filter", t0, **meta), None
+    if isinstance(message.get("refusal"), str) and message["refusal"]:
+        return _fail(CONTENT_FILTER, "模型拒答（refusal）", t0, **meta), None
     if finish == "length":
         return _fail(TRUNCATED, "finish_reason=length", t0, **meta), None
-    if finish == "insufficient_system_resource":
-        return _fail(OVERLOADED, "finish_reason=insufficient_system_resource", t0, **meta), None
     if finish != "stop":
         return _fail(OTHER, f"finish_reason={finish}", t0, **meta), None
     if not content.strip():
@@ -1293,8 +1281,8 @@ async def _json_once(
         return _fail(TIMEOUT, "總期限已過", t0), None
     try:
         body = build_body(
-            model, prompt, max_tokens=max_tokens, system=system, stream=False, user_id=user_id,
-            temperature=0, response_format={"type": "json_object"}, provider=_provider(),
+            model, prompt, max_tokens=max_tokens, system=system, stream=False,
+            temperature=0, response_format={"type": "json_object"},
         )
         client = _async_client()
         request = client.build_request(
@@ -1312,7 +1300,7 @@ async def _json_once(
         return _fail(TIMEOUT, f"總期限內未完成（剩 {remaining:.0f}s 時送出）", t0), None
     except httpx.ReadTimeout as exc:
         # 請求已送達、伺服器 `_READ_TIMEOUT` 秒沒回任何位元組：非串流時伺服器要整份生成完才回本體，
-        # 生成超過 60 秒又沒送 keep-alive 就會落到這裡（9/24 探測：短回應沒有 keep-alive）。它很可能
+        # 生成超過 60 秒又沒送 keep-alive 就會落到這裡。它很可能
         # 已經在生成、會計費，歸 NETWORK 重試就是同一份輸出再付一次錢，而且第二次多半同樣慢。所以
         # 歸 TIMEOUT、不重試——與線上 `astream_chat` 首字前的 ReadTimeout 同一個理由。
         detail = f"伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組（非串流，可能仍在生成）（{type(exc).__name__}）"
@@ -1351,9 +1339,9 @@ async def complete_json(
 ) -> JsonResult:
     """非串流、JSON 模式的單次呼叫（judge 用）。任何失敗都轉成結果，不往外拋（`CancelledError` 除外）。
 
-    請求固定 `stream=false`、`response_format={"type":"json_object"}`、`temperature=0`、thinking 兩個開關
-    都關（`build_body`）。JSON 模式要求 prompt 含「json」字樣：9/24 探測實測大寫 `JSON` 也算數，現行四支
-    judge 系統提示都有「只輸出 JSON」，所以不必改提示（改了就是換尺，`judge_prompt_sha` 會變）。
+    請求固定 `stream=false`、`response_format={"type":"json_object"}`、`temperature=0`、推理關（`build_body`）。
+    JSON 模式要求 prompt 含「json」字樣，現行四支 judge 系統提示都有「只輸出 JSON」，所以不必改提示（改了就是
+    換尺，`judge_prompt_sha` 會變）。
 
     - `timeout`：涵蓋所有嘗試（含退避）的**總期限**，以 asyncio 期限實作（見 `_json_once`）。
     - 回應必須 `finish_reason=stop` 且 content 是 JSON 物件或陣列，否則照 kind 回傳：
@@ -1361,7 +1349,7 @@ async def complete_json(
     - 重試（最多 `max_attempts`，預設 `JSON_MAX_ATTEMPTS`＝2 個請求）只給三種：`TRUNCATED` 以 2 倍
       `max_tokens` 重送、`EMPTY` 原樣重送、暫時性錯誤（`TRANSIENT_KINDS`）退避後重送（優先照
       `Retry-After`，上限 `_JSON_RETRY_AFTER_CAP`；等待會超過總期限就不等）。
-    - 審查、帳號（401／402／404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
+    - 內容政策、帳號（401、額度用完、404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
       帳號錯誤要由呼叫端升級（離線整批中止、生產記 degraded），不在這裡處理。
     - httpx 的 read 逾時（請求已送出、伺服器 60 秒沒回任何位元組）歸 `TIMEOUT`、不重試：非串流時
       伺服器整份生成完才回本體，這時多半已在生成、會計費（見 `_json_once`）。連線／寫入逾時仍是

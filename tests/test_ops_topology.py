@@ -61,13 +61,19 @@ class ExternalHealthTests(unittest.TestCase):
 
     NOW = datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)
     R2 = _ext("r2", probe="health", down=(6,))
-    LLM = _ext("deepseek", probe="health", down=(8,), degraded=(7,))
+    LLM = _ext("llm", probe="health", down=(8,))
+    DEGRADABLE = _ext("office-feed", probe="health", down=(8,), degraded=(9,))
 
     def test_exit_codes(self):
         self.assertEqual(external_health(self.R2, _probe("health", 0), self.NOW)[:2], ("ok", "探針 health 退出碼 0"))
         self.assertEqual(external_health(self.R2, _probe("health", 6), self.NOW)[0], "down")
-        self.assertEqual(external_health(self.LLM, _probe("health", 7), self.NOW)[0], "degraded")
         self.assertEqual(external_health(self.LLM, _probe("health", 8), self.NOW)[0], "down")
+        self.assertEqual(external_health(self.DEGRADABLE, _probe("health", 9), self.NOW)[0], "degraded")
+
+    def test_retired_exit_7_is_not_a_finding(self):
+        """舊版探針殘留的 7：沒有外部依賴認得它，判斷不出來，不是 degraded。"""
+        self.assertEqual(external_health(self.LLM, _probe("health", 7), self.NOW)[0], "unknown")
+        self.assertEqual(external_health(self.R2, _probe("health", 7), self.NOW)[0], "unknown")
 
     def test_masked_or_other_codes_are_unknown_not_ok(self):
         """web 探針 8 會蓋住 6：R2 此時判斷不出來，絕不能顯示正常。"""
@@ -92,14 +98,14 @@ class ExternalHealthTests(unittest.TestCase):
 class BuildTopologyTests(unittest.TestCase):
     def _prod_like(self, postgres="running", web_probe=0):
         items = [
-            _svc("web", deps=["postgres", "r2", "deepseek"], tier="critical"),
+            _svc("web", deps=["postgres", "r2", "llm"], tier="critical"),
             _svc("postgres", postgres, kind="container", tier="critical"),
             _svc("nginx", deps=["web"], kind="container", tier="critical"),
             _svc("sync", "idle", deps=["postgres", "nas", "r2"], timer="report-mark-sync.timer", type_="oneshot"),
             _probe("health", web_probe),
             _svc("metrics"),
         ]
-        externals = [_ext("r2", probe="health", down=(6,)), _ext("deepseek", probe="health", down=(8,)),
+        externals = [_ext("r2", probe="health", down=(6,)), _ext("llm", probe="health", down=(8,), ok=(0, 6)),
                      _ext("nas", tier="important"), _ext("public-edge", deps=["nginx"])]
         return build_topology(_listing(items, externals))
 
@@ -122,7 +128,7 @@ class BuildTopologyTests(unittest.TestCase):
         self.assertIn({"dependent": "web", "dependency": "postgres", "broken": False}, g["edges"])
         self.assertEqual(len(g["edges"]), 3 + 1 + 3 + 1)
         # 依層級、tier、名稱排序
-        self.assertEqual([n["name"] for n in g["nodes"]][:3], ["deepseek", "postgres", "r2"])
+        self.assertEqual([n["name"] for n in g["nodes"]][:3], ["llm", "postgres", "r2"])
 
     def test_upstream_failure_propagates_transitively(self):
         g = self._prod_like(postgres="failed")
@@ -151,32 +157,37 @@ class BuildTopologyTests(unittest.TestCase):
         self.assertEqual(g["down"], ["r2"])
         self.assertEqual(g["affected"], ["nginx", "public-edge", "sync", "web"])
         nodes = {n["name"]: n for n in g["nodes"]}
-        self.assertEqual(nodes["deepseek"]["health"], "unknown")  # 6 可能蓋住 7（餘額低）：不當成正常
+        self.assertEqual(nodes["llm"]["health"], "ok")  # 8 優先於 6：回 6 就代表 LLM 沒問題
         g8 = self._prod_like(web_probe=8)
         nodes8 = {n["name"]: n for n in g8["nodes"]}
-        self.assertEqual((nodes8["deepseek"]["health"], nodes8["r2"]["health"]), ("down", "unknown"))
+        self.assertEqual((nodes8["llm"]["health"], nodes8["r2"]["health"]), ("down", "unknown"))
 
     def test_probe_reporting_an_external_is_not_itself_a_root_cause(self):
         """探針以外部依賴認得的退出碼結束（systemd 停在 failed）：發現記在外部依賴上，探針自己不是根因。
 
-        2026-10-22 正式環境：DeepSeek 餘額低（web 探針 7），依賴圖卻把 health 列成唯一根因。
+        2026-10-22 正式環境：外部依賴只是降級（當時是 web 探針 7），依賴圖卻把 health 列成唯一根因。
         """
-        items = [_svc("web", deps=["r2", "deepseek"], tier="critical"),
-                 _probe("health", 7, summary="failed")]
-        externals = [_ext("r2", probe="health", down=(6,)), _ext("deepseek", probe="health", down=(8,), degraded=(7,))]
+        items = [_svc("web", deps=["r2", "llm"], tier="critical"),
+                 _probe("health", 9, summary="failed")]
+        externals = [_ext("r2", probe="health", down=(6,)), _ext("llm", probe="health", down=(8,), degraded=(9,))]
         g = build_topology(_listing(items, externals))
         nodes = {n["name"]: n for n in g["nodes"]}
         self.assertEqual((nodes["health"]["health"], g["down"], g["root_causes"]), ("ok", [], []))
-        self.assertIn("deepseek", nodes["health"]["health_reason"])
-        self.assertEqual(nodes["deepseek"]["health"], "degraded")
+        self.assertIn("llm", nodes["health"]["health_reason"])
+        self.assertEqual(nodes["llm"]["health"], "degraded")
 
-        # 8：根因是 deepseek（下游 web 受影響），不是探針
+        # 6：根因是 r2（下游 web 受影響），不是探針
+        items[1] = _probe("health", 6, summary="failed")
+        g6 = build_topology(_listing(items, externals))
+        self.assertEqual((g6["down"], g6["root_causes"], g6["affected"]), (["r2"], ["r2"], ["web"]))
+
+        # 8：根因是 llm（下游 web 受影響），不是探針
         items[1] = _probe("health", 8, summary="failed")
         g8 = build_topology(_listing(items, externals))
-        self.assertEqual((g8["down"], g8["root_causes"], g8["affected"]), (["deepseek"], ["deepseek"], ["web"]))
+        self.assertEqual((g8["down"], g8["root_causes"], g8["affected"]), (["llm"], ["llm"], ["web"]))
 
         # 沒有外部依賴認得的退出碼（1＝web HTTP 失敗、4＝探針自己不能執行）：探針照常是 down
-        for code in (1, 4):
+        for code in (1, 4, 7):  # 7 已退役：舊版探針殘留，沒人認得
             items[1] = _probe("health", code, summary="failed")
             with self.subTest(code=code):
                 self.assertEqual(build_topology(_listing(items, externals))["root_causes"], ["health"])

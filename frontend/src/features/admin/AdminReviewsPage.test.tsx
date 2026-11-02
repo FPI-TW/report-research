@@ -40,12 +40,12 @@ test('管理員看到待複核頁首與佇列；判定尺取不到（500）也�
   expect(fetchMock.mock.calls.filter(([u]) => u === '/api/progress')).toHaveLength(0)
 })
 
-test('判定尺剛換成 DeepSeek → 忠實度分頁標新量尺（資料來自 /api/review/judge-scale）', async () => {
+test('判定尺剛換 → 忠實度分頁標新量尺（資料來自 /api/review/judge-scale）', async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'root', role: 'admin' }), { status: 200 })
     if (url === '/api/review/judge-scale') {
       return new Response(JSON.stringify({
-        judge_model: 'deepseek-flash', judge_since: '2026-09-25', other_judge_checked: 6,
+        judge_model: 'gpt-6-luna', judge_since: '2026-09-25', other_judge_checked: 6,
       }), { status: 200 })
     }
     if (url.startsWith('/api/review/queue')) {
@@ -62,7 +62,7 @@ test('判定尺剛換成 DeepSeek → 忠實度分頁標新量尺（資料來自
       <MemoryRouter initialEntries={['/admin/reviews']}><AdminReviewsPage /></MemoryRouter>
     </QueryClientProvider>,
   )
-  expect(await screen.findByText(/判定尺 deepseek-flash 是新量尺（自 2026-09-25 起，DeepSeek）/)).toBeInTheDocument()
+  expect(await screen.findByText(/判定尺 gpt-6-luna 是新量尺（自 2026-09-25 起，gpt-6-luna）/)).toBeInTheDocument()
   expect(judgeScaleCalls(fetchMock)).toBe(1)
   expect(fetchMock.mock.calls.filter(([u]) => u === '/api/progress')).toHaveLength(0)
 })

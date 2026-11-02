@@ -44,7 +44,7 @@ const DEPS = {
   environment: 'production', host: 'office-host', checked_at: '2026-10-06T02:00:00Z',
   nodes: [
     node('web', 'systemd', 'ok'),
-    node('r2', 'external', 'ok', 'r2-reconcile'), node('deepseek', 'external', 'ok', 'llm-health'),
+    node('r2', 'external', 'ok', 'r2-reconcile'), node('llm', 'external', 'ok', 'llm-health'),
     node('nas', 'external', 'unknown'), node('slack', 'external', 'unknown'),
   ],
   edges: [], down: [], root_causes: [], affected: [],

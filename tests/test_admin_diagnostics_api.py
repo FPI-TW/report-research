@@ -1,6 +1,6 @@
 """診斷（/api/admin/diagnostics，HTTP 層）與 `app/services/diagnostics.py` 的純函式。
 
-不連 DB、不連維運代理、不打 R2／DeepSeek：DB 用假 session、代理用假 client、healthz 的兩份快取只被動讀。驗：
+不連 DB、不連維運代理、不打 R2／LLM：DB 用假 session、代理用假 client、healthz 的兩份快取只被動讀。驗：
 未登入 401、一般使用者 403、沒有 `ops.read` 的管理員 403 `missing_scope`；回應形狀與 schema 版本判讀；
 **祕密不外洩**（環境變數、DB 密碼、狀態檔訊息裡夾帶的憑證，整份回應字串都找不到）；某段失敗（DB 掛、
 代理連不上、某個段落拋例外）整頁仍 200、該段只記例外型別；TTL 快取；讀 `.git` 不跑 git；
@@ -33,7 +33,7 @@ PATH = "/api/admin/diagnostics"
 
 # 假祕密一律 fixed-test-secret-…（gitleaks 的 allowlist 認得這個前綴）。
 SECRETS = {
-    "DEEPSEEK_API_KEY": "fixed-test-secret-deepseek6b1f0c",
+    "OPENAI_API_KEY": "fixed-test-secret-openai6b1f0c",
     "R2_ACCESS_KEY_ID": "fixed-test-secret-r2access91ad",
     "R2_SECRET_ACCESS_KEY": "fixed-test-secret-r2secretc0ffee",
     "REPORT_MARK_EDGE_SECRET": "fixed-test-secret-edge77aa",
@@ -254,7 +254,7 @@ class SecretLeakTests(_Base):
         status.write_text(json.dumps({
             "checked_at": "2026-10-06T05:20:03+08:00", "mode": "full", "exit_code": 2, "alert": True,
             "problems": ["check_error"],
-            "message": f"讀不到 DB：connect {DB_URL} failed；key={SECRETS['DEEPSEEK_API_KEY']}",
+            "message": f"讀不到 DB：connect {DB_URL} failed；key={SECRETS['OPENAI_API_KEY']}",
             "version": {"status": "error"}, "drift": {"status": "error"},
         }), encoding="utf-8")
         env = {**SECRETS, "SCHEMA_CHECK_STATUS_FILE": str(status), "REPORT_MARK_DB_URL": DB_URL}
@@ -270,7 +270,7 @@ class SecretLeakTests(_Base):
         self.assertEqual(d["config"]["db_target"], "db.internal.example:6543/research_x")
         self.assertIn(diagnostics.REDACTED, d["schema_info"]["daily_check"]["message"])
         present = d["config"]["secrets_present"]
-        self.assertTrue(all(present[k] for k in ("deepseek_api_key", "r2_credentials", "edge_secret",
+        self.assertTrue(all(present[k] for k in ("openai_api_key", "r2_credentials", "edge_secret",
                                                  "alert_webhook", "session_secret")))
 
     def test_config_is_whitelist(self):
@@ -338,16 +338,16 @@ class FailureTests(_Base):
 
 
 class PassiveHealthTests(unittest.TestCase):
-    """R2 與 DeepSeek 只讀 healthz 上一次的結論：診斷頁不得觸發探測（計費的 R2 list、餘額查詢）。"""
+    """R2 與 LLM 只讀 healthz 上一次的結論：診斷頁不得觸發探測（計費的 R2 list、`/models`）。"""
 
     def test_llm_snapshot_does_not_fetch(self):
         llm_health.reset()
         self.addCleanup(llm_health.reset)
-        with mock.patch.object(llm_http, "fetch_balance", side_effect=AssertionError("不得查餘額")):
+        with mock.patch.object(llm_http, "probe_endpoint", side_effect=AssertionError("不得探端點")):
             snap = llm_health.cached_snapshot()
         self.assertEqual(snap["state"], llm_health.UNKNOWN)
         self.assertIsNone(snap["last_check_age_s"])
-        self.assertNotIn("detail", snap, "detail 含金額，只進日誌")
+        self.assertNotIn("detail", snap, "detail 只進日誌")
 
     def test_storage_snapshot_does_not_probe(self):
         class _Storage:
@@ -368,7 +368,7 @@ class PassiveHealthTests(unittest.TestCase):
 
 class ScrubTests(unittest.TestCase):
     def test_secret_values_and_scrub(self):
-        env = {"DEEPSEEK_API_KEY": "fixed-test-secret-a1", "ASK_MAX_TOKENS": "8192", "LOG_LEVEL": "INFO",
+        env = {"OPENAI_API_KEY": "fixed-test-secret-a1", "ASK_MAX_TOKENS": "8192", "LOG_LEVEL": "INFO",
                "R2_ENDPOINT_URL": "https://acct.r2.example.invalid", "EMPTY_TOKEN": ""}
         values = diagnostics.secret_values(env, db_url="postgresql://u:fixed-test-secret-pw@h:1/d")
         self.assertIn("fixed-test-secret-a1", values)

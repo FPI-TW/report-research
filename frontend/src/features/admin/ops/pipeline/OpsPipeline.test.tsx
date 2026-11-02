@@ -193,7 +193,7 @@ test('產出覆蓋：三列與最後產出；舊後端缺摘錄 → 該列降級
   expect(cov.getByRole('link', { name: '看批次新鮮度' })).toHaveAttribute('href', '/admin/operations/data-health')
 })
 
-test('忠實度：三個訊號、門檻與待複核連結；DeepSeek 剛換尺 → 標新量尺並說明其他尺的筆數', async () => {
+test('忠實度：三個訊號、門檻與待複核連結；剛換尺 → 標新量尺並說明其他尺的筆數', async () => {
   const base = progressFixture()
   mount([progressFixture({
     evaluation: { min_score: 0.9, qa: { ...base.evaluation!.qa!, other_judge_checked: 88 } },
@@ -202,7 +202,7 @@ test('忠實度：三個訊號、門檻與待複核連結；DeepSeek 剛換尺 �
   expect(f.getByText('412')).toBeInTheDocument()
   expect(f.getByText('門檻 0.9')).toBeInTheDocument()
   expect(f.getByText('0.947')).toBeInTheDocument()
-  expect(f.getByText('新量尺（自 2026-09-26 起，DeepSeek）')).toBeInTheDocument()
+  expect(f.getByText('新量尺（自 2026-09-26 起，gpt-6-luna）')).toBeInTheDocument()
   expect(f.getByText(/該尺已查核 324、平均樣本數 318/)).toBeInTheDocument()
   expect(f.getByText(/另有 88 筆其他判定尺的結果只計入已查核數/)).toBeInTheDocument()
 })

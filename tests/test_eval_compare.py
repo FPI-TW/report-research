@@ -233,7 +233,7 @@ class TestJudgeScale(unittest.TestCase):
         base = load(RAGAS_CLEAN)
         with tempfile.TemporaryDirectory() as tmp:
             a = self._variant(tmp, "a.json", base, **_SCALE)
-            b = self._variant(tmp, "b.json", base, **{**_SCALE, "judge_model": "deepseek-flash"})
+            b = self._variant(tmp, "b.json", base, **{**_SCALE, "judge_model": "gpt-6-luna"})
         cmp_ = compare(a, b)
         self.assertEqual(cmp_.exit_code, 2)
         self.assertTrue(any("judge_model" in r for r in cmp_.incomparable), cmp_.incomparable)

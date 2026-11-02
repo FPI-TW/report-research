@@ -33,8 +33,8 @@ from scripts._claude_cli import CliResult, error_kind, failure_kind, run_claude
 ROOT = Path(__file__).resolve().parents[1]
 TAGS_DIR = ROOT / "data" / "tags"
 
-# 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
-# （app/services/llm_models.py；預設 deepseek 下是 deepseek-flash）。
+# 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查預設表
+# （app/services/llm_models.py）。
 TAG_MODEL = resolve_model(TASK_TAG)
 # 輸出上限（第二版計畫 §8）；與 tag_all_cli 同值。
 TAG_MAX_TOKENS = 1024
@@ -131,7 +131,7 @@ def _tag_via_cli(
     *,
     file_hash: str | None = None,
 ):
-    """標註單篇（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）→ (tag, error)。tag 為 None 時 error
+    """標註單篇（`run_claude`；名稱是 CLI 時代的歷史值）→ (tag, error)。tag 為 None 時 error
     說得出為什麼。
 
     **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
@@ -347,7 +347,7 @@ async def ingest_one(
             await session.commit()
             stopped_at = "not_research"
         stage = {"skip_untagged": "tag", "skip_blocked": "tag_blocked", "skip_truncated": "tag_truncated"}.get(reason)
-        # DeepSeek 的內容型失敗（審查、截斷、空回應、400）的跳過名單分類；其餘失敗為 None。
+        # LLM 的內容型失敗（審查、截斷、空回應、400）的跳過名單分類；其餘失敗為 None。
         fail_reason = failure_kind(CliResult(None, tag_error)) if tag is None else None
         return Outcome(
             reason, path, file_hash=res.file_hash, stage=stage, reason=tag_error if stage else None,

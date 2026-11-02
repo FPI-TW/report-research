@@ -1,4 +1,4 @@
-"""DeepSeek judge adapter 的接線（DeepSeek 遷移 PR-18）：生產忠實度與離線評測兩個入口。
+"""HTTP judge adapter 的接線：生產忠實度與離線評測兩個入口。
 
 全程不連網：`httpx.MockTransport` 注入 `llm_http._transport`，金鑰只用 gitleaks allowlist 內的假值。
 
@@ -9,7 +9,7 @@
 2. 各階段 `max_tokens`：拆解 8192、grounding 2048、CP 2048、反推問題 1024（第二版計畫 §6.5）。
 3. 失敗分類：生產記 `degraded_reason`（審查→content_risk、401／402→account），離線帳號錯誤拋
    `JudgeAccountError` 讓 run_ragas 整批中止（rc=2、不寫結果檔）。
-4. PR-M：judge 只剩 DeepSeek。model 不在白名單（含 claude-*）時不送出——生產記 degraded(account)、離線拋
+4. judge 只走 HTTP。model 不在白名單（含 claude-*）時不送出——生產記 degraded(account)、離線拋
    `JudgeAccountError`（整批中止）。
 """
 from __future__ import annotations
@@ -36,14 +36,14 @@ from app.services import llm_http as lh  # noqa: E402
 from eval import judge as EJ  # noqa: E402
 from eval import ragas_metrics as RM  # noqa: E402
 
-FAKE_KEY = "fixed-test-secret-deepseek0"
-ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
-MODEL = "deepseek-flash"
+FAKE_KEY = "fixed-test-secret-openai0"
+ENV = {"OPENAI_API_KEY": FAKE_KEY, "OPENAI_BASE_URL": "https://api.example.test"}
+MODEL = "gpt-6-luna"
 
 
 def completion(content, finish="stop", fp="fp_judge"):
     return httpx.Response(200, json={
-        "model": "deepseek-v4.1-flash", "system_fingerprint": fp,
+        "model": "gpt-6-luna", "system_fingerprint": fp,
         "choices": [{"index": 0, "message": {"content": content if isinstance(content, str)
                                              else json.dumps(content, ensure_ascii=False)},
                      "finish_reason": finish}],
@@ -155,17 +155,18 @@ class ProductionJudgeTests(_Http):
         self.assertEqual(r.faithfulness_score, 1.0)
         ev = r.to_evaluation()
         self.assertEqual(ev["judge_model"], MODEL)
-        self.assertEqual(ev["judge_model_resp"], "deepseek-v4.1-flash")
+        self.assertEqual(ev["judge_model_resp"], "gpt-6-luna")
         self.assertEqual(ev["judge_fingerprint"], "fp_judge")
         self.assertEqual(ev["judge_requests"], 2)
-        self.assertEqual(ev["usage"], {"prompt_tokens": 20, "completion_tokens": 10})
+        self.assertEqual(ev["usage"], {"prompt_tokens": 20, "completion_tokens": 10,
+                                       "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 20})
         by_sys = {b["messages"][0]["content"]: b for b in self.requests}
-        self.assertEqual(by_sys[F.DECOMPOSE_SYS]["max_tokens"], 8192)
-        self.assertEqual(by_sys[F.GROUND_SYS]["max_tokens"], 2048)
+        self.assertEqual(by_sys[F.DECOMPOSE_SYS]["max_completion_tokens"], 8192)
+        self.assertEqual(by_sys[F.GROUND_SYS]["max_completion_tokens"], 2048)
         for b in self.requests:
-            self.assertEqual(b["user_id"], "web-faithfulness")
+            self.assertNotIn("user_id", b)
             self.assertEqual(b["response_format"], {"type": "json_object"})
-            self.assertEqual(b["thinking"], {"type": "disabled"})
+            self.assertNotIn("thinking", b)
             self.assertEqual(b["temperature"], 0)
             self.assertIs(b["stream"], False)
 
@@ -202,10 +203,10 @@ class ProductionJudgeTests(_Http):
         r = await self.check()
         self.assertEqual(r.degraded_reason, F.DEGRADED_TRUNCATED)
         self.assertEqual(len(self.requests), 2)
-        self.assertEqual([b["max_tokens"] for b in self.requests], [8192, 16384])
+        self.assertEqual([b["max_completion_tokens"] for b in self.requests], [8192, 16384])
 
     async def test_content_risk_is_not_retried(self):
-        self.install(lambda s, n, b: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}))
+        self.install(lambda s, n, b: httpx.Response(400, json={"error": {"message": "Rejected by our safety system"}}))
         r = await self.check()
         self.assertEqual((r.degraded_reason, len(self.requests)), (F.DEGRADED_CONTENT_RISK, 1))
 
@@ -228,7 +229,7 @@ class ProductionJudgeTests(_Http):
 
     async def test_missing_key_is_account_and_sends_nothing(self):
         self.install(lambda s, n, b: completion({"statements": []}))
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             r = await self.check()
         self.assertEqual(r.degraded_reason, F.DEGRADED_ACCOUNT)
         self.assertEqual(self.requests, [])
@@ -314,10 +315,10 @@ class EvalJudgeTests(_Http):
         out = await EJ.judge_json("答", system=RM.GENQ_SYS, model=MODEL, timeout=5, max_tokens=1024, meta=meta)
         self.assertEqual(out, {"questions": ["q"]})
         self.assertEqual(meta["system_fingerprint"], "fp_judge")
-        self.assertEqual(meta["model_resp"], "deepseek-v4.1-flash")
+        self.assertEqual(meta["model_resp"], "gpt-6-luna")
         self.assertEqual(meta["requests"], 1)
-        self.assertEqual(self.requests[0]["max_tokens"], 1024)
-        self.assertEqual(self.requests[0]["user_id"], "eval-judge")
+        self.assertEqual(self.requests[0]["max_completion_tokens"], 1024)
+        self.assertNotIn("user_id", self.requests[0])
 
     def test_stage_max_tokens_table(self):
         self.assertEqual(RM.JUDGE_MAX_TOKENS_BY_SYSTEM, {
@@ -347,7 +348,7 @@ class EvalJudgeTests(_Http):
         with self.assertRaises(js.JudgeSchemaError):
             await RM.context_precision("q", "a", ["[1] 報告：x"], judge=judge)
         self.assertEqual(len(self.requests), js.HTTP_STAGE_MAX_REQUESTS)
-        self.assertEqual([b["max_tokens"] for b in self.requests], [2048, 4096, 2048])
+        self.assertEqual([b["max_completion_tokens"] for b in self.requests], [2048, 4096, 2048])
 
 
 class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
@@ -439,7 +440,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
 
     def test_main_exits_2_on_generator_account_error(self):
         async def fake_run(dataset, **kwargs):
-            raise rr.GeneratorAccountError("生成端（deepseek-flash）API[quota] 帳戶餘額不足")
+            raise rr.GeneratorAccountError("生成端（gpt-6-luna）API[quota] 帳戶餘額不足")
 
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "out.json"
@@ -496,7 +497,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
 
             async def fake_judge_json(user, *, system, model, max_tokens, meta):
                 seen.append((system, max_tokens))
-                meta.update({"model_resp": "deepseek-v4.1-flash", "system_fingerprint": "fp1", "requests": 1,
+                meta.update({"model_resp": "gpt-6-luna", "system_fingerprint": "fp1", "requests": 1,
                              "usage": {"prompt_tokens": 7}})
                 return {}
 
@@ -514,7 +515,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
             "decompose": 8192, "ground": 2048, "context_precision": 2048, "answer_relevancy": 1024,
         })
         self.assertEqual(judge_cfg["observed"], {
-            "model_resp": ["deepseek-v4.1-flash"], "system_fingerprint": ["fp1"], "requests": 4,
+            "model_resp": ["gpt-6-luna"], "system_fingerprint": ["fp1"], "requests": 4,
             "usage": {"prompt_tokens": 28},
         })
         self.assertNotIn("observed", report["summary"], "config 只供印差異，不能進 summary（會回 3）")

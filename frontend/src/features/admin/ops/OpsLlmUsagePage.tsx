@@ -208,7 +208,7 @@ function Usage({ d }: { d: LlmUsageResponse }) {
 
 /**
  * LLM 用量：批次（`data/llm_usage.jsonl`，摘要、標題、摘錄、訊號、簡報、標註…）與線上（`research.llm_usage_daily`，
- * 問答與忠實度抽查，Admin v2）兩個來源，依任務、模型、日期（台北時間）。費用真值看 DeepSeek 餘額差分，這裡是歸因。
+ * 問答與忠實度抽查，Admin v2）兩個來源，依任務、模型、日期（台北時間）。費用真值看供應商後台，這裡是歸因。
  * 個人用量只在配額頁。
  */
 export default function OpsLlmUsagePage() {
@@ -221,7 +221,7 @@ export default function OpsLlmUsagePage() {
         help={(
           <>
             兩個來源：批次（<code>data/llm_usage.jsonl</code>，摘要、標題、摘錄、訊號、簡報、標註）與線上（問答、忠實度抽查，記在 DB 的台北日彙總）。
-            只記 metadata、不記問題與答案。費用真值看 DeepSeek 餘額差分，這裡用來看哪個任務、哪個模型花了多少 token；個人用量在「配額」頁。
+            只記 metadata、不記問題與答案。費用真值看供應商後台，這裡用來看哪個任務、哪個模型花了多少 token；個人用量在「配額」頁。
           </>
         )}
         actions={<Segmented label="範圍" options={RANGES} value={days} onChange={setDays} />}

@@ -1,6 +1,6 @@
 """啟動期 LLM 自檢：設定不對要說出來，但不擋啟動。
 
-`/healthz` 只探 DB。DeepSeek 金鑰沒填、模型名不在白名單、網搜總閘開著卻沒有後端時，問答每一題都回
+`/healthz` 只探 DB。金鑰沒填、模型名不在白名單、網搜總閘開著卻沒有後端時，問答每一題都回
 SSE error（或時效題一律婉拒），而健康檢查照樣 ok。這裡釘住兩件事：lifespan 真的有呼叫自檢、設定不對時
 App 仍然起得來（檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM）。判準的逐列測試在 tests/test_llm_models.py。
 
@@ -45,23 +45,23 @@ class LifespanLlmModelCheckTests(unittest.TestCase):
                     self.assertEqual(client.get("/login").status_code, 200)
         return cm
 
-    def test_deepseek_without_key_logs_error_but_still_starts(self):
-        cm = self._run({"DEEPSEEK_API_KEY": ""})
+    def test_openai_without_key_logs_error_but_still_starts(self):
+        cm = self._run({"OPENAI_API_KEY": ""})
         out = "\n".join(cm.output)
-        self.assertIn("DEEPSEEK_API_KEY 為空", out)
-        self.assertIn("provider=deepseek", out)
+        self.assertIn("OPENAI_API_KEY 為空", out)
+        self.assertIn("provider=openai", out)
         for task in ("ask_answer", "ask_intent", "faithfulness"):
-            self.assertIn(f"{task}=deepseek-flash", out)
+            self.assertIn(f"{task}=gpt-6-luna", out)
         self.assertIn("ask_web=", out)  # 網搜沒有模型（空字串）
         self.assertNotIn("claude CLI：", out)  # PR-M 前的 PATH 自檢不再出現
 
     def test_unset_provider_with_key_is_quiet(self):
         """預設（provider 未設、有金鑰、總閘預設關）：沒有任何 ERROR。"""
-        cm = self._run({"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"}, pop=("LLM_PROVIDER", "ASK_ENABLE_WEB"))
+        cm = self._run({"OPENAI_API_KEY": "fixed-test-secret-openai0"}, pop=("LLM_PROVIDER", "ASK_ENABLE_WEB"))
         out = "\n".join(cm.output)
-        self.assertIn("provider=deepseek", out)
+        self.assertIn("provider=openai", out)
         self.assertEqual([r.getMessage() for r in cm.records if r.levelname == "ERROR"], [])
-        self.assertNotIn("fixed-test-secret-deepseek0", out)
+        self.assertNotIn("fixed-test-secret-openai0", out)
 
     def test_claude_model_name_logs_error(self):
         """PR-M：claude-* 不再是合法的模型名（沒有 CLI backend），與打錯字同樣記 ERROR。"""
@@ -69,28 +69,28 @@ class LifespanLlmModelCheckTests(unittest.TestCase):
             with self.subTest(name=name):
                 cm = self._run({"ASK_INTENT_MODEL": name}, level="ERROR")
                 out = "\n".join(cm.output)
-                self.assertIn("不在 DeepSeek 白名單", out)
+                self.assertIn("不在白名單", out)
                 self.assertIn(f"ask_intent={name}", out)
 
     def test_web_gate_on_logs_error(self):
-        cm = self._run({"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "ASK_ENABLE_WEB": "1"}, level="ERROR")
+        cm = self._run({"OPENAI_API_KEY": "fixed-test-secret-openai0", "ASK_ENABLE_WEB": "1"}, level="ERROR")
         self.assertIn("ASK_ENABLE_WEB 開著，但網搜沒有後端", "\n".join(cm.output))
 
     def test_retired_provider_logs_error_and_still_starts(self):
-        """退役值（claude_only 等）：web 記 ERROR、照常以 deepseek 解析（線上容錯）。"""
+        """退役值（deepseek、claude_only 等）：web 記 ERROR、照常以 openai 解析（線上容錯）。"""
         from app.services import llm_models
 
-        for value in ("claude_only", "claude_cli"):
+        for value in ("deepseek", "claude_only", "claude_cli"):
             with self.subTest(value=value):
                 llm_models._LOGGED.clear()
                 with self.assertLogs("app.services.llm_models", level="ERROR") as errs:
-                    cm = self._run({"LLM_PROVIDER": value, "DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"})
-                self.assertIn("provider=deepseek", "\n".join(cm.output))
-                self.assertIn("已隨 claude CLI 退役", "\n".join(errs.output))
+                    cm = self._run({"LLM_PROVIDER": value, "OPENAI_API_KEY": "fixed-test-secret-openai0"})
+                self.assertIn("provider=openai", "\n".join(cm.output))
+                self.assertIn("已退役", "\n".join(errs.output))
 
 
 class LifespanClosesLlmHttpTests(unittest.TestCase):
-    """關機時收掉 DeepSeek 的 AsyncClient 連線池（沒走過 HTTP 路徑時是 no-op）。
+    """關機時收掉 LLM 的 AsyncClient 連線池（沒走過 HTTP 路徑時是 no-op）。
 
     pgvector 版本檢查換成立即回傳：這組只驗關機，不該花 DB 連線逾時的時間（沒有 DB 的
     機器上每次啟動會等 60 秒）。

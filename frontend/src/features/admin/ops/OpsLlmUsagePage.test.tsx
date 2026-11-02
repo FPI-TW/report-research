@@ -19,7 +19,7 @@ const BATCH = {
   totals: totals(11),
   by_day: [{ day: '2026-10-06', ...totals(11) }],
   by_task: [{ task: 'summary', ...totals(11) }],
-  by_model: [{ model: 'deepseek-flash', ...totals(11) }],
+  by_model: [{ model: 'gpt-6-luna', ...totals(11) }],
   rows: [], rows_truncated: false, cost_available: false,
 }
 
@@ -28,7 +28,7 @@ const ONLINE = {
   totals: totals(7, { failures: 1 }),
   by_day: [{ day: '2026-10-05', ...totals(3) }, { day: '2026-10-06', ...totals(4) }],
   by_task: [{ task: 'ask_answer', ...totals(5) }, { task: 'faithfulness', ...totals(2) }],
-  by_model: [{ model: 'deepseek-flash', ...totals(7) }],
+  by_model: [{ model: 'gpt-6-luna', ...totals(7) }],
   rows: [], rows_truncated: false, attributed_users: 3, unattributed_calls: 2, cost_available: false,
 }
 

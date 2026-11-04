@@ -409,6 +409,7 @@ class TakeawaySignalRecordingTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(es, "FAIL_LOG", Path(tmp) / "f.log"), \
              mock.patch.object(es, "call_cli", side_effect=lambda *a, **k: next(results)), \
              mock.patch.object(es, "build_rows", return_value=rows), \
+             mock.patch.object(es, "_apply_target_neighbors", new=mock.AsyncMock()), \
              mock.patch.object(es, "_upsert_rows", new=mock.AsyncMock()):
             await es.extract_one(asyncio.Semaphore(1), item, 16000, "m", 1, recorder=rec)
         return rec

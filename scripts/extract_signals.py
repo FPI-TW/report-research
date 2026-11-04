@@ -45,12 +45,15 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.rating_index import strip_rating_index  # noqa: E402
 from app.services.signal_extract import (  # noqa: E402
     EXTRACTION_VERSION,
+    REUSABLE_EXTRACTION_VERSIONS,
     SIGNAL_MODEL_DEFAULT,
+    TARGET_NEIGHBOR_DAYS,
     ParsedReportSignals,
     ReportContext,
     SignalRow,
     build_rows,
     build_signal_prompt,
+    drop_implausible_targets,
     parse_signal,
 )
 from scripts._claude_cli import (  # noqa: E402
@@ -128,6 +131,20 @@ def build_existing_signals_sql() -> str:
         "SELECT report_id::text, instrument_code, extraction_status, extraction_version "
         "FROM research.report_signal "
         "WHERE report_id::text = ANY(:report_ids)"
+    )
+
+
+def build_target_neighbors_sql() -> str:
+    """同券商同標的、報告日前後 `TARGET_NEIGHBOR_DAYS` 天的其他目標價（合理性閘門的比較基準）。"""
+    return (
+        "SELECT instrument_code, target_price, target_currency "
+        "FROM research.report_signal "
+        "WHERE broker = :broker "
+        "  AND instrument_code = ANY(CAST(:codes AS text[])) "
+        "  AND report_id <> CAST(:report_id AS uuid) "
+        "  AND target_price IS NOT NULL "
+        "  AND report_date BETWEEN CAST(:report_date AS date) - CAST(:days AS int) "
+        "                      AND CAST(:report_date AS date) + CAST(:days AS int)"
     )
 
 
@@ -279,7 +296,7 @@ async def _fetch_done_map(session, report_ids):
 
 
 def _is_done(requested_codes, existing: dict, reextract: bool) -> bool:
-    """該報告是否可跳過：所有 requested 標的皆已 valid/partial 且版本相符。"""
+    """該報告是否可跳過：所有 requested 標的皆已 valid/partial 且版本可沿用（`REUSABLE_EXTRACTION_VERSIONS`）。"""
     if reextract:
         return False
     for code in requested_codes:
@@ -287,7 +304,7 @@ def _is_done(requested_codes, existing: dict, reextract: bool) -> bool:
         if rec is None:
             return False
         status, version = rec
-        if status not in ("valid", "partial") or version != EXTRACTION_VERSION:
+        if status not in ("valid", "partial") or version not in REUSABLE_EXTRACTION_VERSIONS:
             return False
     return True
 
@@ -352,6 +369,31 @@ async def load_full_text(worklist: list[WorkItem]) -> list[WorkItem]:
     return [it for it in worklist if it.full_text]
 
 
+async def _apply_target_neighbors(rows: list[SignalRow], ctx: ReportContext) -> None:
+    """用同券商鄰近目標價擋掉離譜的值。閘門本身是派生檢查：任何失敗都放行，不擋訊號入庫。"""
+    try:
+        codes = sorted({r.instrument_code for r in rows if r.target_price is not None})
+        if not codes or not ctx.broker or not ctx.report_date:
+            return
+        async with SessionFactory() as session:
+            res = await session.execute(
+                text(build_target_neighbors_sql()),
+                {
+                    "broker": ctx.broker,
+                    "codes": codes,
+                    "report_id": ctx.report_id,
+                    "report_date": ctx.report_date,
+                    "days": TARGET_NEIGHBOR_DAYS,
+                },
+            )
+            neighbors: dict[str, list[tuple[float, Optional[str]]]] = {}
+            for code, price, currency in res.all():
+                neighbors.setdefault(code, []).append((float(price), currency))
+        drop_implausible_targets(rows, neighbors)
+    except Exception as exc:
+        print(f"[signal] 目標價鄰近比對略過（{type(exc).__name__}）：{ctx.report_id}", flush=True)
+
+
 async def _upsert_rows(rows: list[SignalRow]) -> None:
     async with SessionFactory() as session:
         for row in rows:
@@ -410,6 +452,7 @@ async def extract_one(
 
     try:
         rows = build_rows(ctx, parsed, model=used_model)
+        await _apply_target_neighbors(rows, ctx)
         await _upsert_rows(rows)
         if all(r.extraction_status == "rejected" for r in rows):
             _rejected += 1

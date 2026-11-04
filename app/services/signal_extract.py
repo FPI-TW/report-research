@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
@@ -71,6 +72,12 @@ RATING_MAP: dict[str, str] = {
     "underweight": "underweight", "reduce": "underweight", "underperform": "underweight",
     # sell
     "賣出": "sell", "賣": "sell", "強力賣出": "sell", "sell": "sell", "strong sell": "sell",
+    # 外資與永豐、元富表格的縮寫（語料實測；太短，只收整串相等，不進子字串表）。
+    # 永豐例：`日月光投控 (3711 TT，B，755→795；upside：16%)`、`友達(2409 TT ，N)：...維持中立的評等`。
+    # 單獨的 O／E／1 語意隨券商而異（Citi 的 1 是 Buy），刻意不收，留 unknown 不計入分布。
+    "b": "buy", "ow": "overweight", "op": "overweight", "o-pf": "overweight",
+    "n": "neutral", "h": "neutral", "ew": "neutral", "uw": "underweight",
+    "降低持股": "underweight",
     # unknown（明確無評等）
     "未評等": "unknown", "無評等": "unknown", "暫不評等": "unknown", "待評": "unknown",
     "n/a": "unknown", "na": "unknown",
@@ -84,8 +91,8 @@ RATING_KEYWORDS: list[tuple[str, str]] = [
     ("區間偏多", "overweight"), ("區間偏空", "underweight"), ("區間操作", "neutral"),
     ("增加持股", "overweight"), ("逢低承接", "overweight"), ("逢低布局", "overweight"),
     ("買進", "buy"), ("買入", "buy"), ("增持", "overweight"), ("加碼", "buy"),
-    ("減碼", "underweight"), ("減持", "underweight"), ("賣出", "sell"),
-    ("中立", "neutral"), ("持有", "neutral"), ("觀望", "neutral"),
+    ("減碼", "underweight"), ("減持", "underweight"), ("降低持股", "underweight"), ("賣出", "sell"),
+    ("中立", "neutral"), ("中性", "neutral"), ("持有", "neutral"), ("觀望", "neutral"),
     ("outperform", "overweight"), ("underperform", "underweight"),
     ("strong buy", "buy"), ("strong sell", "sell"), ("buy", "buy"),
     ("overweight", "overweight"), ("underweight", "underweight"), ("sell", "sell"),
@@ -102,13 +109,30 @@ _CURRENCY_MAP: dict[str, str] = {
 }
 
 
+# 評等變動的寫法（已小寫）：現在的評等在分隔符右邊。不先切的話關鍵字表只認第一個命中的詞，
+# 「買進轉中立」「downgrade to neutral from buy」都會判成 buy，方向正好相反。
+_RATING_CHANGE_SEP = re.compile(r"轉為?|→|->|➔|⇒|至|\bto\b")
+_RATING_FROM_TAIL = re.compile(r"\bfrom\b.*$")
+
+
+def _rating_after_change(v: str) -> Optional[str]:
+    """評等變動字串取變動後的那一段；不是變動字串、或右邊不是評等（「目標價調升至 300」）回 None。"""
+    parts = _RATING_CHANGE_SEP.split(_RATING_FROM_TAIL.sub("", v))
+    if len(parts) < 2:
+        return None
+    return _match_rating(parts[-1].strip())
+
+
 def _match_rating(v: str) -> Optional[str]:
-    """已小寫的評等字串查 `RATING_MAP`（整串）再查 `RATING_KEYWORDS`（子字串）；都沒命中回 None。
+    """已小寫的評等字串查 `RATING_MAP`（整串）→ 變動寫法 → `RATING_KEYWORDS`（子字串）；都沒命中回 None。
 
     回 None 與表裡明寫的 'unknown'（「未評等」）要分開：前者才值得換個鍵再查一次。
     """
     if v in RATING_MAP:
         return RATING_MAP[v]
+    after = _rating_after_change(v)
+    if after is not None:
+        return after
     for kw, level in RATING_KEYWORDS:
         if kw in v:
             return level

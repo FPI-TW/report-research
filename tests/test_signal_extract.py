@@ -357,6 +357,38 @@ class SimplifiedLookupTests(unittest.TestCase):
         self.assertEqual(r.raw_payload["rating"]["raw"], "买入")
 
 
+class RatingCodeAndChangeTests(unittest.TestCase):
+    """語料實測：外資與表格縮寫落 unknown、評等變動判成舊評等（2026-11-04 盤點）。"""
+
+    def test_broker_short_codes(self):
+        cases = {
+            "OW": "overweight", "UW": "underweight", "EW": "neutral", "OP": "overweight", "O-PF": "overweight",
+            "B": "buy", "N": "neutral", "H": "neutral", "降低持股": "underweight",
+        }
+        for raw, level in cases.items():
+            self.assertEqual(normalize_rating(raw), level, raw)
+
+    def test_short_codes_only_match_whole_string(self):
+        """縮寫不進子字串表：含 b、n 的一般字串不能被當成評等。"""
+        for raw in ("Top Pick", "not rated", "首選", "受法規限制", "NC", "1"):
+            self.assertEqual(normalize_rating(raw), "unknown", raw)
+
+    def test_rating_change_takes_the_new_rating(self):
+        cases = {
+            "買進轉中立": "neutral", "中立轉買進": "buy", "N→B": "buy", "B->N": "neutral",
+            "由買進調降至中立": "neutral", "調升至買進": "buy",
+            "downgrade to neutral from buy": "neutral", "upgrade to EW from UW": "neutral",
+        }
+        for raw, level in cases.items():
+            self.assertEqual(normalize_rating(raw), level, raw)
+
+    def test_separator_without_rating_keeps_keyword_match(self):
+        """分隔符右邊不是評等時不能把整串判丟：這些都是維持原評等。"""
+        self.assertEqual(normalize_rating("買進(目標價調升至300)"), "buy")
+        self.assertEqual(normalize_rating("持有-超越同業"), "neutral")
+        self.assertEqual(normalize_rating("買進(調升評等)"), "buy")
+
+
 class RawPayloadModelTests(unittest.TestCase):
     """raw_payload.model 記產出模型（遷移 PR-15）。"""
 

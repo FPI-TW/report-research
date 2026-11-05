@@ -10,8 +10,9 @@
   狀態改 `partial`、原因附在 `error_detail`。**只清不補**：錯的值不換成猜的值；原始值留在
   `raw_payload.target_price`。鄰近比對用先過第一道閘門之後還留著的值當基準，現價不當基準。
 
-已經發出去的每日簡報（`report_brief.markdown`）不會跟著改；要重產用
-`scripts/generate_brief.py --date … --force`（會呼叫 LLM）。
+已經發出去的每日簡報（`report_brief.markdown`）不會跟著改。要重產的話注意：
+`scripts/generate_brief.py --date … --force` 對過去的日期會把窗期算成「現在往前 24 小時」，
+不是該列原本的窗期，要先處理這點再用（會呼叫 LLM）。
 
 模式：
   uv run python scripts/repair_signal_values.py                     # 試跑：只列出會改什麼，不寫 DB

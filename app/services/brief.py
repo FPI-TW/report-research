@@ -482,6 +482,8 @@ def _to_row(r) -> BriefRow:
 
 _LATEST_SQL = text(_BRIEF_SELECT + " ORDER BY brief_date DESC LIMIT 1")
 _BY_DATE_SQL = text(_BRIEF_SELECT + " WHERE brief_date = :d")
+_PREVIOUS_SQL = text(_BRIEF_SELECT + " WHERE brief_date < :d ORDER BY brief_date DESC LIMIT 1")
+_FOLLOWING_SQL = text(_BRIEF_SELECT + " WHERE brief_date > :d ORDER BY brief_date ASC LIMIT 1")
 _DATES_SQL = text(
     "SELECT brief_date FROM research.report_brief ORDER BY brief_date DESC LIMIT :limit"
 )
@@ -494,6 +496,18 @@ async def fetch_latest(session: AsyncSession) -> Optional[BriefRow]:
 
 async def fetch_by_date(session: AsyncSession, d: date) -> Optional[BriefRow]:
     row = (await session.execute(_BY_DATE_SQL, {"d": d})).first()
+    return _to_row(row) if row else None
+
+
+async def fetch_previous(session: AsyncSession, d: date) -> Optional[BriefRow]:
+    """`d` 之前最近的一份簡報（窗期起點）。"""
+    row = (await session.execute(_PREVIOUS_SQL, {"d": d})).first()
+    return _to_row(row) if row else None
+
+
+async def fetch_following(session: AsyncSession, d: date) -> Optional[BriefRow]:
+    """`d` 之後最近的一份簡報（補過去日子時的窗期終點）。"""
+    row = (await session.execute(_FOLLOWING_SQL, {"d": d})).first()
     return _to_row(row) if row else None
 
 

@@ -17,14 +17,24 @@
 - 窗期內既無新研報也無評等變動 → **不寫列**，下一輪再看。寫一列「今天沒事」會讓
   當天稍晚真的有素材時再也補不上（UNIQUE 擋著），而「今天沒事」對讀者沒有價值
 
-窗期是「上一份簡報的 window_end → 現在」，故不會有縫；沒有上一份時取最近 24 小時
-（另有 --max-lookback-days 上限，避免久未執行後一次把幾週的東西全塞進 prompt）。
+## 窗期
+
+各份簡報的窗期首尾相接，一份研報只進一份簡報。規則在 `plan_window`：
+
+- 排程（今天、還沒有列）：上一份的 window_end → 現在；沒有上一份時取最近 24 小時
+  （另有 --max-lookback-days 上限，避免久未執行後一次把幾週的東西全塞進 prompt）。
+- 目標日已有列（--force）：沿用該列存的窗期，不重算。素材與該份簡報當初看到的是同一段，
+  前後的簡報也不受影響。
+- 補過去的日子（目標日還沒有列）：起點是目標日之前最近一份的 window_end；終點是目標日之後
+  最近一份的 window_start 與目標日結束（本地時間）取早的。窗期長度為零時不寫列、不呼叫 LLM：
+  窗期首尾相接，缺的那天的研報已經在後面那份簡報裡。
 
 用法：
   uv run python scripts/generate_brief.py --dry-run     # 只印素材與判斷，不呼叫 LLM
   uv run python scripts/generate_brief.py               # 排程走的就是這條
-  uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，重寫當日
-  uv run python scripts/generate_brief.py --date 2026-08-05
+  uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，以該列原窗期重寫當日
+  uv run python scripts/generate_brief.py --date 2026-08-05 --force   # 以原窗期重寫過去某天
+  uv run python scripts/generate_brief.py --date 2026-08-05           # 補缺的日子（多天時由舊到新）
 
 退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（模型名不在
 白名單、缺金鑰、401／額度用完／模型不存在、斷路器）、75 批次鎖被其他批次佔用。
@@ -134,18 +144,56 @@ def resolve_window(
     previous_end: Optional[datetime],
     now: datetime,
     max_lookback_days: int = MAX_LOOKBACK_DAYS,
+    not_after: Optional[datetime] = None,
 ) -> tuple[datetime, datetime]:
     """窗期＝上一份簡報的結尾 → 現在（無縫接續），但不回看超過上限。
+
+    `not_after` 把終點壓在現在之前（補過去的日子）；回看的上限與 24 小時預設都從終點起算。
+    上一份的結尾晚於終點時，回傳的起點會不早於終點（空窗期），由呼叫端判斷。
 
     純函式：時間邏輯是這支腳本唯一容易錯又完全無聲的地方（錯了只是簡報少幾篇，
     沒有任何錯誤訊息），所以抽出來單測。
     """
-    floor = now - timedelta(days=max_lookback_days)
+    end = now if not_after is None else min(now, not_after)
+    floor = end - timedelta(days=max_lookback_days)
     if previous_end is None:
-        start = now - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
+        start = end - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
     else:
         start = previous_end
-    return max(start, floor), now
+    return max(start, floor), end
+
+
+def end_of_local_day(target: date_cls) -> datetime:
+    """目標日結束的時間點（隔天 00:00，本地時區，與預設目標日同一個基準），以 UTC 表示。
+
+    一律轉 UTC：`fetch_signal_changes` 以 `end.date()` 算新鮮度下限，帶 +08:00 的值落庫後
+    再讀回來是 UTC，日期會差一天，同一個窗期重跑的結果就不同了。
+    """
+    return datetime.combine(target + timedelta(days=1), datetime.min.time()).astimezone(timezone.utc)
+
+
+def plan_window(
+    target: date_cls,
+    existing: Optional[brief_service.BriefRow],
+    previous: Optional[brief_service.BriefRow],
+    following: Optional[brief_service.BriefRow],
+    now: datetime,
+    max_lookback_days: int = MAX_LOOKBACK_DAYS,
+) -> tuple[datetime, datetime]:
+    """決定目標日的窗期（規則見模組 docstring；純函式）。
+
+    `existing`／`previous`／`following` 是目標日當天、之前最近、之後最近的簡報。
+
+    `existing` 的窗期原樣回傳，回看上限也不套：重寫不能改變這份簡報涵蓋的範圍，否則它和前後
+    簡報的銜接會斷（窗期被換成「現在往前 24 小時」，舊簡報就變成當天的素材）。
+    """
+    if existing is not None:
+        return existing.window_start, existing.window_end
+    caps = [end_of_local_day(target)]
+    if following is not None:
+        caps.append(following.window_start)
+    previous_end = previous.window_end if previous is not None else None
+    return resolve_window(previous_end, now, max_lookback_days, not_after=min(caps))
 
 
 async def generate(args) -> int:
@@ -167,9 +215,17 @@ async def generate(args) -> int:
             print(f"[brief] {target} 已有簡報（{existing.report_count} 篇）→ no-op")
             return 0
 
-        latest = await brief_service.fetch_latest(session)
-        previous_end = latest.window_end if latest and latest.brief_date < target else None
-        start, end = resolve_window(previous_end, now, args.max_lookback_days)
+        previous = following = None
+        if existing is None:
+            previous = await brief_service.fetch_previous(session, target)
+            following = await brief_service.fetch_following(session, target)
+        start, end = plan_window(target, existing, previous, following, now, args.max_lookback_days)
+        if start >= end:
+            print(
+                f"[brief] {target} 窗期為空（{start.isoformat()} → {end.isoformat()}）"
+                "：這段時間的研報已在前後的簡報裡 → 不寫列"
+            )
+            return 0
 
         reports = await brief_service.fetch_window_reports(session, start, end)
         total = await brief_service.count_window_reports(session, start, end)
@@ -273,7 +329,7 @@ def main() -> int:
         help="本地時間到這個鐘點之後才產生（預設 9；--force 可繞過）",
     )
     ap.add_argument("--max-lookback-days", type=int, default=MAX_LOOKBACK_DAYS)
-    ap.add_argument("--force", action="store_true", help="忽略時間閘與既有列，重寫當日")
+    ap.add_argument("--force", action="store_true", help="忽略時間閘與既有列，以該列原窗期重寫")
     ap.add_argument("--dry-run", action="store_true", help="只印素材，不呼叫 LLM、不寫庫")
     args = ap.parse_args()
     # 模型與金鑰預檢排在 generate() 之前，也就在取鎖之前；--dry-run 不呼叫 LLM，不檢查。

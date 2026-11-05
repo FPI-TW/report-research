@@ -103,7 +103,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### ⑧ 每日簡報：`scripts/generate_brief.py`（LLM，簡報頁用）
 
-- 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7），用 `created_at` 界定。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
+- 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7），用 `created_at` 界定；`--force` 重寫已有的列時沿用該列存的窗期；補過去的日子時，終點是目標日結束（本地時間）與下一份的 `window_start` 取早的，窗期長度為零就不寫列。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
 - `--date`、`--after-hour`（9，未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
 
 ### LLM 批次互斥：`scripts/_claude_lock.py`

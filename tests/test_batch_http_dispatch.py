@@ -964,7 +964,8 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
             p(mock.patch.object(gb, "FAIL_LOG", self.tmp / "brief_failures.log"))
             p(mock.patch.object(gb, "SessionFactory", lambda: _FakeSession()))
             p(mock.patch.object(svc, "fetch_by_date", mock.AsyncMock(return_value=None)))
-            p(mock.patch.object(svc, "fetch_latest", mock.AsyncMock(return_value=None)))
+            p(mock.patch.object(svc, "fetch_previous", mock.AsyncMock(return_value=None)))
+            p(mock.patch.object(svc, "fetch_following", mock.AsyncMock(return_value=None)))
             p(mock.patch.object(svc, "fetch_window_reports",
                                 mock.AsyncMock(return_value=[argparse.Namespace(report_id="r1")])))
             p(mock.patch.object(svc, "count_window_reports", mock.AsyncMock(return_value=1)))

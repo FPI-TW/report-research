@@ -5,11 +5,16 @@ DB 查詢本身（_SIGNAL_CHANGES_SQL 的 lag 視窗、新鮮度過濾）不在�
 pgvector 容器，與 tests/test_schema_constraints.py 同一類。此處守的是**接線與判斷**：
 窗期算錯、模型輸出沒收乾淨、空狀態被當成錯誤，這三種失效都不會有任何錯誤訊息。
 """
+import argparse
+import contextlib
+import io
 import os
 import sys
+import time
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -21,12 +26,16 @@ import generate_brief  # noqa: E402  (scripts/ 已在 sys.path)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.services.brief import (  # noqa: E402
+    SIGNAL_MAX_REPORT_AGE_DAYS,
     BriefReport,
     BriefRow,
     BriefSignalChange,
     BriefWindowMix,
     build_material,
     build_prompt,
+    fetch_following,
+    fetch_previous,
+    fetch_signal_changes,
     market_zh,
     parse_brief,
     rating_zh,
@@ -86,6 +95,258 @@ class WindowTests(unittest.TestCase):
         previous_end = NOW - timedelta(days=90)
         start, _ = generate_brief.resolve_window(previous_end, NOW, max_lookback_days=7)
         self.assertEqual(start, NOW - timedelta(days=7))
+
+    def test_not_after_caps_the_end_and_lookback_counts_from_it(self):
+        """過去的日子不可把回看上限算在現在頭上：否則起點會跑到終點之後，整段窗期被吃掉。"""
+        not_after = NOW - timedelta(days=30)
+        previous_end = not_after - timedelta(days=2)
+        self.assertEqual(
+            generate_brief.resolve_window(previous_end, NOW, not_after=not_after),
+            (previous_end, not_after),
+        )
+        start, end = generate_brief.resolve_window(previous_end, NOW, max_lookback_days=1, not_after=not_after)
+        self.assertEqual((start, end), (not_after - timedelta(days=1), not_after))
+        start, end = generate_brief.resolve_window(None, NOW, not_after=not_after)
+        self.assertEqual((start, end), (not_after - timedelta(hours=24), not_after))
+
+    def test_not_after_later_than_now_does_not_extend_past_now(self):
+        _, end = generate_brief.resolve_window(None, NOW, not_after=NOW + timedelta(hours=5))
+        self.assertEqual(end, NOW)
+
+
+class _TzMixin:
+    """把行程時區固定成 UTC+8，日界線的斷言才不隨主機變動（POSIX 寫法，不需要 tzdata）。"""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.dict(os.environ, {"TZ": "CST-8"})
+        patcher.start()
+        time.tzset()
+
+        def restore():
+            patcher.stop()
+            time.tzset()
+
+        self.addCleanup(restore)
+
+
+def _at(day, hour=1):
+    """該日 UTC `hour` 時（台北 9 時），排程產生簡報的典型時間點。"""
+    return datetime(day.year, day.month, day.day, hour, tzinfo=timezone.utc)
+
+
+def _brief(day, start=None, end=None):
+    return BriefRow(
+        brief_date=day,
+        window_start=start or _at(day - timedelta(days=1)),
+        window_end=end or _at(day),
+        markdown="## 今日重點\n- 舊內容",
+        report_ids=["rep-old"],
+        report_count=1,
+        signal_count=0,
+        model="gpt-6-luna",
+        created_at=_at(day),
+    )
+
+
+NOV = {d: date(2026, 11, d) for d in range(1, 8)}
+CLOCK = datetime(2026, 11, 5, 7, 30, tzinfo=timezone.utc)  # 11/05 台北 15:30
+
+
+class PlanWindowTests(_TzMixin, unittest.TestCase):
+    """窗期首尾相接是這張表的不變量（2026-11-05 實測 63 份裡 61 份逐份相接、零重疊）。"""
+
+    def test_existing_row_keeps_its_stored_window(self):
+        """回歸：已有 11/05 時下 --date 11-04 --force，舊簡報被換成「現在往前 24 小時」的素材。"""
+        row = _brief(NOV[4])
+        window = generate_brief.plan_window(NOV[4], row, _brief(NOV[3]), _brief(NOV[5]), CLOCK)
+        self.assertEqual(window, (row.window_start, row.window_end))
+
+    def test_existing_row_of_today_keeps_its_stored_window(self):
+        row = _brief(NOV[5])
+        window = generate_brief.plan_window(NOV[5], row, _brief(NOV[4]), None, CLOCK)
+        self.assertEqual(window, (row.window_start, row.window_end))
+
+    def test_existing_row_is_not_clamped_by_lookback(self):
+        """停擺多日後的那份窗期本來就長，或是在 --max-lookback-days 之外的舊日子：一律不動。"""
+        row = _brief(NOV[4], start=_at(NOV[4]) - timedelta(days=30))
+        window = generate_brief.plan_window(NOV[4], row, None, None, CLOCK, max_lookback_days=7)
+        self.assertEqual(window, (row.window_start, row.window_end))
+
+    def test_scheduled_run_ends_now(self):
+        previous = _brief(NOV[4])
+        window = generate_brief.plan_window(NOV[5], None, previous, None, CLOCK)
+        self.assertEqual(window, (previous.window_end, CLOCK))
+
+    def test_scheduled_run_without_any_brief_looks_back_24h(self):
+        window = generate_brief.plan_window(NOV[5], None, None, None, CLOCK)
+        self.assertEqual(window, (CLOCK - timedelta(hours=24), CLOCK))
+
+    def test_backfill_is_bounded_by_the_following_brief(self):
+        """回歸：終點若是現在，就和後面的簡報重疊。這裡 11/05 因停擺超過回看上限而留了縫。"""
+        previous = _brief(NOV[3])
+        following = _brief(NOV[5], start=previous.window_end + timedelta(hours=3))
+        window = generate_brief.plan_window(NOV[4], None, previous, following, CLOCK)
+        self.assertEqual(window, (previous.window_end, following.window_start))
+
+    def test_backfill_between_contiguous_briefs_is_empty(self):
+        """窗期首尾相接時，缺的那天的研報全在後一份裡，沒有東西可補。"""
+        previous = _brief(NOV[3])
+        following = _brief(NOV[5], start=previous.window_end)
+        start, end = generate_brief.plan_window(NOV[4], None, previous, following, CLOCK)
+        self.assertEqual(start, end)
+
+    def test_backfill_with_overlapping_neighbours_is_empty(self):
+        previous = _brief(NOV[3])
+        following = _brief(NOV[5], start=previous.window_end - timedelta(hours=1))
+        start, end = generate_brief.plan_window(NOV[4], None, previous, following, CLOCK)
+        self.assertGreaterEqual(start, end)
+
+    def test_backfill_without_later_brief_ends_with_the_target_day(self):
+        """沒有後面的簡報也不可到現在：那天的簡報會吞掉之後每一天的素材。"""
+        previous = _brief(NOV[1])
+        _, end = generate_brief.plan_window(NOV[3], None, previous, None, CLOCK)
+        self.assertEqual(end, datetime(2026, 11, 3, 16, 0, tzinfo=timezone.utc), "台北 11/04 00:00")
+
+    def test_following_brief_after_the_target_day_does_not_extend_the_window(self):
+        previous = _brief(NOV[1])
+        following = _brief(NOV[5], start=_at(NOV[4]))
+        _, end = generate_brief.plan_window(NOV[3], None, previous, following, CLOCK)
+        self.assertEqual(end, datetime(2026, 11, 3, 16, 0, tzinfo=timezone.utc))
+
+    def test_backfill_before_the_first_brief_looks_back_24h_from_its_end(self):
+        following = _brief(NOV[5], start=_at(NOV[3]))
+        start, end = generate_brief.plan_window(NOV[2], None, None, following, CLOCK)
+        self.assertEqual(end, datetime(2026, 11, 2, 16, 0, tzinfo=timezone.utc))
+        self.assertEqual(start, end - timedelta(hours=24))
+
+    def test_consecutive_backfills_tile_with_the_scheduled_run(self):
+        """由舊到新逐日補，再接今天的排程：沒有縫也沒有重疊。"""
+        rows = [_brief(NOV[1])]
+        for day in (NOV[2], NOV[3], NOV[4], NOV[5]):
+            start, end = generate_brief.plan_window(day, None, rows[-1], None, CLOCK)
+            rows.append(_brief(day, start=start, end=end))
+        for earlier, later in zip(rows, rows[1:]):
+            self.assertEqual(later.window_start, earlier.window_end)
+        self.assertEqual(rows[-1].window_end, CLOCK)
+
+    def test_end_of_local_day_is_utc(self):
+        """帶 +08:00 的值 `.date()` 與落庫讀回的 UTC 差一天，同窗期重跑的新鮮度下限就不同。"""
+        end = generate_brief.end_of_local_day(NOV[4])
+        self.assertEqual(end.utcoffset(), timedelta(0))
+        self.assertEqual(end.date(), NOV[4])
+
+
+class _Session:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def commit(self):
+        pass
+
+
+class GenerateWindowTests(unittest.IsolatedAsyncioTestCase):
+    """窗期要真的接到素材查詢與落庫上。不呼叫 LLM（call_cli 是假的）、不連 DB。"""
+
+    async def _generate(self, *, target, existing=None, previous=None, following=None, force=True):
+        svc = generate_brief.brief_service
+        args = argparse.Namespace(
+            date=target.isoformat(), force=force, after_hour=0, dry_run=False, model="gpt-6-luna", max_lookback_days=7,
+        )
+        mocks = {
+            "fetch_by_date": mock.AsyncMock(return_value=existing),
+            "fetch_previous": mock.AsyncMock(return_value=previous),
+            "fetch_following": mock.AsyncMock(return_value=following),
+            "fetch_window_reports": mock.AsyncMock(return_value=[_report()]),
+            "count_window_reports": mock.AsyncMock(return_value=1),
+            "fetch_signal_changes": mock.AsyncMock(return_value=[]),
+            "upsert_brief": mock.AsyncMock(),
+        }
+        call_cli = mock.MagicMock(return_value=(ParseTests.BODY, None))
+        out = io.StringIO()
+        with mock.patch.multiple(svc, **mocks), \
+                mock.patch.object(generate_brief, "SessionFactory", _Session), \
+                mock.patch.object(generate_brief, "call_cli", call_cli), \
+                mock.patch.object(generate_brief, "blocked_today", return_value=False), \
+                mock.patch.object(generate_brief, "claude_cli_lock_or_exit", lambda name: contextlib.nullcontext()), \
+                contextlib.redirect_stdout(out):
+            rc = await generate_brief.generate(args)
+        return rc, mocks, call_cli, out.getvalue()
+
+    async def test_force_on_past_date_reuses_stored_window(self):
+        row = _brief(NOV[4])
+        rc, mocks, call_cli, _ = await self._generate(target=NOV[4], existing=row)
+        self.assertEqual(rc, 0)
+        window = (row.window_start, row.window_end)
+        for name in ("fetch_window_reports", "count_window_reports", "fetch_signal_changes"):
+            self.assertEqual(mocks[name].await_args.args[1:3], window, name)
+        kwargs = mocks["upsert_brief"].await_args.kwargs
+        self.assertEqual((kwargs["window_start"], kwargs["window_end"]), window, "落庫的窗期不可被覆寫")
+        self.assertEqual(kwargs["brief_date"], NOV[4])
+        call_cli.assert_called_once()
+        mocks["fetch_previous"].assert_not_awaited()
+        mocks["fetch_following"].assert_not_awaited()
+
+    async def test_existing_without_force_is_still_a_noop(self):
+        rc, mocks, call_cli, out = await self._generate(target=NOV[4], existing=_brief(NOV[4]), force=False)
+        self.assertEqual(rc, 0)
+        self.assertIn("no-op", out)
+        mocks["fetch_window_reports"].assert_not_awaited()
+        mocks["upsert_brief"].assert_not_awaited()
+        call_cli.assert_not_called()
+
+    async def test_backfill_uses_neighbours_for_the_window(self):
+        previous = _brief(NOV[3])
+        following = _brief(NOV[5], start=previous.window_end + timedelta(hours=3))
+        rc, mocks, _, _ = await self._generate(target=NOV[4], previous=previous, following=following, force=False)
+        self.assertEqual(rc, 0)
+        kwargs = mocks["upsert_brief"].await_args.kwargs
+        self.assertEqual((kwargs["window_start"], kwargs["window_end"]), (previous.window_end, following.window_start))
+
+    async def test_empty_window_writes_nothing_and_skips_the_llm(self):
+        previous = _brief(NOV[3])
+        following = _brief(NOV[5], start=previous.window_end)
+        rc, mocks, call_cli, out = await self._generate(target=NOV[4], previous=previous, following=following)
+        self.assertEqual(rc, 0)
+        self.assertIn("窗期為空", out)
+        mocks["fetch_window_reports"].assert_not_awaited()
+        mocks["upsert_brief"].assert_not_awaited()
+        call_cli.assert_not_called()
+
+
+class SignalAgeBaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rerun_with_stored_window_keeps_the_freshness_floor(self):
+        """SIGNAL_MAX_REPORT_AGE_DAYS 的基準是 end：沿用原窗期重跑，新鮮度下限與當初相同，不隨重跑時間改變。"""
+        row = _brief(NOV[4])
+        session = mock.AsyncMock()
+        session.execute.return_value = mock.MagicMock(all=mock.MagicMock(return_value=[]))
+        await fetch_signal_changes(session, row.window_start, row.window_end)
+        params = session.execute.await_args.args[1]
+        self.assertEqual((params["start"], params["end"]), (row.window_start, row.window_end))
+        self.assertEqual(params["min_report_date"], NOV[4] - timedelta(days=SIGNAL_MAX_REPORT_AGE_DAYS))
+
+
+class NeighbourQueryTests(unittest.IsolatedAsyncioTestCase):
+    """方向寫反不會有錯誤訊息，只會拿到離目標日最遠的那份。"""
+
+    async def _sql(self, fetch):
+        session = mock.AsyncMock()
+        session.execute.return_value = mock.MagicMock(first=mock.MagicMock(return_value=None))
+        self.assertIsNone(await fetch(session, NOV[4]))
+        stmt, params = session.execute.await_args.args
+        self.assertEqual(params, {"d": NOV[4]})
+        return " ".join(str(stmt).split())
+
+    async def test_previous_is_nearest_earlier(self):
+        sql = await self._sql(fetch_previous)
+        self.assertIn("brief_date < :d ORDER BY brief_date DESC LIMIT 1", sql)
+
+    async def test_following_is_nearest_later(self):
+        sql = await self._sql(fetch_following)
+        self.assertIn("brief_date > :d ORDER BY brief_date ASC LIMIT 1", sql)
 
 
 class WindowMixTests(unittest.TestCase):

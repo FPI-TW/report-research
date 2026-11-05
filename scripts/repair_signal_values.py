@@ -11,7 +11,8 @@
   `raw_payload.target_price`。鄰近比對用先過第一道閘門之後還留著的值當基準，現價不當基準。
 
 已經發出去的每日簡報（`report_brief.markdown`）不會跟著改；要重產用
-`scripts/generate_brief.py --date … --force`（會呼叫 LLM）。
+`scripts/generate_brief.py --date … --force`（會呼叫 LLM）。`--force` 沿用該列存的窗期，素材範圍
+不變，只會讀到修復後的值。
 
 模式：
   uv run python scripts/repair_signal_values.py                     # 試跑：只列出會改什麼，不寫 DB

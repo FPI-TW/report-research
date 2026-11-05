@@ -961,7 +961,7 @@ P5 對退出碼 8 只有一則措辭（「LLM 帳號不可用…」），是哪�
 2. 確認 `curl -s http://127.0.0.1:8097/healthz/llm` 回 `{"llm":"ok"}`。web 自己的請求碰過額度用完時，`GET /models` 回 200 也不會解除，要等之後有一次真實請求成功（問一題）；重啟 web 也會清掉。
 3. 停排程：`sudo systemctl stop report-mark-sync.timer`。
 4. 依「整批中止後的重放」逐份重放 sync 殼保留的 delta（`--delta … --hashes-out …`），每份接著用它自己的 hashes 補跑摘要、標題、摘錄（`--hashes-file`）；下游中止保留的 `data/sync_hashes_retained_<時間>.txt` 同樣補跑。**不能**用 `failures_to_delta.py` 或 `--all-local`（整批中止不留逐篇失敗紀錄）。
-5. 缺的簡報日子補 `uv run python scripts/generate_brief.py --date YYYY-MM-DD`。
+5. 缺的簡報日子由舊到新逐日補 `uv run python scripts/generate_brief.py --date YYYY-MM-DD`。窗期從目標日之前最近一份的 `window_end` 起，到目標日結束（本地時間）或目標日之後最近一份的 `window_start` 為止，取早的。窗期內沒有素材就印訊息、不寫列（rc 0），這是常態：重放的研報 `created_at` 是重放當下，會進今天的簡報；目標日之後已有簡報時，缺的那天的研報通常也已在那份裡（窗期首尾相接）。要重寫已有的某天用 `--date YYYY-MM-DD --force`，沿用該列存的窗期。
 6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
 
 ### 忠實度 judge

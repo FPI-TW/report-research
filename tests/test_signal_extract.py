@@ -11,10 +11,15 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.services.signal_extract import (  # noqa: E402
     EXTRACTION_VERSION,
     STANCE_CONSTRUCTIVENESS,
+    TARGET_NOTE_IMPLAUSIBLE,
+    TARGET_NOTE_INLINE_PRICE,
+    TARGET_NOTE_TABLE_COLUMN,
     THESIS_DIMENSIONS,
     ReportContext,
     build_rows,
+    drop_implausible_targets,
     eps_comparable,
+    implausible_target_note,
     normalize_currency,
     normalize_rating,
     parse_signal,
@@ -355,6 +360,116 @@ class SimplifiedLookupTests(unittest.TestCase):
         self.assertEqual(r.rating_raw, "买入")  # 存的是原值
         self.assertEqual(r.thesis_dimensions["outlook"]["evidence"], "订单能见度改善")  # 逐字證據不轉
         self.assertEqual(r.raw_payload["rating"]["raw"], "买入")
+
+
+class RatingCodeAndChangeTests(unittest.TestCase):
+    """語料實測：外資與表格縮寫落 unknown、評等變動判成舊評等（2026-11-04 盤點）。"""
+
+    def test_broker_short_codes(self):
+        cases = {
+            "OW": "overweight", "UW": "underweight", "EW": "neutral", "OP": "overweight", "O-PF": "overweight",
+            "B": "buy", "N": "neutral", "H": "neutral", "降低持股": "underweight",
+        }
+        for raw, level in cases.items():
+            self.assertEqual(normalize_rating(raw), level, raw)
+
+    def test_short_codes_only_match_whole_string(self):
+        """縮寫不進子字串表：含 b、n 的一般字串不能被當成評等。"""
+        for raw in ("Top Pick", "not rated", "首選", "受法規限制", "NC", "1"):
+            self.assertEqual(normalize_rating(raw), "unknown", raw)
+
+    def test_rating_change_takes_the_new_rating(self):
+        cases = {
+            "買進轉中立": "neutral", "中立轉買進": "buy", "N→B": "buy", "B->N": "neutral",
+            "由買進調降至中立": "neutral", "調升至買進": "buy",
+            "downgrade to neutral from buy": "neutral", "upgrade to EW from UW": "neutral",
+        }
+        for raw, level in cases.items():
+            self.assertEqual(normalize_rating(raw), level, raw)
+
+    def test_separator_without_rating_keeps_keyword_match(self):
+        """分隔符右邊不是評等時不能把整串判丟：這些都是維持原評等。"""
+        self.assertEqual(normalize_rating("買進(目標價調升至300)"), "buy")
+        self.assertEqual(normalize_rating("持有-超越同業"), "neutral")
+        self.assertEqual(normalize_rating("買進(調升評等)"), "buy")
+
+
+class TargetPriceGateTests(unittest.TestCase):
+    """目標價誤讀的確定性閘門；證據字串都取自語料。"""
+
+    def _row(self, value, evidence):
+        sig = _full_signal()
+        sig["target_price"] = {"value": value, "currency": "TWD", "horizon": "12M", "evidence": evidence}
+        return build_rows(_ctx(["2330"]), parse_signal(_raw(sig), ["2330"]))[0]
+
+    def test_inline_current_price_dropped(self):
+        for value, evidence in [
+            (1355, "台達電 (2308 TT，NT$1,355，增加持股)"),
+            (4745, "台光電 (2383 TT, NT$4, 745, 增加持股)"),
+            (1175, "欣興（3037 TT, NT$1,175, 增加持股）"),
+            (81.7, "豐泰(9910 TT, NT$ 81.7, 持有)"),
+        ]:
+            with self.subTest(evidence=evidence):
+                r = self._row(value, evidence)
+                self.assertIsNone(r.target_price)
+                self.assertIsNone(r.target_currency)
+                self.assertIsNone(r.target_price_evidence)
+                self.assertEqual(r.extraction_status, "partial")
+                self.assertIn(TARGET_NOTE_INLINE_PRICE, r.error_detail)
+                self.assertEqual(r.raw_payload["target_price"]["value"], value)  # 原始值留著追溯
+
+    def test_target_next_to_inline_price_kept(self):
+        """同一句有現價也有目標價時，等於目標價的那個數字是對的。"""
+        r = self._row(1305, "我們維持亞德客-KY (1590 TT, NT$1,010, 增加持股) 評等，目標價分別為 1,305 元與 316 元。")
+        self.assertEqual(r.target_price, 1305)
+
+    def test_sinopac_inline_third_field_is_target(self):
+        """永豐的 (代碼，評等，目標價) 沒有 $，第三欄就是目標價，不能擋。"""
+        self.assertEqual(self._row(850, "金像電(2368 TT，B，850)").target_price, 850)
+        self.assertEqual(self._row(795, "日月光投控 (3711 TT，B，755→795；upside：16%)").target_price, 795)
+
+    def test_table_price_column_dropped(self):
+        r = self._row(3770, "世芯 -KY 3661 TT 增加持股 6,180 10,225 3,770.0")
+        self.assertIsNone(r.target_price)
+        self.assertIn(TARGET_NOTE_TABLE_COLUMN, r.error_detail)
+        r = self._row(3770, "世芯-KY 3661 TT | 增加持股 | 6,180 10,225 3,770.0")
+        self.assertIsNone(r.target_price)
+
+    def test_table_target_columns_kept(self):
+        """表格取到目標價欄（第一個或現價後面那個）都不能擋。"""
+        self.assertEqual(self._row(6180, "世芯-KY 3661 TT | 增加持股 | 6,180").target_price, 6180)
+        self.assertEqual(self._row(6600, "聯發科 2454 TT 增加持股 6,600 266,567 5,285.0").target_price, 6600)
+        self.assertEqual(self._row(419, "儒鴻 1476 TT 持有 360.50 419.0 16.2").target_price, 419)
+        self.assertEqual(self._row(445, "雙鴻 3324 TT 增加持股 445.0 1,266 445.00 0.0").target_price, 445)
+
+    def test_explicit_target_kept(self):
+        r = self._row(2505, "凱基維持台達電「增加持股」評等並下調 12 個月目標價至 2,505 元")
+        self.assertEqual(r.target_price, 2505)
+        self.assertEqual(r.extraction_status, "valid")
+
+    def test_implausible_target_needs_two_neighbors(self):
+        self.assertIsNone(implausible_target_note(72, "TWD", [(720, "TWD")]))
+        self.assertEqual(
+            implausible_target_note(72, "TWD", [(720, "TWD"), (720, "TWD")]), TARGET_NOTE_IMPLAUSIBLE
+        )
+
+    def test_correct_value_next_to_wrong_one_not_flagged(self):
+        """720 的鄰居有一個錯的 72：中位數不會把對的值連坐。"""
+        self.assertIsNone(implausible_target_note(720, "TWD", [(72, "TWD"), (720, "TWD")]))
+
+    def test_large_but_real_revision_kept(self):
+        self.assertIsNone(implausible_target_note(4000, "TWD", [(2165, "TWD"), (2320, "TWD")]))
+
+    def test_other_currency_not_compared(self):
+        """同標的的 ADR 目標價是美元，不能跟台幣比。"""
+        self.assertIsNone(implausible_target_note(300, "USD", [(1500, "TWD"), (1500, "TWD")]))
+
+    def test_drop_implausible_targets_updates_row(self):
+        row = self._row(72, "南亞科 2408 目標價 72")
+        drop_implausible_targets([row], {"2330": [(720.0, "TWD"), (720.0, "TWD")]})
+        self.assertIsNone(row.target_price)
+        self.assertEqual(row.extraction_status, "partial")
+        self.assertEqual(row.error_detail, TARGET_NOTE_IMPLAUSIBLE)
 
 
 class RawPayloadModelTests(unittest.TestCase):

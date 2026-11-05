@@ -146,6 +146,77 @@ class CheckpointTests(unittest.TestCase):
         existing = {"2330": ("valid", es.EXTRACTION_VERSION)}
         self.assertFalse(es._is_done(["2330"], existing, reextract=True))
 
+    def test_previous_version_reused_without_llm(self):
+        """v1 列由 scripts/repair_signal_values.py 修，bump 不能讓全語料重打 LLM。"""
+        existing = {"2330": ("valid", "sig-2026-07-15.v1")}
+        self.assertTrue(es._is_done(["2330"], existing, reextract=False))
+        self.assertFalse(es._is_done(["2330"], existing, reextract=True))
+
+
+class TargetNeighborTests(unittest.IsolatedAsyncioTestCase):
+    def test_sql_uses_casts_and_excludes_own_report(self):
+        sql = es.build_target_neighbors_sql()
+        self.assertIn("instrument_code = ANY(CAST(:codes AS text[]))", sql)
+        self.assertIn("report_id <> CAST(:report_id AS uuid)", sql)
+        self.assertIn("CAST(:report_date AS date) - CAST(:days AS int)", sql)
+        self.assertNotIn("::", sql)
+
+    def _row(self, price=72.0):
+        return SignalRow(
+            report_id="11111111-1111-1111-1111-111111111111", market="TW", instrument_code="2408", broker="kgi",
+            report_date=date(2026, 9, 10), rating_raw=None, rating_normalized="unknown", target_price=price,
+            target_currency="TWD" if price else None, target_horizon=None, target_price_evidence="x" if price else None,
+            eps_estimates=[], thesis_dimensions={}, extraction_version="v", extraction_status="valid",
+            raw_payload=None, error_detail=None,
+        )
+
+    def _ctx(self, broker="kgi"):
+        return es.ReportContext(
+            report_id="11111111-1111-1111-1111-111111111111", market="TW", broker=broker,
+            report_date=date(2026, 9, 10), requested_codes=["2408"],
+        )
+
+    async def test_neighbors_applied(self):
+        session = mock.AsyncMock()
+        session.execute.return_value = mock.Mock(all=lambda: [("2408", 720, "TWD"), ("2408", 720, "TWD")])
+        factory = mock.MagicMock()
+        factory.return_value.__aenter__.return_value = session
+        row = self._row()
+        with mock.patch.object(es, "SessionFactory", factory):
+            await es._apply_target_neighbors([row], self._ctx())
+        self.assertIsNone(row.target_price)
+        self.assertEqual(row.extraction_status, "partial")
+
+    async def test_query_failure_keeps_row(self):
+        """閘門是派生檢查：查不到鄰居就放行，不能擋訊號入庫。"""
+        factory = mock.MagicMock()
+        factory.return_value.__aenter__.side_effect = RuntimeError("db down")
+        row = self._row()
+        with mock.patch.object(es, "SessionFactory", factory):
+            await es._apply_target_neighbors([row], self._ctx())
+        self.assertEqual(row.target_price, 72.0)
+
+    async def test_gate_bug_keeps_row(self):
+        """閘門自己出錯也不能害訊號丟失：外層 except 會把整筆算成失敗、不落庫。"""
+        session = mock.AsyncMock()
+        session.execute.return_value = mock.Mock(all=lambda: [("2408", 720, "TWD"), ("2408", 720, "TWD")])
+        factory = mock.MagicMock()
+        factory.return_value.__aenter__.return_value = session
+        row = self._row()
+        with (
+            mock.patch.object(es, "SessionFactory", factory),
+            mock.patch.object(es, "drop_implausible_targets", side_effect=ValueError("bug")),
+        ):
+            await es._apply_target_neighbors([row], self._ctx())
+        self.assertEqual(row.target_price, 72.0)
+        await es._apply_target_neighbors([object()], self._ctx())  # 欄位對不上一樣放行
+
+    async def test_no_query_without_target_or_broker(self):
+        factory = mock.MagicMock(side_effect=AssertionError("不該查 DB"))
+        with mock.patch.object(es, "SessionFactory", factory):
+            await es._apply_target_neighbors([self._row(None)], self._ctx())
+            await es._apply_target_neighbors([self._row()], self._ctx(broker=None))
+
 
 
 class _TextSession:

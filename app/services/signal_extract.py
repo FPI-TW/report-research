@@ -12,15 +12,23 @@
 from __future__ import annotations
 
 import json
+import re
+import statistics
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Optional
+from typing import Iterable, Optional
 
 from app.services.llm_models import TASK_SIGNAL, resolve_model
 from app.services.zh_hant import lookup_key, to_traditional
 
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
-EXTRACTION_VERSION = "sig-2026-07-15.v1"
+EXTRACTION_VERSION = "sig-2026-11-04.v2"
+
+# 批次視為「已擷取、不必重打 LLM」的版本。bump 版本但不想重跑全語料時，把舊版留在這裡：
+# 只比 EXTRACTION_VERSION 的話，一 bump 子集內約 6,300 篇全部變成待擷取，訊號段每輪 100 篇、
+# 連續燒好幾天 LLM 費用。v1 列的目標價錯誤由 scripts/repair_signal_values.py 零 LLM 修掉。
+# 真的要重擷取就加 --reextract，或把該版本從這裡拿掉。
+REUSABLE_EXTRACTION_VERSIONS = frozenset({EXTRACTION_VERSION, "sig-2026-07-15.v1"})
 
 # 數值/證據擷取重準確度；預設模型見 llm_models 的預設表（批次可用 --model 覆寫）。
 # 來源是 SIGNAL_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
@@ -71,6 +79,12 @@ RATING_MAP: dict[str, str] = {
     "underweight": "underweight", "reduce": "underweight", "underperform": "underweight",
     # sell
     "賣出": "sell", "賣": "sell", "強力賣出": "sell", "sell": "sell", "strong sell": "sell",
+    # 外資與永豐、元富表格的縮寫（語料實測；太短，只收整串相等，不進子字串表）。
+    # 永豐例：`日月光投控 (3711 TT，B，755→795；upside：16%)`、`友達(2409 TT ，N)：...維持中立的評等`。
+    # 單獨的 O／E／1 語意隨券商而異（Citi 的 1 是 Buy），刻意不收，留 unknown 不計入分布。
+    "b": "buy", "ow": "overweight", "op": "overweight", "o-pf": "overweight",
+    "n": "neutral", "h": "neutral", "ew": "neutral", "uw": "underweight",
+    "降低持股": "underweight",
     # unknown（明確無評等）
     "未評等": "unknown", "無評等": "unknown", "暫不評等": "unknown", "待評": "unknown",
     "n/a": "unknown", "na": "unknown",
@@ -84,8 +98,8 @@ RATING_KEYWORDS: list[tuple[str, str]] = [
     ("區間偏多", "overweight"), ("區間偏空", "underweight"), ("區間操作", "neutral"),
     ("增加持股", "overweight"), ("逢低承接", "overweight"), ("逢低布局", "overweight"),
     ("買進", "buy"), ("買入", "buy"), ("增持", "overweight"), ("加碼", "buy"),
-    ("減碼", "underweight"), ("減持", "underweight"), ("賣出", "sell"),
-    ("中立", "neutral"), ("持有", "neutral"), ("觀望", "neutral"),
+    ("減碼", "underweight"), ("減持", "underweight"), ("降低持股", "underweight"), ("賣出", "sell"),
+    ("中立", "neutral"), ("中性", "neutral"), ("持有", "neutral"), ("觀望", "neutral"),
     ("outperform", "overweight"), ("underperform", "underweight"),
     ("strong buy", "buy"), ("strong sell", "sell"), ("buy", "buy"),
     ("overweight", "overweight"), ("underweight", "underweight"), ("sell", "sell"),
@@ -102,13 +116,30 @@ _CURRENCY_MAP: dict[str, str] = {
 }
 
 
+# 評等變動的寫法（已小寫）：現在的評等在分隔符右邊。不先切的話關鍵字表只認第一個命中的詞，
+# 「買進轉中立」「downgrade to neutral from buy」都會判成 buy，方向正好相反。
+_RATING_CHANGE_SEP = re.compile(r"轉為?|→|->|➔|⇒|至|\bto\b")
+_RATING_FROM_TAIL = re.compile(r"\bfrom\b.*$")
+
+
+def _rating_after_change(v: str) -> Optional[str]:
+    """評等變動字串取變動後的那一段；不是變動字串、或右邊不是評等（「目標價調升至 300」）回 None。"""
+    parts = _RATING_CHANGE_SEP.split(_RATING_FROM_TAIL.sub("", v))
+    if len(parts) < 2:
+        return None
+    return _match_rating(parts[-1].strip())
+
+
 def _match_rating(v: str) -> Optional[str]:
-    """已小寫的評等字串查 `RATING_MAP`（整串）再查 `RATING_KEYWORDS`（子字串）；都沒命中回 None。
+    """已小寫的評等字串查 `RATING_MAP`（整串）→ 變動寫法 → `RATING_KEYWORDS`（子字串）；都沒命中回 None。
 
     回 None 與表裡明寫的 'unknown'（「未評等」）要分開：前者才值得換個鍵再查一次。
     """
     if v in RATING_MAP:
         return RATING_MAP[v]
+    after = _rating_after_change(v)
+    if after is not None:
+        return after
     for kw, level in RATING_KEYWORDS:
         if kw in v:
             return level
@@ -223,6 +254,9 @@ SIGNAL_INSTRUCTION = """你是金融研報結構化擷取助手。閱讀以下�
 5. 目標價與 EPS 保留研報「原本的幣別與單位」，**不要換算**成其他幣別。
 6. 只針對「指定標的清單」中的代碼輸出；清單以外的代碼不要輸出。
    某標的研報中完全沒有可擷取內容時，該標的可整個省略。
+7. 目標價只取研報明確標示為「目標價」「Target Price」「TP」「PT」的數字，**現價、收盤價、市值都不是目標價**：
+   - 內文括號標記如「台達電 (2308 TT，NT$1,355，增加持股)」裡的 NT$ 是現價，不是目標價。
+   - 表格要依欄名對應數字，不要依位置猜；看不出哪一欄是目標價就填 null。
 
 JSON 格式：
 {
@@ -358,6 +392,69 @@ def parse_signal(raw: str, requested_codes: list[str]) -> ParsedReportSignals:
     return ParsedReportSignals(ok=True, signals=signals, raw_text=raw_text)
 
 
+# ── 目標價的確定性閘門：prompt 是機率性保證，這裡擋語料實測過的誤讀──
+# 寧可少一個目標價（訊號列保留、前端顯示未提供），不要把現價當目標價：下游的共識與每日簡報
+# 會直接把它算成「目標價下修 36%」（2026-11-04 簡報的台達電 2140→1355 就是這樣來的）。
+TARGET_NOTE_INLINE_PRICE = "target_price 是內文括號標記的現價，已丟棄"
+TARGET_NOTE_TABLE_COLUMN = "target_price 讀到表格的現價欄，已丟棄"
+TARGET_NOTE_IMPLAUSIBLE = "target_price 與同券商鄰近目標價差距過大，已丟棄"
+
+# 券商內文標記個股的慣例「(代碼, 現價, 評等)」，比對對象是去空白後的證據。
+# 永豐的 `(2368 TT，B，850)` 第三欄才是目標價，沒有 $ 所以不會命中。
+_INLINE_PRICE_RE = re.compile(
+    r"[(（][0-9A-Za-z.\-]{2,12}[,，;；](?:NT|US|HK|RMB|CNY)?\$([0-9][0-9,]*(?:\.[0-9]+)?)(?=[,，;；)）])"
+)
+# 凱基策略報告表格：「代碼 TT｜評等｜目標價 市值 現價」。其他凱基表格是「現價 目標價 潛在空間」，
+# 目標價落在第二個數字，不會被這條擋（語料實測：取到第三欄的 8 筆全是這個版型，潛在空間可驗算）。
+_TABLE_ROW_RE = re.compile(
+    r"[0-9]{4}\s*TT\s+[^\s\d]{1,12}\s+([0-9][0-9,]*(?:\.[0-9]+)?)\s+[0-9][0-9,]*(?:\.[0-9]+)?\s+([0-9][0-9,]*(?:\.[0-9]+)?)"
+)
+
+# 與同券商同標的鄰近目標價的中位數差幾倍算離譜。±45 天內差 3 倍以上的 8 對全部含誤讀
+# （72 vs 720、660 vs 6,600、EPS 當目標價），而真實的大幅調整最多約 2 倍。
+TARGET_NEIGHBOR_DAYS = 45
+TARGET_NEIGHBOR_MAX_RATIO = 3.0
+# 只有一個鄰居時分不出誰錯，不判。
+TARGET_NEIGHBOR_MIN_COUNT = 2
+
+
+def _same_number(text_value: str, value: float) -> bool:
+    return abs(float(text_value.replace(",", "")) - value) < 1e-6
+
+
+def suspect_target_note(value: float, evidence: Optional[str]) -> Optional[str]:
+    """目標價數字與它自己的證據對不起來的話回丟棄原因；看不出問題回 None。
+
+    比的是「數字等於括號裡的現價」，不是「證據有沒有目標價三個字」：
+    `我們維持亞德客 (1590 TT, NT$1,010, 增加持股) 評等，目標價 1,305 元` 的 1,305 是對的。
+    """
+    if not evidence:
+        return None
+    compact = re.sub(r"\s+", "", evidence)
+    if any(_same_number(m, value) for m in _INLINE_PRICE_RE.findall(compact)):
+        return TARGET_NOTE_INLINE_PRICE
+    row = _TABLE_ROW_RE.search(evidence.replace("|", " ").replace("｜", " "))
+    if row and _same_number(row.group(2), value) and not _same_number(row.group(1), value):
+        return TARGET_NOTE_TABLE_COLUMN
+    return None
+
+
+def implausible_target_note(
+    value: float, currency: Optional[str], neighbors: Iterable[tuple[float, Optional[str]]]
+) -> Optional[str]:
+    """與同券商同標的 ±`TARGET_NEIGHBOR_DAYS` 天的目標價中位數差太多就回丟棄原因。
+
+    用中位數而不是前一筆：72 夾在兩個 720 中間時只有 72 會被判錯，720 不會被連坐。
+    只比同幣別（同標的的 ADR 目標價是美元）。`neighbors` 不含這一列自己。
+    """
+    same = [float(v) for v, c in neighbors if c == currency and v and float(v) > 0]
+    if value <= 0 or len(same) < TARGET_NEIGHBOR_MIN_COUNT:
+        return None
+    median = statistics.median(same)
+    ratio = max(value / median, median / value)
+    return TARGET_NOTE_IMPLAUSIBLE if ratio >= TARGET_NEIGHBOR_MAX_RATIO else None
+
+
 def _normalize_target(obj: object) -> tuple[Optional[dict], list[str]]:
     """正規化 target_price 子物件 → (dict 或 None, dropped 原因清單)。"""
     notes: list[str] = []
@@ -371,6 +468,9 @@ def _normalize_target(obj: object) -> tuple[Optional[dict], list[str]]:
         return None, notes
     currency = normalize_currency(obj.get("currency"))
     evidence = _truncate(obj.get("evidence"), EVIDENCE_MAX)
+    suspect = suspect_target_note(price, evidence)
+    if suspect:
+        return None, [suspect]  # 原始值留在 raw_payload 供追溯
     if currency is None:
         notes.append("target_price 缺幣別")  # 下游不會併入跨券商中位數
     if evidence is None:
@@ -556,3 +656,18 @@ def build_rows(
         signal = parsed.signals.get(code) or {}
         rows.append(_build_one_row(ctx, code, signal, model))
     return rows
+
+
+def drop_implausible_targets(
+    rows: list[SignalRow], neighbors: dict[str, list[tuple[float, Optional[str]]]]
+) -> None:
+    """就地拿掉與鄰近目標價差距過大的目標價（`neighbors`：代碼 → [(目標價, 幣別), …]，要查 DB 所以由批次帶進來）。"""
+    for row in rows:
+        if row.target_price is None:
+            continue
+        note = implausible_target_note(row.target_price, row.target_currency, neighbors.get(row.instrument_code, []))
+        if note is None:
+            continue
+        row.target_price = row.target_currency = row.target_horizon = row.target_price_evidence = None
+        row.extraction_status = "partial"
+        row.error_detail = f"{row.error_detail}；{note}" if row.error_detail else note

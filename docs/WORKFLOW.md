@@ -89,7 +89,8 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 ### ⑤ 訊號擷取：`scripts/extract_signals.py`（LLM，觀點雷達用）
 
 - 輸入 `full_text`，輸出 `research.report_signal`（一列＝研報 × 標的）。LLM 依固定 schema 擷取 `rating_raw`、目標價與 evidence、EPS 估計、四維論點（`outlook`、`catalyst`、`risk`、`valuation`）；Python 正規化評等（`buy`／`overweight`／`neutral`／`underweight`／`sell`／`unknown`）、幣別、判 `extraction_status`（`valid`／`partial`／`rejected`）。`thesis_dimensions[*].evidence` 逐字不轉繁。
-- 只跑高覆蓋子集：`--min-brokers`（3）、`--min-reports`（5）、`--top-n`（50）；`--workers`（2）、`--limit`、`--excerpt`（16000）、`--reextract`、`--retry-blocked`、`--dry-run`。`EXTRACTION_VERSION = "sig-2026-07-15.v1"`。
+- 只跑高覆蓋子集：`--min-brokers`（3）、`--min-reports`（5）、`--top-n`（50）；`--workers`（2）、`--limit`、`--excerpt`（16000）、`--reextract`、`--retry-blocked`、`--dry-run`。`EXTRACTION_VERSION = "sig-2026-11-04.v2"`；`REUSABLE_EXTRACTION_VERSIONS` 裡的舊版不算待擷取，bump 不會重打全語料，要重跑加 `--reextract`。
+- 目標價閘門（`app/services/signal_extract.py`）：數字等於內文括號標記的現價（`(2308 TT，NT$1,355，增加持股)`）、讀到凱基策略表的現價欄、或與同券商同標的 ±45 天目標價中位數差 3 倍以上，就清空目標價並標 `partial`（原始值留在 `raw_payload`）；只清不補。既有列用 `scripts/repair_signal_values.py` 套同一套規則與評等表（零 LLM）。
 - 空是常態：雷達 API 對未擷取的研報回 `pending_extraction`。
 
 ### ⑥ 摘要：`scripts/generate_summaries.py`（LLM）

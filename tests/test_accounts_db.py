@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import unittest
 import uuid
@@ -869,6 +870,159 @@ async def scenario_bulk_rolls_back_on_unexpected_error(api) -> None:
     assert (await api.verify_audit_chain()).ok
 
 
+
+# ───── OIDC 單一登入（revision 0013）─────
+
+@contextmanager
+def _oidc(**changes):
+    """在範圍內把 Settings.oidc 換成指定值（不碰 os.environ）。"""
+    from app import config
+
+    base = config.get_settings()
+    patched = dataclasses.replace(base, oidc=dataclasses.replace(base.oidc, **changes))
+    with mock.patch.object(config, "_SETTINGS", patched):
+        yield
+
+
+def _issuer() -> str:
+    return f"https://idp-{uuid.uuid4().hex[:8]}.example.test/realms/corp"
+
+
+async def scenario_sso_jit_creates_plain_user(api) -> None:
+    iss, sub, name = _issuer(), uuid.uuid4().hex, _name("jit") + "@corp.example"
+    first = await api.sso_login(iss, sub, name)
+    assert first.reason == "ok" and first.created and not first.linked, first
+    assert first.user.role == "user" and first.user.scopes == frozenset() and first.user.auth_method == "sso"
+    info = await api.get_user(first.user.id)
+    assert info.username == name and info.sso_bound and not info.is_super
+    _t, audit = await api.list_audit(limit=500)
+    created = [e for e in audit if e.target_id == first.user.id and e.action == "user.create"]
+    assert created and created[0].actor_user_id is None, created  # 系統行為者
+    assert created[0].detail["via"] == "sso_jit" and sub not in str(created[0].detail)
+    again = await api.sso_login(iss, sub, "renamed-at-idp@corp.example")  # 綁定只看 issuer＋subject
+    assert again.reason == "ok" and not again.created and again.user.id == first.user.id
+    assert again.user.username == name  # 帳號名稱以本系統為準
+    # 本地密碼永遠比對不上 SSO 帳號的標記
+    assert (await api.authenticate(name, accounts.SSO_PASSWORD_HASH)).reason == "bad_password"
+    other = await api.sso_login(_issuer(), sub, _name("other"))  # 同一個 subject、不同 issuer 是另一個人
+    assert other.created and other.user.id != first.user.id
+
+
+async def scenario_sso_disabled_and_admin_rights(api) -> None:
+    boss = await api.create_user(_name("SsoBoss"), PW, "admin", actor_id=None, is_super=True)
+    iss, sub = _issuer(), uuid.uuid4().hex
+    jit = await api.sso_login(iss, sub, _name("ssoadm"))
+    await api.update_user(jit.user.id, role="admin", actor_id=boss.id)
+    await api.set_privileges(jit.user.id, scopes=["qa_content.read"], actor_id=boss.id)
+    promoted = await api.sso_login(iss, sub, "ignored")
+    assert promoted.user.is_admin and "qa_content.read" in promoted.user.scopes  # 授權在系統內
+    sid = await api.create_session(jit.user.id, max_age_seconds=3600, auth_method="sso", idp_mfa=True)
+    await api.update_user(jit.user.id, enabled=False, actor_id=boss.id)
+    assert await api.resolve_session(sid) is None
+    blocked = await api.sso_login(iss, sub, "ignored")
+    assert blocked.reason == "disabled" and blocked.user is None and blocked.user_id == jit.user.id
+
+
+async def scenario_sso_username_conflict_and_link(api) -> None:
+    local = await api.create_user(_name("Local") + "@corp.example", PW, "user", actor_id=None)
+    iss, sub = _issuer(), uuid.uuid4().hex
+    with _oidc(link_by_username=False):
+        res = await api.sso_login(iss, sub, local.username.upper())
+        assert res.reason == "username_conflict" and res.user_id == local.id, res
+    with _oidc(link_by_username=True):
+        res = await api.sso_login(iss, sub, local.username.upper())
+        assert res.reason == "ok" and res.linked and res.user.id == local.id, res
+        assert (await api.get_user(local.id)).sso_bound
+        # 已綁定的帳號不能再被另一個 IdP 身分以同名綁走
+        taken = await api.sso_login(iss, uuid.uuid4().hex, local.username)
+        assert taken.reason == "username_conflict"
+    _t, audit = await api.list_audit(limit=500)
+    links = [e for e in audit if e.target_id == local.id and e.action == "user.sso_link"]
+    assert len(links) == 1 and links[0].actor_user_id is None
+    assert (await api.authenticate(local.username, PW)).reason == "ok"  # 綁定不影響既有密碼
+    disabled = await api.create_user(_name("Off"), PW, "user", actor_id=None)
+    await api.update_user(disabled.id, enabled=False, actor_id=None)
+    with _oidc(link_by_username=True):
+        assert (await api.sso_login(iss, uuid.uuid4().hex, disabled.username)).reason == "disabled"
+    assert not (await api.get_user(disabled.id)).sso_bound
+
+
+async def scenario_sso_break_glass_and_invalid_name(api) -> None:
+    glass = await api.create_user(_name("Glass"), PW, "admin", actor_id=None)
+    with _oidc(link_by_username=True, break_glass_users=(glass.username.lower(),)):
+        res = await api.sso_login(_issuer(), uuid.uuid4().hex, glass.username)
+        assert res.reason == "break_glass" and not (await api.get_user(glass.id)).sso_bound
+    for bad in ("x", "has space@corp", "a" * 65):
+        assert (await api.sso_login(_issuer(), uuid.uuid4().hex, bad)).reason == "invalid_username"
+    await _expect(ValueError, api.sso_login("", "sub", "name"))
+    await _expect(ValueError, api.sso_login(_issuer(), "s" * 256, "name"))
+
+
+async def scenario_sso_session_flags(api) -> None:
+    jit = await api.sso_login(_issuer(), uuid.uuid4().hex, _name("flags"))
+    sso_sid = await api.create_session(jit.user.id, max_age_seconds=3600, auth_method="sso", idp_mfa=True)
+    user = await api.resolve_session(sso_sid)
+    assert user.auth_method == "sso" and user.idp_mfa
+    local = await api.create_user(_name("Pw"), PW, "user", actor_id=None)
+    pw_sid = await api.create_session(local.id, max_age_seconds=3600, idp_mfa=True)  # 密碼 session 不會有 idp_mfa
+    user = await api.resolve_session(pw_sid)
+    assert user.auth_method == "password" and not user.idp_mfa
+    await _expect(ValueError, api.create_session(local.id, max_age_seconds=3600, auth_method="saml"))
+
+
+async def scenario_sso_only_policy(api) -> None:
+    glass = await api.create_user(_name("Glass"), PW, "admin", actor_id=None)
+    member = await api.create_user(_name("Member"), PW, "user", actor_id=None)
+    demoted = await api.create_user(_name("GlassUser"), PW, "user", actor_id=None)
+    member_sid = await api.create_session(member.id, max_age_seconds=3600)
+    glass_sid = await api.create_session(glass.id, max_age_seconds=3600)
+    jit = await api.sso_login(_issuer(), uuid.uuid4().hex, _name("ssoonly"))
+    sso_sid = await api.create_session(jit.user.id, max_age_seconds=3600, auth_method="sso")
+    with _oidc(sso_only=True, break_glass_users=(glass.username.lower(), demoted.username.lower())):
+        assert not accounts.local_login_permitted(member.username, "user")
+        res = await api.authenticate(member.username, PW)
+        assert res.reason == "sso_only" and res.user is None and res.user_id == member.id
+        assert (await api.authenticate(member.username, "wrong-password")).reason == "bad_password"
+        assert (await api.authenticate(glass.username.upper(), PW)).reason == "ok"
+        assert (await api.authenticate(demoted.username, PW)).reason == "sso_only"  # 名單內但不是管理員
+        assert await api.resolve_session(member_sid) is None  # 既有密碼 session 立即失效
+        assert (await api.resolve_session(glass_sid)).id == glass.id
+        assert (await api.resolve_session(sso_sid)).id == jit.user.id
+    assert (await api.resolve_session(member_sid)).id == member.id  # 政策關掉後（沒撤銷的）照常
+
+
+async def scenario_sso_elevation(api) -> None:
+    iss, sub = _issuer(), uuid.uuid4().hex
+    jit = await api.sso_login(iss, sub, _name("elev"))
+    sid = await api.create_session(jit.user.id, max_age_seconds=3600, auth_method="sso")
+    assert await api.elevate_sso_session(sid, issuer=iss, subject=uuid.uuid4().hex) is None
+    assert not (await api.resolve_session(sid)).is_elevated
+    until = await api.elevate_sso_session(sid, issuer=iss, subject=sub)
+    assert until is not None and (await api.resolve_session(sid)).is_elevated
+    local = await api.create_user(_name("PwElev"), PW, "user", actor_id=None)
+    pw_sid = await api.create_session(local.id, max_age_seconds=3600)
+    assert await api.elevate_sso_session(pw_sid, issuer=iss, subject=sub) is None  # 密碼 session 不走這條
+    assert await api.elevate_sso_session(str(uuid.uuid4()), issuer=iss, subject=sub) is None
+    _t, audit = await api.list_audit(limit=500)
+    mine = [e.action for e in audit if e.target_id == sid]
+    assert mine.count("session.elevate") == 1 and mine.count("session.elevate_failed") == 1, mine
+
+
+async def scenario_sso_deletion_clears_binding(api) -> None:
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None, is_super=True)
+    iss, sub, name = _issuer(), uuid.uuid4().hex, _name("gone")
+    jit = await api.sso_login(iss, sub, name)
+    await api.request_deletion(jit.user.id, actor_id=admin.id, delay_seconds=0)
+    assert (await api.sso_login(iss, sub, name)).reason == "disabled"  # 排程中＝已停用
+    assert (await api.deletion_residue(jit.user.id)).identifiable
+    await api.execute_deletion(jit.user.id)
+    residue = await api.deletion_residue(jit.user.id)
+    assert residue.clean, residue
+    assert not (await api.get_user(jit.user.id)).sso_bound
+    fresh = await api.sso_login(iss, sub, name)  # 刪除後同一人回來＝全新的一般帳號
+    assert fresh.created and fresh.user.id != jit.user.id
+
+
 SCENARIOS = [
     scenario_login,
     scenario_duplicate_username_case_insensitive,
@@ -907,6 +1061,14 @@ SCENARIOS = [
     scenario_bulk_disable_enable_logout,
     scenario_bulk_rules,
     scenario_bulk_rolls_back_on_unexpected_error,
+    scenario_sso_jit_creates_plain_user,
+    scenario_sso_disabled_and_admin_rights,
+    scenario_sso_username_conflict_and_link,
+    scenario_sso_break_glass_and_invalid_name,
+    scenario_sso_session_flags,
+    scenario_sso_only_policy,
+    scenario_sso_elevation,
+    scenario_sso_deletion_clears_binding,
 ]
 
 

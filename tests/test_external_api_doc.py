@@ -36,6 +36,8 @@ FRAMEWORK_CODES = {"validation_error"}
 RESPONSE_BUILDERS = {
     "external_search": ("external_search", "_report_payload"),
     "external_report_file_url": ("external_report_file_url",),
+    "external_upload": ("external_upload", "_upload_payload"),
+    "external_upload_status": ("external_upload_status", "_upload_payload"),
 }
 
 _HEADING = re.compile(r"^### (GET|POST|PUT|PATCH|DELETE) (/external/\S+)\s*$", re.M)

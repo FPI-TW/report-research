@@ -97,7 +97,7 @@ class _NoCommit:
 async def _ingest(session, name: str, file_hash: str, report_date: date) -> str:
     row = store.ReportRow(
         file_hash=file_hash, file_name=f"{name}.pdf", file_path=f"/nonexistent/{name}.pdf",
-        market="TW", is_research=True, confidence=1.0, stock_code=CODE, company_name="可見性測試公司",
+        market="TW", doc_type="research", confidence=1.0, stock_code=CODE, company_name="可見性測試公司",
         source=f"測試券商{name}", report_date=report_date, report_type="個股",
         stock_targets=[CODE], instrument_types=["stock"], relates_stock=True, full_text=f"{TERM} 全文 {name}",
     )

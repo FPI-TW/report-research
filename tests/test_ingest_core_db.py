@@ -92,7 +92,7 @@ class PreUpsertSameTransactionTests(unittest.TestCase):
         finally:
             await eng.dispose()
 
-    async def _ingest(self, session, hook, *, dim: int):
+    async def _ingest(self, session, hook, *, dim: int, metadata=None):
         def fake_embed(chunks, batch_size=8):
             return [[0.001] * dim for _ in chunks]
 
@@ -102,6 +102,7 @@ class PreUpsertSameTransactionTests(unittest.TestCase):
                 mock.patch("app.services.extraction.cache.write_record", lambda rec: None):
             return await ic.ingest_one(
                 session, self.path, storage=mock.Mock(enabled=False), tags_dir=self.tags_dir, pre_upsert=hook,
+                metadata=metadata, connector="inbox" if metadata is not None else None,
             )
 
     async def _counts(self, session) -> tuple[int, int]:
@@ -150,6 +151,46 @@ class PreUpsertSameTransactionTests(unittest.TestCase):
             # upsert_report 內部一次、extraction_log 之後一次；hook 的寫入由第一次一起落庫
             self.assertEqual(commit.await_count, 2)
             self.assertEqual(await self._counts(session), (1, 1))
+
+        self._run(fn)
+
+
+    def test_metadata_sidecar_lands_with_the_report_in_one_transaction(self):
+        """側檔（revision 0014 的 report_metadata）與研報同一筆交易；標題寫進 research_report。"""
+        from app.services.connectors.sidecar import validate
+
+        meta = validate({"title": "人工標題", "market": "US", "stock_targets": ["AAPL"], "rating": "買進",
+                         "target_price": 210.5, "target_currency": "USD"}, "券商A/a.json")
+
+        async def fn(session, commit):
+            from sqlalchemy import text
+
+            out = await self._ingest(session, None, dim=1024, metadata=meta)
+            # 標註快取裡已有 LLM 的 TW 標籤（setUp）：側檔的 US／AAPL 照樣優先
+            self.assertEqual((out.kind, out.market), ("ingested", "US"))
+            row = (await session.execute(text(
+                "SELECT m.connector, m.origin, m.metadata, r.title, r.title_source, r.stock_targets "
+                "FROM research.report_metadata m JOIN research.research_report r ON r.file_hash = m.file_hash "
+                "WHERE m.file_hash = :h"), {"h": self.file_hash})).one()
+            self.assertEqual(row[:2], ("inbox", "券商A/a.json"))
+            self.assertEqual(row[2]["rating"], "買進")
+            self.assertEqual(row[2]["target_price"], 210.5)
+            self.assertEqual(row[3:], ("人工標題", "metadata", ["AAPL"]))
+            self.assertEqual(commit.await_count, 2)
+
+        self._run(fn)
+
+    def test_metadata_rolls_back_when_upsert_fails(self):
+        from app.services.connectors.sidecar import validate
+
+        async def fn(session, commit):
+            from sqlalchemy import text
+
+            out = await self._ingest(session, None, dim=3, metadata=validate({"title": "x"}, "a.json"))
+            self.assertEqual((out.kind, out.stage), ("fail", "ingest"))
+            n = (await session.execute(text("SELECT count(*) FROM research.report_metadata WHERE file_hash = :h"),
+                                       {"h": self.file_hash})).scalar_one()
+            self.assertEqual(n, 0, "upsert 失敗時側檔不得留下")
 
         self._run(fn)
 

@@ -5,6 +5,8 @@
 
 - `JOBS`：進框架的排程。排程時間與對應 timer 的 OnCalendar 相同（同一個測試逐支換算比對），在容器的
   `TZ`（預設 Asia/Taipei）下解讀。`default_enabled=False` 的要部署方明確開啟（理由寫在 note）。
+  `unit=None` 的是**框架專屬**、沒有對應 timer 的工作（例如 `connectors`：廷豐主機的對應是 sync 殼，
+  它屬主機層），文件另有一張表對帳。
 - `WORKER_UNITS`：改由常駐的 `worker` 服務（迴圈）取代的 timer。
 - `HOST_LAYER`：屬廷豐主機層、不進框架的 timer（探針、事件、信標、NAS、LINE bot、主機監控匯入、來源同步）。
 
@@ -30,7 +32,7 @@ class Job:
     name: str
     cron: str  # 分 時 日 月 週
     command: tuple[str, ...]
-    unit: str  # 對應的 systemd timer
+    unit: str | None  # 對應的 systemd timer；None＝框架專屬（沒有 timer）
     default_enabled: bool = True
     note: str = ""
 
@@ -58,6 +60,9 @@ JOBS: tuple[Job, ...] = (
     Job("retrieval-regression", "40 7 * * *", _py("retrieval_regression.py", "check"),
         "report-mark-retrieval-regression.timer", default_enabled=False,
         note="要先對這個部署擷取一次基準（capture）；會載入嵌入模型"),
+    Job("connectors", "*/15 * * * *", _py("connector_sync.py"), None,
+        note="連接器輪詢入庫＋下游批次（sync 鏈第 4 段起）；各連接器依 profile 的 poll_minutes 決定到期，"
+             "沒有啟用的連接器就是 no-op"),
     Job("r2-reconcile", "0 7 * * 1", _py("reconcile_object_storage.py", "--dry-run", "--kind", "all"),
         "report-mark-r2-reconcile.timer", default_enabled=False,
         note="只在 OBJECT_STORAGE_MODE 不是 local 時有意義（物件儲存是外連，預設關）"),
@@ -68,7 +73,7 @@ WORKER_UNITS: dict[str, str] = {
 }
 
 HOST_LAYER: dict[str, str] = {
-    "report-mark-sync.timer": "來源同步（NAS 掛載／R2 inbox）是廷豐的來源；框架的匯入連接器另由連接器 lane 提供",
+    "report-mark-sync.timer": "來源同步（NAS 掛載／R2 inbox）是廷豐的來源；框架的對應是 scheduler 的 connectors",
     "report-mark-freshness.timer": "判讀 sync 殼的心跳與下游批次，隨 sync 一起",
     "report-mark-beacon.timer": "主機信標",
     "report-mark-load-observations.timer": "主機監控 spool（資源取樣、P5 事件）匯入",
@@ -112,9 +117,13 @@ def selected_jobs(env: Mapping[str, str]) -> list[Job]:
     return [j for j in JOBS if j.name not in disable and (j.default_enabled or j.name in enable)]
 
 
+# 每個工作都經這支包一層：結束時記一行退出碼與耗時，失敗時送通用 webhook 告警（預設關；deploy/container/run_job.py）。
+RUN_JOB = ("python", "deploy/container/run_job.py")
+
+
 def render_crontab(jobs: list[Job]) -> str:
     lines = ["# 由 deploy/container/scheduler.py 產生；不要手改（容器重啟就重新產生）"]
     for j in jobs:
-        lines.append(f"# {j.name}（取代 {j.unit}）")
-        lines.append(f"{j.cron} {shlex.join(j.command)}")
+        lines.append(f"# {j.name}（取代 {j.unit}）" if j.unit else f"# {j.name}（框架專屬，沒有對應的 systemd timer）")
+        lines.append(f"{j.cron} {shlex.join((*RUN_JOB, j.name, '--', *j.command))}")
     return "\n".join(lines) + "\n"

@@ -110,6 +110,9 @@ class AdminUpload(BaseModel):
     decision_reason: str | None = None
     purge_after: str | None = None
     purged_at: str | None = None
+    # 經對外上傳 API（POST /external/v1/uploads）收進來的：uploaded_by 是 null，改帶 API 用戶端。
+    api_client_id: int | None = None
+    api_client: str | None = None
 
 
 class AdminUploadScanner(BaseModel):
@@ -227,6 +230,7 @@ def _item_fields(r: UploadRow) -> dict:
         "process_attempts": r.process_attempts, "failure_kind": r.failure_kind, "failure_detail": r.failure_detail,
         "processed_at": _iso(r.processed_at), "decided_by": r.decided_by, "decided_at": _iso(r.decided_at),
         "decision_reason": r.decision_reason, "purge_after": _iso(r.purge_after), "purged_at": _iso(r.purged_at),
+        "api_client_id": r.api_client_id, "api_client": r.api_client,
     }
 
 

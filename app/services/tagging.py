@@ -86,6 +86,21 @@ FUTURES_TARGETS = [
 # 個股標的清單儲存上限（依重要性排序後截斷）
 STOCK_TARGETS_MAX = 8
 
+# 文件類型（`research_report.doc_type`，revision 0012）。標註器的 `is_research` 判斷映射到這兩個類型：
+# true＝研報、false＝非研究檔（行政／活動檔，對應改動前的 is_research=false，所有功能關閉）。
+# 每種類型啟用哪些功能由 profile 的 `[doc_types]` 決定（`app/profile.py`、`app/services/doc_types.py`）；
+# 新增類型時這裡加上該類型的標註判斷，profile 宣告它的功能，各功能的 SQL 不必改。
+# 這兩個值同時是 revision 0012 回填與 `is_research` 同步約束的字面值，不可改名。
+DOC_TYPE_RESEARCH = "research"
+DOC_TYPE_NON_RESEARCH = "non_research"
+# 標註器會產生的類型；profile 的 `[doc_types]` 必須全部宣告（缺了會讓那類文件靜默消失）。
+TAGGER_DOC_TYPES: tuple[str, ...] = (DOC_TYPE_RESEARCH, DOC_TYPE_NON_RESEARCH)
+
+
+def doc_type_for(is_research: bool) -> str:
+    """標註器的 is_research 判斷 → 文件類型。"""
+    return DOC_TYPE_RESEARCH if is_research else DOC_TYPE_NON_RESEARCH
+
 
 @dataclass
 class MarketTag:
@@ -97,6 +112,11 @@ class MarketTag:
     relates_futures: Optional[bool] = None  # 是否與期貨/指數部位相關
     stock_targets: Optional[list[str]] = None  # 個股標的 4 碼代碼清單
     futures_targets: Optional[list[str]] = None  # 期貨商品（FUTURES_TARGETS 詞表）
+
+    @property
+    def doc_type(self) -> str:
+        """文件類型（由 is_research 映射）。刻意是屬性而不是欄位：tag JSON 的格式不變。"""
+        return doc_type_for(self.is_research)
 
 
 # 給 Claude 標註 agent 的規則（嵌入 workflow 指令中）

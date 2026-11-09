@@ -179,7 +179,8 @@ class HybridSearchForwardsEntitlementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen, {"meta": [None], "lex": [None]})
 
 
-# 導入 entitlement 之前擷取（見模組 docstring）。
+# 導入 entitlement 之前擷取（見模組 docstring）。revision 0012 刻意在可見性片段之後加了文件類型片段
+# （`doc_types.doc_type_enabled_sql("r", "search")`，廷豐 profile 下是 `r.doc_type IN ('research')`），只多這一段。
 _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                     ('SET LOCAL hnsw.iterative_scan = relaxed_order', None),
                     ('\n'
@@ -195,7 +196,8 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                      '        WHERE r.market = :market AND r.instrument_types @> ARRAY[:it]::text[] AND '
                      'r.relates_stock = true AND r.relates_futures = true AND r.report_type = :report_type '
                      'AND NOT EXISTS (SELECT 1 FROM research.report_visibility rvis WHERE rvis.file_hash = '
-                     "r.file_hash AND (rvis.hidden OR rvis.publication <> 'published'))\n"
+                     "r.file_hash AND (rvis.hidden OR rvis.publication <> 'published')) "
+                     "AND r.doc_type IN ('research')\n"
                      '        ORDER BY c.embedding <=> CAST(:q AS vector)\n'
                      '        LIMIT :scan\n'
                      '    ',
@@ -216,7 +218,8 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                   '        FROM research.report_chunk c\n'
                   '        JOIN research.research_report r ON r.id = c.report_id\n'
                   '        WHERE NOT EXISTS (SELECT 1 FROM research.report_visibility rvis WHERE '
-                  "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published'))\n"
+                  "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published')) "
+                  "AND r.doc_type IN ('research')\n"
                   '        ORDER BY c.embedding <=> CAST(:q AS vector)\n'
                   '        LIMIT :scan\n'
                   '    ',
@@ -229,7 +232,8 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                   '            JOIN research.research_report r ON r.id = c.report_id\n'
                   '            WHERE c.content_norm LIKE :t0 AND c.content_norm LIKE :t1 AND c.embedding IS '
                   'NOT NULL AND NOT EXISTS (SELECT 1 FROM research.report_visibility rvis WHERE '
-                  "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published'))\n"
+                  "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published')) "
+                  "AND r.doc_type IN ('research')\n"
                   '            ORDER BY c.id\n'
                   '            LIMIT :cap\n'
                   '        )\n'
@@ -256,7 +260,7 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                    'NOT NULL AND r.market = :market AND r.instrument_types @> ARRAY[:it]::text[] AND '
                    'r.relates_stock = true AND r.relates_futures = true AND r.report_type = :report_type AND '
                    'NOT EXISTS (SELECT 1 FROM research.report_visibility rvis WHERE rvis.file_hash = '
-                   "r.file_hash AND (rvis.hidden OR rvis.publication <> 'published'))\n"
+                   "r.file_hash AND (rvis.hidden OR rvis.publication <> 'published')) AND r.doc_type IN ('research')\n"
                    '            ORDER BY c.id\n'
                    '            LIMIT :cap\n'
                    '        )\n'
@@ -288,7 +292,8 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                      '            JOIN research.research_report r ON r.id = c.report_id\n'
                      '            WHERE c.content_norm LIKE :t0 AND c.content_norm LIKE :t1 AND c.embedding '
                      'IS NOT NULL AND NOT EXISTS (SELECT 1 FROM research.report_visibility rvis WHERE '
-                     "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published'))\n"
+                     "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published')) "
+                     "AND r.doc_type IN ('research')\n"
                      '            ORDER BY c.id\n'
                      '            LIMIT :cap\n'
                      '        ),\n'
@@ -333,7 +338,7 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                                'ARRAY[:it]::text[] AND r.relates_stock = true AND r.relates_futures = true '
                                'AND r.report_type = :report_type AND NOT EXISTS (SELECT 1 FROM '
                                'research.report_visibility rvis WHERE rvis.file_hash = r.file_hash AND '
-                               "(rvis.hidden OR rvis.publication <> 'published'))\n"
+                               "(rvis.hidden OR rvis.publication <> 'published')) AND r.doc_type IN ('research')\n"
                                '            ORDER BY c.id\n'
                                '            LIMIT :cap\n'
                                '        ),\n'
@@ -377,7 +382,8 @@ _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                     '            JOIN research.research_report r ON r.id = c.report_id\n'
                     '            WHERE c.content_norm LIKE :t0 AND c.content_norm LIKE :t1 AND c.embedding '
                     'IS NOT NULL AND NOT EXISTS (SELECT 1 FROM research.report_visibility rvis WHERE '
-                    "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published'))\n"
+                    "rvis.file_hash = r.file_hash AND (rvis.hidden OR rvis.publication <> 'published')) "
+                    "AND r.doc_type IN ('research')\n"
                     '            ORDER BY c.id\n'
                     '            LIMIT :cap\n'
                     '        )\n'

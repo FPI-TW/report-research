@@ -30,6 +30,17 @@
    使用的時間步，所以成功一次（時間步前進）、改密碼、重設 TOTP 都會讓舊的暫時憑證失效。
    secret 以明文存在 app_user（與 Argon2 雜湊同一列、同一份備份）：用 session 簽章金鑰加密的話，
    輪替金鑰（全員登出的正常手段）會讓所有人的 TOTP 一起失效。
+5. **OIDC 單一登入只負責認證，授權留在這裡**（`sso_login`，revision 0013）。帳號以 `(oidc_issuer, oidc_subject)`
+   綁定 IdP 的身分；首次登入 JIT 建成**一般使用者**（`role='user'`、密碼欄是 `SSO_PASSWORD_HASH`，本地密碼永遠
+   比對不上），管理員與 scope 一律由系統內授予（`update_user`／`set_privileges`，照常稽核）。IdP 的群組、角色
+   claim 一概不讀。綁定只看 issuer＋subject，**不看帳號名稱或 email**：名稱在 IdP 端可以改、可以重複使用；
+   唯一的例外是 `OIDC_LINK_BY_USERNAME`（預設關）——開啟時，第一次以 SSO 登入、IdP 給的名稱與一個尚未綁定的
+   既有帳號相同，就綁到那個帳號（`user.sso_link`）。緊急管理員帳號（`OIDC_BREAK_GLASS_USERS`）永遠不綁，
+   它存在的意義就是 IdP 掛掉時還進得來。JIT 建帳與綁定都寫 `admin_audit_log`（actor 為 NULL＝系統）。
+   `OIDC_SSO_ONLY` 開啟時本地密碼只收緊急管理員（`local_login_permitted`）：`authenticate` 在密碼正確後回
+   `sso_only`，既有的密碼 session 在 `resolve_session` 失效——與停用帳號一樣是下一個請求就生效。
+   停用、強制登出、刪除對 SSO 帳號一樣有效；要擋住一個 SSO 使用者用**停用**（綁定留著，IdP 再怎麼放行也登不進來）。
+   刪除會清掉綁定（subject 是可識別資料），之後同一個人再從 IdP 登入會 JIT 成一個全新的一般帳號。
 
 管理動作的保護在這一層、不在路由層，讓 CLI 也受同樣的規則約束：
 - 最後一位啟用中的管理員不能被停用、降級或刪除（`LastAdminError`）。
@@ -87,6 +98,13 @@ DELETION_DELAY_SECONDS = 24 * 3600
 # 已刪除帳號的 password_hash：不是 PHC 字串，passwords.verify_password 一律回 False。
 DELETED_PASSWORD_HASH = "!deleted"
 DELETED_USERNAME_PREFIX = "deleted-"
+# SSO 帳號（JIT 建立）的 password_hash：同樣不是 PHC 字串，本地密碼永遠比對不上。管理員替它重設密碼之後它就
+# 也有本地密碼（`OIDC_SSO_ONLY` 開啟時仍只收緊急管理員）。
+SSO_PASSWORD_HASH = "!sso"
+AUTH_METHODS: tuple[str, ...] = ("password", "sso")
+# IdP subject 的長度上限（與 revision 0013 的 CHECK 一致）。
+_MAX_OIDC_SUBJECT = 255
+_MAX_OIDC_ISSUER = 512
 
 
 def effective_scopes(role: str, is_super: bool, granted: Iterable[str] = ()) -> frozenset[str]:
@@ -123,6 +141,10 @@ class User:
     scopes: frozenset[str] = frozenset()
     elevated_until: datetime | None = None
     totp_enabled: bool = False
+    # 這個 session 的登入方式（user_session.auth_method）與 IdP 是否表明做過多重驗證（user_session.idp_mfa）。
+    # SSO 管理員的 TOTP 強制看 idp_mfa 而不是 totp_enabled（web/authz.py）。
+    auth_method: str = "password"
+    idp_mfa: bool = False
 
     @property
     def is_admin(self) -> bool:
@@ -154,10 +176,11 @@ class LoginResult:
     """登入結果。reason 只進日誌與錯誤頁的分流，絕不帶密碼相關的任何值。
 
     `totp_required` 時 user 為 None、challenge 帶第二步要用的資料（web 層簽章後放進短效 cookie）。
+    `sso_only`：密碼正確，但 `OIDC_SSO_ONLY` 開啟而這個帳號不是緊急管理員（與 disabled 一樣只在密碼正確時才說）。
     """
 
     user: User | None
-    reason: Literal["ok", "unknown_user", "bad_password", "disabled", "totp_required"]
+    reason: Literal["ok", "unknown_user", "bad_password", "disabled", "totp_required", "sso_only"]
     challenge: MfaChallenge | None = None
     # 帳號存在時的 UUID（ok／bad_password／disabled／totp_required）；unknown_user 為 None。
     # 給登入事件（auth_event）歸到帳號用——呼叫端**不得**改記帳號名稱。
@@ -183,6 +206,7 @@ class UserInfo:
     totp_enabled: bool = False
     deleted_at: datetime | None = None
     deletion_execute_after: datetime | None = None  # 有尚未執行的刪除排程時
+    sso_bound: bool = False  # 已綁定 IdP 身分（oidc_issuer／oidc_subject；值本身不外露）
 
 
 @dataclass(frozen=True)
@@ -373,6 +397,18 @@ def admin_mfa_policy_locks(role: str) -> bool:
     return role == "admin" and get_settings().admin_mfa_required
 
 
+def local_login_permitted(username: str, role: str) -> bool:
+    """本地帳密能不能登入（與已經用密碼登入的 session 還算不算數）。
+
+    `OIDC_SSO_ONLY` 關閉（預設）時一律可以；開啟時只有 `OIDC_BREAK_GLASS_USERS` 列出、而且仍是管理員的帳號可以。
+    名單比對不分大小寫，與帳號名稱的唯一性一致。
+    """
+    oidc = get_settings().oidc
+    if not oidc.sso_only:
+        return True
+    return role == "admin" and oidc.is_break_glass(username)
+
+
 class TotpRequiredError(AccountError):
     """密碼正確，但帳號開了 TOTP：還需要驗證碼。"""
 
@@ -513,6 +549,8 @@ async def authenticate(username: str, password: str) -> LoginResult:
             return LoginResult(None, "bad_password", user_id=str(uid))
         if not enabled:
             return LoginResult(None, "disabled", user_id=str(uid))
+        if not local_login_permitted(uname, role):
+            return LoginResult(None, "sso_only", user_id=str(uid))
         params: dict = {"id": uid}
         rehash = ""
         if passwords.needs_rehash(pw_hash):
@@ -569,23 +607,31 @@ async def complete_totp_login(user_id: str, fingerprint: str, code: str) -> User
     return _make_user(uid, uname, role, is_super, granted, totp_enabled=True)
 
 
-def _make_user(uid, uname, role, is_super, granted, elevated_until=None, totp_enabled=False) -> User:
+def _make_user(uid, uname, role, is_super, granted, elevated_until=None, totp_enabled=False,
+               auth_method="password", idp_mfa=False) -> User:
     return User(id=str(uid), username=uname, role=role, is_super=bool(is_super),
                 scopes=effective_scopes(role, bool(is_super), granted or ()), elevated_until=elevated_until,
-                totp_enabled=bool(totp_enabled))
+                totp_enabled=bool(totp_enabled), auth_method=auth_method, idp_mfa=bool(idp_mfa))
 
 
 async def create_session(user_id: str, *, max_age_seconds: int, ip: str | None = None,
-                         user_agent: str | None = None) -> str:
-    """開一個新 session，回 session id（放進 cookie，見 web/auth.py）。"""
+                         user_agent: str | None = None, auth_method: str = "password",
+                         idp_mfa: bool = False) -> str:
+    """開一個新 session，回 session id（放進 cookie，見 web/auth.py）。
+
+    `auth_method`：`password`（本地帳密，含 TOTP）或 `sso`；`idp_mfa` 只對 SSO 有意義（DB 的 CHECK 擋其他組合）。
+    """
+    if auth_method not in AUTH_METHODS:
+        raise ValueError(f"未知的登入方式：{auth_method!r}")
     async with SessionFactory() as session:
         sid = (await session.execute(
             text(
-                "INSERT INTO research.user_session (user_id, expires_at, ip, user_agent) "
-                "VALUES (:uid, now() + make_interval(secs => :ttl), :ip, :ua) RETURNING id"
+                "INSERT INTO research.user_session (user_id, expires_at, ip, user_agent, auth_method, idp_mfa) "
+                "VALUES (:uid, now() + make_interval(secs => :ttl), :ip, :ua, :method, :mfa) RETURNING id"
             ),
             {"uid": user_id, "ttl": int(max_age_seconds), "ip": ip,
-             "ua": (user_agent or "")[:_MAX_USER_AGENT] or None},
+             "ua": (user_agent or "")[:_MAX_USER_AGENT] or None, "method": auth_method,
+             "mfa": bool(idp_mfa) and auth_method == "sso"},
         )).scalar_one()
         await session.commit()
     return str(sid)
@@ -596,6 +642,9 @@ async def resolve_session(session_id: str) -> User | None:
 
     DB 異常**往上拋**：呼叫端（auth middleware）要能分辨「沒登入」與「認證服務掛了」，
     後者回 503 而不是把人導回登入頁——登入頁在 DB 掛掉時一樣登不進去，只會讓人以為密碼錯。
+
+    本地密碼登入的 session 還要過 `local_login_permitted`：開啟 `OIDC_SSO_ONLY` 之後，非緊急管理員的密碼 session
+    下一個請求就失效（不必等它過期），與停用帳號同理。
     """
     if not _valid_uuid(session_id):
         return None
@@ -604,7 +653,8 @@ async def resolve_session(session_id: str) -> User | None:
             text(
                 "SELECT u.id, u.username, u.role, u.is_super, "
                 "ARRAY(SELECT scope FROM research.user_scope WHERE user_id = u.id), s.elevated_until, "
-                "s.last_seen_at < now() - make_interval(secs => :touch) AS stale, u.totp_enabled "
+                "s.last_seen_at < now() - make_interval(secs => :touch) AS stale, u.totp_enabled, "
+                "s.auth_method, s.idp_mfa "
                 "FROM research.user_session s JOIN research.app_user u ON u.id = s.user_id "
                 "WHERE s.id = :sid AND s.revoked_at IS NULL AND s.expires_at > now() AND u.enabled "
                 "AND u.deleted_at IS NULL"
@@ -613,7 +663,9 @@ async def resolve_session(session_id: str) -> User | None:
         )).first()
         if row is None:
             return None
-        uid, uname, role, is_super, granted, elevated_until, stale, totp_on = row
+        uid, uname, role, is_super, granted, elevated_until, stale, totp_on, method, idp_mfa = row
+        if method != "sso" and not local_login_permitted(uname, role):
+            return None
         if stale:
             try:
                 await session.execute(
@@ -624,7 +676,7 @@ async def resolve_session(session_id: str) -> User | None:
             except Exception:
                 # 最後活動時間只是給管理頁看的，寫不進去不該擋住這個請求。
                 logger.warning("user_session last_seen_at 回寫失敗", exc_info=True)
-    return _make_user(uid, uname, role, is_super, granted, elevated_until, totp_on)
+    return _make_user(uid, uname, role, is_super, granted, elevated_until, totp_on, method, idp_mfa)
 
 
 async def elevate_session(session_id: str, password: str, totp_code: str | None = None) -> datetime | None:
@@ -675,6 +727,47 @@ async def elevate_session(session_id: str, password: str, totp_code: str | None 
         )).scalar_one()
         await _audit(session, actor_id=str(uid), action="session.elevate", target_type="session",
                      target_id=session_id, detail={"username": uname, "seconds": ELEVATION_SECONDS})
+        await session.commit()
+    return until
+
+
+async def elevate_sso_session(session_id: str, *, issuer: str, subject: str) -> datetime | None:
+    """SSO 登入的 session 以「回 IdP 重新登入」完成權限提升（本地沒有密碼可以重新驗證）。
+
+    呼叫端（`web/routers/oidc_login.py`）已驗過 ID token（含 `auth_time` 夠新）；這裡只確認這個 session 仍有效、
+    是 SSO session，而且帳號綁的就是這組 issuer＋subject（換了一個 IdP 帳號回來不算數）。成功把提升視窗延到
+    now()+ELEVATION_SECONDS 並寫稽核 `session.elevate`（via `sso`）；不符回 None 並寫 `session.elevate_failed`
+    （session 已失效時不寫——那不是這個帳號的嘗試）。
+    """
+    if not _valid_uuid(session_id):
+        return None
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            text(
+                "SELECT u.id, u.username, u.oidc_issuer, u.oidc_subject, s.auth_method "
+                "FROM research.user_session s JOIN research.app_user u ON u.id = s.user_id "
+                "WHERE s.id = :sid AND s.revoked_at IS NULL AND s.expires_at > now() AND u.enabled "
+                "AND u.deleted_at IS NULL FOR UPDATE OF s"
+            ),
+            {"sid": session_id},
+        )).first()
+        if row is None:
+            return None
+        uid, uname, bound_iss, bound_sub, method = row
+        if method != "sso" or bound_iss != issuer or bound_sub != subject:
+            await _audit(session, actor_id=str(uid), action="session.elevate_failed", target_type="session",
+                         target_id=session_id, detail={"username": uname, "reason": "sso_identity", "via": "sso"})
+            await session.commit()
+            return None
+        until = (await session.execute(
+            text(
+                "UPDATE research.user_session SET elevated_until = now() + make_interval(secs => :ttl) "
+                "WHERE id = :sid RETURNING elevated_until"
+            ),
+            {"sid": session_id, "ttl": ELEVATION_SECONDS},
+        )).scalar_one()
+        await _audit(session, actor_id=str(uid), action="session.elevate", target_type="session",
+                     target_id=session_id, detail={"username": uname, "seconds": ELEVATION_SECONDS, "via": "sso"})
         await session.commit()
     return until
 
@@ -783,16 +876,25 @@ async def admin_revoke_session(session_id: str, *, actor_id: str | None, via: st
 # ───── 登入與安全事件（research.auth_event，revision 0011）─────
 
 # 事件類型的唯一定義（DB 只限形狀）。reason 是各事件的細分原因（形狀 `^[a-z][a-z_]{0,31}$`）：
-#   login.success       reason：password（單一步驟）／totp（兩步驟完成）
-#   login.failure       reason：unknown_user／bad_password／disabled
+#   login.success       reason：password（單一步驟）／totp（兩步驟完成）／sso（OIDC 單一登入）
+#   login.failure       reason：unknown_user／bad_password／disabled／sso_only（密碼正確，但只允許 SSO）
 #   login.totp_failure  reason：bad_code／expired_challenge
 #   login.locked        每 IP 失敗限流期間的請求（web/auth.py 的 _FAILS）；只在記憶體計數、定期寫一列彙總（count）
 #   login.insecure      非 HTTPS 且非本機的登入被拒
+#   login.sso_failure   OIDC 單一登入失敗（web/routers/oidc_login.py）。reason：
+#                         state（沒有或對不上登入流程的暫時憑證；只在記憶體計數、定期寫彙總）
+#                         idp_error（IdP 回了 error；同樣只計數）／token（換 token 或 ID token 驗證失敗）
+#                         claims（缺 subject 或帳號名稱 claim）／domain（不在允許的網域）
+#                         disabled／username_conflict／invalid_username／break_glass（sso_login 的結果）
+#                       刻意不併進 login.failure：SSO 失敗不是猜密碼，不該推高全站登入失敗告警
+#                       （security_ops.FAILURE_EVENTS）。
 #   logout
-#   elevate.success／elevate.failure  權限提升（reason：bad_password／totp）；稽核另有 session.elevate*
+#   elevate.success／elevate.failure  權限提升（reason：bad_password／totp；SSO 重新驗證：成功 sso，
+#                       失敗 sso_stale_auth（IdP 沒有真的重新驗證）／sso_identity（回來的不是同一個 IdP 身分）
+#                       ／sso_session（這個瀏覽器的 session 已失效或換人））；稽核另有 session.elevate*
 AUTH_EVENT_TYPES: frozenset[str] = frozenset({
     "login.success", "login.failure", "login.totp_failure", "login.locked", "login.insecure",
-    "logout", "elevate.success", "elevate.failure",
+    "logout", "elevate.success", "elevate.failure", "login.sso_failure",
 })
 _AUTH_REASON_RE = re.compile(r"^[a-z][a-z_]{0,31}$")
 _MAX_AUTH_IP = 64
@@ -827,6 +929,106 @@ async def record_auth_event(event: str, *, reason: str | None = None, user_id: s
         await session.commit()
 
 
+# ───── OIDC 單一登入（revision 0013；規則見模組 docstring 第 5 點）─────
+
+SsoReason = Literal["ok", "disabled", "username_conflict", "invalid_username", "break_glass"]
+
+
+@dataclass(frozen=True)
+class SsoLoginResult:
+    """`sso_login` 的結果。reason 不是 ok 時 user 為 None；user_id 是牽涉到的既有帳號（給 auth_event 歸到帳號）。
+
+    - `disabled`：綁定的（或同名、可綁定的）帳號已停用或排程刪除中。
+    - `username_conflict`：IdP 給的名稱已被另一個帳號使用，而且不能綁過去（沒開 `OIDC_LINK_BY_USERNAME`、
+      那個帳號已綁別的 IdP 身分）。不會自動改名：改名會讓兩個人在管理頁上看起來像同一個。
+    - `invalid_username`：IdP 給的名稱不合本系統的帳號名稱規則（`username_problem`）。
+    - `break_glass`：名稱撞到緊急管理員帳號；那個帳號刻意不與 IdP 綁定。
+    """
+
+    user: User | None
+    reason: SsoReason
+    user_id: str | None = None
+    created: bool = False
+    linked: bool = False
+
+
+async def sso_login(issuer: str, subject: str, username: str) -> SsoLoginResult:
+    """IdP 已認證這個人（ID token 已由 `app/services/oidc.py` 驗過）；找出或建立對應的帳號。
+
+    1. 已有帳號綁定這組 (issuer, subject)：啟用中就登入（帳號名稱以本系統為準，不跟著 IdP 改）、否則 `disabled`。
+    2. 沒有：IdP 給的名稱必須合規。同名帳號存在時——緊急管理員回 `break_glass`；沒開 `OIDC_LINK_BY_USERNAME`
+       或它已綁別的身分回 `username_conflict`；停用中回 `disabled`；否則綁定（稽核 `user.sso_link`）。
+    3. 都沒有：JIT 建成一般使用者並綁定（稽核 `user.create`，via `sso_jit`）。
+
+    稽核的 actor 是 NULL（系統行為；這時候還沒有已登入的身分可以掛）。detail 不含 subject（那是 IdP 端的識別碼，
+    帳號列本身已存著，稽核不必再複製一份可識別資料）。兩個請求同時首次登入同一人時，晚到的那筆撞唯一約束，
+    重新查一次就會走第 1 條。issuer 或 subject 空白、過長是呼叫端的錯（ValueError）。
+    """
+    if not issuer or not subject or len(issuer) > _MAX_OIDC_ISSUER or len(subject) > _MAX_OIDC_SUBJECT:
+        raise ValueError("issuer／subject 不可為空或超過長度上限")
+    for attempt in range(2):
+        try:
+            return await _sso_login_once(issuer, subject, username)
+        except IntegrityError:
+            if attempt:
+                raise
+    raise AssertionError("unreachable")
+
+
+async def _sso_login_once(issuer: str, subject: str, username: str) -> SsoLoginResult:
+    oidc = get_settings().oidc
+    cols = ("id, username, role, enabled, is_super, deleted_at, oidc_subject, "
+            "ARRAY(SELECT scope FROM research.user_scope WHERE user_id = app_user.id), totp_enabled")
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            text(f"SELECT {cols} FROM research.app_user WHERE oidc_issuer = :iss AND oidc_subject = :sub FOR UPDATE"),
+            {"iss": issuer, "sub": subject},
+        )).first()
+        if row is not None:
+            uid, uname, role, enabled, is_super, deleted_at, _sub, granted, totp_on = row
+            if not enabled or deleted_at is not None:
+                return SsoLoginResult(None, "disabled", user_id=str(uid))
+            await session.execute(text("UPDATE research.app_user SET last_login_at = now() WHERE id = :id"),
+                                  {"id": uid})
+            await session.commit()
+            return SsoLoginResult(_make_user(uid, uname, role, is_super, granted, totp_enabled=totp_on,
+                                             auth_method="sso"), "ok", user_id=str(uid))
+        name = normalize_username(username)
+        if username_problem(name):
+            return SsoLoginResult(None, "invalid_username")
+        row = (await session.execute(
+            text(f"SELECT {cols} FROM research.app_user WHERE lower(username) = lower(:u) FOR UPDATE"), {"u": name},
+        )).first()
+        if row is not None:
+            uid, uname, role, enabled, is_super, deleted_at, bound_sub, granted, totp_on = row
+            if oidc.is_break_glass(uname):
+                return SsoLoginResult(None, "break_glass", user_id=str(uid))
+            if not oidc.link_by_username or bound_sub is not None or deleted_at is not None:
+                return SsoLoginResult(None, "username_conflict", user_id=str(uid))
+            if not enabled:
+                return SsoLoginResult(None, "disabled", user_id=str(uid))
+            await session.execute(
+                text("UPDATE research.app_user SET oidc_issuer = :iss, oidc_subject = :sub, last_login_at = now(), "
+                     "updated_at = now() WHERE id = :id"),
+                {"iss": issuer, "sub": subject, "id": uid},
+            )
+            await _audit(session, actor_id=None, action="user.sso_link", target_type="user", target_id=str(uid),
+                         detail={"username": uname, "issuer": issuer, "via": "sso"})
+            await session.commit()
+            return SsoLoginResult(_make_user(uid, uname, role, is_super, granted, totp_enabled=totp_on,
+                                             auth_method="sso"), "ok", user_id=str(uid), linked=True)
+        uid = (await session.execute(
+            text("INSERT INTO research.app_user (username, password_hash, role, oidc_issuer, oidc_subject, "
+                 "last_login_at) VALUES (:u, :h, 'user', :iss, :sub, now()) RETURNING id"),
+            {"u": name, "h": SSO_PASSWORD_HASH, "iss": issuer, "sub": subject},
+        )).scalar_one()
+        await _audit(session, actor_id=None, action="user.create", target_type="user", target_id=str(uid),
+                     detail={"username": name, "role": "user", "issuer": issuer, "via": "sso_jit"})
+        await session.commit()
+    return SsoLoginResult(_make_user(uid, name, "user", False, (), auth_method="sso"), "ok", user_id=str(uid),
+                          created=True)
+
+
 # ───── 帳號管理 ─────
 
 _USER_COLS = (
@@ -838,7 +1040,8 @@ _USER_COLS = (
     "u.is_super, ARRAY(SELECT sc.scope FROM research.user_scope sc WHERE sc.user_id = u.id ORDER BY sc.scope), "
     "u.totp_enabled, u.deleted_at, "
     "(SELECT d.execute_after FROM research.account_deletion d WHERE d.user_id = u.id "
-    " AND d.cancelled_at IS NULL AND d.executed_at IS NULL) AS deletion_execute_after"
+    " AND d.cancelled_at IS NULL AND d.executed_at IS NULL) AS deletion_execute_after, "
+    "u.oidc_subject IS NOT NULL AS sso_bound"
 )
 # 尚未結束（未取消、未執行）的刪除排程。
 _PENDING = "cancelled_at IS NULL AND executed_at IS NULL"
@@ -847,13 +1050,13 @@ _PENDING_D = "d.cancelled_at IS NULL AND d.executed_at IS NULL"
 
 def _user_info(row) -> UserInfo:
     (uid, uname, role, enabled, created, updated, pw_changed, last_login, last_seen, active, is_super,
-     granted, totp_on, deleted_at, deletion_after) = row
+     granted, totp_on, deleted_at, deletion_after, sso_bound) = row
     return UserInfo(
         id=str(uid), username=uname, role=role, enabled=bool(enabled), created_at=created,
         updated_at=updated, password_changed_at=pw_changed, last_login_at=last_login,
         last_seen_at=last_seen, active_sessions=int(active or 0), is_super=bool(is_super),
         scopes=tuple(granted or ()), totp_enabled=bool(totp_on), deleted_at=deleted_at,
-        deletion_execute_after=deletion_after,
+        deletion_execute_after=deletion_after, sso_bound=bool(sso_bound),
     )
 
 
@@ -1544,6 +1747,7 @@ async def _purge_user(session, user_id: str) -> dict[str, int]:
         text(
             "UPDATE research.app_user SET username = :name, password_hash = :pw, role = 'user', is_super = false, "
             "enabled = false, totp_enabled = false, totp_secret = NULL, totp_last_step = NULL, "
+            "oidc_issuer = NULL, oidc_subject = NULL, "
             "last_login_at = NULL, deleted_at = coalesce(deleted_at, now()), updated_at = now() WHERE id = :id"
         ),
         {"id": user_id, "name": deleted_username(user_id), "pw": DELETED_PASSWORD_HASH},
@@ -1595,6 +1799,7 @@ async def deletion_residue(user_id: str) -> DeletionResidue:
                 "(SELECT count(*) FROM research.user_session WHERE user_id = :id), "
                 "(SELECT username <> :name OR password_hash <> :pw OR enabled OR role <> 'user' OR is_super "
                 " OR totp_enabled OR totp_secret IS NOT NULL OR last_login_at IS NOT NULL OR deleted_at IS NULL "
+                " OR oidc_subject IS NOT NULL "
                 " FROM research.app_user WHERE id = :id), "
                 f"EXISTS (SELECT 1 FROM research.account_deletion WHERE user_id = :id AND {_PENDING}), "
                 "(SELECT count(*) FROM research.usage_counter WHERE user_id = :id), "

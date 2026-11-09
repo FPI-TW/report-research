@@ -15,6 +15,7 @@ import { TF_DUR, TF_EASE_OUT } from '../../lib/motionTokens'
 import { useMe } from '../../lib/useMe'
 import { useMfaEnrollmentSignal } from '../../lib/useMfaEnrollment'
 import { AdminMfaRequired } from './AdminMfaRequired'
+import { AdminSsoMfaRequired } from './AdminSsoMfaRequired'
 import { AdminPalette } from './AdminPalette'
 import {
   flattenPages, locate, pageMatches, visibleDomains,
@@ -38,7 +39,8 @@ const PALETTE_HINT = IS_MAC ? '⌘K' : 'Ctrl K'
  *
  * 管理員 TOTP 強制（後端 `ADMIN_MFA_REQUIRED`）也在這一處處理：`/api/me` 說 `mfa_enrollment_required`
  * 時，導覽與內容換成 TOTP 設定頁（`AdminMfaRequired`）；任何管理 API 回 403 `mfa_enrollment_required`
- * 都會讓 `/api/me` 立刻重取（`useMfaEnrollmentSignal`），不必等快取過期。
+ * 都會讓 `/api/me` 立刻重取（`useMfaEnrollmentSignal`），不必等快取過期。SSO 登入的管理員改看
+ * `sso_mfa_required`（`AdminSsoMfaRequired`：請對方以經過多重驗證的公司帳號重新登入）。
  */
 export function AdminShell() {
   const { pathname } = useLocation()
@@ -51,7 +53,8 @@ export function AdminShell() {
   const [paletteOpen, setPaletteOpen] = useState(false)
 
   const mfaRequired = Boolean(me.data?.mfa_enrollment_required)
-  const ready = me.data?.role === 'admin' && !mfaRequired
+  const ssoMfaRequired = Boolean(me.data?.sso_mfa_required)
+  const ready = me.data?.role === 'admin' && !mfaRequired && !ssoMfaRequired
   const scopeList = me.data?.scopes
   const scopes = useMemo(() => scopeList ?? [], [scopeList])
   const { signals, env, missing } = useAdminSignals({ enabled: ready, scopes })
@@ -159,6 +162,8 @@ export function AdminShell() {
         <RequireAdmin>
           {mfaRequired ? (
             <main className={styles.main}><AdminMfaRequired /></main>
+          ) : ssoMfaRequired ? (
+            <main className={styles.main}><AdminSsoMfaRequired /></main>
           ) : (
             <main className={styles.main}>
               <motion.div

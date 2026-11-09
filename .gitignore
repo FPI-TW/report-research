@@ -142,3 +142,7 @@ data/ops_spool/
 # 整理中刪除，規則保留是為了擋住下一批同類產物。
 /*.pptx
 /*.pptx.inspect.ndjson
+# 建置資訊檔（scripts/build_info.py；make build-info 或映像建置時寫）：執行期產物，不進版控。
+/build_info.json
+# 通用 webhook 告警的冷卻狀態（app/services/alert_webhook.py）。
+data/.alert_webhook_state.json

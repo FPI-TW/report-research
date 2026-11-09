@@ -4,7 +4,7 @@
 修正之前入庫的那批。
 
 流程：
-1. 候選＝`is_research` 且內文有索引表的研報（`full_text` 逐篇套 `index_line_numbers`），
+1. 候選＝類型以標準市場代碼標註（`tagging_markets`）且內文有索引表的研報（`full_text` 逐篇套 `index_line_numbers`），
    加上有訊號的評等證據本身就是索引列長相（`is_index_row`）的研報。
 2. 訊號：評等證據抄自索引列（`evidence_from_index`），或證據本身是索引列長相 → 刪除。
    後者補的是剔除規則抓不到的版型（見 `rating_index` 檔頭「抓不到的」）；誤刪的正當訊號
@@ -42,21 +42,25 @@ load_llm_env()
 from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.doc_types import doc_type_enabled_sql  # noqa: E402
 from app.services.llm_models import TASK_TAG  # noqa: E402
 from app.services.rating_index import evidence_from_index, index_lines, is_index_row  # noqa: E402
 from scripts import _ingest_core  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
+
 # 前置過濾只為了不把全庫 full_text 拉回來：內文有行首日期，或有訊號的評等證據以日期開頭。
 # 是不是索引表、索引列在 Python 判。
-CANDIDATES_SQL = """
+def candidates_sql() -> str:
+    """類型片段在呼叫時依 profile 渲染（app/services/doc_types.py）：標的是以標準市場代碼標註的類型。"""
+    return f"""
 SELECT r.id::text, r.file_hash, r.file_name, r.source, r.stock_targets, r.full_text
 FROM research.research_report r
-WHERE r.is_research
-  AND (r.full_text ~ '(^|\\n)\\s*[0-9]{1,2}/[0-9]{1,2}\\s'
+WHERE {doc_type_enabled_sql('r', 'tagging_markets')}
+  AND (r.full_text ~ '(^|\\n)\\s*[0-9]{{1,2}}/[0-9]{{1,2}}\\s'
        OR EXISTS (SELECT 1 FROM research.report_signal s
                   WHERE s.report_id = r.id
-                    AND s.raw_payload->'rating'->>'evidence' ~ '^\\s*[0-9]{1,2}/[0-9]{1,2}\\s'))
+                    AND s.raw_payload->'rating'->>'evidence' ~ '^\\s*[0-9]{{1,2}}/[0-9]{{1,2}}\\s'))
   AND (CAST(:hashes AS text[]) IS NULL OR r.file_hash = ANY(CAST(:hashes AS text[])))
 ORDER BY r.created_at
 """
@@ -97,7 +101,7 @@ class Candidate:
 
 async def load_candidates(hashes: list[str] | None) -> list[Candidate]:
     async with SessionFactory() as s:
-        rows = (await s.execute(text(CANDIDATES_SQL), {"hashes": hashes})).all()
+        rows = (await s.execute(text(candidates_sql()), {"hashes": hashes})).all()
         cands: dict[str, tuple[Candidate, list[str]]] = {}
         for rid, fh, fn, src, targets, full_text in rows:
             cand = Candidate(rid, fh, fn, src, targets, full_text)

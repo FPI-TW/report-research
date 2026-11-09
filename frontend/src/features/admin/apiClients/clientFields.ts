@@ -10,6 +10,7 @@ export function messageOf(err: unknown): string {
 export const SCOPE_LABELS: Record<ApiClientScope, string> = {
   search: '語意檢索（search）',
   'report.file': '研報原檔連結（report.file）',
+  'report.upload': '研報上傳（report.upload）',
 }
 export const SCOPE_ORDER = Object.keys(SCOPE_LABELS) as ApiClientScope[]
 

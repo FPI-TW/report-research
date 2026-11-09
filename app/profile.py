@@ -5,6 +5,8 @@
 - `profile.toml`：本模組讀取與驗證的設定檔（`tomllib`）。
 - `assets/`：logo、favicon 等靜態檔，只能由 `profile.toml` 以檔名引用（`GET /api/branding/assets/{name}`
   也只交出被引用的檔，見 `web/routers/branding.py`）。
+- `plugins/`：插件連接器（`[connectors.sources.<name>]` 的 `kind = "plugin"`）。只載入 `profile.toml` 以名稱
+  明確引用的檔，不掃描、不自動 import 目錄裡的其他檔（`app/services/connectors/__init__.py`）。
 
 祕密與部署層設定（金鑰、DB URL、LLM 端點）**不放這裡**，照舊走環境變數。
 
@@ -39,6 +41,13 @@
 市場代碼是框架固定的**標準市場代碼**（`app/services/tagging.py` 的 `MARKETS`，標註 prompt 與 `tests/test_tagging.py`
 逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
 廷豐 profile 的代碼與 findb 對齊，是廷豐的跨 repo 契約，不是框架的。
+
+## 文件類型
+
+`[doc_types]` 宣告文件類型（`research_report.doc_type`）與每種類型啟用的功能（`DOC_FEATURES`，框架固定的詞彙）。
+SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設定產生過濾片段。section 缺席時是框架預設：
+`research` 全開、`non_research` 全關（等同改動前的 `is_research` true／false）。標註器會產生的類型
+（`tagging.TAGGER_DOC_TYPES`）必須全部宣告：漏宣告的類型所有功能都關，那類文件會靜默消失。
 """
 
 from __future__ import annotations
@@ -53,7 +62,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from app.services.tagging import MARKET_DISPLAY, MARKETS
+from app.services.tagging import DOC_TYPE_RESEARCH, MARKET_DISPLAY, MARKETS, TAGGER_DOC_TYPES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR_ENV = "PROFILE_DIR"
@@ -123,6 +132,75 @@ class Security:
     totp_issuer: str  # 驗證器 App 顯示的發行者名稱（otpauth URI 的 issuer）
 
 
+# 文件類型可啟用的功能（框架固定的詞彙；`app/services/doc_types.py` 的 docstring 寫每一項管到哪些查詢）。
+DOC_FEATURES: tuple[str, ...] = (
+    "search",  # 混合檢索（檢索頁、問答、對外 API）、檢索頁瀏覽
+    "reading",  # 閱讀頁、相似研報、原檔
+    "tagging_markets",  # 以標準市場代碼標註：入庫要求 market 非空
+    "summary",  # 摘要批次
+    "title",  # 標題批次
+    "takeaway",  # 摘錄批次
+    "signal",  # 訊號擷取批次
+    "radar",  # 觀點雷達
+    "brief",  # 每日簡報
+    "overview",  # 總覽題的分面聚合
+)
+_DOC_TYPE_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")  # 與 revision 0012 的 CHECK 同一個形狀
+
+
+@dataclass(frozen=True)
+class DocTypes:
+    # 類型 → 啟用的功能。順序＝宣告順序（SQL 片段裡的 IN 清單依此排列，輸出穩定）。
+    features: Mapping[str, frozenset[str]]
+
+    def enabled(self, doc_type: str | None, feature: str) -> bool:
+        return feature in self.features.get(doc_type or "", frozenset())
+
+    def types_with(self, feature: str) -> tuple[str, ...]:
+        return tuple(t for t, fs in self.features.items() if feature in fs)
+
+
+def _default_doc_types() -> DocTypes:
+    return DocTypes(features=MappingProxyType({
+        DOC_TYPE_RESEARCH: frozenset(DOC_FEATURES),
+        **{t: frozenset() for t in TAGGER_DOC_TYPES if t != DOC_TYPE_RESEARCH},
+    }))
+
+CONNECTOR_KINDS = ("folder", "s3", "plugin")
+PLUGINS_DIR = "plugins"
+
+
+@dataclass(frozen=True)
+class ConnectorSpec:
+    """一個資料來源連接器的非祕密參數（`[connectors.sources.<name>]`）。祕密（S3 憑證）走環境變數，
+    名稱由 `env` 前綴決定；行為見 `app/services/connectors/__init__.py`。"""
+
+    name: str
+    kind: str  # CONNECTOR_KINDS 之一
+    poll_minutes: int = 180  # 兩次輪詢的最短間隔（排程每次叫起時，未到間隔的連接器略過）
+    settle_seconds: int = 60  # mtime 距今未滿這麼久的檔先不收（可能還在寫入）
+    path: Path | None = None  # folder：監看的資料夾（相對路徑以 repo 根為基準）
+    landing: Path | None = None  # s3／plugin：拉回的檔案落地的資料夾（入庫後 file_path 指向這裡，要長期保留）
+    prefix: str | None = None  # s3：bucket 內的 prefix（以 / 結尾）
+    env: str | None = None  # s3：環境變數前綴（<env>_BUCKET、<env>_ACCESS_KEY_ID…）
+    plugin: Path | None = None  # plugin：profile 的 plugins/<名稱>.py
+    params: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))  # plugin 自訂參數
+
+    @property
+    def root(self) -> Path:
+        """候選檔所在的資料夾：folder 是 path，其餘是 landing。"""
+        return self.path if self.kind == "folder" else self.landing  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class Connectors:
+    enabled: tuple[str, ...] = ()  # 框架的連接器輪詢要跑的連接器（順序＝輪詢順序）；空＝不輪詢
+    sources: Mapping[str, ConnectorSpec] = field(default_factory=lambda: MappingProxyType({}))
+
+    def enabled_specs(self) -> list[ConnectorSpec]:
+        return [self.sources[name] for name in self.enabled]
+
+
 @dataclass(frozen=True)
 class Profile:
     root: Path
@@ -131,7 +209,9 @@ class Profile:
     prompt: PromptParams
     markets: Markets
     security: Security
+    doc_types: DocTypes = field(default_factory=_default_doc_types)
     # 後續 lane 的新 section 欄位一律加在這裡之後、帶預設值（例如 `x: X = field(default_factory=X)`）。
+    connectors: Connectors = field(default_factory=Connectors)
 
 
 # ── 驗證輔助 ─────────────────────────────────────────────────────────────
@@ -332,6 +412,118 @@ def _parse_security(table: dict, ctx: _Ctx) -> Security:
     if ":" in issuer:
         raise ctx.error("totp_issuer", "不可含冒號（otpauth label 以冒號分隔發行者與帳號）")
     return Security(totp_issuer=issuer)
+
+
+@_section("doc_types")
+def _parse_doc_types(table: dict, ctx: _Ctx) -> DocTypes:
+    if not table:
+        return _default_doc_types()
+    out: dict[str, frozenset[str]] = {}
+    for name, spec in table.items():
+        if not _DOC_TYPE_NAME.fullmatch(name):
+            raise ctx.error(name, "類型名稱只能是小寫英文開頭、小寫英數與底線，最多 32 字元")
+        if not isinstance(spec, dict):
+            raise ctx.error(name, f"必須是表格（[doc_types.{name}]），目前是 {_type_name(spec)}")
+        ctx.reject_unknown(spec, {"features"}, prefix=f"{name}.")
+        if "features" not in spec:
+            raise ctx.error(f"{name}.features", "必填（全部關閉請寫空陣列 []）")
+        feats = spec["features"]
+        if not isinstance(feats, list):
+            raise ctx.error(f"{name}.features", f"必須是字串陣列，目前是 {_type_name(feats)}")
+        seen: set[str] = set()
+        for i, feat in enumerate(feats):
+            if not isinstance(feat, str):
+                raise ctx.error(f"{name}.features[{i}]", f"必須是字串，目前是 {_type_name(feat)}")
+            if feat not in DOC_FEATURES:
+                raise ctx.error(f"{name}.features[{i}]", f"未知的功能 {feat!r}（可用：{'、'.join(DOC_FEATURES)}）")
+            if feat in seen:
+                raise ctx.error(f"{name}.features[{i}]", f"重複的功能：{feat!r}")
+            seen.add(feat)
+        out[name] = frozenset(seen)
+    for name in TAGGER_DOC_TYPES:
+        if name not in out:
+            raise ctx.error(name, f"標註器會產生的類型必須宣告（{'、'.join(TAGGER_DOC_TYPES)}）")
+    return DocTypes(features=MappingProxyType(out))
+
+_CONNECTOR_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+_ENV_PREFIX = re.compile(r"[A-Z][A-Z0-9_]{0,47}")
+_PLUGIN_NAME = re.compile(r"[a-z][a-z0-9_]{0,47}")
+
+
+def _int_in(ctx: _Ctx, table: Mapping[str, Any], key: str, default: int, lo: int, hi: int, label: str) -> int:
+    if key not in table:
+        return default
+    value = table[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ctx.error(label, f"必須是整數，目前是 {_type_name(value)}")
+    if not lo <= value <= hi:
+        raise ctx.error(label, f"必須介於 {lo} 與 {hi} 之間")
+    return value
+
+
+def _local_path(ctx: _Ctx, table: Mapping[str, Any], key: str, label: str) -> Path:
+    raw = ctx.string(table, key, max_len=500, key_label=label)
+    path = Path(raw)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+@_section("connectors")
+def _parse_connectors(table: dict, ctx: _Ctx) -> Connectors:
+    ctx.reject_unknown(table, {"enabled", "sources"})
+    sources_table = ctx.table(table, "sources")
+    sources: dict[str, ConnectorSpec] = {}
+    for name in sources_table:
+        base = f"sources.{name}"
+        if not _CONNECTOR_NAME.fullmatch(name):
+            raise ctx.error(base, "連接器名稱只能是小寫英文開頭的英數、底線、連字號（最多 32 字）")
+        spec = ctx.table(sources_table, name, key_label=base)
+        kind = ctx.string(spec, "kind", max_len=20, key_label=f"{base}.kind")
+        if kind not in CONNECTOR_KINDS:
+            raise ctx.error(f"{base}.kind", f"不支援的連接器類型 {kind!r}（可用：{'、'.join(CONNECTOR_KINDS)}）")
+        allowed = {"kind", "poll_minutes", "settle_seconds"} | {
+            "folder": {"path"}, "s3": {"landing", "prefix", "env"}, "plugin": {"landing", "plugin", "params"},
+        }[kind]
+        ctx.reject_unknown(spec, allowed, prefix=f"{base}.")
+        values: dict[str, Any] = {
+            "name": name, "kind": kind,
+            "poll_minutes": _int_in(ctx, spec, "poll_minutes", 180, 5, 7 * 24 * 60, f"{base}.poll_minutes"),
+            "settle_seconds": _int_in(ctx, spec, "settle_seconds", 60, 0, 24 * 3600, f"{base}.settle_seconds"),
+        }
+        if kind == "folder":
+            values["path"] = _local_path(ctx, spec, "path", f"{base}.path")
+        else:
+            values["landing"] = (_local_path(ctx, spec, "landing", f"{base}.landing") if "landing" in spec
+                                 else REPO_ROOT / "data" / "connectors" / name)
+        if kind == "s3":
+            prefix = ctx.string(spec, "prefix", max_len=200, key_label=f"{base}.prefix")
+            if not prefix.endswith("/") or prefix.startswith("/") or ".." in prefix.split("/"):
+                raise ctx.error(f"{base}.prefix", f"prefix 必須是相對的、以 / 結尾（例如 inbox/）：{prefix!r}")
+            env = ctx.string(spec, "env", max_len=48, key_label=f"{base}.env")
+            if not _ENV_PREFIX.fullmatch(env):
+                raise ctx.error(f"{base}.env", f"環境變數前綴只能是大寫英數與底線：{env!r}")
+            values.update(prefix=prefix, env=env)
+        if kind == "plugin":
+            plugin = ctx.string(spec, "plugin", max_len=48, key_label=f"{base}.plugin")
+            if not _PLUGIN_NAME.fullmatch(plugin):
+                raise ctx.error(f"{base}.plugin", f"plugin 名稱只能是小寫英數與底線（檔名不含 .py）：{plugin!r}")
+            plugin_path = ctx.root / PLUGINS_DIR / f"{plugin}.py"
+            if not plugin_path.is_file():
+                raise ctx.error(f"{base}.plugin", f"找不到 plugin 檔：{plugin_path}")
+            params = ctx.table(spec, "params", key_label=f"{base}.params")
+            for key, value in params.items():
+                if isinstance(value, (dict, list)) or not isinstance(value, (str, int, float, bool)):
+                    raise ctx.error(f"{base}.params.{key}", f"只接受字串、數字或布林，目前是 {_type_name(value)}")
+            values.update(plugin=plugin_path, params=MappingProxyType(dict(params)))
+        sources[name] = ConnectorSpec(**values)
+    enabled = ctx.string_list(table, "enabled") or []
+    seen: set[str] = set()
+    for i, name in enumerate(enabled):
+        if name not in sources:
+            raise ctx.error(f"enabled[{i}]", f"沒有這個連接器：{name!r}（先在 [connectors.sources.{name}] 宣告）")
+        if name in seen:
+            raise ctx.error(f"enabled[{i}]", f"重複的連接器：{name!r}")
+        seen.add(name)
+    return Connectors(enabled=tuple(enabled), sources=MappingProxyType(sources))
 
 
 # ── 載入與快取 ───────────────────────────────────────────────────────────

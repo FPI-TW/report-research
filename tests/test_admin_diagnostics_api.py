@@ -276,7 +276,7 @@ class SecretLeakTests(_Base):
     def test_config_is_whitelist(self):
         """config 段的每個鍵都在白名單裡；名稱像祕密的鍵，值只能是布林。"""
         allowed = {
-            "db_target", "object_storage_mode", "llm_provider", "models", "extractor", "log_level",
+            "db_target", "object_storage_mode", "llm_provider", "models", "extractor", "log_level", "log_format",
             "ops_agent_environment", "ops_agent_socket", "flags", "secrets_present", "limits", "error",
         }
         cfg = self.login().get(PATH).json()["config"]

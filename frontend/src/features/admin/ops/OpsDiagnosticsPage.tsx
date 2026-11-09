@@ -159,6 +159,28 @@ function Summary({ d }: { d: DiagnosticsResponse }) {
   )
 }
 
+const BUILD_SOURCE_LABELS: Record<string, string> = {
+  image: '容器映像（建置時寫入）',
+  host: '主機（make build-info）',
+  git: '只有 .git 的 commit',
+}
+
+function treeLabel(clean: boolean | null | undefined): string {
+  if (clean == null) return '不知道'
+  return clean ? '乾淨' : '有未提交的變更'
+}
+
+function buildRows(build: DiagnosticsResponse['versions']['build']): [string, ReactNode][] {
+  if (!build?.available) return [['建置資訊', '無法取得（沒有建置資訊檔也沒有 .git）']]
+  return [
+    ['commit', <Mono>{build.commit ?? '建置時未提供'}</Mono>],
+    ['版本', build.version ?? '—'],
+    ['建置時工作樹', treeLabel(build.tree_clean)],
+    ['來源', BUILD_SOURCE_LABELS[build.source ?? ''] ?? '—'],
+    ...(build.built_at ? [['寫入時間', fmtDateTime(build.built_at)] as [string, ReactNode]] : []),
+  ]
+}
+
 function VersionsCard({ d }: { d: DiagnosticsResponse }) {
   const v = d.versions
   const git = v.git
@@ -166,6 +188,11 @@ function VersionsCard({ d }: { d: DiagnosticsResponse }) {
   return (
     <Card id="diag-versions" title="版本">
       <SectionError error={v.error} />
+      {v.build?.stale_file && (
+        <Warn>建置資訊檔與正在跑的程式不是同一個 commit（更新程式後沒有重跑 make build-info），版本與工作樹狀態未知。</Warn>
+      )}
+      <Sub>建置</Sub>
+      <KV label="建置資訊" rows={buildRows(v.build)} />
       {git?.restart_pending && (
         <Warn>
           磁碟上的程式（{shortSha(git.commit_on_disk)}）與這個行程啟動時（{shortSha(git.commit_at_start)}）不同：

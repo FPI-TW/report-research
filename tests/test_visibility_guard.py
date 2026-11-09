@@ -7,14 +7,14 @@
 
 靜態守門的規則（AST）：
 - 掃描範圍是面向使用者讀取路徑的模組（`_SCANNED`）。
-- 單位＝頂層函式（含類別方法）或頂層敘述（例如 `_DOC_SQL = text(...)`）。
+- 單位＝頂層函式（含類別方法）或頂層敘述（例如 `_TAKEAWAYS_SQL = text(...)`）。
 - 單位裡的字串字面（不含 docstring）出現 `FROM|JOIN research.(research_report|report_chunk|
   report_signal|report_takeaway)`，就必須在同一個單位裡呼叫 `visible_report_sql` 或
   `visible_report_id_sql`；否則必須列在 `_EXEMPT` 並寫明理由。
 - 豁免清單本身也受檢：列了卻已不存在、或已不再查語料表的項目會紅（免得清單只增不減）。
 
 限制：判斷粒度是「單位」，同一個函式裡多條查詢只要有一條帶了片段就會過；多子查詢的 SQL
-（雷達的 `_COVERAGE_SQL`、`_catalog_cte`）每個子查詢都要各自帶，靠 code review 與
+（雷達的 `_coverage_sql`、`_catalog_cte`）每個子查詢都要各自帶，靠 code review 與
 `tests/test_report_visibility_db.py` 的行為測試補上。
 
 真的 SQL 行為（隱藏後各路徑看不到、恢復後回來、重新入庫後旗標仍在）由

@@ -28,9 +28,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional, Sequence
 
-from sqlalchemy import text
+from sqlalchemy import TextClause, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.doc_types import doc_type_enabled_id_sql, doc_type_enabled_sql
 from app.services.visibility import visible_report_id_sql, visible_report_sql
 
 # 只有這兩個狀態代表「真的擷取到東西」。pending/rejected 是批次的過程紀錄，
@@ -118,17 +119,19 @@ class BriefRow:
 # ── 收集（決定性） ────────────────────────────────────────────────
 
 # 被管理員隱藏的研報不得進簡報（app/services/visibility.py）：素材、篇數與來源連結三處都排除。
-_WINDOW_REPORTS_SQL = text(
-    f"""
-    SELECT id::text, file_hash, file_name, title, market, source, report_date, summary
-    FROM research.research_report r
-    WHERE created_at >= :start AND created_at < :end
-      AND is_research IS NOT FALSE
-      AND {visible_report_sql("r")}
-    ORDER BY report_date DESC NULLS LAST, created_at DESC
-    LIMIT :limit
-    """
-)
+# 類型沒開簡報的文件（app/services/doc_types.py）同理。片段在呼叫時依 profile 渲染，所以這幾支 SQL 是函式。
+def _window_reports_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT id::text, file_hash, file_name, title, market, source, report_date, summary
+        FROM research.research_report r
+        WHERE created_at >= :start AND created_at < :end
+          AND {doc_type_enabled_sql("r", "brief")}
+          AND {visible_report_sql("r")}
+        ORDER BY report_date DESC NULLS LAST, created_at DESC
+        LIMIT :limit
+        """
+    )
 
 
 async def fetch_window_reports(
@@ -144,7 +147,7 @@ async def fetch_window_reports(
     """
     rows = (
         await session.execute(
-            _WINDOW_REPORTS_SQL, {"start": start, "end": end, "limit": limit}
+            _window_reports_sql(), {"start": start, "end": end, "limit": limit}
         )
     ).all()
     return [
@@ -162,13 +165,14 @@ async def fetch_window_reports(
     ]
 
 
-_COUNT_WINDOW_REPORTS_SQL = text(
-    f"""
-    SELECT count(*) FROM research.research_report r
-    WHERE created_at >= :start AND created_at < :end AND is_research IS NOT FALSE
-      AND {visible_report_sql("r")}
-    """
-)
+def _count_window_reports_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT count(*) FROM research.research_report r
+        WHERE created_at >= :start AND created_at < :end AND {doc_type_enabled_sql("r", "brief")}
+          AND {visible_report_sql("r")}
+        """
+    )
 
 
 async def count_window_reports(
@@ -176,7 +180,7 @@ async def count_window_reports(
 ) -> int:
     return int(
         (
-            await session.execute(_COUNT_WINDOW_REPORTS_SQL, {"start": start, "end": end})
+            await session.execute(_count_window_reports_sql(), {"start": start, "end": end})
         ).scalar()
         or 0
     )
@@ -199,40 +203,42 @@ SIGNAL_MAX_REPORT_AGE_DAYS = 14
 # 被隱藏研報的訊號在 ranked **之內**就排除（不是最後才濾）：對讀者而言那份研報不存在，
 # 它既不能是「這次」，也不能是同一家券商下一次訊號的「上次」——否則簡報會寫出「從（隱藏研報的）買進
 # 調為中立」，等於把隱藏的內容漏出去。
-_SIGNAL_CHANGES_SQL = text(
-    f"""
-    WITH ranked AS (
-        SELECT
-            market, instrument_code, broker, report_date, created_at,
-            rating_normalized, target_price, target_currency,
-            lag(rating_normalized) OVER w AS prev_rating,
-            lag(target_price)      OVER w AS prev_target
-        FROM research.report_signal
-        WHERE extraction_status = ANY(CAST(:statuses AS text[]))
-          AND broker IS NOT NULL
-          AND {visible_report_id_sql("report_signal.report_id")}
-        WINDOW w AS (
-            PARTITION BY market, instrument_code, broker
-            ORDER BY report_date NULLS FIRST, created_at
+def _signal_changes_sql() -> TextClause:
+    return text(
+        f"""
+        WITH ranked AS (
+            SELECT
+                market, instrument_code, broker, report_date, created_at,
+                rating_normalized, target_price, target_currency,
+                lag(rating_normalized) OVER w AS prev_rating,
+                lag(target_price)      OVER w AS prev_target
+            FROM research.report_signal
+            WHERE extraction_status = ANY(CAST(:statuses AS text[]))
+              AND broker IS NOT NULL
+              AND {visible_report_id_sql("report_signal.report_id")}
+              AND {doc_type_enabled_id_sql("report_signal.report_id", "brief")}
+            WINDOW w AS (
+                PARTITION BY market, instrument_code, broker
+                ORDER BY report_date NULLS FIRST, created_at
+            )
         )
+        SELECT market, instrument_code, broker, report_date,
+               prev_rating, rating_normalized, prev_target, target_price, target_currency
+        FROM ranked
+        WHERE created_at >= :start AND created_at < :end
+          -- report_date IS NULL 一律排除：判不出新鮮度時，寧可漏報也不要把舊變動當新聞。
+          AND report_date IS NOT NULL AND report_date >= :min_report_date
+          AND (
+                (prev_rating IS NOT NULL AND rating_normalized IS NOT NULL
+                 AND prev_rating <> rating_normalized
+                 AND prev_rating <> 'unknown' AND rating_normalized <> 'unknown')
+             OR (prev_target IS NOT NULL AND target_price IS NOT NULL
+                 AND prev_target > 0
+                 AND abs(target_price - prev_target) / prev_target * 100 >= :min_pct)
+          )
+        ORDER BY report_date DESC NULLS LAST, market, instrument_code
+        """
     )
-    SELECT market, instrument_code, broker, report_date,
-           prev_rating, rating_normalized, prev_target, target_price, target_currency
-    FROM ranked
-    WHERE created_at >= :start AND created_at < :end
-      -- report_date IS NULL 一律排除：判不出新鮮度時，寧可漏報也不要把舊變動當新聞。
-      AND report_date IS NOT NULL AND report_date >= :min_report_date
-      AND (
-            (prev_rating IS NOT NULL AND rating_normalized IS NOT NULL
-             AND prev_rating <> rating_normalized
-             AND prev_rating <> 'unknown' AND rating_normalized <> 'unknown')
-         OR (prev_target IS NOT NULL AND target_price IS NOT NULL
-             AND prev_target > 0
-             AND abs(target_price - prev_target) / prev_target * 100 >= :min_pct)
-      )
-    ORDER BY report_date DESC NULLS LAST, market, instrument_code
-    """
-)
 
 
 async def fetch_signal_changes(
@@ -248,7 +254,7 @@ async def fetch_signal_changes(
     """
     rows = (
         await session.execute(
-            _SIGNAL_CHANGES_SQL,
+            _signal_changes_sql(),
             {
                 "start": start,
                 "end": end,
@@ -515,15 +521,17 @@ async def fetch_dates(session: AsyncSession, limit: int = 30) -> list[date]:
     return [r[0] for r in (await session.execute(_DATES_SQL, {"limit": limit})).all()]
 
 
-_REPORTS_BY_IDS_SQL = text(
-    f"""
-    SELECT id::text, file_hash, file_name, title, market, source, report_date, summary
-    FROM research.research_report r
-    WHERE id = ANY(CAST(:ids AS uuid[]))
-      AND {visible_report_sql("r")}
-    ORDER BY report_date DESC NULLS LAST, file_name
-    """
-)
+def _reports_by_ids_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT id::text, file_hash, file_name, title, market, source, report_date, summary
+        FROM research.research_report r
+        WHERE id = ANY(CAST(:ids AS uuid[]))
+          AND {visible_report_sql("r")}
+          AND {doc_type_enabled_sql("r", "brief")}
+        ORDER BY report_date DESC NULLS LAST, file_name
+        """
+    )
 
 
 async def fetch_reports_by_ids(
@@ -537,7 +545,7 @@ async def fetch_reports_by_ids(
     """
     if not ids:
         return []
-    rows = (await session.execute(_REPORTS_BY_IDS_SQL, {"ids": list(ids)})).all()
+    rows = (await session.execute(_reports_by_ids_sql(), {"ids": list(ids)})).all()
     return [
         BriefReport(
             report_id=r[0],
@@ -564,16 +572,17 @@ class BriefWindowMix:
     broker_count: int
 
 
-# 與 _COUNT_WINDOW_REPORTS_SQL 同一條窗期規則（入庫時間、研究報告、對讀者可見），
+# 與 _count_window_reports_sql() 同一條窗期規則（入庫時間、研究報告、對讀者可見），
 # 只是多分組：讀取時現算，不落庫、不呼叫 LLM。
-_WINDOW_MIX_SQL = text(
-    f"""
-    SELECT market, source, count(*) FROM research.research_report r
-    WHERE created_at >= :start AND created_at < :end AND is_research IS NOT FALSE
-      AND {visible_report_sql("r")}
-    GROUP BY market, source
-    """
-)
+def _window_mix_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT market, source, count(*) FROM research.research_report r
+        WHERE created_at >= :start AND created_at < :end AND {doc_type_enabled_sql("r", "brief")}
+          AND {visible_report_sql("r")}
+        GROUP BY market, source
+        """
+    )
 
 
 def summarize_window_mix(rows: Sequence[tuple[Optional[str], Optional[str], int]]) -> BriefWindowMix:
@@ -598,7 +607,7 @@ async def fetch_window_mix(
     簡報產生後才被隱藏的研報在這裡不計入——與來源連結消失同一個規則。
     """
     rows = (
-        await session.execute(_WINDOW_MIX_SQL, {"start": start, "end": end})
+        await session.execute(_window_mix_sql(), {"start": start, "end": end})
     ).all()
     return summarize_window_mix([(r[0], r[1], r[2]) for r in rows])
 

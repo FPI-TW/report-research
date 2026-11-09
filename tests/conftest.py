@@ -106,12 +106,25 @@ os.environ["RETRIEVAL_REGRESSION_BASELINE"] = "/nonexistent/report-mark-retrieva
 # 研報上傳的隔離區（app/services/quarantine.py；預設 repo 根的 data/quarantine/）：同理用賦值指到不存在的路徑——
 # 收檔建不出目錄就回 503 `quarantine_unavailable`，部署目錄不會留下測試寫的 .part／.bin。要寫檔的測試自己給 tempfile。
 os.environ["UPLOAD_QUARANTINE_DIR"] = "/nonexistent/report-mark-quarantine"
+# 資料來源連接器的狀態目錄（app/services/connectors/；預設 repo 根的 data/connectors/：處理紀錄、失敗清單、
+# 本輪 hashes）：同理用賦值指到不存在的路徑——部署目錄的處理紀錄不會被測試改寫。要跑連接器的測試自己給 tempfile。
+os.environ["CONNECTOR_DATA_DIR"] = "/nonexistent/report-mark-connectors"
 # 上傳 worker 的整輪鎖與乾淨檔目錄（app/services/upload_worker.py；預設 repo 根的 data/.upload_worker.lock、
 # data/uploads/clean/）：同理用賦值指到不存在的路徑。要跑 worker 的測試自己給 tempfile（Ctx 的路徑欄位）。
 # 告警 webhook：worker 偵測到感染時會送；測試一律不得送出（要驗的測試自己給假的 runner 與 URL）。
 os.environ["UPLOAD_WORKER_LOCK_FILE"] = "/nonexistent/report-mark-upload-worker/.upload_worker.lock"
 os.environ["UPLOAD_CLEAN_DIR"] = "/nonexistent/report-mark-uploads-clean"
 os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
+# 通用 webhook 告警（app/services/alert_webhook.py）：同理一律不送（**用賦值**設空字串，env loader 才不會再補值）；
+# 冷卻狀態檔預設落在 repo 根的 data/，指到不存在的目錄（開不了檔＝冷卻失效、不寫部署目錄）。要驗的測試自己給
+# URL、MockTransport 與 tempfile。
+os.environ["ALERT_WEBHOOK_URL"] = ""
+os.environ["ALERT_WEBHOOK_STATE_FILE"] = "/nonexistent/report-mark-alert-webhook/state.json"
+# 應用層監控訊號（app/config.py 的 LOG_FORMAT／METRICS_*）：部署目錄 .env 或執行者 shell 的值不滲進測試
+# （LOG_FORMAT=json 會讓 caplog 以外的斷言看到另一種格式；METRICS_* 會改變 /metrics 的存取判定）。空值＝預設。
+os.environ["LOG_FORMAT"] = ""
+os.environ["METRICS_ENABLED"] = "1"
+os.environ["METRICS_ALLOWED_CIDRS"] = ""
 # 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器同時是測試環境的部署主機，代理裝上之後預設 socket
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"
@@ -121,6 +134,15 @@ os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
 # **用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
 # 開啟時的行為由 tests/test_admin_mfa.py 在自己的範圍內換掉 Settings 驗證。
 os.environ["ADMIN_MFA_REQUIRED"] = "0"
+# OIDC 單一登入：開發者環境或 .env 裡的 IdP 設定不可漏進測試（以賦值設空字串，env loader 才不會再補值）。
+# 要驗 SSO 的測試自己把 Settings.oidc 換掉（tests/test_oidc_login.py），HTTP 經 oidc._transport 的 MockTransport。
+# 清單另取名字（不寫成 for 迴圈裡的 tuple 字面）：tests/test_llm_models.py 把那種迴圈認定為 LLM 任務旋鈕的清單。
+_OIDC_KNOBS = ("OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_REDIRECT_URI", "OIDC_SCOPES",
+               "OIDC_USERNAME_CLAIM", "OIDC_ALLOWED_DOMAINS", "OIDC_LINK_BY_USERNAME", "OIDC_SSO_ONLY",
+               "OIDC_BREAK_GLASS_USERS", "OIDC_MFA_AMR", "OIDC_MFA_ACR", "OIDC_ASSUME_IDP_MFA",
+               "OIDC_CLOCK_SKEW_SECONDS")
+for _knob in _OIDC_KNOBS:
+    os.environ[_knob] = ""
 # 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／
 # llm_usage_daily——測試以 `with TestClient(app)` 觸發 lifespan 時，那就是寫進 REPORT_MARK_DB_URL 指的庫
 # （本機預設是測試環境的真實資料庫）。
@@ -193,9 +215,9 @@ def _fake_accounts():
 
 @pytest.fixture(autouse=True)
 def _reset_monitor_caches():
-    """監控的三個模組級 TTL 快取每題前後各清一次：`web.routers.monitor` 的 runtime 與
+    """監控的模組級 TTL 快取每題前後各清一次：`web.routers.monitor` 的 runtime 與
     tag 檔數兩個，加上 `web.stats_snapshot` 的 DB 快照（/api/stats、/api/progress、
-    /api/review/judge-scale 共用）。
+    /api/review/judge-scale 共用），以及 `web.metrics` 從 DB 算的訊號（/metrics）。
 
     沒有這層的話：A 測試 patch 掉 `_gather_runtime` 後打一次 `/api/progress`，
     假值就進了 `_RUNTIME_CACHE`，B 測試即使 patch 成別的值也拿得到 A 的——兩邊
@@ -207,7 +229,8 @@ def _reset_monitor_caches():
     """
 
     def _clear() -> None:
-        for name, reset in (("web.routers.monitor", "reset_caches"), ("web.stats_snapshot", "reset_cache")):
+        for name, reset in (("web.routers.monitor", "reset_caches"), ("web.stats_snapshot", "reset_cache"),
+                            ("web.metrics", "reset_db_cache")):
             mod = sys.modules.get(name)
             if mod is not None and hasattr(mod, reset):
                 getattr(mod, reset)()
@@ -283,6 +306,9 @@ def _reset_v2_state():
         security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
         if security is not None:
             security.reset()
+        oidc = sys.modules.get("app.services.oidc")  # OIDC discovery 與 JWKS 快取
+        if oidc is not None:
+            oidc.reset_cache()
 
     _clear()
     yield

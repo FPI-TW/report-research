@@ -96,12 +96,13 @@ class UploadIntakeDbTests(unittest.TestCase):
     def run_db(self, fn):
         return asyncio.run(_with_session(fn))
 
-    async def _create(self, session, file_hash, *, uid=None, daily=1000, in_flight=10**6, name="元大_報告.pdf"):
+    async def _create(self, session, file_hash, *, uid=None, daily=1000, in_flight=10**6, name="元大_報告.pdf",
+                      client_id=None):
         upload_id = str(uuid.uuid4())
         with _NoCommit(session):
             row = await upload_intake.create_upload(
                 session, upload_id=upload_id, file_hash=file_hash, original_name=name, size_bytes=4321,
-                client_mtime=None, actor_id=uid, daily_quota=daily, max_in_flight=in_flight,
+                client_mtime=None, actor_id=uid, daily_quota=daily, max_in_flight=in_flight, api_client_id=client_id,
             )
         return upload_id, row
 
@@ -234,6 +235,31 @@ class UploadIntakeDbTests(unittest.TestCase):
             self.assertEqual((ctx.exception.scope, ctx.exception.used, ctx.exception.limit), ("daily", 2, 2))
             _, row = await self._create(session, _hash(), uid=uid, daily=3)
             self.assertEqual(row.state, "quarantined")
+
+        self.run_db(body)
+
+    def test_api_client_uploads_quota_and_status_are_per_client(self):
+        """對外上傳（revision 0014 的 api_client_id）：配額依用戶端計、帳號與其他用戶端不算；狀態只查得到自己的。"""
+        async def body(session):
+            cid, other = 900_000_001, 900_000_002  # 刻意無 FK：不必先建 api_client
+            await _insert(session, _hash(), "published", api_client_id=cid)
+            await _insert(session, _hash(), "published", api_client_id=other)
+            await _insert(session, _hash(), "published")  # 帳號（開發模式 NULL）上傳的不算
+            with self.assertRaises(upload_intake.QuotaExceededError):
+                await self._create(session, _hash(), daily=1, client_id=cid)
+            upload_id, row = await self._create(session, _hash(), daily=2, client_id=cid)
+            self.assertEqual((row.uploaded_by, row.api_client_id), (None, cid))
+            got = await upload_intake.get_client_upload(session, upload_id, cid)
+            self.assertEqual(got.upload_id, upload_id)
+            with self.assertRaises(upload_intake.UploadNotFoundError):
+                await upload_intake.get_client_upload(session, upload_id, other)
+            audit = (await session.execute(text(
+                "SELECT detail FROM research.admin_audit_log WHERE action = 'upload.create' AND target_id = :id"),
+                {"id": upload_id})).scalar_one()
+            self.assertEqual(audit["api_client_id"], cid)
+            # 帳號（NULL）的每日配額不把 API 用戶端的上傳算進去
+            _, mine = await self._create(session, _hash(), daily=2)
+            self.assertIsNone(mine.api_client_id)
 
         self.run_db(body)
 

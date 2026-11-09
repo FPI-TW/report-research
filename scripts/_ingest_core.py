@@ -26,6 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from app.services.doc_types import ingest_gate
 from app.services.extraction import cache as extraction_cache
 from app.services.llm_models import TASK_TAG, resolve_model
 from scripts._claude_cli import CliResult, error_kind, failure_kind, run_claude
@@ -80,6 +81,7 @@ class Outcome:
       不屬內容型的失敗、成功、非標註失敗都是 None。
     - `stopped_at`：本次寫進 `research.extraction_log` 的 `stopped_at`；沒寫為 None。
     - `cache_written`：只有 `ingested` 才有，抽取快取是否寫成（fail-open，False 不影響已入庫）。
+    - `tag_skipped`：metadata 側檔取代了標註（`Metadata.skips_tagging()`），這篇沒有呼叫標註 LLM。
     """
 
     kind: str
@@ -93,6 +95,7 @@ class Outcome:
     failure_kind: str | None = None
     stopped_at: str | None = None
     cache_written: bool | None = None
+    tag_skipped: bool = False
 
 
 def skip_before_tag(is_admin: bool, scanned: bool, exists: bool) -> str | None:
@@ -108,7 +111,8 @@ def skip_before_tag(is_admin: bool, scanned: bool, exists: bool) -> str | None:
 
 def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
     """標註後過濾：無 tag → skip_untagged（被內容審查擋下 → skip_blocked；被截斷 → skip_truncated）；
-    非研究/無市場 → skip_non_research；否則 None。"""
+    入庫閘不過（`doc_types.ingest_gate`：類型沒開任何功能，或開了 tagging_markets 卻沒有 market）
+    → skip_non_research；否則 None。"""
     if tag is None:
         kind = error_kind(tag_error)
         if kind == "content_filter":
@@ -117,7 +121,7 @@ def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
         if kind == "truncated":
             return "skip_truncated"
         return "skip_untagged"
-    if not tag.is_research or not tag.market:
+    if not ingest_gate(tag.doc_type, tag.market):
         return "skip_non_research"
     return None
 
@@ -236,6 +240,8 @@ async def ingest_one(
     tagged_paths: dict[str, Path] | None = None,
     pre_upsert: PreUpsert | None = None,
     on_committed: Callable[[str], None] | None = None,
+    metadata=None,
+    connector: str | None = None,
 ) -> Outcome:
     """單篇：抽字 → 標註前閘 → 標註 → 標註後閘 → 切塊 → 嵌入 → 原檔上傳 → 入庫 → 抽取快取。
 
@@ -252,6 +258,11 @@ async def ingest_one(
       `fail`／`ingest`。hook 自己不可 commit。
     - `on_committed`：入庫 commit 成功後、寫抽取快取**之前**以 file_hash 呼叫。sync 用它把 hash 記進
       本輪清單：之後任何步驟（含被中止）都不能讓已入庫的篇掉出 hashes（審查 L9）。
+    - `metadata`：驗證過的 metadata 側檔（`app.services.connectors.sidecar.Metadata`，連接器帶進來）。
+      有給的欄位優先：`report_date`、`source` 取代檔名／內文推得的值；`market`＋`stock_targets` 都給了就不呼叫
+      標註 LLM，否則照常標註再逐欄覆寫（`sidecar.apply_to_tag`）；`title` 直接寫入（`title_source='metadata'`）。
+      側檔內容在 `upsert_report` 之前、同一筆交易寫進 `research.report_metadata`（`connector` 是來源名）。
+      既有研報（`skip_exists`）不會因為側檔而改寫：側檔只在第一次入庫時套用。
 
     例外：抽字與入庫階段的單篇例外收成 `fail`；其餘照原樣往上拋、由入口中止整批——
     `CliNotFoundError`（含 `LlmEnvironmentError`，環境層級失敗）、`BadRequestEscalation`
@@ -272,6 +283,7 @@ async def ingest_one(
         report_exists,
         upsert_extraction_log,
         upsert_report,
+        upsert_report_metadata,
     )
     from app.services.tagging import load_tag
     from app.services.textnorm import clean_extracted
@@ -313,6 +325,11 @@ async def ingest_one(
     # 來源券商：本土發行機構內文指紋 → 檔名 token → 外資內文指紋（見 resolve_source）。
     # 內文指紋置於檔名前，可校正檔名把標的公司誤當券商（語料約 67% 檔名亦不帶券商）。
     source = resolve_source(path.name, res.text)
+    # metadata 側檔有給的欄位優先於檔名、mtime 與內文指紋。
+    if metadata is not None and metadata.has("report_date"):
+        report_date = metadata.report_date
+    if metadata is not None and metadata.has("source"):
+        source = metadata.source
     exists = await report_exists(session, res.file_hash)
     reason = skip_before_tag(meta.is_admin, res.scanned, exists)
     if reason:
@@ -333,12 +350,23 @@ async def ingest_one(
 
     tag = load_tag(tags_dir, res.file_hash)
     tag_error = None
-    if tag is None:
+    tag_skipped = False
+    if metadata is not None and metadata.skips_tagging():
+        # 側檔已給 market 與 stock_targets：不呼叫標註 LLM。側檔版的標籤不寫進標註快取（data/tags 只放 LLM 的
+        # 結果）；側檔本身保存在 research.report_metadata。
+        tag_skipped = tag is None
+    elif tag is None:
         if tagged_paths is not None:
             tagged_paths[res.file_hash] = path
         tag, tag_error = _tag_via_cli(path.name, res.text, file_hash=res.file_hash)
-    if tag is not None:
+        if tag is not None:
+            _persist_tag(res.file_hash, tag, tags_dir)
+    else:
         _persist_tag(res.file_hash, tag, tags_dir)
+    if metadata is not None:
+        from app.services.connectors.sidecar import apply_to_tag
+
+        tag = apply_to_tag(tag, metadata)
     reason = skip_after_tag(tag, tag_error)
     if reason:
         stopped_at = None
@@ -351,7 +379,7 @@ async def ingest_one(
         fail_reason = failure_kind(CliResult(None, tag_error)) if tag is None else None
         return Outcome(
             reason, path, file_hash=res.file_hash, stage=stage, reason=tag_error if stage else None,
-            failure_kind=fail_reason, stopped_at=stopped_at,
+            failure_kind=fail_reason, stopped_at=stopped_at, tag_skipped=tag_skipped,
         )
 
     settings = get_settings()
@@ -385,7 +413,7 @@ async def ingest_one(
             file_name=path.name,
             file_path=str(path),
             market=tag.market,
-            is_research=tag.is_research,
+            doc_type=tag.doc_type,
             confidence=tag.confidence,
             source_object_key=source_object_key,
             stock_code=meta.stock_code,
@@ -411,7 +439,13 @@ async def ingest_one(
                 min_coverage=settings.extraction_review_min_coverage,
                 max_garbled=settings.extraction_review_max_garbled,
             ),
+            title=metadata.title if metadata is not None and metadata.has("title") else None,
+            title_source="metadata" if metadata is not None and metadata.has("title") else None,
         )
+        if metadata is not None:
+            # 同一個 session、尚未 commit：與 upsert_report 內部的 commit 同一筆交易。
+            await upsert_report_metadata(session, res.file_hash, connector=connector or "unknown",
+                                         origin=metadata.origin or path.name, metadata=metadata.to_json())
         if pre_upsert is not None:
             # 同一個 session、尚未 commit：hook 的寫入與下面 upsert_report 內部的 commit 同一個交易。
             await pre_upsert(session, report)
@@ -428,5 +462,5 @@ async def ingest_one(
     cache_written = write_cache_fail_open(res, path, meta, source, report_date)
     return Outcome(
         "ingested", path, file_hash=res.file_hash, report_id=report_id, market=tag.market,
-        chunks=len(chunks), stopped_at="ingested", cache_written=cache_written,
+        chunks=len(chunks), stopped_at="ingested", cache_written=cache_written, tag_skipped=tag_skipped,
     )

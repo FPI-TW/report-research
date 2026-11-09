@@ -81,10 +81,13 @@ GROUP BY 1, 2
 ORDER BY 3 DESC, 1, 2
 """
 
-# 母體用 is_research（該欄已收斂為 NOT NULL DEFAULT true），與檢索母體一致。
+# 母體＝類型開了檢索的文件（app/services/doc_types.py），與檢索母體一致；片段在呼叫時渲染，所以是函式。
 # stock_code 是純量欄位、stock_targets 是陣列，兩者互不覆蓋——目標 3 的召回路徑
 # 要同時吃這兩欄，故分開報並另報聯集。
-COVERAGE_SQL = """
+def coverage_sql() -> str:
+    from app.services.doc_types import doc_type_enabled_sql
+
+    return f"""
 SELECT
   count(*)                                                              AS total,
   count(*) FILTER (
@@ -97,8 +100,8 @@ SELECT
     WHERE (stock_targets IS NOT NULL AND cardinality(stock_targets) > 0)
        OR (stock_code IS NOT NULL AND stock_code <> '')
   )                                                                     AS with_any
-FROM research.research_report
-WHERE is_research
+FROM research.research_report r
+WHERE {doc_type_enabled_sql('r', 'search')}
 """
 
 
@@ -131,7 +134,7 @@ async def collect(days: int) -> dict:
     async with SessionFactory() as session:
         lat = (await session.execute(text(LATENCY_SQL), {"days": days})).mappings().first()
         routes = (await session.execute(text(ROUTE_SQL), {"days": days})).mappings().all()
-        cov = (await session.execute(text(COVERAGE_SQL))).mappings().first()
+        cov = (await session.execute(text(coverage_sql()))).mappings().first()
 
     return {
         "window_days": days,
@@ -168,7 +171,7 @@ def render(report: dict) -> str:
     c = report["coverage"]
     lines += [
         "",
-        "== 標的覆蓋率（is_research 母體）==",
+        "== 標的覆蓋率（檢索母體）==",
         f"  總篇數 {c['total']}",
         f"  stock_targets 非空  {c['with_targets']} ({c['pct_targets']}%)",
         f"  stock_code    非空  {c['with_stock_code']} ({c['pct_stock_code']}%)",

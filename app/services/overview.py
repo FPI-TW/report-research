@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.profile import get_profile
+from app.services.doc_types import doc_type_enabled_sql
 from app.services.filename import BROKER_MAP, SOURCE_DISPLAY, source_display
 from app.services.tagging import INSTRUMENT_DISPLAY, MARKET_DISPLAY
 from app.services.textnorm import norm_for_match
@@ -250,13 +251,11 @@ class CorpusOverview:
 
 
 def _build_where(f: OverviewFilters) -> tuple[str, dict]:
-    """OverviewFilters → (WHERE 片段, params)，欄位皆以別名 r 限定。"""
-    # `IS NOT FALSE` 而非 `= true`：全 repo 其餘 15 處都用前者（NULL＝標註器沒說，
-    # 一律當研報看），這裡是唯一的例外，於是總覽題的母體與檢索頁／閱讀頁不同。
-    # 今天結果一樣純屬巧合——實測 is_research 全是 true。`db/schema.sql` 已把該欄
-    # 收斂成 NOT NULL DEFAULT true，兩種寫法自此等價；統一寫法是為了**讀的時候**
-    # 不必再推敲「這裡為什麼不一樣」。
-    conds = ["r.is_research IS NOT FALSE"]
+    """OverviewFilters → (WHERE 片段, params)，欄位皆以別名 r 限定；沒有任何條件時是空字串。
+
+    母體的文件類型與可見性片段由 aggregate_facets 加上（守門測試要求它們與查詢在同一個函式）。
+    """
+    conds: list[str] = []
     params: dict = {}
     if f.source:
         conds.append("r.source = :source")
@@ -294,10 +293,11 @@ def _build_where(f: OverviewFilters) -> tuple[str, dict]:
 async def aggregate_facets(
     session: AsyncSession, f: OverviewFilters, *, sample_k: int = 5
 ) -> CorpusOverview:
-    """對 research.research_report 跑分面聚合（WHERE = is_research + 解析到的條件）。"""
+    """對 research.research_report 跑分面聚合（WHERE = 文件類型 + 解析到的條件）。"""
     where, params = _build_where(f)
-    # 被管理員隱藏的研報不進總覽的母體（app/services/visibility.py）。
-    where = f"{where} AND {visible_report_sql('r')}"
+    # 母體＝類型啟用了總覽的文件（app/services/doc_types.py；廷豐 profile 下即研報），且沒被管理員隱藏
+    # （app/services/visibility.py）。
+    where = " AND ".join([doc_type_enabled_sql("r", "overview"), *([where] if where else []), visible_report_sql("r")])
     base = f"FROM research.research_report r WHERE {where}"
 
     totals = (

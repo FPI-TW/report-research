@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import text
 
+from app.services.doc_types import doc_type_enabled_sql
 from app.services.filename import source_display
 from app.services.object_storage import get_object_storage, original_available
 from app.services.original_file_url import (
@@ -53,13 +54,17 @@ def _require_report_id(report_id: str) -> None:
 
 
 async def _fetch_report(session, report_id: str):
-    """被管理員隱藏的研報與查無同樣 404（metadata 與原檔 presign 都不給，也不洩漏存在與否）。"""
+    """被管理員隱藏的研報與查無同樣 404（metadata 與原檔 presign 都不給，也不洩漏存在與否）。
+
+    類型沒開閱讀也沒開檢索的文件同樣 404（app/services/doc_types.py）：原檔從閱讀頁與檢索結果都點得到。
+    """
     row = (
         await session.execute(
             text(
                 "SELECT file_name, market, source, report_date, report_type, "
                 "file_path, full_text, summary, title, source_object_key, file_hash "
-                f"FROM research.research_report r WHERE id = :id AND {visible_report_sql('r')}"
+                f"FROM research.research_report r WHERE id = :id AND {visible_report_sql('r')} "
+                f"AND {doc_type_enabled_sql('r', 'reading', 'search')}"
             ),
             {"id": report_id},
         )

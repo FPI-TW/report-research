@@ -97,8 +97,8 @@ class SqlStructureTests(unittest.TestCase):
             "NULLIF(BTRIM(s.broker), ''))"
         )
         instrument_sql = queries._instrument_signals_sql(broker=False)
-        batch_sql = str(queries._BATCH_SIGNALS_SQL)
-        coverage_sql = str(queries._COVERAGE_SQL)
+        batch_sql = str(queries._batch_signals_sql())
+        coverage_sql = str(queries._coverage_sql())
         self.assertIn(f"{effective} AS broker", instrument_sql)
         self.assertIn(f"{effective} AS broker", batch_sql)
         self.assertIn(effective, coverage_sql)
@@ -110,7 +110,7 @@ class SqlStructureTests(unittest.TestCase):
             "COALESCE(NULLIF(BTRIM(r.source), ''), "
             "NULLIF(BTRIM(s.broker), ''))"
         )
-        coverage_total = str(queries._COVERAGE_SQL).split("AS brokers_total", 1)[0]
+        coverage_total = str(queries._coverage_sql()).split("AS brokers_total", 1)[0]
         catalog_rep = queries._catalog_cte().split("), rep AS (", 1)[1]
 
         self.assertIn(effective, coverage_total)
@@ -145,7 +145,7 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("r.market = ANY(:markets)", cte)
 
     def test_instrument_name_is_bound_to_matching_stock_code(self):
-        coverage_sql = str(queries._COVERAGE_SQL)
+        coverage_sql = str(queries._coverage_sql())
         catalog_cte = queries._catalog_cte()
         self.assertIn("r.stock_code = :code", coverage_sql)
         self.assertIn("r.stock_code = st", catalog_cte)
@@ -159,8 +159,8 @@ class SqlStructureTests(unittest.TestCase):
         字串斷言擋得住。
         """
         sqls = {
-            "_COVERAGE_SQL": str(queries._COVERAGE_SQL),
-            "_BROKER_COVERAGE_SQL": str(queries._BROKER_COVERAGE_SQL),
+            "_coverage_sql": str(queries._coverage_sql()),
+            "_broker_coverage_sql": str(queries._broker_coverage_sql()),
             "_catalog_cte": queries._catalog_cte(),
         }
         for name, sql in sqls.items():
@@ -168,12 +168,12 @@ class SqlStructureTests(unittest.TestCase):
                 self.assertNotIn("= ANY(r.stock_targets)", sql)
 
         self.assertEqual(
-            str(queries._COVERAGE_SQL).count("r.stock_targets @> ARRAY[:code]::text[]"),
+            str(queries._coverage_sql()).count("r.stock_targets @> ARRAY[:code]::text[]"),
             3,
         )
         self.assertIn(
             "r.stock_targets @> ARRAY[:code]::text[]",
-            str(queries._BROKER_COVERAGE_SQL),
+            str(queries._broker_coverage_sql()),
         )
         self.assertIn(
             "r.stock_targets @> ARRAY[s.instrument_code]::text[]",
@@ -264,7 +264,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
 
 class BrokerCoverageSqlTests(unittest.TestCase):
     def test_uses_canonical_effective_broker_and_report_universe(self):
-        sql_obj = getattr(queries, "_BROKER_COVERAGE_SQL", None)
+        sql_obj = getattr(queries, "_broker_coverage_sql", lambda: None)()
         self.assertIsNotNone(sql_obj)
         sql = str(sql_obj)
         self.assertIn(
@@ -272,7 +272,7 @@ class BrokerCoverageSqlTests(unittest.TestCase):
             sql,
         )
         self.assertIn("r.stock_targets @> ARRAY[:code]::text[]", sql)
-        self.assertIn("r.is_research IS NOT FALSE", sql)
+        self.assertIn("r.doc_type IN ('research')", sql)
         self.assertIn("= :broker", sql)
 
 
@@ -431,7 +431,7 @@ class BatchSqlStructureTests(unittest.TestCase):
     """
 
     def _compiled(self):
-        return queries._BATCH_SIGNALS_SQL.compile(dialect=pg_asyncpg.dialect())
+        return queries._batch_signals_sql().compile(dialect=pg_asyncpg.dialect())
 
     def test_batch_sql_binds_are_complete_names(self):
         # 名字被吃掉一個字元（markets → market）就會在這裡現形
@@ -459,20 +459,20 @@ class ContainmentBindTests(unittest.TestCase):
 
     def test_coverage_sql_binds_are_complete_names(self):
         self.assertEqual(
-            set(self._compiled(queries._COVERAGE_SQL).params),
+            set(self._compiled(queries._coverage_sql()).params),
             {"market", "code", "statuses"},
         )
 
     def test_broker_coverage_sql_binds_are_complete_names(self):
         self.assertEqual(
-            set(self._compiled(queries._BROKER_COVERAGE_SQL).params),
+            set(self._compiled(queries._broker_coverage_sql()).params),
             {"market", "code", "broker"},
         )
 
     def test_containment_sqls_leave_no_unbound_colon_param(self):
         for name, obj in (
-            ("_COVERAGE_SQL", queries._COVERAGE_SQL),
-            ("_BROKER_COVERAGE_SQL", queries._BROKER_COVERAGE_SQL),
+            ("_coverage_sql", queries._coverage_sql()),
+            ("_broker_coverage_sql", queries._broker_coverage_sql()),
         ):
             with self.subTest(sql=name):
                 # 編譯後只該剩 $n 佔位與 ::text[] 轉型；殘留 :name 代表參數沒綁上
@@ -548,7 +548,7 @@ class RecentRatingChangesSqlTests(unittest.TestCase):
     """跨標的最新評等變動：比對語意要與總覽近期事件一致（同一筆變動在券商共識頁看得到）。"""
 
     def _sql(self):
-        return str(queries._RECENT_RATING_CHANGES_SQL)
+        return str(queries._recent_rating_changes_sql())
 
     def test_partitions_by_effective_broker_with_radar_sort_key(self):
         sql = self._sql()
@@ -578,7 +578,7 @@ class RecentRatingChangesSqlTests(unittest.TestCase):
         )
 
     def test_binds_are_complete_names(self):
-        compiled = queries._RECENT_RATING_CHANGES_SQL.compile(dialect=pg_asyncpg.dialect())
+        compiled = queries._recent_rating_changes_sql().compile(dialect=pg_asyncpg.dialect())
         self.assertEqual(set(compiled.params), {"statuses", "markets", "levels", "limit"})
         self.assertNotRegex(str(compiled), r"(?<!:):\w+")
 

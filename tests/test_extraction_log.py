@@ -75,7 +75,7 @@ class StoreTests(unittest.TestCase):
 
     def test_report_row_defaults_keep_old_callers_working(self):
         row = store.ReportRow(
-            file_hash="h", file_name="f", file_path="p", market=None, is_research=None, confidence=None
+            file_hash="h", file_name="f", file_path="p", market=None, doc_type="research", confidence=None
         )
         self.assertIsNone(row.extractor)
         self.assertFalse(row.needs_review)

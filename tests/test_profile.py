@@ -232,6 +232,43 @@ class ValidationTests(_TmpCase):
         self.assertRejected("[institution]\nname = \"a\\nb\"\nproduct_name = \"x\"\n", "控制字元")
 
 
+class DocTypesSectionTests(_TmpCase):
+    """[doc_types]：類型名稱、功能詞彙、必填與標註器類型都要宣告（fail-closed）。"""
+
+    OK = MINIMAL + "[doc_types.research]\nfeatures = [\"search\"]\n[doc_types.non_research]\nfeatures = []\n"
+
+    def test_parses_declared_types_in_order(self):
+        prof = self.load(self.OK + "[doc_types.memo]\nfeatures = [\"reading\", \"summary\"]\n")
+        self.assertEqual(list(prof.doc_types.features), ["research", "non_research", "memo"])
+        self.assertEqual(prof.doc_types.features["memo"], frozenset({"reading", "summary"}))
+        self.assertEqual(prof.doc_types.types_with("summary"), ("memo",))
+        self.assertTrue(prof.doc_types.enabled("research", "search"))
+        self.assertFalse(prof.doc_types.enabled("non_research", "search"))
+        self.assertFalse(prof.doc_types.enabled(None, "search"))
+
+    def test_default_when_absent(self):
+        prof = self.load(MINIMAL)
+        self.assertEqual(dict(prof.doc_types.features),
+                         {"research": frozenset(P.DOC_FEATURES), "non_research": frozenset()})
+
+    def test_rejections(self):
+        self.assertRejected(self.OK + "[doc_types.Memo]\nfeatures = []\n", "[doc_types].Memo", "類型名稱")
+        self.assertRejected(self.OK + "[doc_types.memo]\nfeatures = [\"ask\"]\n",
+                            "[doc_types].memo.features[0]", "未知的功能")
+        self.assertRejected(self.OK + "[doc_types.memo]\nfeatures = [\"search\", \"search\"]\n",
+                            "[doc_types].memo.features[1]", "重複")
+        self.assertRejected(self.OK + "[doc_types.memo]\nlabel = \"x\"\nfeatures = []\n",
+                            "[doc_types].memo.label", "未知的鍵")
+        self.assertRejected(self.OK + "[doc_types.memo]\n", "[doc_types].memo.features", "必填")
+        self.assertRejected(self.OK + "[doc_types.memo]\nfeatures = \"search\"\n",
+                            "[doc_types].memo.features", "必須是字串陣列")
+        self.assertRejected(self.OK + "[doc_types.memo]\nfeatures = [1]\n",
+                            "[doc_types].memo.features[0]", "必須是字串")
+        self.assertRejected(MINIMAL + "[doc_types]\nmemo = 1\n", "[doc_types].memo", "必須是表格")
+        # 標註器會產生的類型漏宣告：那類文件會靜默消失，所以拒絕啟動。
+        self.assertRejected(MINIMAL + "[doc_types.research]\nfeatures = []\n", "[doc_types].non_research", "必須宣告")
+
+
 class ContractTests(unittest.TestCase):
     def test_every_registered_section_has_a_profile_field(self):
         """登記表與 Profile 欄位一一對應：後續 lane 加 section 漏了任何一邊都會在這裡紅。"""

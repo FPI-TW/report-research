@@ -42,7 +42,7 @@ class SubsetSqlTests(unittest.TestCase):
         self.assertIn("r.stock_targets && CAST(:codes AS text[])", sql)
         self.assertIn(":market", sql)
         self.assertIn("r.full_text IS NOT NULL", sql)
-        self.assertIn("r.is_research IS NOT FALSE", sql)
+        self.assertIn("r.doc_type IN ('research')", sql)
         # 無字串拼接：不得出現 f-string 殘留或 % 格式
         self.assertNotIn("%s", sql)
 

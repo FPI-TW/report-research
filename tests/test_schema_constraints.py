@@ -153,35 +153,5 @@ class IsResearchNotNullSourceTests(unittest.TestCase):
         self.assertNotIn("ALTER COLUMN is_research DROP NOT NULL", self.src)
 
 
-class IsResearchFilterConsistencyTests(unittest.TestCase):
-    """不需要 DB：`is_research` 的過濾寫法只准有一種。
-
-    收斂之前有三種語意不同的寫法並存（`= true` 排除 NULL、`IS NOT FALSE` 含 NULL、
-    完全不過濾），檢索頁／總覽題／閱讀頁的母體因此不同——**今天結果一樣純屬巧合**，
-    實測 14,674 列全是 true。這條測試擋的是「下一個人再寫一個 `= true`」。
-
-    檢索主路刻意不過濾（`ingest_all.py` 只對 is_research 的報告寫 chunk，chunk
-    存在本身就是那個保證），所以不在掃描範圍內——這裡只管有寫過濾的那些。
-    """
-
-    ROOTS = ("app", "web", "scripts")
-
-    def test_no_equals_true_form_anywhere(self):
-        offenders = []
-        for root in self.ROOTS:
-            for path in (REPO_ROOT / root).rglob("*.py"):
-                if "__pycache__" in path.parts:
-                    continue
-                text_ = path.read_text(encoding="utf-8")
-                for lineno, line in enumerate(text_.splitlines(), 1):
-                    if "is_research = true" in line and "SET is_research" not in line:
-                        offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
-        self.assertEqual(
-            offenders, [],
-            "SQL 裡請一律用 `is_research IS NOT FALSE`（NULL＝標註器沒說，當研報看）："
-            + ", ".join(offenders),
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

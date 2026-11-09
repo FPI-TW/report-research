@@ -391,3 +391,87 @@ class StaleCutoffActivationTests(unittest.TestCase):
         """門檻是 ASK_MIN_FRESH_BEFORE_CUTOFF（2）：只有一篇時仍然不截斷。"""
         scored = [_fresh("a", 0, 0.90), _stale("old", 2, 0.90)]
         self.assertIn("old", [s.report_id for s in _select(scored)])
+
+
+# ---------------------------------------------------------------------------
+# rerank_scores：被 cross-encoder 重排過的研報依 rerank 分排在尾段之前；
+# selection_order 與 build_context 的選篇是同一份政策。
+
+
+class RerankOrderingTests(unittest.TestCase):
+    def test_without_rerank_scores_ordering_is_unchanged(self):
+        scored = [
+            (2, 0.30, _row_src("h1", "head")),  # 重排後的 sigmoid 分（低於尾段的 fused）
+            (2, 0.95, _row_src("t1", "tail")),
+        ]
+        self.assertEqual([s.report_id for s in _select(scored)], ["tail", "head"])
+        self.assertEqual(
+            [s.report_id for s in _select(scored, rerank_scores=None)], ["tail", "head"]
+        )
+
+    def test_reranked_reports_precede_tail_within_the_same_tier(self):
+        """尾段 fused 0.95 與 head 的 sigmoid 0.30 不同尺度：被重排的研報在前。"""
+        scored = [
+            (2, 0.30, _row_src("h1", "head")),
+            (2, 0.95, _row_src("t1", "tail")),
+        ]
+        got = _select(scored, rerank_scores={"h1": 0.30})
+        self.assertEqual([s.report_id for s in got], ["head", "tail"])
+
+    def test_tier_still_dominates_the_rerank_flag(self):
+        scored = [
+            (2, 0.90, _row_src("t2", "tail_t2")),
+            (0, 0.99, _row_src("h0", "head_t0")),
+        ]
+        got = _select(scored, rerank_scores={"h0": 0.99})
+        self.assertEqual([s.report_id for s in got], ["tail_t2", "head_t0"])
+
+    def test_reranked_reports_use_rerank_band_then_recency(self):
+        """同一個 rerank band 內照舊以新近度決勝；跨 band 由 rerank 分主導。"""
+        scored = [
+            (2, 0.99, _row_src("a", "old_hi", rdate="2026-03-01")),
+            (2, 0.98, _row_src("b", "new_hi", rdate="2026-07-01")),
+            (2, 0.40, _row_src("c", "newest_lo", rdate="2026-07-07")),
+        ]
+        got = _select(scored, rerank_scores={"a": 0.99, "b": 0.98, "c": 0.40})
+        self.assertEqual([s.report_id for s in got], ["new_hi", "old_hi", "newest_lo"])
+
+    def test_report_rank_uses_rerank_not_its_tail_fused(self):
+        """head 研報的其他 chunk 落在尾段時，尾段的 fused 不得混進它的排序分。"""
+        scored = [
+            (2, 0.80, _row_src("y_head", "Y", content="Y 段一", rdate="2026-01-01")),
+            (2, 0.50, _row_src("x_head", "X", content="X 段一")),
+            (2, 0.99, _row_src("x_tail", "X", content="X 段二")),  # 尾段（fused 尺度）
+        ]
+        got = _select(scored, rerank_scores={"y_head": 0.80, "x_head": 0.50})
+        self.assertEqual([s.report_id for s in got], ["Y", "X"])
+        self.assertEqual(got[1].passages, ["X 段一", "X 段二"])
+
+    def test_gate_floor_still_uses_gate_scores(self):
+        """排序換成 rerank 分，相關度下限仍比 rerank 前的 fused（gate）。"""
+        scored = [(0, 0.99, _row_src("h1", "head"))]
+        got = _select(scored, rerank_scores={"h1": 0.99}, gate_scores={"h1": 0.10})
+        self.assertEqual(got, [])
+
+
+
+class SelectionOrderTests(unittest.TestCase):
+    def test_matches_build_context_selection(self):
+        """rerank 候選直接問選篇政策：順序與 build_context（不帶 rerank_scores）逐篇相同。"""
+        from app.services.answer import selection_order
+
+        scored = [
+            _fresh("a", 0, 0.90), _fresh("b", 0, 0.88), _stale("old", 2, 0.90),
+            _fresh("noise", 0, 0.30), _fresh("c", 2, 0.70),
+        ]
+        sources, _ctx = build_context(scored, now=_NOW)
+        self.assertEqual(
+            selection_order(scored, max_reports=15, now=_NOW), [s.report_id for s in sources]
+        )
+        self.assertNotIn("old", selection_order(scored, max_reports=15, now=_NOW))
+
+    def test_respects_max_reports(self):
+        from app.services.answer import selection_order
+
+        scored = [_fresh(f"r{i}", 2, 0.9 - i / 100) for i in range(5)]
+        self.assertEqual(len(selection_order(scored, max_reports=3, now=_NOW)), 3)

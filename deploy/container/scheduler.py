@@ -6,7 +6,7 @@
 - `JOBS`：進框架的排程。排程時間與對應 timer 的 OnCalendar 相同（同一個測試逐支換算比對），在容器的
   `TZ`（預設 Asia/Taipei）下解讀。`default_enabled=False` 的要部署方明確開啟（理由寫在 note）。
   `unit=None` 的是**框架專屬**、沒有對應 timer 的工作（例如 `connectors`：廷豐主機的對應是 sync 殼，
-  它屬主機層），文件另有一張表對帳。
+  它屬主機層；`backfill-tiers`：首次導入的第三層背景補齊，由 profile 開），文件另有一張表對帳。
 - `WORKER_UNITS`：改由常駐的 `worker` 服務（迴圈）取代的 timer。
 - `HOST_LAYER`：屬廷豐主機層、不進框架的 timer（探針、事件、信標、NAS、LINE bot、主機監控匯入、來源同步）。
 
@@ -63,6 +63,9 @@ JOBS: tuple[Job, ...] = (
     Job("connectors", "*/15 * * * *", _py("connector_sync.py"), None,
         note="連接器輪詢入庫＋下游批次（sync 鏈第 4 段起）；各連接器依 profile 的 poll_minutes 決定到期，"
              "沒有啟用的連接器就是 no-op"),
+    Job("backfill-tiers", "50 * * * *", _py("backfill_tiers.py", "--tier", "3", "--scheduled"), None,
+        note="第三層背景補齊（首次導入的分層回填）；開關在 profile 的 [backfill].background_enabled（預設關＝no-op），"
+             "每日 token 與每輪份數上限也在 profile。各批次照舊取 LLM 批次鎖"),
     Job("r2-reconcile", "0 7 * * 1", _py("reconcile_object_storage.py", "--dry-run", "--kind", "all"),
         "report-mark-r2-reconcile.timer", default_enabled=False,
         note="只在 OBJECT_STORAGE_MODE 不是 local 時有意義（物件儲存是外連，預設關）"),

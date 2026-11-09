@@ -283,6 +283,13 @@ class SchedulerSelectionTests(unittest.TestCase):
         self.assertNotIn("retrieval-regression", names)
         self.assertNotIn("r2-reconcile", names)
         self.assertIn("connectors", names)
+        # 第三層背景補齊排進 crontab，開關在 profile（--scheduled＋[backfill].background_enabled，預設關）。
+        self.assertIn("backfill-tiers", names)
+
+    def test_background_backfill_is_governed_by_the_profile(self):
+        job = next(j for j in sch.JOBS if j.name == "backfill-tiers")
+        self.assertIsNone(job.unit)
+        self.assertEqual(job.command, ("python", "scripts/backfill_tiers.py", "--tier", "3", "--scheduled"))
 
     def test_enable_and_disable(self):
         names = [j.name for j in sch.selected_jobs({sch.ENABLE_ENV: "retrieval-regression",

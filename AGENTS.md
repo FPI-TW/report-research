@@ -59,6 +59,7 @@ make summaries / titles / takeaways / signals / brief   # 批次，都呼叫 LLM
 make sync-once / db-backup / freshness / db-audit        # 維運（sync-once 不經 unit、不載入 /etc/default/report-mark-sync；部署主機要跑一輪用 systemctl start report-mark-sync.service）
 make llm-blocked                     # LLM 批次跳過名單（唯讀；research.llm_task_failure）
 make boilerplate                     # 重建跨文件樣板字典 data/boilerplate/（入庫切塊前剔除；零 LLM）
+make estimate / backfill-status       # 首次導入的事前估價與分層回填進度（零 LLM；docs/WORKFLOW.md「首次導入」）
 make up-edge / down-edge / edge-logs / edge-reload       # 對外 nginx + cloudflared（測試環境；EC2 用 apt 的 nginx）
 uv run python scripts/extract_all.py                     # 全語料三支：只在初次建庫或補歷史
 uv run python scripts/tag_all_cli.py --workers 8

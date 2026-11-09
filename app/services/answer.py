@@ -708,6 +708,7 @@ def select_reports(
     mmr_max_per_source: int = 0,
     mmr_max_per_month: int = 0,
     gate_scores: dict[str, float] | None = None,
+    rerank_scores: dict[str, float] | None = None,
 ) -> list["SelectedReport"]:
     """選篇政策（純函式）：聚合→排序→過舊軟截斷→相關度下限→過舊配額→字數預算。
 
@@ -720,6 +721,13 @@ def select_reports(
       分支內任何例外 log 後 fallback 現行迴圈（fail-open）。
     - mmr_max_per_source / mmr_max_per_month：MMR 分支的多樣性配額，0＝不限；
       source=None／無日期不計入配額。
+    - rerank_scores：chunk_id → cross-encoder 分（只含實際被重排的 chunk，見
+      retrieval_pipeline.rerank_head_first）。給定時排序鍵改為
+      (best_tier, 是否被重排, 相關度 band, 新近度, 排序分, report_id)，排序分在被重排的研報是
+      best_rerank（它被重排過的 chunk 的最高分），其餘是 best_fused。理由：重排分是 sigmoid
+      [0,1]、尾段是 fused，兩種尺度丟進同一個 band 比，沒被重排的研報（fused 常在 0.9 以上）
+      會整批排到被 cross-encoder 判為最相關的研報前面。同一個 band 內照舊以新近度決勝。
+      只改排序，相關度下限、過舊截斷與配額照舊；未提供＝原排序。
     """
     # 契約：不動頂部 import 區（M5/M6 平行），跨模組常數以函式內 import 取用
     from app.services.retrieval import TIER_ALL_TERMS
@@ -734,6 +742,7 @@ def select_reports(
             continue
         # gate＝rerank 前 fused 快照（finding 3）；未提供／缺鍵退回自身 fused
         gate = gate_scores.get(row.chunk_id, fused) if gate_scores else fused
+        rr = rerank_scores.get(row.chunk_id) if rerank_scores else None
         info = by_report.get(rid)
         if info is None:
             info = {
@@ -750,6 +759,7 @@ def select_reports(
                 "best_tier": tier,
                 "best_fused": fused,
                 "best_gate": gate,
+                "best_rerank": rr,
             }
             by_report[rid] = info
             order.append(rid)
@@ -760,20 +770,39 @@ def select_reports(
                 info["best_fused"] = fused
             if gate > info["best_gate"]:
                 info["best_gate"] = gate
+            if rr is not None and (info["best_rerank"] is None or rr > info["best_rerank"]):
+                info["best_rerank"] = rr
         if len(info["passages"]) < max_passages:
             info["passages"].append(content)
 
     reports = [(rid, by_report[rid]) for rid in order if by_report[rid]["passages"]]
-    reports.sort(
-        key=lambda it: (
-            it[1]["best_tier"],
-            _relevance_band(it[1]["best_fused"]),
-            _recency_factor(it[1]["report_date"], now_date, half_life_days),
-            it[1]["best_fused"],
-            it[0],
-        ),
-        reverse=True,
-    )
+    if rerank_scores:
+        def _rank_score(info: dict) -> float:
+            rr = info["best_rerank"]
+            return info["best_fused"] if rr is None else rr
+
+        reports.sort(
+            key=lambda it: (
+                it[1]["best_tier"],
+                it[1]["best_rerank"] is not None,
+                _relevance_band(_rank_score(it[1])),
+                _recency_factor(it[1]["report_date"], now_date, half_life_days),
+                _rank_score(it[1]),
+                it[0],
+            ),
+            reverse=True,
+        )
+    else:
+        reports.sort(
+            key=lambda it: (
+                it[1]["best_tier"],
+                _relevance_band(it[1]["best_fused"]),
+                _recency_factor(it[1]["report_date"], now_date, half_life_days),
+                it[1]["best_fused"],
+                it[0],
+            ),
+            reverse=True,
+        )
 
     factors = {
         rid: _recency_factor(info["report_date"], now_date, half_life_days)
@@ -1052,6 +1081,7 @@ def build_context(
     mmr_max_per_source: int = 0,
     mmr_max_per_month: int = 0,
     gate_scores: dict[str, float] | None = None,
+    rerank_scores: dict[str, float] | None = None,
 ) -> tuple[list[Source], str]:
     """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』（選篇政策見 select_reports）。"""
     now_date = (now or datetime.now(timezone.utc)).date()
@@ -1063,7 +1093,7 @@ def build_context(
         max_stale=max_stale,
         mmr_lambda=mmr_lambda, chunk_embeddings=chunk_embeddings,
         mmr_max_per_source=mmr_max_per_source, mmr_max_per_month=mmr_max_per_month,
-        gate_scores=gate_scores,
+        gate_scores=gate_scores, rerank_scores=rerank_scores,
     )
 
     sources: list[Source] = []
@@ -1101,6 +1131,30 @@ def build_context(
             s.is_latest = s.n == latest_n
 
     return sources, "\n\n".join(blocks)
+
+
+def selection_order(
+    scored,
+    *,
+    max_reports: int,
+    max_passages: int = MAX_PASSAGES_PER_REPORT,
+    max_chars: int = MAX_CONTEXT_CHARS,
+    now: datetime | None = None,
+) -> list[str]:
+    """build_context（不帶 rerank_scores）會依序選進脈絡的 report_id。
+
+    給 retrieval_pipeline 挑 rerank 候選用：選篇政策只有 select_reports 這一份，候選直接問它，
+    不另寫一套「哪些研報進得了脈絡」的判準。參數預設與 build_context 相同。
+    """
+    now_date = (now or datetime.now(timezone.utc)).date()
+    selected = select_reports(
+        scored,
+        max_reports=max_reports, max_passages=max_passages, max_chars=max_chars,
+        now=now_date, half_life_days=RECENCY_HALF_LIFE_DAYS, min_reports=ASK_MIN_REPORTS,
+        relevance_floor=ASK_RELEVANCE_FLOOR, stale_age_days=ASK_STALE_AGE_DAYS,
+        max_stale=ASK_MAX_STALE_REPORTS,
+    )
+    return [sr.report_id for sr in selected]
 
 
 def build_history_block(

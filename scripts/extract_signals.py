@@ -17,6 +17,7 @@
   uv run python scripts/extract_signals.py --limit 5          # 小跑試驗
   uv run python scripts/extract_signals.py                    # 全子集
   uv run python scripts/extract_signals.py --reextract        # 版本升級後強制重跑
+  uv run python scripts/extract_signals.py --hashes-file F --limit N   # 只看這批 file_hash（分層回填用）
 
 注意：--workers 預設壓到 2（見 generate_summaries.py 註），子集 + 低併發雙重控制成本。
 """
@@ -93,8 +94,11 @@ def build_subset_sql() -> str:
     )
 
 
-def build_reports_sql() -> str:
+def build_reports_sql(by_hashes: bool = False) -> str:
     """撈某 market 內涵蓋子集標的的研報（陣列重疊 && 走 idx_rr_stock_targets GIN）。
+
+    by_hashes=True：再限縮到 `:hashes` 這批 file_hash（`--hashes-file`，`scripts/backfill_tiers.py` 用）。
+    子集照舊依全語料的覆蓋度決定，所以清單裡不涵蓋子集標的的研報照樣不擷取。
 
     **刻意不選 `full_text`**：這句每輪都對整個子集跑一次，只為了挑出還沒擷取的那幾份。帶著內文時
     TW 一個 market 就回傳 5,300 多份、約 193 MB（2026-10-12 實測），主機一忙就撞 statement_timeout、
@@ -109,8 +113,15 @@ def build_reports_sql() -> str:
         f"  AND {doc_type_enabled_sql('r', 'signal')} "
         "  AND r.full_text IS NOT NULL "
         "  AND r.report_date IS NOT NULL "
-        "ORDER BY r.report_date DESC NULLS LAST, r.file_name"
+        + ("  AND r.file_hash = ANY(:hashes) " if by_hashes else "")
+        + "ORDER BY r.report_date DESC NULLS LAST, r.file_name"
     )
+
+
+def read_hashes_file(path: str) -> list[str]:
+    """file_hash 清單（每行一個），與 generate_summaries.read_hashes_file 同語義。"""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [h.strip() for h in lines if h.strip()]
 
 
 # 一次撈幾份內文：上限讓單句回傳量有界（每份全文多為數十 KB），不隨待擷取份數成長。
@@ -272,11 +283,12 @@ async def _fetch_subset(session, min_brokers, min_reports, top_n):
     return [(str(code), str(market), int(bc), int(rc)) for code, market, bc, rc in rows]
 
 
-async def _fetch_reports(session, market, codes):
+async def _fetch_reports(session, market, codes, hashes=None):
+    params = {"market": market, "codes": list(codes)}
+    if hashes is not None:
+        params["hashes"] = list(hashes)
     rows = (
-        await session.execute(
-            text(build_reports_sql()), {"market": market, "codes": list(codes)}
-        )
+        await session.execute(text(build_reports_sql(by_hashes=hashes is not None)), params)
     ).all()
     return rows
 
@@ -310,10 +322,11 @@ def _is_done(requested_codes, existing: dict, reextract: bool) -> bool:
     return True
 
 
-async def build_worklist(min_brokers, min_reports, top_n, reextract, skip_model=None):
+async def build_worklist(min_brokers, min_reports, top_n, reextract, skip_model=None, hashes=None):
     """回傳 (subset, worklist)：subset 供 dry-run 顯示，worklist 為需擷取的報告。
 
     skip_model 非 None＝套跳過名單：該 model 下 llm_failures.should_skip 為真的研報不排入。
+    hashes 非 None＝只看這批 file_hash（空清單＝沒有工作）。
     """
     async with SessionFactory() as session:
         subset = await _fetch_subset(session, min_brokers, min_reports, top_n)
@@ -323,7 +336,9 @@ async def build_worklist(min_brokers, min_reports, top_n, reextract, skip_model=
 
         worklist: list[WorkItem] = []
         for market, codes in subset_by_market.items():
-            reports = await _fetch_reports(session, market, codes)
+            if hashes is not None and not hashes:
+                break
+            reports = await _fetch_reports(session, market, codes, hashes)
             ids = [r[0] for r in reports]
             done_map = await _fetch_done_map(session, ids)
             failures = (
@@ -483,8 +498,11 @@ async def main(args) -> None:
     skip_model = (
         args.model if recorder is not None and not (args.retry_blocked or args.reextract) else None
     )
+    # getattr：以程式組 args 呼叫 main 的既有測試不帶這個鍵（＝不限縮）。
+    hashes_file = getattr(args, "hashes_file", None)
+    hashes = read_hashes_file(hashes_file) if hashes_file else None
     subset, worklist = await build_worklist(
-        args.min_brokers, args.min_reports, args.top_n, args.reextract, skip_model
+        args.min_brokers, args.min_reports, args.top_n, args.reextract, skip_model, hashes
     )
     print(
         f"子集：{len(subset)} 個 (market, code)｜待擷取報告：{len(worklist)} 份"
@@ -548,6 +566,8 @@ if __name__ == "__main__":
                     help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打；"
                          "改 prompt 後要加")
     ap.add_argument("--dry-run", action="store_true", help="只印子集與工作項數，不呼叫 LLM")
+    ap.add_argument("--hashes-file", default=None,
+                    help="只處理這個檔案裡列出的 file_hash（每行一個）；子集照舊依全語料決定")
     # --dry-run 也一起擋，理由同 extract_takeaways.py：鎖的涵蓋範圍不隨旗標而變。
     args = ap.parse_args()
     # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。

@@ -312,12 +312,18 @@ def _gate_metrics():
     in_use = GaugeMetricFamily(f"{PREFIX}_gate_in_use", "併發閘使用中的名額", labels=["gate"])
     capacity = GaugeMetricFamily(f"{PREFIX}_gate_capacity", "併發閘的名額上限", labels=["gate"])
     waiting = GaugeMetricFamily(f"{PREFIX}_gate_waiting", "併發閘排隊中的請求", labels=["gate"])
+    # 同名的閘門（理論上不會有；測試會建）依名稱加總：同一組標籤出現兩次，Prometheus 會拒收整份抓取。
+    totals: dict[str, list[float]] = {}
     for g in concurrency.registered_gates():
         free = getattr(getattr(g, "_sem", None), "_value", None)
-        capacity.add_metric([g.name], float(g.capacity))
-        waiting.add_metric([g.name], float(g.waiting))
-        if isinstance(free, int):
-            in_use.add_metric([g.name], float(g.capacity - free))
+        t = totals.setdefault(str(g.name), [0.0, 0.0, 0.0])
+        t[0] += float(g.capacity - free) if isinstance(free, int) else 0.0
+        t[1] += float(g.capacity)
+        t[2] += float(g.waiting)
+    for name, (used, cap, wait) in totals.items():
+        in_use.add_metric([name], used)
+        capacity.add_metric([name], cap)
+        waiting.add_metric([name], wait)
     yield from (in_use, capacity, waiting)
 
 

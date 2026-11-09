@@ -363,7 +363,16 @@ class SnapshotTests(unittest.TestCase):
     def test_pool_gates_and_build_info(self):
         text = _scrape()
         self.assertEqual(_value(text, "report_mark_db_pool_size"), get_settings().db_pool_size)
-        self.assertEqual(_value(text, "report_mark_gate_capacity", gate="ask"), 3)
+        from web import concurrency
+
+        # 閘門登錄表是行程內的；別的測試也會建同名的閘門，所以只驗「每個登錄的閘門都有一筆」。
+        gates = {s.labels["gate"] for s in _samples(text, "report_mark_gate_capacity")}
+        self.assertIn("ask", gates)
+        self.assertEqual(gates, {g.name for g in concurrency.registered_gates()})
+        dup = concurrency.ConcurrencyGate(2, name="ask")  # 同名：依名稱加總，不出現重複序列
+        self.addCleanup(lambda: concurrency._GATES.remove(dup) if dup in concurrency._GATES else None)
+        series = [s for s in _samples(_scrape(), "report_mark_gate_capacity") if s.labels["gate"] == "ask"]
+        self.assertEqual(len(series), 1)
         build = _samples(text, "report_mark_build_info")
         self.assertEqual(len(build), 1)
         self.assertEqual(set(build[0].labels), {"commit", "version", "tree_clean", "source"})

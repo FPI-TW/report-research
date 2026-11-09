@@ -114,6 +114,8 @@ ARG RERANK_MODEL=BAAI/bge-reranker-v2-m3
 # .venv，不重新解析或下載相依。HOME 指到可寫的使用者目錄（torch／transformers 會寫小快取）。
 # 備份落點是 compose 掛進來的 /app/backups：scripts/db_backup.sh 要求它是掛載點（沒掛就失敗、不寫進容器自己的檔案系統）。
 # LOG_FORMAT=json：web 的日誌是一行一個 JSON 物件到 stdout（app/logging_setup.py；欄位與遮罩見 docs/CONTAINER_DEPLOYMENT.md）。
+# EXTRACTOR=pdfplumber：版面層抽取（docs/EXTRACTION.md）。程式預設是舊路徑 pypdf，systemd 主機靠 sync 的環境檔設它；
+# 容器的連接器、上傳 worker 與回填都在這份映像裡跑，不設就靜默走 pypdf（示範 profile 的端到端測試逼出來的）。
 ENV PATH=/app/.venv/bin:${PATH} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -132,6 +134,7 @@ ENV PATH=/app/.venv/bin:${PATH} \
     HOME=/home/app \
     REPORT_MARK_CONTAINER=1 \
     LOG_FORMAT=json \
+    EXTRACTOR=pdfplumber \
     REPORT_MARK_BACKUP_DIR=/app/backups \
     REPORT_MARK_BACKUP_MOUNT=/app/backups \
     TZ=Asia/Taipei

@@ -1470,6 +1470,7 @@ export const UserItemSchema = z.object({
   scopes: z.array(z.enum(['qa_content.read', 'ops.operate', 'api_clients.manage'])).optional(),
   totp_enabled: z.boolean().optional(),
   deletion_execute_after: z.string().nullable().optional(),
+  sso_bound: z.boolean().optional(),
 })
 export type UserItem = z.infer<typeof UserItemSchema>
 
@@ -2121,7 +2122,7 @@ export const adminApi = {
   /** GET /api/admin/security/audit-chain — Security Audit Chain */
   securityAuditChain: () => requestJSON('/api/admin/security/audit-chain', AuditChainStateResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/security/events — Security Events */
-  securityEvents: (query: { event?: 'login.success' | 'login.failure' | 'login.totp_failure' | 'login.locked' | 'login.insecure' | 'logout' | 'elevate.success' | 'elevate.failure' | null; user_id?: string | null; ip?: string | null; since?: string | null; until?: string | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/events${qs(query)}`, AuthEventListResponseSchema, { cache: 'no-store' }),
+  securityEvents: (query: { event?: 'login.success' | 'login.failure' | 'login.totp_failure' | 'login.locked' | 'login.insecure' | 'logout' | 'elevate.success' | 'elevate.failure' | 'login.sso_failure' | null; user_id?: string | null; ip?: string | null; since?: string | null; until?: string | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/events${qs(query)}`, AuthEventListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/security/high-risk — Security High Risk */
   securityHighRisk: (query: { days?: number; category?: 'privilege' | 'elevation' | 'session' | 'credential' | 'deletion' | 'ops' | 'data_access' | 'config' | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/high-risk${qs(query)}`, HighRiskResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/security/sessions — Security Sessions */

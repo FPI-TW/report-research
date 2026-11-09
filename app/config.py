@@ -9,7 +9,8 @@ import logging
 import math
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from app.services.llm_models import (
     DEFAULT_PROVIDER,
@@ -258,6 +259,121 @@ def _faithfulness_min() -> float:
         v = os.getenv("REPORT_FAITHFULNESS_MIN", "0.9")
     return float(v)
 
+
+# ── OIDC 單一登入（app/services/oidc.py、web/routers/oidc_login.py）─────────────────
+# RFC 8176 的 `mfa`／`mca`，加上 ADFS 的多重驗證 URI。Entra ID、Okta 會在 amr 帶 `mfa`；Keycloak 預設不送 amr，
+# 改用 OIDC_MFA_ACR 對它的 acr（LoA）值。
+_OIDC_DEFAULT_MFA_AMR = ("mfa", "mca", "http://schemas.microsoft.com/claims/multipleauthn")
+
+
+def _csv(name: str, *, lower: bool = False) -> tuple[str, ...]:
+    """逗號分隔的清單：去空白、去重、保留順序。"""
+    raw = os.getenv(name) or ""
+    out: list[str] = []
+    for part in raw.split(","):
+        v = part.strip()
+        if lower:
+            v = v.lower()
+        if v and v not in out:
+            out.append(v)
+    return tuple(out)
+
+
+def _strict_flag(name: str) -> bool:
+    """只有明確的 1／true／yes／on 才開（與 ADMIN_MFA_REQUIRED 同一組值）；其餘一律關，無法辨識的值記 warning。
+
+    不用 `_flag`：它把 `off`、`no` 當成開。這裡的旗標開錯方向就是放寬（綁定既有帳號、信任 IdP 的 MFA）。
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if raw and raw not in _MFA_OFF_VALUES and raw not in _MFA_ON_VALUES:
+        logging.getLogger(__name__).warning("%s=%r 不是可辨識的值，視為關閉", name, raw)
+    return raw in _MFA_ON_VALUES
+
+
+def _https_or_loopback(name: str, value: str) -> None:
+    """issuer 與 redirect URI 必須是 https；只有本機開發（localhost／127.0.0.1／::1）可以用 http。"""
+    parts = urlsplit(value)
+    loopback = (parts.hostname or "") in ("localhost", "127.0.0.1", "::1")
+    if parts.scheme != "https" and not (parts.scheme == "http" and loopback):
+        raise ValueError(f"{name} 必須是 https 網址（本機開發才可用 http://localhost），目前為 {value!r}")
+    if not parts.hostname or parts.query or parts.fragment:
+        raise ValueError(f"{name} 必須是不帶查詢字串與片段的完整網址，目前為 {value!r}")
+
+
+@dataclass(frozen=True)
+class OidcSettings:
+    """OIDC 單一登入的設定。`issuer` 空字串＝沒有設定，登入行為與沒有這個功能時完全一樣。
+
+    `client_secret` 不進 repr（Settings 被印進日誌時不外流）。各欄的語意見 `.env.example` 的 OIDC 段。
+    """
+
+    issuer: str = ""
+    client_id: str = ""
+    client_secret: str = field(default="", repr=False)
+    redirect_uri: str = ""
+    scopes: tuple[str, ...] = ("openid", "email", "profile")
+    username_claim: str = "preferred_username"
+    allowed_domains: tuple[str, ...] = ()
+    link_by_username: bool = False
+    sso_only: bool = False
+    break_glass_users: tuple[str, ...] = ()
+    mfa_amr: tuple[str, ...] = _OIDC_DEFAULT_MFA_AMR
+    mfa_acr: tuple[str, ...] = ()
+    assume_idp_mfa: bool = False
+    clock_skew_seconds: int = 120
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.issuer)
+
+    def is_break_glass(self, username: str) -> bool:
+        return (username or "").strip().lower() in self.break_glass_users
+
+
+def _oidc_settings() -> OidcSettings:
+    """讀 OIDC_*。issuer 有設時其餘必要項缺一就拒絕啟動（與 R2 同一個態度：設了一半比沒設更危險）。
+
+    `OIDC_SSO_ONLY` 不依賴 issuer：沒設 issuer 卻開了只允許 SSO，結果是只有緊急管理員能登入——
+    寧可擋住，也不要因為 issuer 拼錯就靜默放回所有本地帳號。
+    """
+    issuer = (os.getenv("OIDC_ISSUER") or "").strip()
+    sso_only = _strict_flag("OIDC_SSO_ONLY")
+    break_glass = _csv("OIDC_BREAK_GLASS_USERS", lower=True)
+    if not issuer:
+        if sso_only:
+            logging.getLogger(__name__).error(
+                "OIDC_SSO_ONLY 已開啟但 OIDC_ISSUER 沒設：只有 OIDC_BREAK_GLASS_USERS 列出的管理員能登入")
+        return OidcSettings(sso_only=sso_only, break_glass_users=break_glass)
+    _https_or_loopback("OIDC_ISSUER", issuer)
+    client_id = (os.getenv("OIDC_CLIENT_ID") or "").strip()
+    redirect_uri = (os.getenv("OIDC_REDIRECT_URI") or "").strip()
+    missing = [k for k, v in (("OIDC_CLIENT_ID", client_id), ("OIDC_REDIRECT_URI", redirect_uri)) if not v]
+    if missing:
+        raise ValueError(f"OIDC_ISSUER 已設定，但缺少：{', '.join(missing)}")
+    _https_or_loopback("OIDC_REDIRECT_URI", redirect_uri)
+    scopes = tuple(s for s in (os.getenv("OIDC_SCOPES") or "openid email profile").split() if s)
+    if "openid" not in scopes:
+        scopes = ("openid", *scopes)
+    username_claim = (os.getenv("OIDC_USERNAME_CLAIM") or "").strip() or "preferred_username"
+    mfa_amr = _csv("OIDC_MFA_AMR") or _OIDC_DEFAULT_MFA_AMR
+    return OidcSettings(
+        issuer=issuer,
+        client_id=client_id,
+        client_secret=os.getenv("OIDC_CLIENT_SECRET") or "",
+        redirect_uri=redirect_uri,
+        scopes=scopes,
+        username_claim=username_claim,
+        allowed_domains=_csv("OIDC_ALLOWED_DOMAINS", lower=True),
+        link_by_username=_strict_flag("OIDC_LINK_BY_USERNAME"),
+        sso_only=sso_only,
+        break_glass_users=break_glass,
+        mfa_amr=mfa_amr,
+        mfa_acr=_csv("OIDC_MFA_ACR"),
+        assume_idp_mfa=_strict_flag("OIDC_ASSUME_IDP_MFA"),
+        clock_skew_seconds=_positive_int("OIDC_CLOCK_SKEW_SECONDS", 120, upper=600),
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     # ASK_*（answer.py）
@@ -465,6 +581,8 @@ class Settings:
     host_beacon_watch: str = ""
     host_beacon_stale_minutes: int = 45
     host_beacon_feed_stale_hours: int = 7
+    # OIDC 單一登入（OidcSettings；OIDC_ISSUER 沒設＝停用，本地帳密照舊）。
+    oidc: OidcSettings = OidcSettings()
 
 
 def _load() -> Settings:
@@ -681,6 +799,7 @@ def _load() -> Settings:
         host_beacon_watch=_beacon_name("HOST_BEACON_WATCH"),
         host_beacon_stale_minutes=_int_at_least("HOST_BEACON_STALE_MINUTES", 45, 15),
         host_beacon_feed_stale_hours=_int_at_least("HOST_BEACON_FEED_STALE_HOURS", 7, 4),
+        oidc=_oidc_settings(),
     )
 
 

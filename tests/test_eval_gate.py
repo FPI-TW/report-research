@@ -121,6 +121,19 @@ class TingfongGateTests(unittest.TestCase):
         self.assertEqual(res.metrics, [])
 
 
+class LatestBaselineTests(unittest.TestCase):
+    def test_latest_baseline_named_in_agents_md_passes_the_tingfong_gate(self):
+        """AGENTS.md「最新基準線」指名的那份，對廷豐的上線驗收必須是 0（CP 以豁免通過）。"""
+        import re
+
+        text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        m = re.search(r"最新基準線 `(eval/baselines/[^`]+\.json)`", text)
+        self.assertIsNotNone(m, "AGENTS.md 找不到「最新基準線」")
+        doc = json.loads((REPO_ROOT / m.group(1)).read_text(encoding="utf-8"))
+        res = _evaluate(doc)
+        self.assertEqual(res.exit_code, 0, (res.undecidable, [(x.metric, x.status) for x in res.metrics]))
+
+
 class OtherProfileGateTests(unittest.TestCase):
     """沒有豁免、也沒有釘系譜的 profile：CP 沒過就是 1，任何系譜都接受。"""
 

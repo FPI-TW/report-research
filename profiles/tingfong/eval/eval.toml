@@ -10,5 +10,5 @@ legacy_repo_path = "eval/ragas_questions.json"
 judge_lineage = "gpt-6-luna-2026-11"
 
 [gate.waivers.context_precision]
-reason = "使用者 2026-11-10 決定 CP 不再是 v1 的上線關卡：fw-cp 診斷指出 CP 實際綁「被引用的比例」，現有量尺下只有砍脈絡篇數能過，該做法不採用。門檻常數 0.8 不變，CP 照常量測與比較。"
+reason = "使用者 2026-11-10 決定 CP 不再是 v1 的上線關卡：fw-cp 診斷指出 CP 實際綁「被引用的比例」，現有量尺下只有砍脈絡篇數能過，該做法不採用。修正 rerank 名額後的基準線 eval/baselines/baseline-2026-11-10-jluna-gluna-rerank.json 為 CP=0.798（F=0.941、AR=0.687），仍未達 0.8。門檻常數 0.8 不變，CP 照常量測與比較。"
 decided_on = 2026-11-10

@@ -900,6 +900,21 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ValueError, "corpus_id"):
                     await rr.run(ds, out_path=None, concurrency=1, corpus_id="snapshot-1", match_baseline=baseline)
 
+    def test_real_build_config_matches_itself(self):
+        """build_config 產出的 config 必須能通過自己的核對（曾因核對清單要求已不記錄的 judge.retries，
+        任何真實基準線都不可比）。"""
+        cfg = rr.build_config(
+            dataset_path="eval/ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=3, rerank_top_m=16, scope=None,
+            limit=None, agentic=False, commit="a", started_at="2026-11-10T00:00:00+00:00", corpus_id="snap-1",
+        )
+        other = rr.build_config(
+            dataset_path="eval/ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=3, rerank_top_m=16, scope=None,
+            limit=None, agentic=False, commit="b", started_at="2026-11-11T00:00:00+00:00", corpus_id="snap-1",
+        )
+        rr.check_baseline_config({"config": json.loads(json.dumps(cfg))}, other)
+
     def test_baseline_config_and_complete_coverage_guard(self):
         cfg = {key: None for key in (
             "gen_model", "gen_timeout", "models", "embed_model", "rerank_top_m", "rerank_model",
@@ -907,7 +922,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         )}
         cfg.update(queryset_sha256="same", corpus_id="snapshot-1")
         cfg["judge"] = {key: None for key in (
-            "provider", "model", "timeout", "retries", "prompt_sha", "schema_version", "lineage", "max_tokens",
+            "provider", "model", "timeout", "prompt_sha", "schema_version", "lineage", "max_tokens",
         )}
         cfg["judge"].update(model="gpt-6-luna", prompt_sha="a")
         rr.check_baseline_config({"config": cfg}, cfg)

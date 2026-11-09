@@ -253,13 +253,16 @@ errors.install(app)
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
 # 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
 # /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
-# 回應內容刻意極簡（見 routers/health.py）。
+# 回應內容刻意極簡（見 routers/health.py）。/readyz（就緒探測，容器部署的負載平衡器與 compose healthcheck 用）
+# 同樣免認證、回應同樣只有 status 一鍵。
 # /healthz/storage、/healthz/llm、/healthz/security、/healthz/feed 在白名單裡但只回答本機直連（其餘 404），
 # 理由見 routers/health.py。
 # /api/branding 與 /api/branding/assets/ 底下：登入頁與 SPA 在登入前就要畫品牌；回應只有顯示用的名稱、
 # asset URL 與色票，asset 端點只交 profile 引用的檔（web/routers/branding.py）。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed",
-                   "/api/branding"}
+_AUTH_ALLOWLIST = {
+    "/login", "/healthz", "/readyz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed",
+    "/api/branding",
+}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/", "/api/branding/assets/")
 # 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
 _EXTERNAL_PREFIX = "/external/"

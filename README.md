@@ -131,13 +131,14 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 
 ## Web 介面與 API
 
-所有路徑除 `/login`、`/healthz`、`/app/assets/`、`/api/branding`（與 `/api/branding/assets/` 底下）外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*`、`/api/admin/*` 與 `/api/progress` 限管理員（一般使用者回 403），每條另要求一個 scope（管理員預設有 `admin`、`accounts.manage`、`audit.read`、`review.manage`、`ops.read`、`reports.manage`、`analytics.read`；`qa_content.read`、`ops.operate`、`api_clients.manage` 要另外授予；super admin 全部都有）。表中寫「已提升」指近 10 分鐘內在同一個 session 重新驗證過密碼（`POST /api/me/elevate`），否則 403 `elevation_required`。會改變狀態的請求（POST／PUT／PATCH／DELETE）帶了 `Origin` 就必須與 `Host` 相同，跨站一律 403 `csrf_rejected`。JSON 錯誤一律是 `{detail, code, request_id}`：`detail` 維持原意（多半是中文訊息，422 是欄位錯誤清單），`code` 是穩定字串，`request_id` 對得上 journal 那一行。SSE 端點每 20 秒送一行心跳註解。
+所有路徑除 `/login`、`/healthz`、`/readyz`、`/app/assets/`、`/api/branding`（與 `/api/branding/assets/` 底下）外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*`、`/api/admin/*` 與 `/api/progress` 限管理員（一般使用者回 403），每條另要求一個 scope（管理員預設有 `admin`、`accounts.manage`、`audit.read`、`review.manage`、`ops.read`、`reports.manage`、`analytics.read`；`qa_content.read`、`ops.operate`、`api_clients.manage` 要另外授予；super admin 全部都有）。表中寫「已提升」指近 10 分鐘內在同一個 session 重新驗證過密碼（`POST /api/me/elevate`），否則 403 `elevation_required`。會改變狀態的請求（POST／PUT／PATCH／DELETE）帶了 `Origin` 就必須與 `Host` 相同，跨站一律 403 `csrf_rejected`。JSON 錯誤一律是 `{detail, code, request_id}`：`detail` 維持原意（多半是中文訊息，422 是欄位錯誤清單），`code` 是穩定字串，`request_id` 對得上 journal 那一行。SSE 端點每 20 秒送一行心跳註解。
 
 對外 API（`/external/v1/*`）不走登入與 session：每個 API 用戶端一把金鑰，以 `Authorization: Bearer <api_key>` 認證，不查也不發 session cookie；反過來，站內 `/api/*` 一律不認 Bearer。缺金鑰 401 `api_key_missing`、金鑰無效／停用／已輪替 401 `api_key_invalid`（帶 `WWW-Authenticate: Bearer`）、scope 不足 403 `api_scope_missing`、每分鐘限流 429 `api_rate_limited`、每日額度用完 429 `api_quota_exceeded`（每日額度以台北時間日曆日計，台北 0 點＝UTC 16:00 重置；429 都帶 `Retry-After`）。認證、錯誤碼與授權範圍語意見 `docs/WORKFLOW.md` 的「對外 API」；交給 API 用戶端的說明是 `docs/EXTERNAL_API.md`（後台「API 用戶端」頁可檢視、下載與試打）。
 
 | 方法 | 路徑 | 參數 | 回應 | 備註 |
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
+| GET | `/readyz` | — | `{"status":"ok"}`；任一項未就緒回 503 `{"status":"not_ready"}` | 免登入；就緒探測（容器部署的 compose healthcheck 與負載平衡器用）：DB 可用（與 `/healthz` 共用探測）、嵌入模型已載入或權重在本機快取、profile 驗證通過、LLM 設定有效（金鑰、白名單模型、送達路徑；**不呼叫 LLM**）。哪一項沒過只進日誌，回應只有 `status` 一鍵；結論快取 5 秒。判斷在 `app/services/readiness.py` |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
 | GET | `/healthz/llm` | — | `{"llm":"unknown"\|"ok"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"\|"misconfigured"}`；後五種回 503（`misconfigured`＝問答主答 `ASK_ANSWER_MODEL` 解析到白名單外的名稱，或目前 provider 的端點設定有誤，不探端點） | **只回答本機直連**，其餘 404；打目前 `LLM_PROVIDER` 的模型清單端點（OpenAI 族 `GET /models`、Azure `GET /openai/models`、Anthropic `GET /v1/models`；只判斷端點與金鑰，各家都沒有餘額 API，沒有用完前的預警），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（503 一律退出碼 8）。各狀態的條件見 `docs/WORKFLOW.md`「健康端點」 |
 | GET | `/healthz/security` | — | `{"security":"ok"\|"unknown"\|"audit_chain_broken"\|"elevate_failures"\|"account_failures"\|"login_failures"}`；後四種回 503（多項同時成立回最前面那一個），`unknown`（判不出來）回 200。**不回任何計數、IP 或帳號** | 安全事件的狀態型告警，**免登入但只回答本機直連**（其餘 404）。判斷是 `security_ops.evaluate_alerts`：`SECURITY_WINDOW_MINUTES`（15）分鐘內全站登入失敗（含被限流擋下的請求）達 `SECURITY_LOGIN_FAILURE_THRESHOLD`（20）、同一帳號「上次登入成功之後」連續失敗達 `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5）、權限提升失敗達 `SECURITY_ELEVATE_FAILURE_THRESHOLD`（3）、稽核鏈驗證失敗（快取 `AUDIT_VERIFY_CACHE_SECONDS`）。結論快取 30 秒、最多等 8 秒（逾時＝unknown）。給 `scripts/check_security_health.sh` 用（`audit_chain_broken` 為退出碼 1、其餘告警 2、判不出來 3），接 P5 instance `report-mark-security-incident`；明細在 `/api/admin/security/alerts` |
@@ -411,6 +412,10 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 - 來源監看：EC2 的新研報全靠辦公室主機推上來，那台停機或來源段壞掉時 EC2 自己的 sync 照樣 rc=0。辦公室主機裝 `report-mark-beacon` 並設 `HOST_BEACON_NAME`，EC2 的 `.env` 設同名的 `HOST_BEACON_WATCH` 並裝 `report-mark-feed-health`、`report-mark-feed-incident`；細節在管理後台「維運 → 來源主機」，步驟見 `docs/production_resilience.md`「來源主機信標」。
 - 對外：`research.tingfong.com` 是 Cloudflare 橘雲 A record 指向 EC2 的 Elastic IP，不走 Tunnel。EC2 上以 apt 的 nginx 載入 `deploy/nginx-origin.conf`（裝到 `/etc/nginx/sites-available/report-mark`），以 Cloudflare Origin CA 憑證（`/etc/ssl/report-mark/`，不進 repo）聽 443、反代 `127.0.0.1:8097`；App 靠對端 127.0.0.1 信任它（`REPORT_MARK_TRUSTED_PROXY_CIDRS` 預設值），所以 `proxy_pass` 不能改成其他位址。Security Group 只放行 Cloudflare IPv4 範圍的 443（由 CloudFormation stack `report-research-staging` 管理）。三個前提缺一不可：橘雲不能關（Origin CA 只有 Cloudflare 信任）、Cloudflare SSL/TLS 模式 Full (strict)、Cloudflare IP 範圍變動時 nginx 的 `set_real_ip_from` 與 SG 的 prefix list 一起改。
 
+### 容器部署（docker compose）
+
+給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。systemd timer 與容器排程的對照、零外連清單、備份還原見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
+
 ### 其他維運入口
 
 辦公室主機的對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。上傳掃描：`make up-clamav`／`down-clamav`／`clamav-smoke`（`deploy/clamav/docker-compose.yml`，獨立 compose 專案、常駐 clamd 容器 `report-mark-clamav`，只綁 `127.0.0.1:3310`，常駐約 1.2–1.6 GB；`clamav-smoke` 驗 EICAR 要 FOUND、正常 PDF 要 OK，可帶 `SMOKE_PDF=…`），安裝、停用與故障處置見 `docs/production_resilience.md`「ClamAV（上傳掃描）」。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
@@ -426,6 +431,7 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 | `docs/WORKFLOW.md` | 端到端管線、逐階段 I/O 與參數、生產同步鏈、研報上傳、標籤詞彙、Web API 契約、物件儲存（R2）、排錯 |
 | `docs/EXTRACTION.md` | 抽取層現況：選型與授權、文件模型、回退、品質指標、快取、`extraction_log`、golden set、回填、切塊與樣板 |
 | `docs/DEPLOYMENT_STATUS.md` | 各主機的部署現況與待確認事項 |
+| `docs/CONTAINER_DEPLOYMENT.md` | 容器部署（映像＋docker compose）：系統需求、首次安裝、升級、備份與還原、systemd timer 對照表、零外連清單 |
 | `docs/production_resilience.md` | 部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
 | `docs/EXTERNAL_API.md` | 交給 API 用戶端的對外 API 說明（認證、權限與資料範圍、限流與額度、端點、錯誤碼、範例）；後台「API 用戶端」頁的「說明文件」與「試打」分頁直接取用 |
 | `docs/EXTERNAL_ACCESS.md` | 辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |

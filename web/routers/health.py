@@ -71,6 +71,14 @@ state：`ok`（200）、`unknown`（判不出來，200）、`audit_chain_broken`
 `GET /api/admin/ops/remote-hosts`（登入＋`ops.read`），與這裡共用同一份快取（`feed_reading`）。
 消費端是 `scripts/check_feed_health.sh`（接 P5 instance `report-mark-feed-incident`）。
 
+## `/readyz`：就緒探測（免認證，容器部署用）
+
+`/healthz` 是存活探測，只回答 DB；容器部署（docs/CONTAINER_DEPLOYMENT.md）的 compose healthcheck 與負載平衡器
+另外需要「可以導流量了嗎」：DB、嵌入模型（已載入或權重在本機）、profile、LLM 設定（不呼叫 LLM）四項全過才 200
+`{"status": "ok"}`，否則 503 `{"status": "not_ready"}`。回應同樣只有 `status` 一鍵，哪一項沒過只進日誌；判斷在
+`app/services/readiness.py`。結論快取 `_TTL` 秒（`_READY_CACHE`）。對外可達（不限本機直連），所以不比 `/healthz`
+多洩漏任何東西。
+
 ## `/api/status`：給一般使用者的粗粒度系統狀態（需登入）
 
 主平台的小燈號用。**任何登入使用者可讀**（不在免登入白名單、不限管理員），所以回應只有
@@ -97,7 +105,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.services import host_beacon, llm_health, security_ops
+from app.services import host_beacon, llm_health, readiness, security_ops
 from app.services.object_storage import get_object_storage
 from web import deps, dev_mode, ops_client
 from web.ttl_cache import TTLCache
@@ -144,6 +152,8 @@ _SECURITY_CACHE = TTLCache(ttl=_SECURITY_TTL, max_entries=1, name="healthz_secur
 _FEED_TTL = 60.0
 _FEED_WAIT = 8.0
 _FEED_CACHE = TTLCache(ttl=_FEED_TTL, max_entries=1, name="healthz_feed")
+# /readyz：結論快取（key 固定），與 /healthz 的 DB 探測同一個 TTL。
+_READY_CACHE = TTLCache(ttl=_TTL, max_entries=1, name="readyz")
 _storage: _StorageState = _STORAGE_INITIAL
 _storage_task: asyncio.Task | None = None
 
@@ -329,6 +339,23 @@ async def healthz() -> JSONResponse:
     if await _db_ok():
         return JSONResponse({"status": "ok"})
     return JSONResponse({"status": "degraded"}, status_code=503)
+
+
+@router.get("/readyz")
+async def readyz() -> JSONResponse:
+    """就緒探測（免認證）。就緒 200 `{"status":"ok"}`；任一項不過 503 `{"status":"not_ready"}`。
+
+    四項判斷與理由在 `app/services/readiness.py`；哪一項不過只進日誌，回應只有 `status` 一鍵。
+    """
+    failed = _READY_CACHE.get("failed")
+    if failed is None:
+        failed = tuple(await readiness.failed_checks(_db_ok))
+        _READY_CACHE.put("failed", failed)
+        if failed:
+            logger.warning("readyz 未就緒：%s", "、".join(failed))
+    if failed:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    return JSONResponse({"status": "ok"})
 
 
 @router.get("/healthz/storage")

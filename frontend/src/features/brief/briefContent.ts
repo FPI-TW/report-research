@@ -22,7 +22,7 @@ export interface BriefHighlight {
 export interface BriefFocusBlock {
   /** 顯示用的市場名：認得的市場一律用介面的名稱（與概況卡圖例一致），其餘照原文。 */
   label: string | null
-  /** findb 市場代碼；認不出來是 null（不畫市場色、不顯示篇數）。 */
+  /** 標準市場代碼；認不出來是 null（不畫市場色、不顯示篇數）。 */
   market: string | null
   paragraphs: string[]
 }
@@ -54,7 +54,7 @@ export const OTHER_COLOR = '#c7c7cc'
 
 const KNOWN_MARKETS = new Set<string>(MARKET_ORDER)
 
-// 模型寫出來的市場名 → findb 代碼。前兩組是後端 market_zh() 與介面 meta.ts 的名稱，
+// 模型寫出來的市場名 → 標準市場代碼。前兩組是後端 market_zh() 與介面 meta.ts 的名稱，
 // 其餘是實際簡報裡出現過或同義的寫法。
 const MARKET_ALIASES: Record<string, string> = {
   台股: 'TW', 臺股: 'TW', 台灣: 'TW',

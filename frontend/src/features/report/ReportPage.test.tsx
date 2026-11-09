@@ -415,7 +415,7 @@ describe('ReportPage', () => {
     expect(sec.queryByRole('link', { name: /^(\d+ 家)?券商共識$/ })).toBeNull()
   })
 
-  // 券商共識只認 findb 的市場代碼；認不得的市場連過去只會 422
+  // 券商共識只認標準市場代碼；認不得的市場連過去只會 422
   it('本篇評等：市場不在券商共識清單內 → 卡片照常顯示但不給連結', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ signals_state: 'available', signals: [{ ...SIGNAL, market: 'JP' }] }))

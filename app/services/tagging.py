@@ -1,8 +1,12 @@
-"""市場標籤 schema（對齊 findb 市場分類）+ Claude 標註指令 + tag JSON 解析/載入。
+"""市場標籤 schema（標準市場代碼）+ Claude 標註指令 + tag JSON 解析/載入。
 
-市場標籤採用 findb 的市場代碼（findb: app/models/canonical.py、scripts/seed_data.py）：
-TW/US/HK/CN/FX/WTX/MACRO/GLOBAL/CRYPTO。findb 未涵蓋的類別歸到最接近者
+市場標籤採用框架固定的**標準市場代碼** TW/US/HK/CN/FX/WTX/MACRO/GLOBAL/CRYPTO（`MARKETS`，
+`tests/test_tagging.py` 逐字釘住；標註 prompt 也用這一組）。profile 只能選子集與改顯示名稱
+（`app/profile.py` 的 `[markets]`），不能新增代碼。標準詞彙未涵蓋的類別歸到最接近者
 （債券→MACRO、原物料→GLOBAL）。
+
+這組代碼與 findb 的市場分類（findb: app/models/canonical.py、scripts/seed_data.py）對齊——那是廷豐
+profile 的跨 repo 契約，不是框架的；`LEGACY_TO_FINDB` 等名稱沿用當時的命名。
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# findb 市場代碼（大寫），與 findb instruments.market 一致
+# 標準市場代碼（大寫）；廷豐 profile 與 findb instruments.market 一致
 MARKETS = ["TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"]
 
 # 市場代碼 → 顯示名稱（前端/報表用）
@@ -29,7 +33,7 @@ MARKET_DISPLAY: dict[str, str] = {
     "CRYPTO": "加密",
 }
 
-# 舊中文標籤 → findb 代碼（含 findb 未涵蓋類別歸到最接近者）
+# 舊中文標籤 → 標準市場代碼（含標準詞彙未涵蓋類別歸到最接近者）
 LEGACY_TO_FINDB: dict[str, str] = {
     "台股": "TW",
     "美股": "US",
@@ -85,7 +89,7 @@ STOCK_TARGETS_MAX = 8
 
 @dataclass
 class MarketTag:
-    market: Optional[str]  # findb 市場代碼；非研究檔為 None
+    market: Optional[str]  # 標準市場代碼；非研究檔為 None
     is_research: bool
     confidence: float = 0.0
     instrument_types: Optional[list[str]] = None  # 商品類型（詞表見上）
@@ -142,7 +146,7 @@ futures_targets：報告涉及的期貨商品，從下列固定小詞表選 0 �
 
 
 def normalize_market(value: Optional[str]) -> Optional[str]:
-    """把舊中文標籤或代碼正規化為 findb 市場代碼；無法對應回傳 None。"""
+    """把舊中文標籤或代碼正規化為標準市場代碼；無法對應回傳 None。"""
     if not value:
         return None
     v = value.strip()
@@ -205,7 +209,7 @@ def build_tagging_prompt(file_path: str, file_name: str) -> str:
 
 
 def parse_tags(raw: str) -> Optional[MarketTag]:
-    """容錯解析 Claude 回應；market 一律正規化為 findb 代碼。"""
+    """容錯解析 Claude 回應；market 一律正規化為標準市場代碼。"""
     if not raw:
         return None
     text = raw.strip()

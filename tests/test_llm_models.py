@@ -113,7 +113,9 @@ class ResolveTests(unittest.TestCase):
     def test_default_provider_is_openai(self):
         self.assertEqual(lm.DEFAULT_PROVIDER, "openai")
         self.assertEqual(lm.PROVIDER_OPENAI, "openai")
-        self.assertEqual(lm.PROVIDERS, ("openai", "opencode_go"))
+        self.assertEqual(
+            lm.PROVIDERS, ("openai", "opencode_go", "azure_openai", "anthropic", "openai_compatible"),
+        )
         self.assertEqual(lm.key_env({}), "OPENAI_API_KEY")
         for env in (dict(EMPTY_KNOBS), {**EMPTY_KNOBS, "LLM_PROVIDER": ""}, {**EMPTY_KNOBS, "LLM_PROVIDER": "  "}):
             with self.subTest(env=env.get("LLM_PROVIDER")):
@@ -379,7 +381,7 @@ class ConftestModelGuardTests(unittest.TestCase):
                 )
                 if body_assigns_environ:
                     loop_keys |= {e.value for e in node.iter.elts if isinstance(e, ast.Constant)}
-        self.assertLessEqual({"LLM_PROVIDER", "LLM_ENV_FILE"}, assigned)
+        self.assertLessEqual({"LLM_PROVIDER", "LLM_ENV_FILE", "LLM_DEFAULT_MODEL"}, assigned)
         self.assertEqual(loop_keys, set(lm.TASK_ENV.values()))
 
 

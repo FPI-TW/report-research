@@ -309,8 +309,8 @@ class SchedulerSelectionTests(unittest.TestCase):
     def test_crontab_lines(self):
         tab = sch.render_crontab([sch.JOBS[0]])
         lines = [ln for ln in tab.splitlines() if ln and not ln.startswith("#")]
-        self.assertEqual(lines, ["0 1 * * * python scripts/backfill_extraction.py --extractor pdfplumber "
-                                 "--max-minutes 240"])
+        self.assertEqual(lines, ["0 1 * * * python deploy/container/run_job.py backfill -- "
+                                 "python scripts/backfill_extraction.py --extractor pdfplumber --max-minutes 240"])
 
 
 # ───────────────────────── schema 閘門與 migrate ─────────────────────────

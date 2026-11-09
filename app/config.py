@@ -49,6 +49,50 @@ def _log_level(name: str, default: str) -> str:
     return v
 
 
+_LOG_FORMATS = ("text", "json")
+
+
+def _log_format() -> str:
+    """日誌格式（`LOG_FORMAT`）：text＝現行的一行文字（systemd 主機的預設）；json＝每行一個 JSON 物件到 stdout
+    （容器映像的預設，`deploy/container/Dockerfile` 的 ENV）。未知值退回 text 並警告——與 `_log_level` 同理，
+    不讓 typo 在 import 期讓 web 起不來。欄位與遮罩見 `app/logging_setup.py`。"""
+    v = (os.getenv("LOG_FORMAT") or "text").strip().lower()
+    if v not in _LOG_FORMATS:
+        logging.getLogger(__name__).warning(
+            "LOG_FORMAT=%r 不是合法值（可用：%s），退回 text", v, "/".join(_LOG_FORMATS))
+        return "text"
+    return v
+
+
+DEFAULT_METRICS_CIDRS = ("127.0.0.1/32", "::1/128")
+
+
+def _metrics_cidrs() -> tuple[str, ...]:
+    """`GET /metrics` 接受的對端位址（`METRICS_ALLOWED_CIDRS`，逗號分隔 CIDR）。沒設＝只收本機（loopback）。
+
+    無效的項目略過並警告；**全部無效時是空清單＝誰都不收**（fail-closed：打錯的允許清單不能變成全開）。
+    判定在 `web/metrics.py` 的 `access_allowed`。
+    """
+    import ipaddress
+
+    raw = os.getenv("METRICS_ALLOWED_CIDRS")
+    if raw is None or not raw.strip():
+        return DEFAULT_METRICS_CIDRS
+    out: list[str] = []
+    for part in raw.split(","):
+        v = part.strip()
+        if not v:
+            continue
+        try:
+            net = str(ipaddress.ip_network(v, strict=False))
+        except ValueError:
+            logging.getLogger(__name__).warning("忽略無效的 METRICS_ALLOWED_CIDRS 項目：%r", v)
+            continue
+        if net not in out:
+            out.append(net)
+    return tuple(out)
+
+
 _EXTRACTORS = ("pypdf", "pdfplumber")
 _OBJECT_STORAGE_MODES = ("local", "hybrid", "r2")
 
@@ -586,6 +630,19 @@ class Settings:
     # 資料來源連接器（app/services/connectors/、scripts/ingest_connectors.py）的狀態目錄：各連接器的處理紀錄
     # （state/<名>.json）、失敗清單（failures.log）、本輪入庫 hashes 與計數。空字串＝repo 根 data/connectors/。
     connector_data_dir: str = ""
+    # ── 應用層監控訊號（docs/CONTAINER_DEPLOYMENT.md「監控對接」）────────────────────────────────
+    # log_format：text＝現行一行文字（systemd 主機預設不變）；json＝結構化 JSON 到 stdout（容器映像預設，
+    # app/logging_setup.py）。metrics_*：`GET /metrics`（web/metrics.py）的總開關與允許的對端 CIDR（預設只收本機；
+    # 經反向代理進來的請求一律不收）。
+    log_format: str = "text"
+    metrics_enabled: bool = True
+    metrics_allowed_cidrs: tuple[str, ...] = DEFAULT_METRICS_CIDRS
+    # 通用 webhook 告警（app/services/alert_webhook.py；URL 只讀環境變數 ALERT_WEBHOOK_URL、不進 Settings）：
+    # 同一個事件（事件＋鍵）在冷卻期內只送一次；上傳積壓＝最舊一筆處理中的上傳超過幾分鐘（0＝不檢查），
+    # 由 web 每 alert_check_interval_seconds 秒檢查一次（只在設了 URL 時啟動）。
+    alert_webhook_cooldown_minutes: int = 60
+    alert_upload_backlog_minutes: int = 120
+    alert_check_interval_seconds: int = 300
 
 
 def _load() -> Settings:
@@ -804,6 +861,12 @@ def _load() -> Settings:
         host_beacon_feed_stale_hours=_int_at_least("HOST_BEACON_FEED_STALE_HOURS", 7, 4),
         oidc=_oidc_settings(),
         connector_data_dir=(os.getenv("CONNECTOR_DATA_DIR") or "").strip(),
+        log_format=_log_format(),
+        metrics_enabled=_flag("METRICS_ENABLED", "1"),
+        metrics_allowed_cidrs=_metrics_cidrs(),
+        alert_webhook_cooldown_minutes=_int_at_least("ALERT_WEBHOOK_COOLDOWN_MINUTES", 60, 1),
+        alert_upload_backlog_minutes=_int_at_least("ALERT_UPLOAD_BACKLOG_MINUTES", 120, 0),
+        alert_check_interval_seconds=_int_at_least("ALERT_CHECK_INTERVAL_SECONDS", 300, 30),
     )
 
 

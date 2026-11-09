@@ -20,9 +20,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
-from sqlalchemy import text
+from sqlalchemy import TextClause, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.doc_types import doc_type_enabled_id_sql, doc_type_enabled_sql
 from app.services.radar.types import SIGNAL_SELECT_SQL, Signal, parse_signal_row
 from app.services.visibility import visible_report_id_sql, visible_report_sql
 
@@ -42,7 +43,7 @@ SIMILAR_EF_SEARCH = 100
 # 那三條「錯了不會報錯、只會變雜訊」不變量的第四條）。
 #
 # `relaxed_order` 而非 `strict_order`：與 `store.search_chunks_meta` 一致，且本查詢的
-# 排序鍵本來就不是原始距離（`_SIMILAR_SQL` 用的是跨 probe 的廣度加權），嚴格距離序
+# 排序鍵本來就不是原始距離（`_similar_sql()` 用的是跨 probe 的廣度加權），嚴格距離序
 # 對它沒有意義，換來的只是更慢。
 #
 # 需要 pgvector ≥ 0.8——0.7 環境會直接 `unrecognized configuration parameter` ⇒
@@ -108,15 +109,17 @@ class SimilarRow:
     score: float
 
 
-_DOC_SQL = text(
-    "SELECT id::text, file_hash, file_name, title, file_path, market, source, "
-    "       report_date, report_type, summary, instrument_types, "
-    "       stock_targets, futures_targets, full_text, source_object_key "
-    "FROM research.research_report r "
-    "WHERE file_hash = :file_hash AND is_research IS NOT FALSE "
-    # 被管理員隱藏＝對讀者而言不存在：與查無同樣回 None → 404，不洩漏存在與否。
-    f"AND {visible_report_sql('r')}"
-)
+def _doc_sql() -> TextClause:
+    return text(
+        "SELECT id::text, file_hash, file_name, title, file_path, market, source, "
+        "       report_date, report_type, summary, instrument_types, "
+        "       stock_targets, futures_targets, full_text, source_object_key "
+        "FROM research.research_report r "
+        "WHERE file_hash = :file_hash "
+        f"AND {doc_type_enabled_sql('r', 'reading')} "
+        # 被管理員隱藏＝對讀者而言不存在：與查無同樣回 None → 404，不洩漏存在與否。
+        f"AND {visible_report_sql('r')}"
+    )
 
 
 async def fetch_doc(session: AsyncSession, file_hash: str) -> Optional[DocRow]:
@@ -125,7 +128,7 @@ async def fetch_doc(session: AsyncSession, file_hash: str) -> Optional[DocRow]:
     file_hash（非 report_id）是閱讀頁的網址鍵：重新 ingest 會換新 report_id，
     分享出去的連結必須存活。
     """
-    row = (await session.execute(_DOC_SQL, {"file_hash": file_hash})).first()
+    row = (await session.execute(_doc_sql(), {"file_hash": file_hash})).first()
     if row is None:
         return None
     return DocRow(
@@ -178,14 +181,16 @@ async def fetch_takeaways(
     ]
 
 
-_SIGNALS_SQL = text(
-    f"SELECT {SIGNAL_SELECT_SQL} "
-    "FROM research.report_signal s "
-    "JOIN research.research_report r ON r.id = s.report_id "
-    "WHERE s.report_id = :report_id AND s.extraction_status = ANY(:statuses) "
-    f"AND {visible_report_sql('r')} "
-    "ORDER BY s.market, s.instrument_code"
-)
+def _signals_sql() -> TextClause:
+    return text(
+        f"SELECT {SIGNAL_SELECT_SQL} "
+        "FROM research.report_signal s "
+        "JOIN research.research_report r ON r.id = s.report_id "
+        "WHERE s.report_id = :report_id AND s.extraction_status = ANY(:statuses) "
+        f"AND {visible_report_sql('r')} "
+        f"AND {doc_type_enabled_sql('r', 'reading')} "
+        "ORDER BY s.market, s.instrument_code"
+    )
 
 
 async def fetch_signals(
@@ -198,7 +203,7 @@ async def fetch_signals(
     """
     rows = (
         await session.execute(
-            _SIGNALS_SQL, {"report_id": report_id, "statuses": list(statuses)}
+            _signals_sql(), {"report_id": report_id, "statuses": list(statuses)}
         )
     ).all()
     return [parse_signal_row(r) for r in rows]
@@ -206,7 +211,7 @@ async def fetch_signals(
 
 # report_signal 只存標的代號，沒有名稱欄位。全語料唯一的名稱來源是
 # research_report.company_name（filename.py 從檔名解析而來），取「最新一份以該代號為
-# stock_code 的報告」——**與雷達的 _COVERAGE_SQL／_catalog_cte 逐字同語意**，否則同一
+# stock_code 的報告」——**與雷達的 _coverage_sql／_catalog_cte 逐字同語意**，否則同一
 # 檔標的在閱讀頁與雷達會叫不同名字，而那種分岔沒有任何錯誤訊息。
 #
 # 名稱是漸進補的：檔名解析不出公司名的報告 company_name 為 NULL，**查無名稱是常態不是
@@ -214,21 +219,22 @@ async def fetch_signals(
 #
 # 轉型一律 CAST(:x AS text[])：`:markets::text[]` 會讓 compiler 回溯成短名而參數綁不上
 # （PR #89 的生產 500，見檔頭「bind 參數禁忌」）。
-_INSTRUMENT_NAMES_SQL = text(
-    f"""
-    SELECT DISTINCT ON (r.market, r.stock_code)
-           r.market, r.stock_code, r.company_name
-      FROM research.research_report r
-     WHERE (r.market, r.stock_code) IN (
-             SELECT m, c
-               FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c))
-       AND r.company_name IS NOT NULL
-       AND r.is_research IS NOT FALSE
-       AND {visible_report_sql("r")}
-     ORDER BY r.market, r.stock_code,
-              r.report_date DESC NULLS LAST, r.created_at DESC, r.id
-    """
-)
+def _instrument_names_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT DISTINCT ON (r.market, r.stock_code)
+               r.market, r.stock_code, r.company_name
+          FROM research.research_report r
+         WHERE (r.market, r.stock_code) IN (
+                 SELECT m, c
+                   FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c))
+           AND r.company_name IS NOT NULL
+           AND {doc_type_enabled_sql("r", "reading")}
+           AND {visible_report_sql("r")}
+         ORDER BY r.market, r.stock_code,
+                  r.report_date DESC NULLS LAST, r.created_at DESC, r.id
+        """
+    )
 
 
 async def fetch_instrument_names(
@@ -246,7 +252,7 @@ async def fetch_instrument_names(
         return {}
     rows = (
         await session.execute(
-            _INSTRUMENT_NAMES_SQL,
+            _instrument_names_sql(),
             {"markets": [m for m, _ in keys], "codes": [c for _, c in keys]},
         )
     ).all()
@@ -258,11 +264,13 @@ async def fetch_instrument_names(
     return out
 
 
-_CHUNK_CONTENT_SQL = text(
-    "SELECT content FROM research.report_chunk "
-    "WHERE report_id = CAST(:rid AS uuid) AND chunk_index = :ci "
-    f"AND {visible_report_id_sql('report_chunk.report_id')}"
-)
+def _chunk_content_sql() -> TextClause:
+    return text(
+        "SELECT content FROM research.report_chunk "
+        "WHERE report_id = CAST(:rid AS uuid) AND chunk_index = :ci "
+        f"AND {visible_report_id_sql('report_chunk.report_id')} "
+        f"AND {doc_type_enabled_id_sql('report_chunk.report_id', 'reading')}"
+    )
 
 
 async def fetch_chunk_content(
@@ -278,7 +286,7 @@ async def fetch_chunk_content(
     轉型用 `CAST(:rid AS uuid)`（見模組 docstring 的 bind 參數禁忌）。
     """
     row = (
-        await session.execute(_CHUNK_CONTENT_SQL, {"rid": report_id, "ci": chunk_index})
+        await session.execute(_chunk_content_sql(), {"rid": report_id, "ci": chunk_index})
     ).first()
     return row[0] if row else None
 
@@ -306,55 +314,56 @@ async def fetch_chunk_content(
 #
 # best CTE 的 DISTINCT ON (pe, report_id) 是「每個 probe 對每篇只計一次最佳距離」，
 # 否則同一篇的多個 chunk 會對同一 probe 灌票。
-_SIMILAR_SQL = text(
-    f"""
-    WITH ranked AS (
-        SELECT c.embedding,
-               row_number() OVER (ORDER BY c.chunk_index) - 1 AS rn
-        FROM research.report_chunk c
-        WHERE c.report_id = :rid AND c.embedding IS NOT NULL
-    ), tot AS (
-        SELECT count(*) AS n FROM ranked
-    ), probe AS (
-        -- 沿 chunk_index 均勻取最多 :probe_n 個位置（見上方註解的取樣理由與整數除法陷阱）
-        SELECT r.embedding
-        FROM ranked r
-        JOIN (
-            SELECT DISTINCT
-                   floor(gs * t.n::numeric / LEAST(:probe_n, GREATEST(t.n, 1)))::int AS rn
-            FROM tot t, generate_series(0, :probe_n - 1) AS gs
-            WHERE t.n > 0
-        ) pick ON pick.rn = r.rn
-    ), hit AS (
-        SELECT p.embedding AS pe, n.report_id, n.dist
-        FROM probe p CROSS JOIN LATERAL (
-            SELECT c.report_id, c.embedding <=> p.embedding AS dist
+def _similar_sql() -> TextClause:
+    return text(
+        f"""
+        WITH ranked AS (
+            SELECT c.embedding,
+                   row_number() OVER (ORDER BY c.chunk_index) - 1 AS rn
             FROM research.report_chunk c
-            WHERE c.report_id <> :rid
-            ORDER BY c.embedding <=> p.embedding
-            LIMIT :per_probe
-        ) n
-        WHERE n.dist <= :max_dist
-    ), best AS (
-        SELECT DISTINCT ON (pe, report_id) pe, report_id, dist
-        FROM hit ORDER BY pe, report_id, dist
-    ), agg AS (
-        SELECT report_id, count(*) AS matched_probes,
-               sum(1 - dist) AS score, min(dist) AS best_dist
-        FROM best GROUP BY report_id
+            WHERE c.report_id = :rid AND c.embedding IS NOT NULL
+        ), tot AS (
+            SELECT count(*) AS n FROM ranked
+        ), probe AS (
+            -- 沿 chunk_index 均勻取最多 :probe_n 個位置（見上方註解的取樣理由與整數除法陷阱）
+            SELECT r.embedding
+            FROM ranked r
+            JOIN (
+                SELECT DISTINCT
+                       floor(gs * t.n::numeric / LEAST(:probe_n, GREATEST(t.n, 1)))::int AS rn
+                FROM tot t, generate_series(0, :probe_n - 1) AS gs
+                WHERE t.n > 0
+            ) pick ON pick.rn = r.rn
+        ), hit AS (
+            SELECT p.embedding AS pe, n.report_id, n.dist
+            FROM probe p CROSS JOIN LATERAL (
+                SELECT c.report_id, c.embedding <=> p.embedding AS dist
+                FROM research.report_chunk c
+                WHERE c.report_id <> :rid
+                ORDER BY c.embedding <=> p.embedding
+                LIMIT :per_probe
+            ) n
+            WHERE n.dist <= :max_dist
+        ), best AS (
+            SELECT DISTINCT ON (pe, report_id) pe, report_id, dist
+            FROM hit ORDER BY pe, report_id, dist
+        ), agg AS (
+            SELECT report_id, count(*) AS matched_probes,
+                   sum(1 - dist) AS score, min(dist) AS best_dist
+            FROM best GROUP BY report_id
+        )
+        SELECT r.file_hash, r.file_name, r.market, r.source, r.report_date, r.summary,
+               a.matched_probes, a.score, (SELECT count(*) FROM probe) AS total_probes,
+               r.title
+        FROM agg a JOIN research.research_report r ON r.id = a.report_id
+        WHERE {doc_type_enabled_sql("r", "reading")} AND a.matched_probes >= :min_probes
+          -- 被隱藏的研報不列為相似研報。放在聚合之後（不進 LATERAL 的 HNSW 掃描）：隱藏是少數例外，
+          -- 頂多讓某個 probe 的 per_probe 名額少幾個，不值得為它改動這支 SQL 量出來的參數。
+          AND {visible_report_sql("r")}
+        ORDER BY a.score DESC, a.best_dist ASC, r.report_date DESC NULLS LAST, r.file_name
+        LIMIT :limit
+        """
     )
-    SELECT r.file_hash, r.file_name, r.market, r.source, r.report_date, r.summary,
-           a.matched_probes, a.score, (SELECT count(*) FROM probe) AS total_probes,
-           r.title
-    FROM agg a JOIN research.research_report r ON r.id = a.report_id
-    WHERE r.is_research IS NOT FALSE AND a.matched_probes >= :min_probes
-      -- 被隱藏的研報不列為相似研報。放在聚合之後（不進 LATERAL 的 HNSW 掃描）：隱藏是少數例外，
-      -- 頂多讓某個 probe 的 per_probe 名額少幾個，不值得為它改動 _SIMILAR_SQL 量出來的參數。
-      AND {visible_report_sql("r")}
-    ORDER BY a.score DESC, a.best_dist ASC, r.report_date DESC NULLS LAST, r.file_name
-    LIMIT :limit
-    """
-)
 
 
 async def fetch_similar(
@@ -366,7 +375,7 @@ async def fetch_similar(
     min_probes: int = 2,
     limit: int = 6,
 ) -> list[SimilarRow]:
-    """找與本篇內容相似的其他研報（見上方 _SIMILAR_SQL 的取樣與排序理由）。
+    """找與本篇內容相似的其他研報（見上方 _similar_sql() 的取樣與排序理由）。
 
     total_probes 為實際取到的 probe 數（可能少於 probe_n：短報告的 chunk 數不足），
     隨每列一起回傳，供前端顯示「9/12 段相符」。無命中時回空 list。
@@ -378,7 +387,7 @@ async def fetch_similar(
     )
     rows = (
         await session.execute(
-            _SIMILAR_SQL,
+            _similar_sql(),
             {
                 "rid": report_id,
                 "probe_n": probe_n,

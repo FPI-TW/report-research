@@ -125,7 +125,7 @@ async def _ingest_draft(session, file_hash, *, name="審核測試", object_key=N
     )
     row = store.ReportRow(
         file_hash=file_hash, file_name=f"{name}.pdf", file_path=f"/nonexistent/{name}.pdf", market="TW",
-        is_research=True, confidence=0.9, stock_code="ZQR1", company_name="審核測試公司", source="測試券商",
+        doc_type="research", confidence=0.9, stock_code="ZQR1", company_name="審核測試公司", source="測試券商",
         report_date=date(2099, 1, 2), report_type="個股", language="zh", stock_targets=["ZQR1"],
         instrument_types=["stock"], relates_stock=True, full_text=CJK_TEXT, source_object_key=object_key,
     )

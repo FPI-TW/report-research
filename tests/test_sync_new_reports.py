@@ -12,6 +12,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import sync_new_reports as snr  # noqa: E402
 
+from app.services.tagging import doc_type_for  # noqa: E402
 from scripts import _claude_cli as cc  # noqa: E402
 from scripts import _ingest_core as ic  # noqa: E402
 
@@ -20,6 +21,10 @@ from scripts import _ingest_core as ic  # noqa: E402
 class _Tag:
     market: str | None
     is_research: bool
+
+    @property
+    def doc_type(self) -> str:  # 與 tagging.MarketTag.doc_type 同一個映射
+        return doc_type_for(self.is_research)
 
 
 class SyncNewReportsTests(unittest.TestCase):

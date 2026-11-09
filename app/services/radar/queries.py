@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import TextClause, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.doc_types import doc_type_enabled_sql
 from app.services.radar.types import (
     EFFECTIVE_BROKER_SQL,
     SIGNAL_SELECT_SQL,
@@ -119,6 +120,7 @@ def _instrument_signals_sql(broker: bool) -> str:
         "WHERE s.market = :market AND s.instrument_code = :code "
         "  AND s.extraction_status = ANY(:statuses) "
         f"  AND {visible_report_sql('r')} "
+        f"  AND {doc_type_enabled_sql('r', 'radar')} "
         f"{where_broker}"
         f"{order}"
     )
@@ -151,17 +153,19 @@ async def fetch_broker_signals(
 # 陣列參數一律用 CAST(:x AS text[])，不可寫 :x::text[]：text() 的 bind 比對規則遇到
 # 參數名緊接 :: 會回溯成短名（:markets → bind "market" ＋殘字 "s"），冒號原樣送進 PG 而炸
 # syntax error，且缺參數不會有例外——只在真的打 DB 時才爆。
-_BATCH_SIGNALS_SQL = text(
-    f"SELECT {SIGNAL_SELECT_SQL} "
-    "FROM research.report_signal s "
-    "JOIN research.research_report r ON r.id = s.report_id "
-    "WHERE (s.market, s.instrument_code) IN ("
-    "  SELECT m, c FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c)) "
-    "  AND s.extraction_status = ANY(:statuses) "
-    f"  AND {visible_report_sql('r')} "
-    f"ORDER BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL} ASC NULLS LAST, "
-    "         s.report_date DESC NULLS LAST, s.created_at DESC, s.id DESC"
-)
+def _batch_signals_sql() -> TextClause:
+    return text(
+        f"SELECT {SIGNAL_SELECT_SQL} "
+        "FROM research.report_signal s "
+        "JOIN research.research_report r ON r.id = s.report_id "
+        "WHERE (s.market, s.instrument_code) IN ("
+        "  SELECT m, c FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c)) "
+        "  AND s.extraction_status = ANY(:statuses) "
+        f"  AND {visible_report_sql('r')} "
+        f"  AND {doc_type_enabled_sql('r', 'radar')} "
+        f"ORDER BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL} ASC NULLS LAST, "
+        "         s.report_date DESC NULLS LAST, s.created_at DESC, s.id DESC"
+    )
 
 
 async def fetch_signals_for_instruments(
@@ -176,7 +180,7 @@ async def fetch_signals_for_instruments(
     out: dict[tuple[str, str], list[Signal]] = {}
     rows = (
         await session.execute(
-            _BATCH_SIGNALS_SQL,
+            _batch_signals_sql(),
             {
                 "markets": [m for m, _ in keys],
                 "codes": [c for _, c in keys],
@@ -196,39 +200,40 @@ async def fetch_signals_for_instruments(
 # 這裡的 WHERE 用法下語意等價（arr 為 NULL/空、元素含 NULL、:code 非 NULL 皆已逐情境對過）。
 # 註：現況約 1.4 萬列且 full_text 多半 TOAST 出去，單次全掃的量級估算只有數十毫秒（未實測）
 # ——這是「規模一放大就線性惡化」的預防，不是已量測到的加速。
-_COVERAGE_SQL = text(
-    f"""
-    SELECT
-      (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
-         FROM research.research_report r
-         LEFT JOIN research.report_signal s
-           ON s.report_id = r.id
-          AND s.market = :market
-          AND s.instrument_code = :code
-         WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
-           AND r.is_research IS NOT FALSE
-           AND {visible_report_sql("r")}) AS brokers_total,
-      (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
-         FROM research.report_signal s
-         JOIN research.research_report r ON r.id = s.report_id
-         WHERE s.market = :market AND s.instrument_code = :code
-           AND s.extraction_status = ANY(:statuses)
-           AND r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
-           AND r.is_research IS NOT FALSE
-           AND {visible_report_sql("r")}) AS brokers_extracted,
-      (SELECT count(*) FROM research.research_report r
-         WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
-           AND r.is_research IS NOT FALSE
-           AND {visible_report_sql("r")}) AS reports_available,
-      (SELECT r.company_name FROM research.research_report r
-         WHERE r.market = :market AND r.stock_code = :code
-           AND r.company_name IS NOT NULL
-           AND r.is_research IS NOT FALSE
-           AND {visible_report_sql("r")}
-         ORDER BY r.report_date DESC NULLS LAST, r.created_at DESC, r.id
-         LIMIT 1) AS instrument_name
-    """
-)
+def _coverage_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT
+          (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
+             FROM research.research_report r
+             LEFT JOIN research.report_signal s
+               ON s.report_id = r.id
+              AND s.market = :market
+              AND s.instrument_code = :code
+             WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
+               AND {doc_type_enabled_sql("r", "radar")}
+               AND {visible_report_sql("r")}) AS brokers_total,
+          (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
+             FROM research.report_signal s
+             JOIN research.research_report r ON r.id = s.report_id
+             WHERE s.market = :market AND s.instrument_code = :code
+               AND s.extraction_status = ANY(:statuses)
+               AND r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
+               AND {doc_type_enabled_sql("r", "radar")}
+               AND {visible_report_sql("r")}) AS brokers_extracted,
+          (SELECT count(*) FROM research.research_report r
+             WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
+               AND {doc_type_enabled_sql("r", "radar")}
+               AND {visible_report_sql("r")}) AS reports_available,
+          (SELECT r.company_name FROM research.research_report r
+             WHERE r.market = :market AND r.stock_code = :code
+               AND r.company_name IS NOT NULL
+               AND {doc_type_enabled_sql("r", "radar")}
+               AND {visible_report_sql("r")}
+             ORDER BY r.report_date DESC NULLS LAST, r.created_at DESC, r.id
+             LIMIT 1) AS instrument_name
+        """
+    )
 
 
 async def fetch_coverage_counts(
@@ -236,7 +241,7 @@ async def fetch_coverage_counts(
 ) -> CoverageCounts:
     row = (
         await session.execute(
-            _COVERAGE_SQL, {"market": market, "code": code, "statuses": VALID_STATUSES}
+            _coverage_sql(), {"market": market, "code": code, "statuses": VALID_STATUSES}
         )
     ).first()
     brokers_total = int(row[0] or 0)
@@ -249,24 +254,25 @@ async def fetch_coverage_counts(
     )
 
 
-_BROKER_COVERAGE_SQL = text(
-    f"""
-    SELECT
-      count(DISTINCT r.id) AS instrument_reports_available,
-      count(DISTINCT r.id) FILTER (
-        WHERE {EFFECTIVE_BROKER_SQL} = :broker
-      ) AS broker_reports_available
-    FROM research.research_report r
-    LEFT JOIN research.report_signal s
-      ON s.report_id = r.id
-     AND s.market = :market
-     AND s.instrument_code = :code
-    WHERE r.market = :market
-      AND r.stock_targets @> ARRAY[:code]::text[]
-      AND r.is_research IS NOT FALSE
-      AND {visible_report_sql("r")}
-    """
-)
+def _broker_coverage_sql() -> TextClause:
+    return text(
+        f"""
+        SELECT
+          count(DISTINCT r.id) AS instrument_reports_available,
+          count(DISTINCT r.id) FILTER (
+            WHERE {EFFECTIVE_BROKER_SQL} = :broker
+          ) AS broker_reports_available
+        FROM research.research_report r
+        LEFT JOIN research.report_signal s
+          ON s.report_id = r.id
+         AND s.market = :market
+         AND s.instrument_code = :code
+        WHERE r.market = :market
+          AND r.stock_targets @> ARRAY[:code]::text[]
+          AND {doc_type_enabled_sql("r", "radar")}
+          AND {visible_report_sql("r")}
+        """
+    )
 
 
 async def fetch_broker_coverage_counts(
@@ -275,7 +281,7 @@ async def fetch_broker_coverage_counts(
     """區分標的不存在、canonical broker 不存在與尚未擷取訊號。"""
     row = (
         await session.execute(
-            _BROKER_COVERAGE_SQL,
+            _broker_coverage_sql(),
             {"market": market, "code": code, "broker": broker},
         )
     ).first()
@@ -293,11 +299,11 @@ def _catalog_cte() -> str:
         f"         {EFFECTIVE_BROKER_SQL} AS broker"
         "  FROM research.report_signal s"
         "  JOIN research.research_report r ON r.id = s.report_id"
-        "  WHERE r.is_research IS NOT FALSE"
+        f"  WHERE {doc_type_enabled_sql('r', 'radar')}"
         f"    AND {visible_report_sql('r')}"
         "    AND s.market = r.market"
         "    AND s.market = ANY(:markets)"
-        # 同 _COVERAGE_SQL 的理由改寫成 @>；右運算元是外層關聯的欄位而非 bind，nested loop
+        # 同 _coverage_sql() 的理由改寫成 @>；右運算元是外層關聯的欄位而非 bind，nested loop
         # 下仍可拿它當 GIN 的搜尋鍵，而 = ANY() 形式連這個機會都沒有。
         "    AND r.stock_targets @> ARRAY[s.instrument_code]::text[]"
         "), sig AS ("
@@ -324,7 +330,7 @@ def _catalog_cte() -> str:
         "    ON s.report_id = r.id"
         "   AND s.market = r.market"
         "   AND s.instrument_code = st"
-        "  WHERE r.is_research IS NOT FALSE"
+        f"  WHERE {doc_type_enabled_sql('r', 'radar')}"
         f"    AND {visible_report_sql('r')}"
         "    AND r.market = ANY(:markets)"
         "  GROUP BY r.market, st"
@@ -440,56 +446,57 @@ FIVE_LEVEL_RATINGS = ["buy", "overweight", "neutral", "underweight", "sell"]
 #
 # - 「前一份」是同一家券商（`EFFECTIVE_BROKER_SQL`）對同一標的**緊鄰的上一份**有效訊號，
 #   排序鍵與 `compute._signal_sort_key` 相同；上一份是 unknown 就不算變動（不跳過它往前找）。
-# - lag() 開在全表上、最後才挑變動列，理由同 brief._SIGNAL_CHANGES_SQL：真正的變動一定跨報告比。
+# - lag() 開在全表上、最後才挑變動列，理由同 brief._signal_changes_sql()：真正的變動一定跨報告比。
 # - 被隱藏研報的訊號在 ranked **之內**就排除：它既不能是「這次」，也不能是下一份的「上次」。
 # - 「這次」那份研報必須真的列在該標的底下（同市場、stock_targets 含代號），否則點過去的
 #   券商共識頁會因為 `fetch_coverage_counts` 找不到研報而 404。
 # - report_date 為 NULL 的不列：排不出先後，寧可漏也不要把舊變動排到最上面。
-_RECENT_RATING_CHANGES_SQL = text(
-    f"""
-    WITH ranked AS (
-        SELECT s.id, s.market, s.instrument_code, s.report_date, s.created_at,
-               {EFFECTIVE_BROKER_SQL} AS broker,
-               s.rating_normalized,
-               lag(s.rating_normalized) OVER w AS prev_rating,
-               (r.market = s.market
-                AND r.stock_targets @> ARRAY[s.instrument_code]::text[]
-                AND r.is_research IS NOT FALSE) AS listed
-        FROM research.report_signal s
-        JOIN research.research_report r ON r.id = s.report_id
-        WHERE s.extraction_status = ANY(CAST(:statuses AS text[]))
-          AND s.market = ANY(CAST(:markets AS text[]))
-          AND {EFFECTIVE_BROKER_SQL} IS NOT NULL
-          AND {visible_report_sql("r")}
-        WINDOW w AS (
-            PARTITION BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL}
-            ORDER BY s.report_date NULLS FIRST, s.created_at, s.id
+def _recent_rating_changes_sql() -> TextClause:
+    return text(
+        f"""
+        WITH ranked AS (
+            SELECT s.id, s.market, s.instrument_code, s.report_date, s.created_at,
+                   {EFFECTIVE_BROKER_SQL} AS broker,
+                   s.rating_normalized,
+                   lag(s.rating_normalized) OVER w AS prev_rating,
+                   (r.market = s.market
+                    AND r.stock_targets @> ARRAY[s.instrument_code]::text[]) AS listed
+            FROM research.report_signal s
+            JOIN research.research_report r ON r.id = s.report_id
+            WHERE s.extraction_status = ANY(CAST(:statuses AS text[]))
+              AND s.market = ANY(CAST(:markets AS text[]))
+              AND {EFFECTIVE_BROKER_SQL} IS NOT NULL
+              AND {visible_report_sql("r")}
+              AND {doc_type_enabled_sql("r", "radar")}
+            WINDOW w AS (
+                PARTITION BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL}
+                ORDER BY s.report_date NULLS FIRST, s.created_at, s.id
+            )
+        ), changes AS (
+            SELECT id, market, instrument_code, report_date, created_at, broker,
+                   prev_rating, rating_normalized
+            FROM ranked
+            WHERE listed
+              AND report_date IS NOT NULL
+              AND prev_rating = ANY(CAST(:levels AS text[]))
+              AND rating_normalized = ANY(CAST(:levels AS text[]))
+              AND prev_rating <> rating_normalized
+            ORDER BY report_date DESC, created_at DESC, id DESC
+            LIMIT :limit
         )
-    ), changes AS (
-        SELECT id, market, instrument_code, report_date, created_at, broker,
-               prev_rating, rating_normalized
-        FROM ranked
-        WHERE listed
-          AND report_date IS NOT NULL
-          AND prev_rating = ANY(CAST(:levels AS text[]))
-          AND rating_normalized = ANY(CAST(:levels AS text[]))
-          AND prev_rating <> rating_normalized
-        ORDER BY report_date DESC, created_at DESC, id DESC
-        LIMIT :limit
+        SELECT c.market, c.instrument_code,
+               (SELECT rn.company_name FROM research.research_report rn
+                 WHERE rn.market = c.market AND rn.stock_code = c.instrument_code
+                   AND rn.company_name IS NOT NULL
+                   AND {doc_type_enabled_sql("rn", "radar")}
+                   AND {visible_report_sql("rn")}
+                 ORDER BY rn.report_date DESC NULLS LAST, rn.created_at DESC, rn.id
+                 LIMIT 1) AS instrument_name,
+               c.broker, c.report_date, c.prev_rating, c.rating_normalized
+        FROM changes c
+        ORDER BY c.report_date DESC, c.created_at DESC, c.id DESC
+        """
     )
-    SELECT c.market, c.instrument_code,
-           (SELECT rn.company_name FROM research.research_report rn
-             WHERE rn.market = c.market AND rn.stock_code = c.instrument_code
-               AND rn.company_name IS NOT NULL
-               AND rn.is_research IS NOT FALSE
-               AND {visible_report_sql("rn")}
-             ORDER BY rn.report_date DESC NULLS LAST, rn.created_at DESC, rn.id
-             LIMIT 1) AS instrument_name,
-           c.broker, c.report_date, c.prev_rating, c.rating_normalized
-    FROM changes c
-    ORDER BY c.report_date DESC, c.created_at DESC, c.id DESC
-    """
-)
 
 
 async def fetch_recent_rating_changes(
@@ -498,7 +505,7 @@ async def fetch_recent_rating_changes(
     """全部標的中最新的幾筆評等變動（新到舊）。空清單是常態：多數日子沒有券商改評等。"""
     rows = (
         await session.execute(
-            _RECENT_RATING_CHANGES_SQL,
+            _recent_rating_changes_sql(),
             {
                 "statuses": VALID_STATUSES,
                 "markets": list(MARKETS),

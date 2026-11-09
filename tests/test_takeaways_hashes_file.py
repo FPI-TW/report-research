@@ -47,7 +47,7 @@ class BuildReportsSqlScopeTests(unittest.TestCase):
         sql = self.mod.build_reports_sql(by_hashes=True)
         self.assertIn("r.full_text IS NOT NULL", sql)
         self.assertIn("r.full_text <> ''", sql)
-        self.assertIn("r.is_research IS NOT FALSE", sql)
+        self.assertIn("r.doc_type IN ('research')", sql)
 
     def test_no_inline_cast_colon_syntax(self):
         """專案鐵律（見檔頭註解）：一律 CAST(:x AS t)，寫 :x::t 會讓參數綁不上 → 生產 500。"""

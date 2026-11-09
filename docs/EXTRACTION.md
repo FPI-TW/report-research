@@ -154,7 +154,7 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 | 每家券商一支 parser | 只會累積不會刪除 |
 | LLM 做 profiling 或評分 | 不可重現、成本不成比例 |
 | 修 `clean_extracted` 的 CJK 空白邏輯 | 表格改走 markdown 就不需要；且它與 `content_norm` 沒有耦合（後者對應 `norm_for_match`） |
-| 把 `is_admin` 與 `is_research=false` 入庫 | 汙染檢索；改記 `extraction_log` |
+| 把 `is_admin` 與入庫閘不過的檔（廷豐 profile 下即 `is_research=false`，`doc_types.ingest_gate`）入庫 | 汙染檢索；改記 `extraction_log` |
 | 抽取評測進 CI | 需要 DB 與真實 PDF，且與定時同步互搶批次資源 |
 | 用 `images` 當圖區、用 pdfplumber 文字策略重抽可疑表格 | 前者把側欄底圖當圖、目標價整排消失；後者以字元定欄界，欄界落在被切開的數字中間（v4 實測，§4） |
 | 樣板段落從 `full_text` 拿掉 | 閱讀頁與摘錄錨點都建立在完整正典文字上；樣板只是不進 chunk（§12） |

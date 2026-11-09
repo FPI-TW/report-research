@@ -85,7 +85,7 @@ async def _ingest(session, name: str) -> str:
     file_hash = hashlib.sha256(f"lexdet-{name}-{uuid.uuid4()}".encode()).hexdigest()
     row = store.ReportRow(
         file_hash=file_hash, file_name=f"{name}.pdf", file_path=f"/nonexistent/{name}.pdf",
-        market="TW", is_research=True, confidence=1.0, source=f"測試券商{name}",
+        market="TW", doc_type="research", confidence=1.0, source=f"測試券商{name}",
         report_date=date(2099, 1, 2), report_type="產業", full_text=f"{TERM} {name}",
     )
     chunks = [f"{TERM} 字面可重現測試 {name} 第{i}段" for i in range(CHUNKS_PER_REPORT)]

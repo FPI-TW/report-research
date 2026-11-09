@@ -10,7 +10,7 @@
    跳過，不再每輪重打（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
 
 **擷取單位＝一份研報**（一次 LLM 呼叫回該報告涵蓋的多標的，Python fan-out 成多列）。
-資料源用 DB full_text（天然只涵蓋已入庫、is_research 的語料）。
+資料源用 DB full_text（只涵蓋已入庫、類型開了訊號擷取的語料；`doc_types.doc_type_enabled_sql`）。
 
 用法：
   uv run python scripts/extract_signals.py --dry-run          # 只印子集與工作項數
@@ -42,6 +42,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.doc_types import doc_type_enabled_sql  # noqa: E402
 from app.services.rating_index import strip_rating_index  # noqa: E402
 from app.services.signal_extract import (  # noqa: E402
     EXTRACTION_VERSION,
@@ -82,7 +83,7 @@ def build_subset_sql() -> str:
         "SELECT st AS instrument_code, r.market, "
         "count(DISTINCT r.source) AS broker_count, count(*) AS report_count "
         "FROM research.research_report r, unnest(r.stock_targets) st "
-        "WHERE r.is_research IS NOT FALSE "
+        f"WHERE {doc_type_enabled_sql('r', 'signal')} "
         "  AND r.report_date IS NOT NULL "
         "GROUP BY st, r.market "
         "HAVING count(DISTINCT r.source) >= :min_brokers "
@@ -105,7 +106,7 @@ def build_reports_sql() -> str:
         "FROM research.research_report r "
         "WHERE r.market = :market "
         "  AND r.stock_targets && CAST(:codes AS text[]) "
-        "  AND r.is_research IS NOT FALSE "
+        f"  AND {doc_type_enabled_sql('r', 'signal')} "
         "  AND r.full_text IS NOT NULL "
         "  AND r.report_date IS NOT NULL "
         "ORDER BY r.report_date DESC NULLS LAST, r.file_name"

@@ -13,7 +13,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `app/config.py` | 集中讀環境變數為 frozen dataclass `Settings`（`get_settings()`）。驗證器對 typo 不靜默：`LOG_LEVEL`、`EXTRACTOR`、`OBJECT_STORAGE_MODE` 打錯會警告退回預設或拒絕啟動 |
-| `app/profile.py` | 部署 profile（`get_profile()`，frozen dataclass、行程內快取、`reset_profile_cache()`）：讀 `PROFILE_DIR`（預設 `profiles/tingfong`）的 `profile.toml`，sections 是 `[institution]`（機構名、產品名、簡稱）、`[branding]`（亮暗 logo、favicon、強調色覆寫）、`[prompt]`（注入 prompt 的稱謂）、`[markets]`（使用者端啟用的標準市場子集與顯示名稱）、`[security]`（TOTP 發行者）。**嚴格驗證、fail-closed**：未知 section 或鍵、型別錯、引用不存在或跳出 `assets/` 的檔、非標準市場代碼、目錄不存在一律拋 `ProfileError`（訊息帶檔案與鍵），web 在 lifespan 第一步載入，錯了拒起。每個 section 一個 parser，以 `@_section` 登記（`Profile` 的欄位與登記表由 `tests/test_profile.py` 對帳）；後續 section 的欄位加在 `Profile` 末尾、帶預設。葉模組（只 import 標準函式庫與 `app.services.tagging`），`PROFILE_DIR` 刻意不進 `Settings`（理由在 docstring） |
+| `app/profile.py` | 部署 profile（`get_profile()`，frozen dataclass、行程內快取、`reset_profile_cache()`）：讀 `PROFILE_DIR`（預設 `profiles/tingfong`）的 `profile.toml`，sections 是 `[institution]`（機構名、產品名、簡稱）、`[branding]`（亮暗 logo、favicon、強調色覆寫）、`[prompt]`（注入 prompt 的稱謂）、`[markets]`（使用者端啟用的標準市場子集與顯示名稱）、`[security]`（TOTP 發行者）、`[doc_types]`（文件類型與各類型啟用的功能，見 §8）。**嚴格驗證、fail-closed**：未知 section 或鍵、型別錯、引用不存在或跳出 `assets/` 的檔、非標準市場代碼、目錄不存在一律拋 `ProfileError`（訊息帶檔案與鍵），web 在 lifespan 第一步載入，錯了拒起。每個 section 一個 parser，以 `@_section` 登記（`Profile` 的欄位與登記表由 `tests/test_profile.py` 對帳）；後續 section 的欄位加在 `Profile` 末尾、帶預設。葉模組（只 import 標準函式庫與 `app.services.tagging`），`PROFILE_DIR` 刻意不進 `Settings`（理由在 docstring） |
 | `app/logging_setup.py` | dictConfig 宣告 root logger；刻意不宣告 uvicorn 的三個 logger。只在 `web/server.py` 初始化，順序由 `tests/test_logging_setup.py` 釘住；批次腳本的 `logger.info` 無聲 |
 | `app/request_context.py` | HTTP 請求的日誌關聯 id（`contextvars`；`create_task`／`to_thread` 自動沿用）。handler 上的 `RequestIdFilter` 把它蓋到每筆 record，日誌行以 `rid=` 呈現；批次與啟動期為 `-`。**不是** `qa_log.request_id`（那是前端冪等鍵）。另帶使用者 id：`require_login` 設值，`llm_http` 的 observer 與用量 middleware 據此歸因到人；只是歸因標記、不是授權 |
 
@@ -204,7 +204,7 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 
 | 表 | 用途 | 關係 |
 |---|---|---|
-| `research_report` | 研報主檔：檔案、標籤、`full_text`、`summary`、顯示標題三欄（`title`／`title_original`／`title_source`）、抽取七欄、`source_object_key` | `file_hash` UNIQUE；`is_research` NOT NULL DEFAULT true |
+| `research_report` | 研報主檔：檔案、標籤、文件類型 `doc_type`、`full_text`、`summary`、顯示標題三欄（`title`／`title_original`／`title_source`）、抽取七欄、`source_object_key` | `file_hash` UNIQUE；`doc_type` NOT NULL DEFAULT `'research'`、CHECK 形狀（詞彙由 profile 決定、不列舉）；舊欄位 `is_research` NOT NULL DEFAULT true 保留，CHECK 綁成 `is_research = (doc_type = 'research')`（revision 0012） |
 | `report_chunk` | 切塊、`embedding vector(1024)`（HNSW cosine）、生成欄 `content_norm`（GIN trgm） | FK → `research_report` CASCADE |
 | `qa_log` | 問答紀錄：`filters`、`sources`、`ext_sources`、`stages`、`followups`、`evidence_manifest`、`evaluation`、版本鏈 `root_qa_id`、`request_id` UNIQUE、擁有者 `user_id` | `conversation_id` 軟連結；`user_id` → `app_user.id` 刻意無 FK（備份表不被還原順序綁住），NULL＝個別帳號上線前的共用歷史，一般介面看不到 |
 | `report_signal` | 雷達訊號（研報 × 標的） | FK → `research_report` CASCADE；UNIQUE(report_id, market, instrument_code) |
@@ -231,6 +231,8 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
 
 備份涵蓋二十張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`、`api_client`、`api_client_entitlement`）→ NAS；語料層（可由原檔重建）、`user_session` 與 `api_client_usage` 刻意不備；`usage_counter`、`llm_usage_daily`、`db_stat_snapshot` 與觀測、排程執行的投影（`service_observation*`、`job_execution`）也不在備份範圍。備份只在辦公室主機跑（`report-mark-backup.timer`，NAS）；正式環境靠 RDS 自動備份。`app_user` 含 Argon2id 密碼雜湊，備份檔要當機密看待。
+
+文件類型（revision 0012，`app/services/doc_types.py`）：`research_report.doc_type` 是文件類型，每種類型啟用哪些功能（`search`、`reading`、`tagging_markets`、`summary`、`title`、`takeaway`、`signal`、`radar`、`brief`、`overview`；詞彙是 `app/profile.py` 的 `DOC_FEATURES`）由 profile 的 `[doc_types]` 決定。廷豐 profile：`research` 全開、`non_research` 全關，等同改動前的 `is_research` true／false。讀取一律經 `doc_type_enabled_sql(別名, 功能…)`／`doc_type_enabled_id_sql(欄位, 功能…)`，片段在呼叫時依 profile 渲染，所以帶它的 SQL 寫成函式、不是模組常數；面向使用者的語料查詢與 `visible_report_sql` 並列（`tests/test_doc_type_guard.py` 同時禁止再寫 `is_research` 過濾）。入庫閘是 `doc_types.ingest_gate`（類型至少開一個功能；開了 `tagging_markets` 時 market 必填）。標註器的 `is_research` 判斷由 `tagging.MarketTag.doc_type` 映射成類型，tag JSON 格式不變。`is_research` 是舊版程式與備份還原的相容欄位：寫入由 `doc_type` 推得（`store.upsert_report`），不再讀它。刻意不分類型的：管理面（`visibility.list_reports`）、`web/stats_snapshot.py` 的券商與市場分佈、`make db-audit` 的 chunkless 檢查。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。
@@ -284,7 +286,7 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 | `rows.ChunkRow` 新欄位插中段不 append | `app/services/rows.py` |
 | 字面路 cap 前以 `c.id` 排序、查詢前強迫 custom plan | `app/services/store.py` 的 `_lexical_sql` docstring 與 `search_chunks_lexical` 註解、`tests/test_lexical_determinism_db.py` |
 | `ASK_*` 逾時、`DB_*` 逾時的數字 | `app/config.py` 逐條註解 |
-| `zh_hant.py` 的判別法與門檻、`faithfulness.is_numeric_claim`、`reading/queries.py` 的 `_SIMILAR_SQL`、`ASK_RERANK_CANDIDATES` | `zh_hant.py` 模組 docstring、`faithfulness.py` 的 `_NUMERIC_RE` 上方、`reading/queries.py` 的 `_SIMILAR_SQL` 周邊註解、`docs/CAPACITY.md` |
+| `zh_hant.py` 的判別法與門檻、`faithfulness.is_numeric_claim`、`reading/queries.py` 的 `_similar_sql`、`ASK_RERANK_CANDIDATES` | `zh_hant.py` 模組 docstring、`faithfulness.py` 的 `_NUMERIC_RE` 上方、`reading/queries.py` 的 `_similar_sql` 周邊註解、`docs/CAPACITY.md` |
 | 抽取層不用 PyMuPDF、不用 LLM 評分、快取不存 bbox | `docs/EXTRACTION.md` |
 | session 每個請求查 DB、不快取；刪除帳號保留列只清內容與可識別資料、正確性靠交易與 tombstone 重放而非 FK；TOTP 時間步不可重用；稽核與變更同交易 | `app/services/accounts.py` 模組 docstring |
 | 問答紀錄的舊共用歷史（`user_id` NULL）對一般使用者隱藏 | `db/schema.sql` 的 `qa_log.user_id` 註解 |

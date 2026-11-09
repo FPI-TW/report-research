@@ -24,6 +24,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 - 市場代碼是框架固定的標準詞彙（`tagging.MARKETS`，標註 prompt 不變）；profile 只能選使用者端啟用的子集（選單、`market` 篩選、API 用戶端 entitlement）與改顯示名稱，**不是可見性**：標到未啟用市場的研報照常出現在不帶篩選的清單與問答裡。給 LLM 的文字（簡報、總覽的分面統計）照舊用標準名稱。
 - 品牌對前端只經免登入的 `GET /api/branding`（名稱、asset URL、強調色）與 `GET /api/branding/assets/{name}`；登入頁由伺服器注入，SPA 由 `frontend/src/lib/branding.ts` 在啟動時抓、讀不到退回中性預設。強調色的鍵是固定清單（`ACCENT_TOKENS`，前端 `ACCENT_CSS_VARS` 對到 `tokens.css` 的鎏金系列與 `--ac-gold*`），色值只收 hex 與 `rgb()`／`rgba()`。
 - 加新 section：一個 parser＋`@_section` 登記＋`Profile` 末尾帶預設的欄位（步驟在 `app/profile.py` docstring）。
+- 兩個 profile：`profiles/tingfong`（預設、正式）與 `profiles/demo`（虛構的示範券商）。後者每一項都刻意與廷豐不同（機構與產品名、自製 logo、強調色、市場只開 `TW`／`US`／`MACRO`、S3 連接器＋metadata 側檔、背景補齊開著且上限小），用途有二：證明框架不依賴廷豐的設定（`scripts/e2e_compose.py` 以它把 compose 從空庫跑到問答，`tests/test_demo_profile.py` 釘住「每一項都不同」），以及業務展示環境（`docs/CONTAINER_DEPLOYMENT.md`「示範環境」）。它的語料是 `scripts/demo_corpus.py` 以固定種子產生的虛構 PDF，LLM 是 `deploy/demo/fake_llm.py`（OpenAI 相容的決定性假服務）。
 
 ### 2.2 `app/services/` 檢索與問答
 

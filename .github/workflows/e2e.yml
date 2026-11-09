@@ -1,0 +1,195 @@
+name: E2E（容器、示範 profile）
+
+# 容器端到端測試（scripts/e2e_compose.py）：以示範券商 profile（profiles/demo）把 compose 從空庫跑到問答。
+# 獨立的 workflow 檔、**不是必要檢查**：映像要 build 好幾 GB（torch＋兩份模型權重）、要十幾分鐘，
+# 不該擋住每一個 PR；分支保護的 required check 只認 ci.yml 的四個 job 名稱（這裡的 job 名稱刻意不撞名，
+# tests/test_demo_profile.py 守）。
+#
+# 假 LLM（deploy/demo/fake_llm.py）與 S3 測試伺服器（moto，Apache-2.0）都在 compose 裡，預設那一條零外連、零費用。
+# 真實 LLM 的版本只能手動觸發（workflow_dispatch 勾 real_llm），金鑰由 repo secret 提供；沒設 secret 就跳過。
+
+on:
+  pull_request:
+    # 分支清單與 ci.yml 相同（tests/test_demo_profile.py 對帳）。
+    branches: [main, 'admin-v*-integration', 'ui-v*-integration', 'framework-v*-integration']
+    # 只在會改變映像或端到端行為的檔案變動時跑（文件、測試以外幾乎都算）。
+    paths:
+      - 'app/**'
+      - 'web/**'
+      - 'scripts/**'
+      - 'deploy/**'
+      - 'profiles/**'
+      - 'db/**'
+      - 'frontend/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.dockerignore'
+      - '.github/workflows/e2e.yml'
+  workflow_dispatch:
+    inputs:
+      real_llm:
+        description: '另跑一次接真實 LLM 的版本（需要 E2E_LLM_API_KEY、E2E_LLM_MODEL secret）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: 容器端到端（示範 profile、假 LLM）
+    runs-on: ubuntu-latest
+    # 實測量級：映像 build 快取命中約 5 分鐘、未命中（下載約 4.5 GB 權重＋torch）約 20 分鐘；
+    # 合成語料約 3 分鐘；compose 端到端約 10 分鐘。
+    timeout-minutes: 75
+    env:
+      E2E_IMAGE: report-mark:e2e
+    steps:
+      - uses: actions/checkout@v7
+
+      # runner 的根磁碟只有十幾 GB 可用，映像本身約 10 GB（buildx 的快取另外再一份）。
+      # 刪掉用不到的預裝工具鏈（.NET、Android SDK、GHC、CodeQL）約可騰出 30 GB。
+      - name: 騰出磁碟空間
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af > /dev/null
+          df -h /
+
+      - name: 安裝 uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 安裝 Python 與相依套件
+        run: uv sync --frozen
+
+      # 合成語料用 weasyprint 渲染中文 PDF，要 CJK 字型（沒有的話中文抽不回來，入庫數會失敗）。
+      # 與 ci.yml 共用同一個 .deb 快取 key：細節與三道逾時的理由見 ci.yml 的同名步驟。
+      - name: 還原 CJK 字型 .deb 快取
+        uses: actions/cache@v6
+        timeout-minutes: 5
+        with:
+          path: ~/deb-cache
+          key: noto-cjk-deb-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: 安裝 CJK 字型
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          DEB_DIR="$HOME/deb-cache"; PKG=fonts-noto-cjk
+          mkdir -p "$DEB_DIR"
+          if ! compgen -G "$DEB_DIR/${PKG}_*.deb" > /dev/null; then
+            APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+            sudo apt-get update -qq "${APT_OPTS[@]}"
+            ( cd "$DEB_DIR" && timeout 240 apt-get download "$PKG" "${APT_OPTS[@]}" )
+          fi
+          sudo dpkg -i "$DEB_DIR/${PKG}"_*.deb || sudo apt-get -y -f install
+          sudo fc-cache -f > /dev/null
+          fc-list :lang=zh family | grep -qi "noto sans cjk" || { echo "::error::找不到 Noto Sans CJK"; exit 1; }
+
+      - name: 產生合成語料
+        run: uv run python scripts/demo_corpus.py --out "$RUNNER_TEMP/demo"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 映像層快取放 GitHub Actions cache（scope 固定，PR 之間共用）。mode=min 只存最終映像的層：
+      # 權重層（約 4.5 GB）＋相依層已經佔掉 repo 快取額度（10 GB）的一大半，mode=max 連中間階段都存會互相擠掉。
+      # 權重在 build 時由 deploy/container/fetch_models.py 下載（Hugging Face），快取命中時不再下載。
+      - name: build 映像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/container/Dockerfile
+          tags: ${{ env.E2E_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=e2e-image
+          cache-to: type=gha,mode=min,scope=e2e-image
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_VERSION=e2e-${{ github.run_number }}
+            BUILD_TREE_CLEAN=1
+
+      - name: 端到端測試
+        run: uv run python scripts/e2e_compose.py --image "$E2E_IMAGE" --corpus "$RUNNER_TEMP/demo"
+
+      - name: 映像大小
+        if: always()
+        run: docker image ls "$E2E_IMAGE"
+
+  e2e-real-llm:
+    name: 容器端到端（真實 LLM，手動）
+    if: github.event_name == 'workflow_dispatch' && inputs.real_llm
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      E2E_IMAGE: report-mark:e2e
+      # 金鑰只經環境變數交給 e2e_compose.py，它寫進暫存目錄的 .env（0600），不進 argv、不進日誌。
+      E2E_LLM_API_KEY: ${{ secrets.E2E_LLM_API_KEY }}
+      E2E_LLM_MODEL: ${{ secrets.E2E_LLM_MODEL }}
+      E2E_LLM_PROVIDER: ${{ secrets.E2E_LLM_PROVIDER }}
+      E2E_LLM_BASE_URL: ${{ secrets.E2E_LLM_BASE_URL }}
+    steps:
+      - name: 沒有設定 secret 就跳過
+        id: gate
+        run: |
+          if [ -z "$E2E_LLM_API_KEY" ] || [ -z "$E2E_LLM_MODEL" ]; then
+            echo "::notice::沒有 E2E_LLM_API_KEY／E2E_LLM_MODEL secret，跳過真實 LLM 的端到端測試"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.gate.outputs.run == 'true'
+
+      - name: 騰出磁碟空間
+        if: steps.gate.outputs.run == 'true'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: 安裝 uv
+        if: steps.gate.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 安裝 Python 與相依套件
+        if: steps.gate.outputs.run == 'true'
+        run: uv sync --frozen
+
+      - name: 安裝 CJK 字型
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          fc-list :lang=zh family | grep -qi "noto sans cjk"
+
+      - name: 產生合成語料
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python scripts/demo_corpus.py --out "$RUNNER_TEMP/demo"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.gate.outputs.run == 'true'
+
+      - name: build 映像
+        if: steps.gate.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/container/Dockerfile
+          tags: ${{ env.E2E_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=e2e-image
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_VERSION=e2e-${{ github.run_number }}
+            BUILD_TREE_CLEAN=1
+
+      - name: 端到端測試（真實 LLM）
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python scripts/e2e_compose.py --image "$E2E_IMAGE" --corpus "$RUNNER_TEMP/demo" --real-llm

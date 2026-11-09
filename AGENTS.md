@@ -120,6 +120,7 @@ uv run python scripts/ingest_all.py
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露。網搜暫停與否由 `frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`（功能旗標 `ask.web_search`，讀 `/api/features`）控制，不要刪 web 項；清單為空時 `ComposerTools` 回 null |
 | 新增或修改功能旗標 | 先讀 `app/services/feature_flags.py` 的 docstring：DB 讀取失敗退回 registry 預設，所以**安全閘門不可做成旗標**；批次腳本不讀旗標 |
 | 上傳 worker、PDF 預檢或清除流程 | 先讀 `app/services/upload_worker.py` 與 `app/services/pdf_preflight.py` 的 docstring（交易邊界、條件式狀態轉移、commit 之後才刪檔與 R2 物件、不可信 PDF 只在受限子行程檢查）；入庫重用 `scripts/_ingest_core.py` 的 `ingest_one`，不另寫一份 |
+| `/metrics` 的指標或標籤（`web/metrics.py`） | 指標寫進 `docs/CONTAINER_DEPLOYMENT.md`「監控對接」的表（`tests/test_metrics.py` 對帳兩邊）；標籤只能是封閉詞彙或路由模板（認不得歸 `other`），不放原始路徑、查詢字串、使用者識別、IP 或研報 id。計數器是 web 行程內狀態，靠單 worker 守門成立 |
 | 使用分析新增維度或匯出 | 先讀 `app/services/analytics.py` 的隱私契約（只出彙總、k 門檻、互補抑制與被抑制格子的處理）；不讀問答原文 |
 | 管理後台新增或搬動頁面 | `frontend/src/components/shell/adminNav.ts` 的 `ADMIN_IA` 是導覽、麵包屑、⌘K 搜尋與總覽捷徑的唯一來源，路由另外在 `frontend/src/App.tsx`；頁面的 `scope` 只是顯示層（擋人的是後端）。資料要靠主機上另外安裝的元件才有的頁面標 `requires`，判斷寫在 `frontend/src/features/admin/adminCapabilities.ts`（依維運代理的服務清單；不知道時照常列出）——正式環境沒裝監控匯入器，主機、排程工作、事件三頁因此不列。共用元件在 `frontend/src/components/console/`，深淺色的色票在 `frontend/src/styles/tokens.css` |
 | 前端在別頁讀功能旗標 | `useFeature()` 只讀 store，目前只有問答頁呼叫 `useFeatures()` 去抓 `/api/features`；新頁面要在頁面層呼叫一次 `useFeatures()`，否則旗標永遠是 false（`frontend/src/lib/useFeatures.ts`） |

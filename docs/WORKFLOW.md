@@ -275,6 +275,33 @@ max_reports_per_round = 100   # 每輪最多幾份
 - **退出碼**：0 跑完或碰到上限而停；75 鎖被佔用（另一個分層回填正在跑——編排鎖 `data/backfill/.lock`——或子批次撞上 LLM 批次鎖，本輪停下、下次再續）；2 子批次帳號／環境型中止（例如額度用完、金鑰錯）：本批 hashes 保留成 `data/backfill/retained_*.txt` 並印出各批次的 `--hashes-file` 補跑指令，排除原因後照印的指令補跑，或直接重跑 `backfill_tiers.py`（會重新挑出這批）。其他非零退出碼 best-effort：記一行、照常往下，沒補成的下次再挑。
 - 編排入口本身不呼叫 LLM、不持有 LLM 批次鎖（子批次取的是同一把，持有它會讓每個子批次撞鎖），但照 LLM 入口的規矩在取鎖前預檢金鑰（`--dry-run` 不檢）。
 
+## 導入驗收：凍結題集、基準線與上線門檻（`scripts/draft_eval_questions.py`、`scripts/eval_gate.py`）
+
+每家券商導入時建**自己的**凍結題集，以該客戶的 LLM／judge 量出基準線，過門檻才上線。廷豐的題集 `eval/ragas_questions.json` 與基準線不搬家、不重做：`profiles/tingfong/eval/eval.toml` 以 `[questions].legacy_repo_path` 指回它，`--profile tingfong` 與不帶 `--profile` 讀到同一份檔、同一個 sha256。
+
+**profile 的評測檔**（規則在 `eval/profile_eval.py`）：
+
+| 檔案 | 內容 |
+|---|---|
+| `profiles/<名稱>/eval/questions.json` | 凍結題集，與 `eval/question_contract.py` 同一套契約（version 2、`id`／`question`／`filters`／`scope` 四個欄位）。只能由 `freeze` 產生 |
+| `profiles/<名稱>/eval/questions.manifest.json` | 凍結指紋（題集檔的 sha256）、題數、類型涵蓋，以及每題的類型、支撐研報（`file_hash`）與研究員有沒有改過 LLM 原稿。讀題集時一律核對：指紋不符、題號對不上、涵蓋不達政策就拒讀——凍結後手改題集，量出來的分數就不是同一把尺 |
+| `profiles/<名稱>/eval/eval.toml`（選填） | 上線驗收的設定：`[gate].judge_lineage`（要求的量尺系譜）與 `[gate.waivers.<指標>]`（豁免，每一項都必須附 `reason` 與 `decided_on`）。未知鍵、型別錯、豁免缺理由一律拒讀 |
+
+題集政策（`eval/profile_eval.py` 的常數）：核准題至少 30 題，個股（`stock`）、產業（`industry`）、總經（`macro`）、跨篇比較（`cross_report`）每一類至少 5 題；跨篇比較題至少兩份不同的支撐研報。
+
+### 步驟
+
+1. **草擬**（會呼叫 LLM、取 LLM 批次鎖；在該 profile 的部署環境執行，`PROFILE_DIR` 必須就是它）：
+   `uv run python scripts/draft_eval_questions.py draft --profile <名稱> --out <待審檔.json> [--target 48] [--seed 0]`。
+   Python 從可檢索、有摘要的研報依（市場、報告類型、季度）分層抽樣，另挑同市場同季、不同券商的研報對；LLM 只寫題目、判斷單篇題的類型、寫參考答案要點。filters、題號、指紋都由 Python 決定，同一份語料與同一個 `--seed` 抽樣相同。模型是離線評測的 `EVAL_JUDGE_MODEL`（未設時查預設表）。
+2. **研究員審**：逐題把 `review.status` 改成 `approved`／`rejected`／`modified`（`review.note` 自由填）。要改題目就直接改 `question`、`filters`、`category` 或 `supporting_reports` 並標 `modified`；`original` 是 LLM 原稿，不要改。改過卻標 `approved`、標 `modified` 卻沒改，凍結時都會被擋下（清單的 `edited` 才記得準）。`status --draft <待審檔>` 印進度與還缺什麼。
+3. **凍結**：`uv run python scripts/draft_eval_questions.py freeze --profile <名稱> --draft <待審檔>`。全部審完、題數與涵蓋達標才寫出凍結題集與清單；否則逐條說明缺什麼（還差幾題、哪一類不夠、哪一題不合契約），不寫任何檔。已有凍結題集時拒絕覆寫，換題要加 `--replace`，舊基準線隨之不可比。待審檔留著：參考答案要點只在那裡。
+4. **跑基準線**：`uv run python eval/run_ragas.py --profile <名稱> --corpus-id <語料快照> --complete-only --repeat 3 --checkpoint-dir <目錄> --out <結果.json>`。judge 是該客戶的模型；部署宣告的模型（Azure deployment、Anthropic、自架端點）自成量尺系譜 `declared:<模型>`，記在結果的 `summary.judge_lineage`，與其他系譜的結果 `eval_compare` 回 2。
+5. **上線驗收**：`make eval-gate PROFILE=<名稱> RESULT=<結果.json>`，**退出碼是結論**：0 通過（F>0.9、CP>0.8、AR>0.55 全過，或沒過的都在豁免清單）／1 有未豁免的指標沒過／2 不能下結論（結果有 error 或 judge 沒量到的題、題數不等於凍結題集、不是這份題集量的、跑了 `--limit`／`--scope`、judge 解讀規則版本不是現行的、量尺系譜不是 `[gate].judge_lineage`）。門檻數值是政策，profile 只能豁免、不能改數值；豁免的指標照樣印出數值與「未過（豁免）」。廷豐豁免 CP（使用者 2026-11-10 的決定，理由寫在廷豐的 `eval.toml`）。
+6. **上線**：通過驗收的結果檔留作該客戶的基準線，之後改檢索或生成品質照舊前後各跑一次、`make eval-compare` 比。檢索回歸：profile 自帶凍結題集時，`scripts/retrieval_regression.py` 預設比那一份，容器 scheduler 的 `retrieval-regression` 工作也會自動排入——上線前先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），否則每日檢查回「還沒有基準」。
+
+`scripts/bench_load.py`、`eval/question_contract.py` 也接受 `--profile`（核對指紋後讀該 profile 的題集）。
+
 ## 研報上傳：收檔、worker 與審核（`UPLOAD_ENABLED` 預設關閉）
 
 管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`），兩個環境目前都沒開。開之前該主機要先裝好 worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器並走完上線步驟（`docs/production_resilience.md`「上傳 worker」；正式環境兩者都沒裝，各主機現況見 `docs/DEPLOYMENT_STATUS.md`）。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。

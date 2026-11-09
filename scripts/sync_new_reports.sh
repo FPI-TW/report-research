@@ -7,8 +7,10 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$ROOT"
 
-MOUNT=/mnt/nas-research
-SRC="$MOUNT/02.研究資源/研報自動匯入/"
+# NAS 研報來源的掛載點：掛的是 `研報自動匯入` 子資料夾本身（理由見 deploy/systemd/mount-nas-research）。
+# SYNC_NAS_MOUNT 只給測試用；部署不設，掛載腳本寫死同一個路徑。
+MOUNT="${SYNC_NAS_MOUNT:-/mnt/nas-research}"
+SRC="$MOUNT/"
 DST="研報自動匯入/"
 DATE=$(date +%Y%m%d)
 LOG="data/sync_run_${DATE}.log"
@@ -466,6 +468,13 @@ else
   if ! mountpoint -q "$MOUNT"; then
     write_feed_state mount_failed 0 none
     log "掛載失敗或不可用 → 結束（不跑 rsync、不動 DB）"; exit 1
+  fi
+  # 掛到的若是整個 share（舊版掛載腳本，或手動掛的暫時繞法），SRC 底下是 share 的目錄樹，
+  # rsync 會把整棵樹當成新檔複製進本地鏡像、整批送去匯入。寧可停下來。
+  if [ -d "$MOUNT/02.研究資源" ]; then
+    write_feed_state mount_failed 0 none
+    log "掛載點是整個 share 而不是研報資料夾（$MOUNT/02.研究資源 存在）→ 結束；卸載後重跑 /usr/local/sbin/mount-nas-research"
+    exit 1
   fi
 
   # 2) rsync 只傳新檔，擷取 delta

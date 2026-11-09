@@ -143,7 +143,7 @@ uv run python eval/qa_adversarial.py --live --out /tmp/qa-adversarial-live.json
 兩個環境各跑一份，`report-mark-sync.timer` 每 3 小時（`OnCalendar=*-*-* 00/3:00:00`，`Persistent=false` 刻意不補跑）觸發，PID lock `data/.sync_new_reports.lock`。來源段不同：辦公室主機（測試環境）`SYNC_SOURCE=nas`（預設）從 NAS rsync，設了 `SYNC_INBOX_PUSH=1` 所以再把新檔推到 R2 `inbox/`；EC2（正式環境）`SYNC_SOURCE=r2-inbox` 從 `inbox/` 拉；第 4 段起相同。
 
 1. 補記上一輪異常收場；系統關機中或 lock 被佔用退出 0；找不到 `uv` 退出 1。
-2. drvfs 唯讀掛載 NAS（`/usr/local/sbin/mount-nas-research`，sudoers 免密碼）；失敗退出 1。
+2. drvfs 唯讀掛載 NAS 上的研報資料夾 `投資研究處\02.研究資源\研報自動匯入`（`/usr/local/sbin/mount-nas-research`，sudoers 免密碼；share 根目錄的 ACL 讀不到，所以只掛子資料夾）；失敗、或掛到的是整個 share（掛載點底下有 `02.研究資源`）時退出 1。
 3. `rsync -rt --size-only` 到 `研報自動匯入/`，delta 寫 `data/sync_delta_<時間>.txt`。`SYNC_INBOX_PUSH=1` 時接著以 `scripts/r2_inbox.py push` 把本輪新檔連同相對路徑與 mtime 推到 R2 的 `inbox/`（best-effort，失敗不擋匯入）。推送失敗會保留 `data/inbox_delta_retained_<時間>.txt`，log 與告警紀錄提供 `push --delta` 補傳指令；補傳成功後刪掉該份 delta。
    第 2、3 段的結論每輪寫進 `data/.sync_feed_state`（`result`＝`ok`／`mount_failed`／`rsync_failed`，`push`＝`off`／`none`／`ok`／`failed`；掛載或 rsync 失敗而中止的那一輪也寫，PID lock 早退不寫）。`report-mark-beacon.timer` 每 10 分鐘以 `scripts/publish_host_beacon.py` 把它連同服務狀態發布到 R2 的 `beacons/<HOST_BEACON_NAME>.json`，收檔那一端（EC2）的 `/healthz/feed` 讀來判斷「來源主機失聯／來源段壞了」並告警——那一端自己看不出 inbox 沒有新檔是因為沒有新稿還是來源斷了（`app/services/host_beacon.py`；處置見 `docs/production_resilience.md`「來源主機信標」）。
    碰不到 NAS 的部署（EC2，正式環境）設 `SYNC_SOURCE=r2-inbox`：第 2、3 段改成 `scripts/r2_inbox.py pull`，把本地鏡像沒有或大小不同的 inbox 物件拉回 `研報自動匯入/`（保留 mtime）並寫同格式的 delta，第 4 段起完全相同。部分失敗仍匯入已落地的檔，失敗檔下一輪重拉；拉取／推送有失敗時均記告警並抑制完整成功心跳。`originals/` 不能拿來代替 inbox：那裡只有 SHA256 與 sha256 metadata，沒有檔名與 mtime。

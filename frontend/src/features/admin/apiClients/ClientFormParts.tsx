@@ -1,6 +1,7 @@
 import { CheckRow, Field, FieldGroup } from '../../../components/console'
 import c from '../../../components/console/Console.module.css'
-import { MARKET_ORDER, marketLabel } from '../../../lib/meta'
+import { useEnabledMarkets } from '../../../lib/marketsConfig'
+import { marketLabel } from '../../../lib/meta'
 import type { ApiClientScope } from '../useAdminApiClients'
 import {
   NOTE_MAX, OPTIONAL_DIMS, QUOTA_RANGE, RATE_RANGE, SCOPE_LABELS, SCOPE_ORDER, type DimText,
@@ -23,10 +24,12 @@ export function ScopeChecks({ value, onChange }: { value: ApiClientScope[]; onCh
 }
 
 export function MarketChecks({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  // 只列 profile 啟用的市場：後端的 entitlement 驗證也只收這一組（app/services/api_clients.py）。
+  const enabled = useEnabledMarkets()
   return (
     <FieldGroup label="授權市場（必選，至少一個）">
       <div className={local.checkGrid}>
-        {MARKET_ORDER.map(m => (
+        {enabled.map(m => (
           <CheckRow key={m} checked={value.includes(m)} onChange={() => onChange(toggle(value, m))}>{marketLabel(m)}（{m}）</CheckRow>
         ))}
       </div>

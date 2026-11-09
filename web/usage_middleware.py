@@ -4,7 +4,7 @@
 |---|---|---|
 | `GET /api/reading/{file_hash}`（閱讀頁本體；`/text`、`/similar` 不算） | `reading` | file_hash |
 | `GET /api/report/{report_id}/file`（原檔） | `report_file` | report_id |
-| `GET /api/search` | `search` | `market` 篩選（只收 findb 市場代碼），沒有篩選＝只計總量 |
+| `GET /api/search` | `search` | `market` 篩選（只收標準市場代碼），沒有篩選＝只計總量 |
 | `POST /api/ask` | `ask` | 只計總量 |
 
 **搜尋字串永遠不碰**：query string 只逐段比對鍵名 `market`，其餘段落（含 `q`）不解碼、不保存。

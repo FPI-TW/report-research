@@ -1,0 +1,28 @@
+# 廷豐智能研報的 profile（預設 profile：PROFILE_DIR 未設時載入這一份）。
+# 格式與驗證規則見 app/profile.py 的模組 docstring：未知的 section 或鍵、型別錯、引用不存在的 asset、
+# 非標準市場代碼一律拒絕啟動。祕密與部署層設定不放這裡。
+
+[institution]
+name = "廷豐"
+product_name = "廷豐智能研報"
+short_name = "廷豐研報"
+
+[branding]
+logo_light = "logo.png"
+logo_dark = "logo.png"
+favicon = "favicon.svg"
+# 強調色不覆寫：frontend/src/styles/tokens.css 的預設鎏金即廷豐的色票。
+
+[prompt]
+# 注入問答、路由、規劃、評估各段 prompt 的稱謂。改了它，系統提示就與評測基準線不同
+# （tests/test_profile_prompts.py 以改動前的全文為 golden 逐字比對）。
+system_name = "廷豐研報"
+system_name_en = "廷豐研報"
+
+[markets]
+# 標準市場代碼全部啟用；順序＝使用者端選單的顯示順序。
+# 代碼與 findb 的 instruments.market 對齊，是廷豐的跨 repo 契約（tests/test_tagging.py 逐字釘住標準詞彙）。
+enabled = ["TW", "US", "HK", "CN", "WTX", "FX", "MACRO", "GLOBAL", "CRYPTO"]
+
+[security]
+totp_issuer = "廷豐智能研報"

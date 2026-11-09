@@ -25,6 +25,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 
 from app.config import get_settings
+from app.profile import get_profile
 from app.services import query_planner
 from app.services.scope_router import RouteDecision
 from app.services.textnorm import norm_for_match
@@ -147,7 +148,7 @@ def _build_evaluation_prompt(
 ) -> tuple[str, str]:
     """評估步 prompt：問題＋合併來源 metadata＋每篇脈絡前段節錄。"""
     system = (
-        "你是「廷豐研報」投資問答系統的證據評估器。系統已為使用者的問題檢索到"
+        f"你是「{get_profile().prompt.system_name}」投資問答系統的證據評估器。系統已為使用者的問題檢索到"
         "一批研報段落；你的唯一任務是判斷現有證據是否足以回答問題。\n"
         "只輸出一個 JSON 物件，格式："
         '{"sufficient": true|false, "queries": ["<補查查詢>", ...]}，'

@@ -95,7 +95,7 @@ test('五段操作示範都是有說明文字的圖', () => {
   expect(demos[4]).toHaveAccessibleName(/月曆點選 27 日/)
 })
 
-test('市場代碼表列出全部九個 findb 市場代碼', () => {
+test('市場代碼表列出全部九個標準市場代碼', () => {
   renderHelp()
   const table = within(document.getElementById('help-markets')!).getByRole('table')
   const rows = within(table).getAllByRole('row').slice(1)

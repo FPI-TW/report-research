@@ -127,6 +127,10 @@ os.environ["ADMIN_MFA_REQUIRED"] = "0"
 # **用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
 # 要驗寫入的測試自己給假的 session factory（tests/test_usage_events.py）。
 os.environ["USAGE_EVENTS_ENABLED"] = "0"
+# profile（app/profile.py）：一律用預設的廷豐 profile（空值＝預設）。**用賦值**：部署目錄 .env 或執行者 shell 若指向
+# 別的 profile，既有測試的品牌、prompt 與市場斷言都會失準。要驗別的 profile 的測試在 tempfile 建一份、自己設
+# PROFILE_DIR 並 reset_profile_cache()（下方 fixture 每題前後都會清快取）。
+os.environ["PROFILE_DIR"] = ""
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -225,6 +229,20 @@ def _reset_llm_batch_state():
         mod = sys.modules.get("scripts._claude_cli")
         if mod is not None and hasattr(mod, "_reset_state"):
             mod._reset_state()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_profile_cache():
+    """`app.profile.get_profile()` 的快取每題前後各清一次：換 profile 的測試不能把別人的品牌留給下一題。"""
+
+    def _clear() -> None:
+        mod = sys.modules.get("app.profile")
+        if mod is not None:
+            mod.reset_profile_cache()
 
     _clear()
     yield

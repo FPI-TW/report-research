@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Search, X } from 'lucide-react'
-import { MARKET_ORDER, marketLabel } from '../../lib/meta'
+import { useEnabledMarkets } from '../../lib/marketsConfig'
+import { marketLabel } from '../../lib/meta'
 import type { CatalogSort, Market, StanceFilter } from '../../lib/radarSchemas'
 import { SORT_LABEL, SORT_OPTIONS, STANCE_DISPLAY, STANCE_OPTIONS } from './catalogState'
 import { InstrumentTable } from './InstrumentTable'
@@ -10,10 +11,6 @@ import { useRadarInstruments } from './useRadar'
 import shared from './shared.module.css'
 import styles from './InstrumentPicker.module.css'
 
-const MARKETS: ReadonlyArray<{ code: Market | ''; label: string }> = [
-  { code: '', label: '全部' },
-  ...MARKET_ORDER.map(code => ({ code, label: marketLabel(code) })),
-]
 
 /** 「全部」在分段控制裡用 `all` 表示，進出時與網址的 null（不篩選）互換。 */
 const STANCE_SEGMENTS: ReadonlyArray<SegmentedOption<StanceFilter | 'all'>> = STANCE_OPTIONS.map(
@@ -42,6 +39,12 @@ export function InstrumentPicker({
   // 查詢鍵一起抖動。刻意不做網址→草稿的反向同步：那需要一個 effect setState，失效方式是
   // 「打字打到一半被蓋掉」。
   const [draft, setDraft] = useState(q)
+  // 市場選單＝profile 啟用的子集（顯示順序、名稱都來自 profile）；名稱在 render 時才取，覆寫抓到後跟著換。
+  const enabled = useEnabledMarkets()
+  const markets: ReadonlyArray<{ code: Market | ''; label: string }> = [
+    { code: '', label: '全部' },
+    ...(enabled as readonly Market[]).map(code => ({ code, label: marketLabel(code) })),
+  ]
   const composing = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -157,7 +160,7 @@ export function InstrumentPicker({
       </div>
 
       <div className={styles.markets} role="group" aria-label="市場">
-        {MARKETS.map(m => {
+        {markets.map(m => {
           const active = (market || '') === m.code
           return (
             <button

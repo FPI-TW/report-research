@@ -21,11 +21,12 @@ import struct
 import time
 from urllib.parse import quote, urlencode
 
+from app.profile import get_profile
+
 PERIOD_SECONDS = 30
 DIGITS = 6
 # 驗證時接受目前時間步的前後各幾步（手機與伺服器的時鐘誤差、輸入花的時間）。
 WINDOW = 1
-ISSUER = "廷豐智能研報"
 _SECRET_BYTES = 20  # RFC 4226 建議 160 bits（SHA1 的輸出長度）
 
 
@@ -89,8 +90,17 @@ def match_step(secret: str, code: str | None, *, last_step: int | None, now: flo
     return found
 
 
-def otpauth_uri(secret: str, account: str, issuer: str = ISSUER) -> str:
+def current_issuer() -> str:
+    """驗證器 App 顯示的發行者名稱：profile 的 `[security].totp_issuer`（預設＝產品全名）。
+
+    已經掃過 QR code 的帳號不受影響（App 存的是當時的 URI）；換了之後只有新設定的帳號顯示新名稱。
+    """
+    return get_profile().security.totp_issuer
+
+
+def otpauth_uri(secret: str, account: str, issuer_name: str | None = None) -> str:
     """驗證器 App 用的 `otpauth://totp/...` URI（可貼上、也可自行轉成 QR code）。"""
+    issuer = issuer_name if issuer_name is not None else current_issuer()
     label = quote(f"{issuer}:{account}", safe="")
     query = urlencode({"secret": secret, "issuer": issuer, "algorithm": "SHA1", "digits": DIGITS,
                        "period": PERIOD_SECONDS}, quote_via=quote)

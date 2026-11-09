@@ -56,6 +56,8 @@ LOCKED_SCRIPTS = [
     "generate_brief.py",
     # 修復索引表污染的一次性批次：重標經 _ingest_core 的行內標註呼叫點。
     "repair_rating_index.py",
+    # 導入驗收的題集草擬（draft 子命令）：導入時跑一次，照樣防重複計費與 DB 連線數。
+    "draft_eval_questions.py",
 ]
 
 

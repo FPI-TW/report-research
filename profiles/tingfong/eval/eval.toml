@@ -1,0 +1,14 @@
+# 廷豐的評測設定（格式與驗證規則見 eval/profile_eval.py 的 load_eval_config：未知鍵、型別錯、豁免缺理由一律拒讀）。
+
+[questions]
+# 廷豐的凍結題集留在 repo 的 eval/（不搬家）：基準線與 tests/test_eval_question_contract.py 都記它的路徑與 sha256。
+# 其他 profile 不設這個鍵，題集是同目錄的 questions.json（由 scripts/draft_eval_questions.py freeze 產生）。
+legacy_repo_path = "eval/ragas_questions.json"
+
+[gate]
+# 上線驗收（scripts/eval_gate.py）要求的量尺系譜：現行 judge gpt-6-luna（app/services/llm_models.py 的 judge_lineage）。
+judge_lineage = "gpt-6-luna-2026-11"
+
+[gate.waivers.context_precision]
+reason = "使用者 2026-11-10 決定 CP 不再是 v1 的上線關卡：fw-cp 診斷指出 CP 實際綁「被引用的比例」，現有量尺下只有砍脈絡篇數能過，該做法不採用。門檻常數 0.8 不變，CP 照常量測與比較。"
+decided_on = 2026-11-10

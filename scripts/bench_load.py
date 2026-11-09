@@ -13,6 +13,7 @@
 
 **題目取自 `eval/ragas_questions.json` 的凍結題集**，不自己造題：repo 的規約是量測不要
 另建一套（見 AGENTS.md 的評測條目）。同一份題集也讓不同時間點的壓測可以互相比較。
+`--profile <名稱>` 改用該 profile 的凍結題集（`profiles/<名稱>/eval/`，先核對凍結指紋；`eval/profile_eval.py`）。
 
 HTTP 模式會真的消耗 LLM 額度；`--offline-rerank` 只用本機模型與固定合成片段，
 沒有資料庫、語料或網路請求。兩種結果不能互相當作端到端延遲。
@@ -103,11 +104,23 @@ def login(base: str, user: str, password: str, timeout: float) -> str:
     raise RuntimeError("登入沒有取得 tf_session cookie（帳密可能不正確）")
 
 
-def load_questions(limit: int | None) -> list[str]:
+def profile_question_set(profile: str) -> Path:
+    """`--profile` → 該 profile 的凍結題集（核對凍結指紋）。延後 import：沒帶 --profile 時本檔只用標準函式庫。"""
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from eval import profile_eval
+
     try:
-        payload = json.loads(QUESTION_SET.read_text(encoding="utf-8"))
+        return profile_eval.load_profile_dataset(profile_eval.resolve_profile_arg(profile)).path
     except (OSError, ValueError) as exc:
-        raise RuntimeError(f"讀不到題集 {QUESTION_SET}：{exc}") from None
+        raise RuntimeError(f"profile 題集不能用：{exc}") from None
+
+
+def load_questions(limit: int | None, path: Path = QUESTION_SET) -> list[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"讀不到題集 {path}：{exc}") from None
     qs = [q["question"] for q in payload.get("questions", []) if q.get("question")]
     if not qs:
         raise RuntimeError("題集是空的")
@@ -271,10 +284,11 @@ def run_offline_rerank(*, repeat: int, threads: int, pairs: int) -> dict:
 
 
 def run_bench(args) -> dict:
-    questions = load_questions(args.limit)
+    question_set = profile_question_set(args.profile) if getattr(args, "profile", None) else QUESTION_SET
+    questions = load_questions(args.limit, question_set)
     plan = [questions[i % len(questions)] for i in range(args.repeat * len(questions))]
 
-    print(f"題集      {QUESTION_SET.name}（{len(questions)} 題）")
+    print(f"題集      {question_set.name}（{len(questions)} 題）")
     print(f"端點      /api/{args.endpoint}")
     print(f"計畫      {len(plan)} 個請求 × 併發 {args.concurrency}")
     print(f"逾時      {args.timeout:.0f}s／請求")
@@ -358,6 +372,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--endpoint", choices=("ask",), default="ask")
     p.add_argument("--repeat", type=int, default=1, help="整份題集重複幾輪（預設 1）")
     p.add_argument("--limit", type=int, default=None, help="只取題集前 N 題")
+    p.add_argument("--profile", default=None, help="改用該 profile 的凍結題集（預設 eval/ragas_questions.json）")
     p.add_argument("--concurrency", type=int, default=1, help="併發數（/api/ask 的閘上限是 3）")
     p.add_argument("--timeout", type=float, default=600.0, help="單一請求逾時秒數")
     p.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR), help="結果檔輸出目錄")

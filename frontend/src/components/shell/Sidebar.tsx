@@ -6,6 +6,7 @@ import { FluidHoverHighlight } from '@/components/fluid-hover-highlight'
 import { useStableRect } from '@/lib/useStableRect'
 import { Tooltip } from '@/components/ui/tooltip'
 import { BrandLogo } from '../BrandLogo'
+import { useBranding } from '../../lib/branding'
 import { preloadRoute, type RouteKey } from '../../lib/routePreload'
 import { useIsMac } from '../../lib/useIsMac'
 import { ConversationList } from './ConversationList'
@@ -107,13 +108,14 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const active = activeIndexOf(pathname)
   const activeRect = useStableRect(rows, active)
   const toggleLabel = collapsed ? '展開側欄' : '收合側欄'
+  const brand = useBranding()
 
   return (
     <aside className={styles.sidebar} data-collapsed={collapsed} aria-label="側欄">
       <div className={styles.head}>
         <span className={styles.brand} aria-hidden={collapsed}>
           <BrandLogo size={22} alt="" />
-          <span className={styles.brandName}>廷豐智能研報</span>
+          <span className={styles.brandName}>{brand.productName}</span>
         </span>
         <Tooltip content={toggleLabel} side="right" sideOffset={10}>
           <button type="button" className={styles.toggle} onClick={onToggle} aria-label={toggleLabel} aria-expanded={!collapsed}>

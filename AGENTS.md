@@ -30,7 +30,7 @@
 - **分工**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），LLM（`gpt-6-luna`）只做語意（標註、摘要、問答、訊號擷取）。研報以檔案 SHA256 `file_hash` 識別；各入口能不能續跑、重跑會不會覆寫，以該腳本的 docstring 為準（例如 `scripts/extract_all.py` 每次全量重抽並覆寫同 hash 的快取，`scripts/ingest_all.py` 跳過已入庫的 hash）。
 - **不另建檢索**：新功能重用 `hybrid_search`／`retrieval_pipeline`。
 - **fail-open**：派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律降級，不阻斷主流程。
-- 市場代碼對齊 findb（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`），對照在 `app/services/tagging.py`、由 `tests/test_tagging.py` 逐字釘住，是跨 repo 契約；`make align` 零 LLM 重對。
+- 市場代碼是框架固定的標準市場代碼（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`），對照在 `app/services/tagging.py`、由 `tests/test_tagging.py` 逐字釘住；與 findb 對齊是廷豐 profile 的跨 repo 契約。profile 只能選使用者端的子集與改顯示名稱（`app/profile.py` 的 `[markets]`），標註 prompt 不變；`make align` 零 LLM 重對。
 
 ## 指令
 
@@ -103,6 +103,8 @@ uv run python scripts/ingest_all.py
 | `content_norm` 或 `textnorm.norm_for_match()` | 兩者逐字等價（`tests/test_content_norm_equivalence.py`；已知 6 個分歧字元由該測試鎖住範圍，不可擴大） |
 | 新增含 SQL 的 Python 頂層目錄 | 加進 `tests/test_sql_bind_casts.py` 的 `SCAN_ROOTS`，否則 bind 轉型的守門掃不到它 |
 | 新增 DB 契約測試（參照 `REPORT_MARK_REQUIRE_DB`） | 在 `.github/workflows/ci.yml` 的 schema job 加一個步驟，`tests/test_ci_db_contract.py` 對帳兩邊清單（理由見「測試與 CI」） |
+| profile schema 新增 section（`app/profile.py`） | 寫一個 parser 以 `@_section` 登記，`Profile` 末尾加帶預設的欄位（`tests/test_profile.py` 對帳兩邊）；驗證照樣 fail-closed（未知鍵、型別錯一律拋 `ProfileError`），不做「認不得就忽略」。會被免登入看到的欄位只能經 `web/routers/branding.py`，加進 `/api/branding` 前先確認它是顯示用的。改了 `profiles/tingfong/profile.toml` 要重啟 web |
+| 系統提示的文字或注入的稱謂（`answer`、`scope_router`、`query_planner`、`agentic_qa`、`overview`） | prompt 只注入 profile 的 `[prompt]` 參數，不開放覆寫；新提示一律在呼叫時以函式渲染（import 期定值的常數會留著上一個 profile 的稱謂）。廷豐的全文由 `tests/test_profile_prompts.py` 對 `tests/fixtures/profile_prompts_tingfong.json` 逐字比對：刻意改 prompt 時才重生 golden，並前後各跑一次評測（`make eval-compare`）|
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的讀取**不要順手搬**；找旋鈕要同時搜 `os.getenv` 與 `os.environ`（搜尋指令見 `docs/ARCHITECTURE.md` §9）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶這個前綴的變數一律不改名（不屬 auth／DB 的例外清單在 §9，都是 live 的） |
 | `ops_agent/` 或 `deploy/ops/services.*.toml` | 代理只用標準庫、不 import `app.*`（`tests/test_ops_agent.py` 守）；新增 action 要同時改 `ops_agent/protocol.py` 的 `KNOWN_ACTIONS`／`OPS` 與 `web/routers/admin_ops.py` 的 `Action`。部署時：代理從 root 擁有的 `/opt/report-mark-ops/` 執行（docker 群組等同 root，不從 repo 跑），要重新 `install` 到那裡、`--check` 後重啟該主機的代理（測試環境 `report-mark-ops-agent.service`、正式環境 `report-mark-ops-agent-staging.service`；步驟見 `docs/production_resilience.md`「維運代理」） |
 | sync 殼的來源段（NAS 掛載、rsync、inbox 推送）、`data/.sync_feed_state` 的鍵，或主機信標的狀態詞彙 | 殼寫、`app/services/host_beacon.py` 讀：鍵名與詞彙兩端一起改（`tests/test_pipeline_heartbeat.py` 的 FeedStateTests 以真的殼對帳）。信標是**跨主機、跨版本**的契約（辦公室主機發布、EC2 判讀，兩台不會同時升級）：加欄位用可缺的鍵，改到舊版讀不懂才升 `SCHEMA_VERSION`，而且先升級判讀那一端。新增告警狀態要同時改 `ALERT_STATES`、`web/routers/admin_ops.py` 的 `RemoteState`／`RemoteAlert`（重跑 `scripts/gen_admin_client.py`）、`scripts/check_feed_health.sh` 的 `case` 與前端 `remoteHostLabels.ts`（`tests/test_host_beacon.py`、`tests/test_feed_health_probe.py` 對帳前三者）。處置見 `docs/production_resilience.md`「來源主機信標」 |

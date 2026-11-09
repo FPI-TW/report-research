@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
+import { useBranding } from '../../lib/branding'
 import type { ReadingDoc } from '../../lib/readingSchemas'
 import { useBackNav } from './backNav'
 import { PdfPane } from './PdfPane'
@@ -34,6 +35,7 @@ const NARROW_QUERY = '(max-width: 1023px)'
 export default function ReportPage() {
   const { hash = '' } = useParams()
   const back = useBackNav()
+  const brand = useBranding()
 
   const valid = isValidHash(hash)
 
@@ -229,7 +231,7 @@ export default function ReportPage() {
             窄版堆疊時落到整頁最末。位置全由 grid-template-areas 決定，**DOM 只有這一份** ——
             寬窄各放一份會讓 getByText 撞到兩個節點而整批測試爆掉。 */}
         <div className={styles.disc}>
-          本平台內容彙整自券商研究報告，僅供內部研究參考，不構成任何投資建議或要約。評等、目標價與論點均為原報告發布券商之意見，非廷豐之立場。投資請自行判斷並承擔風險。
+          本平台內容彙整自券商研究報告，僅供內部研究參考，不構成任何投資建議或要約。評等、目標價與論點均為原報告發布券商之意見，非{brand.institutionName}之立場。投資請自行判斷並承擔風險。
         </div>
       </div>
     </div>

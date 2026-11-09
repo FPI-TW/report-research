@@ -4,7 +4,7 @@ M5（問答 agentic 迴圈，profile="qa"）使用本模組。profile 機制保�
 （解析、正規化、fail-open）與 prompt 建構器分離，新增規劃用途時只加一個
 PlannerProfile 區段（M6 的研報 profile 已隨該功能一併移除）。
 
-import 約束：只准 import 葉模組（config/llm/textnorm），禁止 answer/
+import 約束：只准 import 葉模組（config/profile/llm/textnorm），禁止 answer/
 retrieval_pipeline——retrieval_pipeline 頂層 import answer，本模組必須
 可被任一側頂層 import 而不形成循環。
 """
@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.config import get_settings
+from app.profile import get_profile
 from app.services.llm import stream_completion
 from app.services.textnorm import norm_for_match
 
@@ -229,7 +230,7 @@ async def plan_queries(
 def _build_qa_prompt(question: str, max_subqueries: int) -> tuple[str, str]:
     """qa profile（M5）：輸出補充子查詢＋freshness 需求的嚴格 JSON 物件。"""
     system = (
-        "你是「廷豐研報」投資問答系統的檢索規劃器。使用者的問題已由上游路由器"
+        f"你是「{get_profile().prompt.system_name}」投資問答系統的檢索規劃器。使用者的問題已由上游路由器"
         "判定需要檢索研報語料；你的唯一任務是判斷是否需要補充子查詢。\n"
         "只輸出一個 JSON 物件，格式："
         '{"subqueries": [{"q": "<子查詢>", "fresh": true|false}, ...]}，'

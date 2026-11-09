@@ -6,7 +6,7 @@
 
 delete_qa、list_qa_versions、_valid_uuid、SessionFactory 走 web.deps（測試 patch
 web.deps.X 即涵蓋）。其餘服務函式（record_feedback、history_item、對話串 CRUD、
-OFF_TOPIC_MESSAGES）只有這組用，由 app.services.answer 直接匯入。
+off_topic_messages）只有這組用，由 app.services.answer 直接匯入。
 
 **每人資料隔離**：每支端點都取目前使用者（`authz.current_user`），把 `user.id` 傳進
 SQL 條件——隔離在後端，不靠前端。別人的資料與不存在的資料回一樣的東西：
@@ -21,11 +21,11 @@ from sqlalchemy import bindparam, text
 
 from app.services.accounts import User
 from app.services.answer import (
-    OFF_TOPIC_MESSAGES,
     delete_conversation,
     get_conversation,
     history_item,
     list_conversations,
+    off_topic_messages,
     record_feedback,
 )
 from web import authz, deps
@@ -90,7 +90,7 @@ async def history(limit: int = Query(50, ge=1, le=200), user: User = Depends(aut
                     "AND user_id IS NOT DISTINCT FROM :uid "
                     "ORDER BY created_at DESC LIMIT :limit"
                 ).bindparams(bindparam("offtopics", expanding=True)),
-                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit, "uid": user.id},
+                {"offtopics": list(off_topic_messages()), "limit": limit, "uid": user.id},
             )
         ).all()
     return [history_item(tuple(r)) for r in rows]

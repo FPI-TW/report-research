@@ -472,6 +472,11 @@ jobs:
       - name: 對外 API 資料邊界
         run: uv run pytest -q tests/test_external_api_db.py
 
+      # 首次導入的分層回填：層別（窗期起點當天、前一天、NULL）、待補判斷（rejected 摘錄不算完成、
+      # 跳過名單與換 model）、挑候選不看訊號，以及查進度與估價的 SQL 執行得動。
+      - name: 分層回填
+        run: uv run pytest -q tests/test_backfill_tiers_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

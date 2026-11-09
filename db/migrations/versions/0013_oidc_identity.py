@@ -1,14 +1,13 @@
 """OIDC 單一登入：帳號綁定公司 IdP 的身分（issuer, subject），session 記下登入方式與 IdP 是否做了多重驗證
 
 Revision ID: 0013
-Revises: 0011
+Revises: 0012
 Create Date: 2026-11-09
 """
 # 慣例（tests/test_schema_migrations.py 守）：只寫 SQL，放在 UPGRADE_SQL；不用 autogenerate。
 # 改 CHECK 約束要同步重生 db/expected_constraints.txt；新增不可重建的表要動備份清單（這裡沒有新表）。
 #
-# 編號：框架化 v1 預先把 0012 分給另一條 lane；本 lane 開發時整合分支的 head 是 0011，所以接在 0011 之後。
-# 兩條都併進整合分支時，後到的那條把 down_revision 改成線性（AGENTS.md「改動對照表」的 schema 列）。
+# 編號：接在框架化 v1 的 0012（研報 doc_type）之後，維持單一 head。
 #
 # 規則在 app/services/accounts.py（`sso_login`）：
 # - 一個 (oidc_issuer, oidc_subject) 只能綁一個帳號（UNIQUE）；一個帳號最多綁一個 IdP 身分（兩欄同一列）。
@@ -24,7 +23,7 @@ from alembic import op
 from app.services.schema_migrations import run_sql_script
 
 revision = "0013"
-down_revision = "0011"
+down_revision = "0012"
 branch_labels = None
 depends_on = None
 

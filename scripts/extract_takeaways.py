@@ -73,6 +73,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.doc_types import doc_type_enabled_sql  # noqa: E402
 from app.services.llm_models import TASK_TAKEAWAY, resolve_model  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
@@ -198,7 +199,7 @@ def sha256_of(canonical: str) -> str:
 def build_reports_sql(by_hashes: bool = False) -> str:
     """工作集：近 N 天（或指定 file_hash 清單）、有全文的研究報告。
 
-    is_research 用 IS NOT FALSE（含 NULL：未判定的也算研報），不是 = true。
+    母體＝類型開了摘錄的文件（`doc_types.doc_type_enabled_sql`；廷豐 profile 下即研報）。
     report_date 為 NULL 者天然被 >= 比較排除（NULL 比較結果非 true）。
 
     by_hashes=True：改以 file_hash 清單選取，**且不套 report_date 條件**。
@@ -217,7 +218,7 @@ def build_reports_sql(by_hashes: bool = False) -> str:
         "FROM research.research_report r "
         "WHERE r.full_text IS NOT NULL "
         "  AND r.full_text <> '' "
-        "  AND r.is_research IS NOT FALSE "
+        f"  AND {doc_type_enabled_sql('r', 'takeaway')} "
         + where_scope
         + "ORDER BY r.report_date DESC, r.file_name"
     )

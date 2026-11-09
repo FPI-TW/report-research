@@ -22,6 +22,7 @@ import time
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services.doc_types import doc_type_enabled_sql
 from app.services.extraction import EXTRACTION_VERSION
 from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL
@@ -120,7 +121,7 @@ async def _fetch_db_stats_snapshot() -> dict:
                 )
             )
         ).all()
-        # 券商分佈。**刻意不濾 is_research／full_text**，與上面的 market/instrument
+        # 券商分佈。**刻意不濾文件類型／full_text**，與上面的 market/instrument
         # 分面一致——三者的分母都要等於 db.reports，否則監控頁上兩張分佈卡的百分比
         # 會各自對到不同的總數，而且沒有任何地方看得出來。
         #
@@ -140,8 +141,8 @@ async def _fetch_db_stats_snapshot() -> dict:
             await session.execute(
                 text(
                     "SELECT count(*) FILTER (WHERE summary IS NOT NULL), count(*) "
-                    "FROM research.research_report "
-                    "WHERE full_text IS NOT NULL AND is_research IS NOT FALSE"
+                    "FROM research.research_report r "
+                    f"WHERE full_text IS NOT NULL AND {doc_type_enabled_sql('r', 'summary')}"
                 )
             )
         ).first()
@@ -164,7 +165,7 @@ async def _fetch_db_stats_snapshot() -> dict:
                     "LEFT JOIN (SELECT DISTINCT report_id FROM research.report_takeaway) t "
                     "       ON t.report_id = r.id "
                     "WHERE r.report_date > current_date - 30 "
-                    "  AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
+                    f"  AND r.full_text IS NOT NULL AND {doc_type_enabled_sql('r', 'takeaway')}"
                 )
             )
         ).first()
@@ -177,7 +178,7 @@ async def _fetch_db_stats_snapshot() -> dict:
                     "LEFT JOIN (SELECT DISTINCT report_id FROM research.report_signal) s "
                     "       ON s.report_id = r.id "
                     "WHERE r.report_date > current_date - 30 "
-                    "  AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
+                    f"  AND r.full_text IS NOT NULL AND {doc_type_enabled_sql('r', 'signal')}"
                 )
             )
         ).first()

@@ -94,6 +94,8 @@ report_visibility.report_visibility_file_hash_check = CHECK ((file_hash ~ '^[0-9
 report_visibility.report_visibility_hidden_needs_reason = CHECK (((NOT hidden) OR (btrim(COALESCE(reason, ''::text)) <> ''::text)))
 report_visibility.report_visibility_publication_check = CHECK ((publication = ANY (ARRAY['draft'::text, 'published'::text])))
 report_visibility.report_visibility_reason_check = CHECK ((char_length(reason) <= 500))
+research_report.research_report_doc_type_check = CHECK ((doc_type ~ '^[a-z][a-z0-9_]{0,31}$'::text))
+research_report.research_report_doc_type_legacy_sync = CHECK ((is_research = (doc_type = 'research'::text)))
 service_observation.service_observation_host_check = CHECK (((char_length(host) >= 1) AND (char_length(host) <= 255)))
 service_observation.service_observation_metric_check = CHECK ((metric ~ '^[a-z][a-z0-9_]{0,63}$'::text))
 service_observation.service_observation_scope_check = CHECK ((scope = ANY (ARRAY['host'::text, 'container'::text, 'service'::text])))

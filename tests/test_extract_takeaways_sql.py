@@ -97,9 +97,9 @@ class SqlBuilderTests(unittest.TestCase):
         self.assertIn("FROM research.research_report", sql)
         self.assertIn("r.full_text IS NOT NULL", sql)
         self.assertIn("r.full_text <> ''", sql)
-        # is_research 含 NULL（未判定的也算研報），不可寫成 = true
-        self.assertIn("r.is_research IS NOT FALSE", sql)
-        self.assertNotIn("is_research = true", sql)
+        # 母體＝類型開了摘錄的文件（doc_types 片段；廷豐 profile 下即研報），不再直接寫 is_research
+        self.assertIn("r.doc_type IN ('research')", sql)
+        self.assertNotIn("is_research", sql)
         self.assertIn("current_date - CAST(:since_days AS int)", sql)
         # 無字串拼接
         self.assertNotIn("%s", sql)

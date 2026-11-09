@@ -58,7 +58,8 @@ class IngestAllObjectStorageTests(unittest.TestCase):
             calls.append("upsert")
 
         tag = SimpleNamespace(
-            market="TW", is_research=True, confidence=0.9, instrument_types=[], relates_stock=False,
+            market="TW", is_research=True, doc_type="research", confidence=0.9, instrument_types=[],
+            relates_stock=False,
             relates_futures=False, stock_targets=[], futures_targets=[],
         )
         with tempfile.TemporaryDirectory() as directory:

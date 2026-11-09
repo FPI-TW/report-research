@@ -26,3 +26,11 @@ enabled = ["TW", "US", "HK", "CN", "WTX", "FX", "MACRO", "GLOBAL", "CRYPTO"]
 
 [security]
 totp_issuer = "廷豐智能研報"
+
+# 文件類型與各類型啟用的功能（功能詞彙見 app/profile.py 的 DOC_FEATURES）。
+# research 全開、non_research 全關＝改動前的 is_research true／false（零回歸）。
+[doc_types.research]
+features = ["search", "reading", "tagging_markets", "summary", "title", "takeaway", "signal", "radar", "brief", "overview"]
+
+[doc_types.non_research]
+features = []

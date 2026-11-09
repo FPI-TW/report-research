@@ -1,7 +1,7 @@
 # tests/test_brief.py
 """每日簡報：純函式（窗期／素材／解析）＋ 三支端點（TestClient + 假 deps）。
 
-DB 查詢本身（_SIGNAL_CHANGES_SQL 的 lag 視窗、新鮮度過濾）不在此檔——那需要真的
+DB 查詢本身（_signal_changes_sql 的 lag 視窗、新鮮度過濾）不在此檔——那需要真的
 pgvector 容器，與 tests/test_schema_constraints.py 同一類。此處守的是**接線與判斷**：
 窗期算錯、模型輸出沒收乾淨、空狀態被當成錯誤，這三種失效都不會有任何錯誤訊息。
 """

@@ -714,7 +714,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 ### 兩個刻意的預設
 
-- **語料閘（`corpus`）抑制連鎖假警報。** 派生批次都只吃「本輪新入庫」的研報，沒有新研報時它們一行都不會產出——那是正確行為。所以語料自己在同窗期內沒前進時，派生資產的過期一律判 `suppressed`；少了這一層，一個連假就讓幾個資產同時亮紅。語料閘的母體刻意與批次一致（`full_text IS NOT NULL AND is_research IS NOT FALSE`）——用全表 `max()` 會被行政／活動檔拉新，抑制就失效了。`corpus` 本身的門檻預設 0：語料停更由 sync unit 的 `OnFailure` 覆蓋，而 NAS 供稿有連假空窗。
+- **語料閘（`corpus`）抑制連鎖假警報。** 派生批次都只吃「本輪新入庫」的研報，沒有新研報時它們一行都不會產出——那是正確行為。所以語料自己在同窗期內沒前進時，派生資產的過期一律判 `suppressed`；少了這一層，一個連假就讓幾個資產同時亮紅。語料閘的母體刻意與批次一致（`full_text IS NOT NULL`＋類型開了摘要，`doc_types.doc_type_enabled_sql`；廷豐 profile 下即研報）——用全表 `max()` 會被行政／活動檔拉新，抑制就失效了。`corpus` 本身的門檻預設 0：語料停更由 sync unit 的 `OnFailure` 覆蓋，而 NAS 供稿有連假空窗。
 - **`signal` 預設門檻 0（不告警）。** 訊號只來自高覆蓋的少數研報，排程把積壓跑完之後 `max(created_at)` 就不再前進，與「這段時間沒有合格研報」無法區分——設任何門檻都會在積壓耗盡那天開始每日假警報。「訊號排程壞了」走另一條路：sync 殼對 `extract_signals` 非零退出會記進 `data/unit_failures.log`（測試釘住那個呼叫）。要開＝`--signal-days 14`。
 
 ### 排程健康：`unit_failures.log` 的讀取端

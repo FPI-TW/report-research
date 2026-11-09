@@ -13,7 +13,7 @@ data/extracted/<file_hash>.json            per-hash 快取（text、blocks 索�
    ▼ ② scripts/tag_all_cli.py             LLM（gpt-6-luna）市場 / 商品類型 / 標的
 data/tags/<file_hash>.json
    │
-   ▼ ③ scripts/ingest_all.py              gate: is_research 且 market 非空
+   ▼ ③ scripts/ingest_all.py              gate: doc_types.ingest_gate（類型有開功能；tagging_markets 時 market 非空）
 research.research_report ──── research.report_chunk（BGE-M3 dense + content_norm）
 research.extraction_log（每個 hash 一列，含未入庫者）
    │
@@ -53,7 +53,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |
 | `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state`、`data/.sync_feed_state` | 執行期日誌、心跳、本輪狀態、來源段結果（掛載／rsync／inbox 推送；主機信標讀它） | 否 |
-| `research.*`（Postgres ＋ pgvector；測試環境是容器 `report-mark-postgres`、host port 5436，正式環境是 RDS） | 由 Alembic migration 管理（`db/migrations/`），`db/schema.sql` 是凍結的 baseline | 是 |
+| `research.*`（Postgres ＋ pgvector；測試環境是容器 `report-mark-postgres`、host port 5436，正式環境是 RDS） | 由 Alembic migration 管理（`db/migrations/`），`db/schema.sql` 是凍結的 baseline；各表見 `docs/ARCHITECTURE.md` §8。`research_report.doc_type`（revision 0012）是文件類型，舊欄位 `is_research` 保留且由 CHECK 與它同步，讀取不再用它 | 是 |
 
 `data/` 在 `.gitignore` 是逐項忽略而非整目錄；新增執行期檔案要同步加一行，因為 repo 禁止 `git add -A`。
 
@@ -69,13 +69,13 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 ### ② 多維標註：`scripts/tag_all_cli.py`（LLM）
 
 - 輸入 `data/extracted/`，輸出 `data/tags/<file_hash>.json`；已有標籤檔即跳過。`--workers`（預設 8）、`--limit`、`--excerpt`（預設 10000 字）。模型 `TAG_MODEL`（未設查表，預設 `gpt-6-luna`）。
-- 標籤 schema（`app/services/tagging.py`）：`market`（標準市場代碼）、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`（四碼數字，最多 8 個）、`futures_targets`（小詞表）。Python 端 `parse_tags` 正規化：舊中文標籤經 `LEGACY_TO_FINDB` 對照，詞表外的值丟棄。送標註與訊號擷取的內文先經 `app/services/rating_index.py` 剔除封面的近期報告／評等異動索引表。
+- 標籤 schema（`app/services/tagging.py`）：`market`（標準市場代碼）、`is_research`（標註器的研報判斷；映射成文件類型 `research`／`non_research`，見 ③）、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`（四碼數字，最多 8 個）、`futures_targets`（小詞表）。Python 端 `parse_tags` 正規化：舊中文標籤經 `LEGACY_TO_FINDB` 對照，詞表外的值丟棄。送標註與訊號擷取的內文先經 `app/services/rating_index.py` 剔除封面的近期報告／評等異動索引表。
 - 取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75。
 - 提高 `--workers` 前依 `.env.example` 算式重算 DB 連線數。
 
 ### ③ 嵌入入庫：`scripts/ingest_all.py`
 
-- 輸入 `data/extracted/` ＋ `data/tags/`，輸出 `research.research_report` 與 `research.report_chunk`。閘：`is_research` 且 `market` 非空；`is_admin`、`scanned`、`not_research`、`extract_error` 各寫一列 `extraction_log`。`--limit`、`--batch-size`（預設 32）。
+- 輸入 `data/extracted/` ＋ `data/tags/`，輸出 `research.research_report` 與 `research.report_chunk`。閘：`doc_types.ingest_gate`——文件類型（tag 的 `is_research` 映射：true→`research`、false→`non_research`）在 profile 的 `[doc_types]` 至少開一個功能，且開了 `tagging_markets` 時 `market` 非空（廷豐 profile 下等同 `is_research` 且 `market` 非空）；寫入 `research_report.doc_type`，舊欄位 `is_research` 由它推得。`is_admin`、`scanned`、`not_research`（閘不過）、`extract_error` 各寫一列 `extraction_log`。`--limit`、`--batch-size`（預設 32）。
 - 切塊 `app/services/chunk.py`（600 字元、80 重疊，段落邊界），嵌入 `app/services/embed.py`（BGE-M3，CPU），`store.upsert_report` 依 `file_hash` 先刪後插。
 - 收尾 `ANALYZE research.report_chunk`（可能久於 60 秒，走 `relax_statement_timeout`）。
 - `make ingest-lowio` 會關 `fsync`，SIGKILL 後不還原；處置 `make restore-durability`。除非使用者明講不要跑（走 `docker exec`，RDS 不適用）。
@@ -220,6 +220,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | `instrument_types` | `equity`、`index`、`futures`、`options`、`etf`、`bond`、`fx`、`commodity`、`crypto` |
 | `futures_targets` | 台指期、小型台指、電子期、金融期、個股期貨、其他 |
 | `stock_targets` | 四碼數字，最多 8 個，去重保序 |
+| `doc_type`（文件類型，`research_report.doc_type`） | 標註器產生 `research`（`is_research=true`）、`non_research`（`is_research=false`）（`tagging.DOC_TYPE_RESEARCH`／`DOC_TYPE_NON_RESEARCH`）。詞彙與各類型啟用的功能由 profile 的 `[doc_types]` 宣告（`app/profile.py`；功能清單 `DOC_FEATURES`，各功能管到哪些查詢見 `app/services/doc_types.py` docstring），DB 只限形狀 `^[a-z][a-z0-9_]{0,31}$`。廷豐 profile：`research` 全開、`non_research` 全關 |
 | `source`（券商） | `filename.BROKER_MAP` 由檔名代碼正規化（如 `kgi`、`masterlink`、`sinopac`、`yuanta`、`morgan_stanley`），`SOURCE_DISPLAY` 給顯示名；缺檔名代碼時由 `extract_source_from_text` 從內文補 |
 | `report_type` | 檔名解析 |
 

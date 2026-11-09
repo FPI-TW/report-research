@@ -8,7 +8,7 @@ import {
 import { normalizeSort } from '../../lib/sortForMode'
 import { queryTerms } from '../../lib/terms'
 import { latestId } from '../../lib/isLatest'
-import { MARKET_ORDER } from '../../lib/meta'
+import { useEnabledMarkets } from '../../lib/marketsConfig'
 import type { ReportRow } from '../../lib/schemas'
 import type { TableSort, TableSortKey } from '../../lib/tableSort'
 import { SearchBar } from './SearchBar'
@@ -78,6 +78,7 @@ export default function SearchPage() {
   }, [stats.data])
 
   /** 搜尋時的市場計數來自命中集合（/api/search 分面）。 */
+  const enabledMarkets = useEnabledMarkets()
   const hitCounts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const f of results.facets) m[f.market] = f.count
@@ -92,7 +93,7 @@ export default function SearchPage() {
   const searchAllMarkets = mode === 'search' && state.market === 'ALL'
   const chipCounts = mode === 'search' ? (searchAllMarkets && !results.isLoading ? hitCounts : undefined) : corpusCounts
   const chipCodes = searchAllMarkets && !results.isLoading
-    ? MARKET_ORDER.filter(c => (hitCounts[c] ?? 0) > 0)
+    ? enabledMarkets.filter(c => (hitCounts[c] ?? 0) > 0)
     : undefined
 
   const instrumentOptions = (stats.data?.instrument_types ?? []).map(t => t.type)

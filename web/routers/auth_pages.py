@@ -39,16 +39,18 @@ INFO**。失敗／鎖定／遭拒是異常，值得在把 `LOG_LEVEL` 調成 WAR
 記憶體計數、定期寫一列彙總（`security_ops.ThrottledTally`），被攻擊時不會放大成 DB 寫入。每 IP 失敗限流
 （`web.auth`）原封不動。
 """
+import html
 import logging
 import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.services import accounts, security_ops
 from app.services.accounts import User
 from web import auth, authz, deps
+from web.routers.branding import branding_payload
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +71,25 @@ def _safe_next(raw: str | None) -> str:
     return raw
 
 
-def _static_page(name: str) -> FileResponse:
-    """回傳 HTML 殼，並標記 no-cache（瀏覽器每次重新向伺服器取用，改版後同事免強制重整即見新版）。
+def _login_page() -> HTMLResponse:
+    """登入頁：`web/static/login.html` 填上 profile 的品牌後回傳，並標記 no-cache（改版後免強制重整）。
 
-    註：route-level 的 FileResponse 不會對 If-None-Match/If-Modified-Since 做 304 短路，
-    每次都回 200 全量 body（HTML 約數十 KB，區網成本可忽略）。/static 下的 css/js 由
-    _NoCacheStatic（StaticFiles）服務，才有條件式 304 重新驗證。
+    品牌在伺服器端注入而不是讓頁面自己去抓 `/api/branding`：登入頁是每個人的第一眼，先閃一次中性名稱再換成
+    機構名不像樣，而且這頁刻意不載入任何外部 script。替換的值一律 HTML 跳脫；`{{brand_logo}}` 在 profile 沒有
+    logo 時換成空字串（版面照常，只少一張圖）。每次都回 200 全量 body（約 50 KB，成本可忽略）。
     """
-    return FileResponse(deps.STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
+    brand = branding_payload()
+    name = html.escape(brand["product_name"])
+    logo = brand["logo_light_url"]
+    favicon = brand["favicon_url"]
+    page = (deps.STATIC_DIR / "login.html").read_text(encoding="utf-8")
+    page = page.replace(
+        "{{brand_logo}}",
+        f'<img class="glyph" src="{html.escape(logo)}" width="64" height="64" alt="{name}" />' if logo else "",
+    ).replace(
+        "{{favicon_link}}", f'<link rel="icon" href="{html.escape(favicon)}" />' if favicon else "",
+    ).replace("{{product_name}}", name)
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 async def _cookie_user(request: Request) -> User | None:
@@ -147,7 +160,7 @@ async def login_page(request: Request):
     nxt = _safe_next(request.query_params.get("next"))
     if await _cookie_user(request) is not None:
         return RedirectResponse(nxt, status_code=302)
-    return _static_page("login.html")
+    return _login_page()
 
 
 @router.post("/login")

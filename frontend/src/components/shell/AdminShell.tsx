@@ -10,6 +10,7 @@ import { fmtDateTime } from '../../features/admin/auditLabels'
 import { worstLamp, type AdminSignals } from '../../features/admin/adminSignals'
 import { useAdminSignals } from '../../features/admin/useAdminSignals'
 import { useAdminTheme, type AdminTheme } from '../../lib/adminTheme'
+import { useBranding } from '../../lib/branding'
 import { TF_DUR, TF_EASE_OUT } from '../../lib/motionTokens'
 import { useMe } from '../../lib/useMe'
 import { useMfaEnrollmentSignal } from '../../lib/useMfaEnrollment'
@@ -46,6 +47,7 @@ export function AdminShell() {
   const me = useMe()
   useMfaEnrollmentSignal()
   const { theme, setTheme } = useAdminTheme()
+  const brand = useBranding()
   const [paletteOpen, setPaletteOpen] = useState(false)
 
   const mfaRequired = Boolean(me.data?.mfa_enrollment_required)
@@ -83,7 +85,7 @@ export function AdminShell() {
   return (
     <div className={styles.shell}>
       <aside className={styles.rail}>
-        <BrandLogo size={30} className={styles.logo} />
+        <BrandLogo size={30} className={styles.logo} theme={theme} />
         {domains.length > 0 && (
           <nav ref={railRef} className={styles.domains} aria-label="管理領域">
             {domains.map(d => <RailItem key={d.key} domain={d} on={d.key === here?.domain.key} signals={signals} />)}
@@ -103,7 +105,7 @@ export function AdminShell() {
       {domain && (
         <aside className={styles.panel}>
           <div className={styles.panelHead}>
-            <div className={styles.panelKicker}>廷豐智能研報・管理後台</div>
+            <div className={styles.panelKicker}>{brand.productName}・管理後台</div>
             <div className={styles.panelTitle}>{domain.label}</div>
           </div>
           <nav ref={panelNavRef} className={styles.panelNav} aria-label="管理導覽">

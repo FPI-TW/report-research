@@ -13,7 +13,7 @@
 - 只落兩種形狀：「主題×日」（`usage_daily`，**沒有 user_id**）與「人×日×類別」（`usage_counter`，**沒有主題**）。
   **永遠不會有「誰看了哪篇」**：主題與人只在同一個記憶體格子裡相遇一次——`usage_daily` 的不重複人數
   （`users`）用行程內的集合去重，集合本身從不落庫，flush 只送集合的大小。
-- 搜尋**永不記查詢字串**：middleware 只從 query string 取 `market` 一個鍵，而且只接受 findb 市場代碼
+- 搜尋**永不記查詢字串**：middleware 只從 query string 取 `market` 一個鍵，而且只接受標準市場代碼
   （`tagging.MARKETS`）；其餘任何值（含 `q`）連讀都不讀進累加器。
 - LLM 只記 metadata（任務、模型、成敗、token、耗時），observer 介面上就沒有 prompt 與回答（`llm_http.call_metadata`）。
 - 已刪除帳號（`app_user.deleted_at`）的個人資料在 upsert 時以 JOIN 濾掉：刪帳前一刻還在累加器裡的計數不會讓

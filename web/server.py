@@ -37,6 +37,7 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 configure_logging()
 
+from app import profile as app_profile  # noqa: E402
 from app import request_context  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services import accounts, db, llm_http, llm_models, usage_events  # noqa: E402
@@ -66,6 +67,7 @@ from web.routers import admin_security as admin_security_routes  # noqa: E402
 from web.routers import admin_uploads as admin_uploads_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
+from web.routers import branding as branding_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
 from web.routers import external as external_routes  # noqa: E402
 from web.routers import features as features_routes  # noqa: E402
@@ -179,6 +181,10 @@ def _start_usage_collection() -> usage_events.UsageFlusher | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # profile（app/profile.py）：機構名、品牌、prompt 參數、市場子集。設定錯了（未知鍵、缺 asset、非標準市場、
+    # PROFILE_DIR 不存在）就在這裡拋 ProfileError、拒絕啟動，不等到第一個問答或第一次載入品牌才炸。
+    loaded = app_profile.get_profile()
+    logger.warning("profile：%s（%s）", loaded.institution.product_name, loaded.root)
     # 併發上限與背景 run 登錄表都是 per-process 狀態，多 worker 會讓上限翻倍、模型
     # 記憶體翻倍、研報重連隨機 404。偵測得到就拒絕啟動（fail-closed），偵測不到就
     # 放行——判準與已知缺口見 web/concurrency.py。
@@ -240,15 +246,18 @@ app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 # 統一錯誤格式 {"detail", "code", "request_id"}（web/errors.py）。
 errors.install(app)
 
-# ───── 認證閘門(deny-by-default;白名單僅 /login 與 /healthz)─────
+# ───── 認證閘門(deny-by-default;白名單僅 /login、/healthz 與品牌)─────
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
 # 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
 # /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
 # 回應內容刻意極簡（見 routers/health.py）。
 # /healthz/storage、/healthz/llm、/healthz/security、/healthz/feed 在白名單裡但只回答本機直連（其餘 404），
 # 理由見 routers/health.py。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed"}
-_AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
+# /api/branding 與 /api/branding/assets/ 底下：登入頁與 SPA 在登入前就要畫品牌；回應只有顯示用的名稱、
+# asset URL 與色票，asset 端點只交 profile 引用的檔（web/routers/branding.py）。
+_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed",
+                   "/api/branding"}
+_AUTH_PREFIX_ALLOWLIST = ("/app/assets/", "/api/branding/assets/")
 # 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
 _EXTERNAL_PREFIX = "/external/"
 
@@ -354,6 +363,8 @@ app.add_middleware(RequestLogMiddleware)
 # /healthz（免認證存活探測）——必須與 _AUTH_ALLOWLIST 的白名單成對存在，
 # 只掛路由而沒放行等於它永遠回 302，與不存在的路由無從分辨（那正是它要解決的問題）。
 app.include_router(health_routes.router)
+# /api/branding、/api/branding/assets/{name}：登入前就要畫品牌，同樣在白名單（只交顯示用的欄位）。
+app.include_router(branding_routes.router)
 
 # /api/stats 與 /api/progress 已拆至 web/routers/monitor.py
 app.include_router(monitor_routes.router)

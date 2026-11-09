@@ -182,7 +182,7 @@ async def radar_instruments(
 async def radar_rating_changes(limit: int = Query(4, ge=1, le=20)):
     """跨標的的最新評等變動（研報庫首頁）：每筆是某券商對某標的、與它前一份訊號相比的調升或調降。
 
-    比對語意與個股總覽的近期事件相同（見 `queries._RECENT_RATING_CHANGES_SQL`），
+    比對語意與個股總覽的近期事件相同（見 `queries._recent_rating_changes_sql`），
     回應只有評等，不含目標價。
     """
     t0 = time.monotonic()

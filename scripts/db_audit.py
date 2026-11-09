@@ -178,10 +178,12 @@ CHECKS: tuple[Check, ...] = (
         "有全文卻沒有任何 chunk 的研報",
         SEVERITY_WARN,
         "SELECT count(*) FROM research.research_report r"
-        " WHERE r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
+        " WHERE r.full_text IS NOT NULL"
         "   AND NOT EXISTS (SELECT 1 FROM research.report_chunk c WHERE c.report_id = r.id)",
         "ingest 只跑了報告層、沒跑到分塊層。這些報告完全不會被檢索到，"
-        "但在總覽分面與監控頁的計數裡都在——所以覆蓋率看起來是滿的。",
+        "但在總覽分面與監控頁的計數裡都在——所以覆蓋率看起來是滿的。"
+        "刻意不分文件類型：入庫閘放行的每一種類型都會寫 chunk（`store.upsert_report`），"
+        "沒有 chunk 的一律是入庫中斷，與類型開了哪些功能無關。",
     ),
     Check(
         "takeaway_sha_disagreement",

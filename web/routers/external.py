@@ -40,6 +40,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.services import feature_flags, quarantine, uploads
+from app.services.doc_types import doc_type_enabled_sql
 from app.services.entitlement import Entitlement
 from app.services.filename import source_display
 from app.services.original_file_url import (
@@ -158,7 +159,8 @@ async def fetch_file_pointer(session, report_id: str, ent: Entitlement):
     return (await session.execute(
         text(
             "SELECT r.file_name, r.file_hash, r.source_object_key FROM research.research_report r "
-            f"WHERE r.id = CAST(:id AS uuid) AND {visible_report_sql('r')} AND {ent_clause}"
+            f"WHERE r.id = CAST(:id AS uuid) AND {visible_report_sql('r')} "
+            f"AND {doc_type_enabled_sql('r', 'search')} AND {ent_clause}"
         ),
         {"id": report_id, **ent_params},
     )).first()
@@ -176,7 +178,8 @@ async def fetch_file_pointers(session, report_ids: list[str], ent: Entitlement) 
         text(
             "SELECT CAST(r.id AS text), r.file_name, r.file_hash, r.source_object_key "
             "FROM research.research_report r "
-            f"WHERE r.id = ANY(CAST(:ids AS uuid[])) AND {visible_report_sql('r')} AND {ent_clause}"
+            f"WHERE r.id = ANY(CAST(:ids AS uuid[])) AND {visible_report_sql('r')} "
+            f"AND {doc_type_enabled_sql('r', 'search')} AND {ent_clause}"
         ),
         {"ids": report_ids, **ent_params},
     )).all()

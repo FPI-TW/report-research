@@ -26,6 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from app.services.doc_types import ingest_gate
 from app.services.extraction import cache as extraction_cache
 from app.services.llm_models import TASK_TAG, resolve_model
 from scripts._claude_cli import CliResult, error_kind, failure_kind, run_claude
@@ -110,7 +111,8 @@ def skip_before_tag(is_admin: bool, scanned: bool, exists: bool) -> str | None:
 
 def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
     """標註後過濾：無 tag → skip_untagged（被內容審查擋下 → skip_blocked；被截斷 → skip_truncated）；
-    非研究/無市場 → skip_non_research；否則 None。"""
+    入庫閘不過（`doc_types.ingest_gate`：類型沒開任何功能，或開了 tagging_markets 卻沒有 market）
+    → skip_non_research；否則 None。"""
     if tag is None:
         kind = error_kind(tag_error)
         if kind == "content_filter":
@@ -119,7 +121,7 @@ def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
         if kind == "truncated":
             return "skip_truncated"
         return "skip_untagged"
-    if not tag.is_research or not tag.market:
+    if not ingest_gate(tag.doc_type, tag.market):
         return "skip_non_research"
     return None
 
@@ -411,7 +413,7 @@ async def ingest_one(
             file_name=path.name,
             file_path=str(path),
             market=tag.market,
-            is_research=tag.is_research,
+            doc_type=tag.doc_type,
             confidence=tag.confidence,
             source_object_key=source_object_key,
             stock_code=meta.stock_code,

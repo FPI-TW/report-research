@@ -27,6 +27,14 @@ enabled = ["TW", "US", "HK", "CN", "WTX", "FX", "MACRO", "GLOBAL", "CRYPTO"]
 [security]
 totp_issuer = "廷豐智能研報"
 
+# 文件類型與各類型啟用的功能（功能詞彙見 app/profile.py 的 DOC_FEATURES）。
+# research 全開、non_research 全關＝改動前的 is_research true／false（零回歸）。
+[doc_types.research]
+features = ["search", "reading", "tagging_markets", "summary", "title", "takeaway", "signal", "radar", "brief", "overview"]
+
+[doc_types.non_research]
+features = []
+
 [connectors]
 # 資料來源連接器（app/services/connectors/）。廷豐的來源由主機層的 scripts/sync_new_reports.sh 執行
 # （辦公室主機：NAS 掛載 → rsync；EC2：SYNC_SOURCE=r2-inbox），sync 鏈第 4 段起不變；框架的連接器輪詢

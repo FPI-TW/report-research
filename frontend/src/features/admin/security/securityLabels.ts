@@ -35,7 +35,7 @@ export const LIVE_LABELS: Record<string, string> = { ok: '完整', broken: '斷�
 /** 事件類型選單（順序即顯示順序）。值與後端 `accounts.AUTH_EVENT_TYPES` 一致（產生的 client 型別守住）。 */
 export const EVENT_OPTIONS = [
   'login.success', 'login.failure', 'login.totp_failure', 'login.locked', 'login.insecure',
-  'logout', 'elevate.success', 'elevate.failure',
+  'logout', 'elevate.success', 'elevate.failure', 'login.sso_failure',
 ] as const
 
 /** `bad_credentials` 是權限提升給了驗證碼卻失敗（服務層分不出是密碼還是驗證碼錯）。其餘沿用共用標籤。 */
@@ -46,7 +46,8 @@ export function eventLabel(event: string, reason?: string | null): string {
 
 /** 事件列的語氣色：失敗＝bad、被擋下的彙總列＝warn，其餘不上色。未知事件不上色。 */
 export function eventTone(event: string): 'bad' | 'warn' | undefined {
-  if (event === 'login.failure' || event === 'login.totp_failure' || event === 'elevate.failure') return 'bad'
+  if (event === 'login.failure' || event === 'login.totp_failure' || event === 'elevate.failure'
+    || event === 'login.sso_failure') return 'bad'
   if (event === 'login.locked' || event === 'login.insecure') return 'warn'
   return undefined
 }

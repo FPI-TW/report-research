@@ -1,18 +1,17 @@
 """資料來源連接器：metadata 側檔（research.report_metadata）、對外上傳 scope 與上傳來源的 API 用戶端
 
 Revision ID: 0014
-Revises: 0011
+Revises: 0013
 Create Date: 2026-11-10
 """
 # 慣例（tests/test_schema_migrations.py 守）：只寫 SQL，放在 UPGRADE_SQL；不用 autogenerate。
 # 改 CHECK 約束要同步重生 db/expected_constraints.txt；新增不可重建的表要動備份清單。
-# 編號：0012／0013 保留給同期的其他 lane（fw-doctype、fw-oidc），整合時依合併順序把 down_revision 線性化。
 from alembic import op
 
 from app.services.schema_migrations import run_sql_script
 
 revision = "0014"
-down_revision = "0011"
+down_revision = "0013"
 branch_labels = None
 depends_on = None
 

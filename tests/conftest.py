@@ -124,6 +124,15 @@ os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
 # **用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
 # 開啟時的行為由 tests/test_admin_mfa.py 在自己的範圍內換掉 Settings 驗證。
 os.environ["ADMIN_MFA_REQUIRED"] = "0"
+# OIDC 單一登入：開發者環境或 .env 裡的 IdP 設定不可漏進測試（以賦值設空字串，env loader 才不會再補值）。
+# 要驗 SSO 的測試自己把 Settings.oidc 換掉（tests/test_oidc_login.py），HTTP 經 oidc._transport 的 MockTransport。
+# 清單另取名字（不寫成 for 迴圈裡的 tuple 字面）：tests/test_llm_models.py 把那種迴圈認定為 LLM 任務旋鈕的清單。
+_OIDC_KNOBS = ("OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_REDIRECT_URI", "OIDC_SCOPES",
+               "OIDC_USERNAME_CLAIM", "OIDC_ALLOWED_DOMAINS", "OIDC_LINK_BY_USERNAME", "OIDC_SSO_ONLY",
+               "OIDC_BREAK_GLASS_USERS", "OIDC_MFA_AMR", "OIDC_MFA_ACR", "OIDC_ASSUME_IDP_MFA",
+               "OIDC_CLOCK_SKEW_SECONDS")
+for _knob in _OIDC_KNOBS:
+    os.environ[_knob] = ""
 # 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／
 # llm_usage_daily——測試以 `with TestClient(app)` 觸發 lifespan 時，那就是寫進 REPORT_MARK_DB_URL 指的庫
 # （本機預設是測試環境的真實資料庫）。
@@ -286,6 +295,9 @@ def _reset_v2_state():
         security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
         if security is not None:
             security.reset()
+        oidc = sys.modules.get("app.services.oidc")  # OIDC discovery 與 JWKS 快取
+        if oidc is not None:
+            oidc.reset_cache()
 
     _clear()
     yield

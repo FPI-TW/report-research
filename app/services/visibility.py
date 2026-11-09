@@ -191,7 +191,7 @@ async def list_reports(
 
     `publication`：`draft`／`published`／None（全部）。沒有 visibility 列的研報（sync 進來的）算已發布。
 
-    **不套 is_research 條件**：非研究檔本來就不進使用者路徑，但管理員可能正是要找它。
+    **不套文件類型條件**（`doc_types.doc_type_enabled_sql`）：類型關掉的文件不進使用者路徑，但管理員可能正是要找它。
     排序：入庫新→舊，id 當決勝鍵讓翻頁穩定。
     """
     conds: list[str] = []
@@ -225,7 +225,7 @@ async def list_reports(
 async def get_report(session: AsyncSession, file_hash: str) -> Optional[AdminReportRow]:
     """管理頁的單筆研報（`?report=<file_hash>` 的分享連結用），欄位與 `list_reports` 的一列相同。
 
-    與清單一樣**不過濾可見性**（隱藏的、草稿都回）、不套 is_research。格式不對或不存在回 None。
+    與清單一樣**不過濾可見性**（隱藏的、草稿都回）、不套文件類型條件。格式不對或不存在回 None。
     """
     if not valid_file_hash(file_hash):
         return None

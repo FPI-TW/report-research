@@ -44,6 +44,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.doc_types import doc_type_enabled_sql  # noqa: E402
 from app.services.llm_models import TASK_TITLE, resolve_model  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
@@ -273,7 +274,8 @@ def build_candidates_sql(by_hashes: bool, skip_blocked: bool, limit: bool, exclu
     sql = (
         "SELECT r.id::text, r.file_name, r.full_text, r.file_hash "
         "FROM research.research_report r "
-        "WHERE r.title IS NULL AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE "
+        "WHERE r.title IS NULL AND r.full_text IS NOT NULL "
+        f"AND {doc_type_enabled_sql('r', 'title')} "
     )
     if by_hashes:
         sql += "AND r.file_hash = ANY(:hashes) "

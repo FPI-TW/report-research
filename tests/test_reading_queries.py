@@ -69,36 +69,36 @@ class SqlBindTests(unittest.TestCase):
         )
 
     def test_doc_sql(self):
-        self._assert_binds(queries._DOC_SQL, {"file_hash"})
+        self._assert_binds(queries._doc_sql(), {"file_hash"})
 
     def test_takeaways_sql(self):
         self._assert_binds(queries._TAKEAWAYS_SQL, {"report_id", "statuses"})
 
     def test_signals_sql(self):
-        self._assert_binds(queries._SIGNALS_SQL, {"report_id", "statuses"})
+        self._assert_binds(queries._signals_sql(), {"report_id", "statuses"})
 
     def test_instrument_names_sql(self):
-        self._assert_binds(queries._INSTRUMENT_NAMES_SQL, {"markets", "codes"})
+        self._assert_binds(queries._instrument_names_sql(), {"markets", "codes"})
 
     def test_similar_sql(self):
         self._assert_binds(
-            queries._SIMILAR_SQL,
+            queries._similar_sql(),
             {"rid", "probe_n", "per_probe", "max_dist", "min_probes", "limit"},
         )
 
     def test_chunk_content_sql(self):
-        self._assert_binds(queries._CHUNK_CONTENT_SQL, {"rid", "ci"})
+        self._assert_binds(queries._chunk_content_sql(), {"rid", "ci"})
 
 
 class SqlStructureTests(unittest.TestCase):
     """結構斷言一律對「編譯後」字串做（同一個理由：只有編譯後才是真相）。"""
 
-    def test_doc_sql_filters_non_research_inclusively(self):
-        sql = _sql(queries._DOC_SQL)
+    def test_doc_sql_filters_by_doc_type(self):
+        sql = _sql(queries._doc_sql())
         self.assertIn("FROM research.research_report", sql)
-        self.assertIn("is_research IS NOT FALSE", sql)
-        # NULL 也要算研究檔：`= true` 會把未標記的整批弄不見
-        self.assertNotIn("is_research = true", sql)
+        # 類型沒開閱讀的文件（廷豐 profile 下＝非研究檔）與查無同樣 404；不再直接寫 is_research
+        self.assertIn("r.doc_type IN ('research')", sql)
+        self.assertNotIn("is_research", sql)
 
     def test_takeaways_sql_ordered_by_ordinal(self):
         sql = _sql(queries._TAKEAWAYS_SQL)
@@ -108,7 +108,7 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("text_sha256", sql)  # 驗章用，端點需要
 
     def test_signals_sql_takes_jsonb_as_text(self):
-        sql = _sql(queries._SIGNALS_SQL)
+        sql = _sql(queries._signals_sql())
         self.assertIn("FROM research.report_signal s", sql)
         self.assertIn("JOIN research.research_report r ON r.id = s.report_id", sql)
         self.assertIn("s.extraction_status = ANY(", sql)
@@ -117,17 +117,17 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("s.thesis_dimensions::text", sql)
 
     def test_instrument_names_sql_mirrors_radar_name_resolution(self):
-        sql = _sql(queries._INSTRUMENT_NAMES_SQL)
+        sql = _sql(queries._instrument_names_sql())
         # 名稱只有一個真相來源：research_report.company_name。改成別的來源（例如
         # 拿本篇的 company_name 就好）會讓同一檔標的在閱讀頁與雷達叫不同名字。
         self.assertIn("FROM research.research_report r", sql)
         self.assertIn("r.company_name", sql)
-        # 依代號比對的是純量欄 stock_code（雷達 _COVERAGE_SQL／_catalog_cte 同語意），
+        # 依代號比對的是純量欄 stock_code（雷達 _coverage_sql()／_catalog_cte 同語意），
         # 不是 stock_targets 陣列——後者「這份報告提到這檔」不等於「這份報告在講這檔」，
         # 拿它取名會把整份產業報告的公司名安到隨便一檔成分股上。
         self.assertIn("r.stock_code", sql)
         self.assertNotIn("stock_targets", sql)
-        self.assertIn("is_research IS NOT FALSE", sql)
+        self.assertIn("r.doc_type IN ('research')", sql)
         # 每個 (market, code) 只留最新一列
         self.assertIn("DISTINCT ON (r.market, r.stock_code)", sql)
         self.assertIn("r.report_date DESC NULLS LAST", sql)
@@ -139,7 +139,7 @@ class SqlStructureTests(unittest.TestCase):
         self.assertEqual(queries.VALID_STATUSES, ["valid", "partial"])
 
     def test_similar_sql_samples_whole_document(self):
-        sql = _sql(queries._SIMILAR_SQL)
+        sql = _sql(queries._similar_sql())
         # 全篇均勻取樣（不是取前 N 塊——開頭多為封面/免責樣板）
         self.assertIn("row_number() OVER (ORDER BY c.chunk_index)", sql)
         # 均勻鋪滿：generate_series + floor(i * n / min(probe_n, n))。
@@ -153,7 +153,7 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("c.embedding <=> p.embedding", sql)
 
     def test_similar_sql_ranks_by_breadth_weighted_score(self):
-        sql = _sql(queries._SIMILAR_SQL)
+        sql = _sql(queries._similar_sql())
         # 每個 probe 對每篇只計一次最佳距離，否則同篇多塊會對同一 probe 灌票
         self.assertIn("DISTINCT ON (pe, report_id)", sql)
         self.assertIn("sum(1 - dist) AS score", sql)
@@ -162,14 +162,14 @@ class SqlStructureTests(unittest.TestCase):
         # 「兩篇共用同一段免責聲明樣板」看起來極度相似，榜單全雜訊
         self.assertLess(sql.index("a.score DESC"), sql.index("a.best_dist ASC"))
         self.assertIn("a.matched_probes >=", sql)  # 單一樣板塊推不上榜
-        self.assertIn("r.is_research IS NOT FALSE", sql)
+        self.assertIn("r.doc_type IN ('research')", sql)
         self.assertIn("(SELECT count(*) FROM probe) AS total_probes", sql)
 
     def test_similar_sql_excludes_self(self):
-        self.assertIn("c.report_id <>", _sql(queries._SIMILAR_SQL))
+        self.assertIn("c.report_id <>", _sql(queries._similar_sql()))
 
     def test_chunk_content_sql_casts_with_cast_not_double_colon(self):
-        sql = _sql(queries._CHUNK_CONTENT_SQL)
+        sql = _sql(queries._chunk_content_sql())
         self.assertIn("FROM research.report_chunk", sql)
         self.assertIn("chunk_index =", sql)
         # `:rid::uuid` 會讓 compiler 回溯成短名、參數綁不上（PR #89 的生產 500）
@@ -217,7 +217,7 @@ class _RecordingSession:
 
 
 def _doc_row(full_text="內文", file_hash="a" * 64):
-    # 順序須與 _DOC_SQL 的 SELECT 一致
+    # 順序須與 _doc_sql 的 SELECT 一致
     return (
         "rep-1", file_hash, "daiwa-8046.pdf", "基板漲價超預期",
         "/data/daiwa-8046.pdf", "TW", "daiwa",
@@ -360,7 +360,7 @@ class FetchChunkContentTests(unittest.IsolatedAsyncioTestCase):
 
 
 def _similar_row(file_hash="c" * 64, matched=9, score=5.4, total=12, title="相似報告標題"):
-    # 順序須與 _SIMILAR_SQL 的最終 SELECT 一致（title 在尾端，見 fetch_similar 註解）
+    # 順序須與 _similar_sql 的最終 SELECT 一致（title 在尾端，見 fetch_similar 註解）
     return (
         file_hash, "other.pdf", "TW", "kgi", date(2026, 7, 1), "摘要",
         matched, score, total, title,

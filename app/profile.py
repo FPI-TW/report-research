@@ -41,6 +41,13 @@
 市場代碼是框架固定的**標準市場代碼**（`app/services/tagging.py` 的 `MARKETS`，標註 prompt 與 `tests/test_tagging.py`
 逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
 廷豐 profile 的代碼與 findb 對齊，是廷豐的跨 repo 契約，不是框架的。
+
+## 文件類型
+
+`[doc_types]` 宣告文件類型（`research_report.doc_type`）與每種類型啟用的功能（`DOC_FEATURES`，框架固定的詞彙）。
+SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設定產生過濾片段。section 缺席時是框架預設：
+`research` 全開、`non_research` 全關（等同改動前的 `is_research` true／false）。標註器會產生的類型
+（`tagging.TAGGER_DOC_TYPES`）必須全部宣告：漏宣告的類型所有功能都關，那類文件會靜默消失。
 """
 
 from __future__ import annotations
@@ -55,7 +62,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from app.services.tagging import MARKET_DISPLAY, MARKETS
+from app.services.tagging import DOC_TYPE_RESEARCH, MARKET_DISPLAY, MARKETS, TAGGER_DOC_TYPES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR_ENV = "PROFILE_DIR"
@@ -125,6 +132,40 @@ class Security:
     totp_issuer: str  # 驗證器 App 顯示的發行者名稱（otpauth URI 的 issuer）
 
 
+# 文件類型可啟用的功能（框架固定的詞彙；`app/services/doc_types.py` 的 docstring 寫每一項管到哪些查詢）。
+DOC_FEATURES: tuple[str, ...] = (
+    "search",  # 混合檢索（檢索頁、問答、對外 API）、檢索頁瀏覽
+    "reading",  # 閱讀頁、相似研報、原檔
+    "tagging_markets",  # 以標準市場代碼標註：入庫要求 market 非空
+    "summary",  # 摘要批次
+    "title",  # 標題批次
+    "takeaway",  # 摘錄批次
+    "signal",  # 訊號擷取批次
+    "radar",  # 觀點雷達
+    "brief",  # 每日簡報
+    "overview",  # 總覽題的分面聚合
+)
+_DOC_TYPE_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")  # 與 revision 0012 的 CHECK 同一個形狀
+
+
+@dataclass(frozen=True)
+class DocTypes:
+    # 類型 → 啟用的功能。順序＝宣告順序（SQL 片段裡的 IN 清單依此排列，輸出穩定）。
+    features: Mapping[str, frozenset[str]]
+
+    def enabled(self, doc_type: str | None, feature: str) -> bool:
+        return feature in self.features.get(doc_type or "", frozenset())
+
+    def types_with(self, feature: str) -> tuple[str, ...]:
+        return tuple(t for t, fs in self.features.items() if feature in fs)
+
+
+def _default_doc_types() -> DocTypes:
+    return DocTypes(features=MappingProxyType({
+        DOC_TYPE_RESEARCH: frozenset(DOC_FEATURES),
+        **{t: frozenset() for t in TAGGER_DOC_TYPES if t != DOC_TYPE_RESEARCH},
+    }))
+
 CONNECTOR_KINDS = ("folder", "s3", "plugin")
 PLUGINS_DIR = "plugins"
 
@@ -168,6 +209,7 @@ class Profile:
     prompt: PromptParams
     markets: Markets
     security: Security
+    doc_types: DocTypes = field(default_factory=_default_doc_types)
     # 後續 lane 的新 section 欄位一律加在這裡之後、帶預設值（例如 `x: X = field(default_factory=X)`）。
     connectors: Connectors = field(default_factory=Connectors)
 
@@ -371,6 +413,37 @@ def _parse_security(table: dict, ctx: _Ctx) -> Security:
         raise ctx.error("totp_issuer", "不可含冒號（otpauth label 以冒號分隔發行者與帳號）")
     return Security(totp_issuer=issuer)
 
+
+@_section("doc_types")
+def _parse_doc_types(table: dict, ctx: _Ctx) -> DocTypes:
+    if not table:
+        return _default_doc_types()
+    out: dict[str, frozenset[str]] = {}
+    for name, spec in table.items():
+        if not _DOC_TYPE_NAME.fullmatch(name):
+            raise ctx.error(name, "類型名稱只能是小寫英文開頭、小寫英數與底線，最多 32 字元")
+        if not isinstance(spec, dict):
+            raise ctx.error(name, f"必須是表格（[doc_types.{name}]），目前是 {_type_name(spec)}")
+        ctx.reject_unknown(spec, {"features"}, prefix=f"{name}.")
+        if "features" not in spec:
+            raise ctx.error(f"{name}.features", "必填（全部關閉請寫空陣列 []）")
+        feats = spec["features"]
+        if not isinstance(feats, list):
+            raise ctx.error(f"{name}.features", f"必須是字串陣列，目前是 {_type_name(feats)}")
+        seen: set[str] = set()
+        for i, feat in enumerate(feats):
+            if not isinstance(feat, str):
+                raise ctx.error(f"{name}.features[{i}]", f"必須是字串，目前是 {_type_name(feat)}")
+            if feat not in DOC_FEATURES:
+                raise ctx.error(f"{name}.features[{i}]", f"未知的功能 {feat!r}（可用：{'、'.join(DOC_FEATURES)}）")
+            if feat in seen:
+                raise ctx.error(f"{name}.features[{i}]", f"重複的功能：{feat!r}")
+            seen.add(feat)
+        out[name] = frozenset(seen)
+    for name in TAGGER_DOC_TYPES:
+        if name not in out:
+            raise ctx.error(name, f"標註器會產生的類型必須宣告（{'、'.join(TAGGER_DOC_TYPES)}）")
+    return DocTypes(features=MappingProxyType(out))
 
 _CONNECTOR_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 _ENV_PREFIX = re.compile(r"[A-Z][A-Z0-9_]{0,47}")

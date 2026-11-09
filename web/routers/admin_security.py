@@ -43,7 +43,7 @@ _ACCOUNTS = Depends(authz.require_scope("accounts.manage"))
 # 與 accounts.AUTH_EVENT_TYPES 逐字一致（tests/test_admin_security_api.py 釘住）；OpenAPI 與前端 client 靠它列舉。
 AuthEventType = Literal[
     "login.success", "login.failure", "login.totp_failure", "login.locked", "login.insecure",
-    "logout", "elevate.success", "elevate.failure",
+    "logout", "elevate.success", "elevate.failure", "login.sso_failure",
 ]
 # 與 security_ops.HIGH_RISK_CATEGORIES 逐字一致（同上）。
 HighRiskCategory = Literal[

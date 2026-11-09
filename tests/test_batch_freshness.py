@@ -339,7 +339,7 @@ class SqlShapeTests(unittest.TestCase):
     """查詢形狀：只讀、只 max()、母體與批次實際處理的一致。"""
 
     def test_query_is_read_only(self):
-        upper = cbf.LATEST_SQL.upper()
+        upper = cbf.latest_sql().upper()
         for verb in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "ALTER", "DROP"):
             self.assertNotIn(verb, upper, f"偵測器不得寫 DB（出現 {verb}）")
 
@@ -349,17 +349,19 @@ class SqlShapeTests(unittest.TestCase):
             "research.report_takeaway",
             "research.report_signal",
         ):
-            self.assertIn(table, cbf.LATEST_SQL)
-        self.assertEqual(cbf.LATEST_SQL.count("max(created_at)"), 4)
+            self.assertIn(table, cbf.latest_sql())
+        self.assertEqual(cbf.latest_sql().count("max(created_at)"), 4)
 
     def test_corpus_population_matches_batch_eligibility(self):
-        """語料閘的母體必須是「有全文、非行政檔」。
+        """語料閘的母體必須是「有全文、類型開了摘要」（廷豐 profile 下＝非行政檔）。
 
         用全表 max() 會被行政／活動檔拉新，於是「連續幾天只進非研報」時抑制失效、
         三個資產一起假紅——那恰好是抑制存在的理由。
         """
-        self.assertIn("full_text IS NOT NULL", cbf.LATEST_SQL)
-        self.assertIn("is_research IS NOT FALSE", cbf.LATEST_SQL)
+        self.assertIn("full_text IS NOT NULL", cbf.latest_sql())
+        # 文件類型片段（app/services/doc_types.py）：廷豐 profile 下＝研報，等同改動前的 is_research IS NOT FALSE。
+        self.assertEqual(cbf.latest_sql().count("r.doc_type IN ('research')"), 2)
+        self.assertNotIn("is_research", cbf.latest_sql())
 
 
 class ReportFormatTests(unittest.TestCase):

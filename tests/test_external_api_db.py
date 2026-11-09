@@ -93,7 +93,7 @@ async def _ingest(session, name: str, file_hash: str, *, market: str, source: st
     row = store.ReportRow(
         file_hash=file_hash, file_name=f"{name}.pdf", file_path=f"/nonexistent/{name}.pdf",
         source_object_key=f"originals/{file_hash[:2]}/{file_hash}.pdf",
-        market=market, is_research=True, confidence=1.0, source=source, report_date=REPORT_DATE,
+        market=market, doc_type="research", confidence=1.0, source=source, report_date=REPORT_DATE,
         report_type="個股", instrument_types=["stock"], relates_stock=True, full_text=f"{TERM} 全文 {name}",
     )
     chunks = [f"{TERM} 對外API測試 {name} 第{i}段" for i in range(2)]

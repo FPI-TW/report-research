@@ -87,6 +87,7 @@ class UserItem(BaseModel):
     scopes: list[GrantableScope] = []  # 另外授予的；管理員預設 scope 不列
     totp_enabled: bool = False
     deletion_execute_after: str | None = None  # 有尚未執行的刪除排程時：執行時刻
+    sso_bound: bool = False  # 已綁定公司 IdP 的身分（OIDC 單一登入；識別碼本身不外露）
 
 
 class UserListResponse(BaseModel):
@@ -231,7 +232,7 @@ def _user_item(info) -> UserItem:
         password_changed_at=_iso(info.password_changed_at), last_login_at=_iso(info.last_login_at),
         last_seen_at=_iso(info.last_seen_at), active_sessions=info.active_sessions,
         is_super=info.is_super, scopes=list(info.scopes), totp_enabled=info.totp_enabled,
-        deletion_execute_after=_iso(info.deletion_execute_after),
+        deletion_execute_after=_iso(info.deletion_execute_after), sso_bound=info.sso_bound,
     )
 
 

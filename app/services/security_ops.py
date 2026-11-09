@@ -135,7 +135,11 @@ INSECURE_TALLY = ThrottledTally(INSECURE_EVENT)
 # 第二步沒有（或帶著失效的）暫時憑證：不計入每 IP 限流（那不是猜錯驗證碼），所以同樣只能在記憶體計數，
 # 否則任何人都能以不帶 cookie 的 step=totp 請求無限灌 DB。
 EXPIRED_CHALLENGE_TALLY = ThrottledTally("login.totp_failure", reason="expired_challenge")
-_TALLIES = (LOCKED_TALLY, INSECURE_TALLY, EXPIRED_CHALLENGE_TALLY)
+# OIDC 單一登入：IdP 導回時沒有（或對不上）登入流程的暫時憑證、或 IdP 回了 error。兩者都不需要任何祕密就能
+# 無限製造（自己開一個流程再亂改 state），同樣只在記憶體計數。
+SSO_STATE_TALLY = ThrottledTally("login.sso_failure", reason="state")
+SSO_IDP_ERROR_TALLY = ThrottledTally("login.sso_failure", reason="idp_error")
+_TALLIES = (LOCKED_TALLY, INSECURE_TALLY, EXPIRED_CHALLENGE_TALLY, SSO_STATE_TALLY, SSO_IDP_ERROR_TALLY)
 
 
 async def flush_tallies(api: Any, *, force: bool = False) -> int:
@@ -514,7 +518,7 @@ HIGH_RISK_ACTIONS: dict[str, tuple[str, ...]] = {
     "privilege": ("user.set_privileges", "user.set_role"),
     "elevation": ("session.elevate", "session.elevate_failed"),
     "session": ("session.admin_revoke", "user.force_logout", "user.disable", "user.bulk_action"),
-    "credential": ("user.reset_password", "user.totp_reset", "user.totp_disable"),
+    "credential": ("user.reset_password", "user.totp_reset", "user.totp_disable", "user.sso_link"),
     "deletion": ("user.delete_requested", "user.delete_cancelled", "user.delete_executed", "user.delete_replayed"),
     "ops": ("ops.*",),
     "data_access": ("qa_content.read", "data.export"),

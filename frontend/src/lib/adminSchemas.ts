@@ -23,6 +23,10 @@ export const meSchema = z.object({
   mfa_enrollment_required: z.boolean().nullish(),
   // Admin v2：管理員在 TOTP 強制政策下不可自行關閉兩步驟驗證（後端 /api/me/totp/disable 回 403 mfa_policy_locked）。
   mfa_policy_locked: z.boolean().nullish(),
+  // OIDC 單一登入：這個 session 的登入方式（password／sso）；SSO 的權限提升改回 IdP 重新登入（lib/ssoElevation.ts）。
+  auth_method: z.string().nullish(),
+  // 管理員 TOTP 強制開啟、SSO 登入的管理員這次沒有經過 IdP 的多重驗證（管理端點此時一律 403 sso_mfa_required）。
+  sso_mfa_required: z.boolean().nullish(),
 })
 export type Me = z.infer<typeof meSchema>
 

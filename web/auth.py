@@ -20,6 +20,7 @@ import base64
 import hashlib
 import hmac
 import ipaddress
+import json
 import logging
 import os
 import secrets
@@ -257,6 +258,78 @@ def set_mfa_cookie(response, now: int, *, user_id: str, fingerprint: str, secure
 
 def clear_mfa_cookie(response) -> None:
     response.delete_cookie(MFA_COOKIE_NAME, path="/login")
+
+
+# ───── OIDC 單一登入流程的暫時憑證（web/routers/oidc_login.py）─────
+# 導去 IdP 之前發、IdP 導回 callback 時收：state、nonce、PKCE code_verifier、登入後要去的 next、用途
+# （login／elevate）與發起時的 session id（權限提升要回到同一個 session）。伺服器端不記任何東西。
+# - 格式 `o1.<base64url JSON>.<sig>`；簽章訊息以 `o1.` 開頭並帶登出 epoch，與 session（`3.`）、MFA（`m1.`）
+#   分屬不同領域，不能互相冒充。HttpOnly、SameSite=Lax（IdP 導回是頂層 GET，Lax 照樣帶）、path 限 /login/oidc、
+#   10 分鐘。code_verifier 留在使用者自己的瀏覽器裡是 PKCE 的本意：攔到授權碼的人沒有這張 cookie。
+# - 只靠簽章與到期，不靠「用過即丟」：callback 一律清掉它，授權碼本身在 IdP 端只能用一次。
+OIDC_COOKIE_NAME = "tf_oidc"
+OIDC_COOKIE_PATH = "/login/oidc"
+OIDC_TTL = 600
+_OIDC_VERSION = "o1"
+_OIDC_MAX_TOKEN_CHARS = 4096
+
+
+@dataclass(frozen=True)
+class OidcPending:
+    state: str
+    nonce: str
+    code_verifier: str
+    next: str
+    intent: str  # login／elevate
+    session_id: str | None
+    expires_at: int
+
+
+def _oidc_message(payload: str) -> str:
+    return f"{_OIDC_VERSION}.{payload}.{_SESSION_EPOCH}"
+
+
+def issue_oidc_token(now: int, pending: OidcPending) -> str:
+    body = {"s": pending.state, "n": pending.nonce, "v": pending.code_verifier, "x": pending.next,
+            "i": pending.intent, "sid": pending.session_id, "e": now + OIDC_TTL}
+    payload = base64.urlsafe_b64encode(json.dumps(body, separators=(",", ":")).encode()).decode().rstrip("=")
+    return f"{_OIDC_VERSION}.{payload}.{_sign(_oidc_message(payload))}"
+
+
+def parse_oidc_token(token: str | None, now: int) -> OidcPending | None:
+    """驗章＋未過期才回 OidcPending；形狀不對一律 None。"""
+    if not token or len(token) > _OIDC_MAX_TOKEN_CHARS:
+        return None
+    parts = token.split(".")
+    if len(parts) != 3 or parts[0] != _OIDC_VERSION:
+        return None
+    _ver, payload, sig = parts
+    if not hmac.compare_digest(sig.encode(), _sign(_oidc_message(payload)).encode()):
+        return None
+    try:
+        body = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        exp = body["e"]
+        fields = (body["s"], body["n"], body["v"], body["x"], body["i"])
+        sid = body.get("sid")
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(exp, int) or exp <= now or exp > now + OIDC_TTL:
+        return None
+    if not all(isinstance(f, str) and f for f in fields) or fields[4] not in ("login", "elevate"):
+        return None
+    if sid is not None and not (isinstance(sid, str) and _canonical_uuid(sid)):
+        return None
+    return OidcPending(state=fields[0], nonce=fields[1], code_verifier=fields[2], next=fields[3], intent=fields[4],
+                       session_id=sid, expires_at=exp)
+
+
+def set_oidc_cookie(response, now: int, pending: OidcPending, *, secure: bool) -> None:
+    response.set_cookie(OIDC_COOKIE_NAME, issue_oidc_token(now, pending), max_age=OIDC_TTL, httponly=True,
+                        samesite="lax", secure=secure, path=OIDC_COOKIE_PATH)
+
+
+def clear_oidc_cookie(response) -> None:
+    response.delete_cookie(OIDC_COOKIE_NAME, path=OIDC_COOKIE_PATH)
 
 
 # ───── 每 IP 失敗限流(in-memory,重啟即重置)─────

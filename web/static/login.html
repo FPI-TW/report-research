@@ -139,6 +139,29 @@
   .form-alt { margin: -4px 0 0; text-align: center; font-size: 13px; }
   .form-alt a { color: var(--tf-gold-text); }
   .form-alt a:hover { color: var(--gold-hover); }
+  /* OIDC 單一登入：伺服器依 OIDC_ISSUER／OIDC_SSO_ONLY 把 login-card 的 data-sso 填成 off／on／only。
+     on＝公司帳號按鈕在上、帳密表單照常；only＝帳密表單收起，只留給緊急管理員展開。 */
+  .sso { display: none; flex-direction: column; gap: 14px; }
+  [data-sso="on"] .sso, [data-sso="only"] .sso { display: flex; }
+  .sso-button {
+    display: flex; align-items: center; justify-content: center; height: 50px; padding: 0 16px;
+    font-size: 15px; font-weight: 600; color: #fff; text-decoration: none;
+    background: var(--tf-gold-text); border-radius: 999px; transition: background-color .18s;
+  }
+  .sso-button:hover { background: var(--gold-hover); }
+  .sso-button:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(138,90,15,.22); }
+  .sso-divider { display: none; align-items: center; gap: 12px; font-size: 12px; color: var(--text-desc); }
+  .sso-divider::before, .sso-divider::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+  [data-sso="on"] .sso-divider { display: flex; }
+  [data-sso="on"] #password-form .submit { color: var(--tf-gold-text); background: var(--tf-surface);
+    box-shadow: inset 0 0 0 1px var(--tf-border); }
+  [data-sso="on"] #password-form .submit:hover { background: var(--tf-canvas); }
+  .local-toggle { display: none; margin: 0; padding: 0; font: inherit; font-size: 13px; color: var(--tf-gold-text);
+    background: none; border: none; cursor: pointer; text-align: center; }
+  .local-toggle:hover { color: var(--gold-hover); }
+  [data-sso="only"] .local-toggle { display: block; }
+  [data-sso="only"] #password-form:not(.is-open) { display: none; }
+  [data-sso="only"] .local-toggle.is-open { display: none; }
   .card-foot {
     padding-top: 18px; border-top: 1px solid var(--hairline);
     font-size: 12px; line-height: 1.5; color: var(--text-desc); text-align: center;
@@ -464,7 +487,7 @@
 <body>
 <div class="page">
   <!-- 登入卡刻意排在 DOM 第一位：小螢幕單欄時在最上、鍵盤 Tab 也先到表單；桌面三欄由 grid 放到中欄。 -->
-  <main class="login-card" id="login-card">
+  <main class="login-card" id="login-card" data-sso="{{sso_mode}}">
 <!-- region:card (lane login-shell) -->
     <div class="card-body">
       <div class="brand">
@@ -474,8 +497,15 @@
       <div class="card-rule" aria-hidden="true"></div>
       <div class="card-heading">
         <h2 class="card-title" id="card-title"><span data-step="password">登入</span><span data-step="totp" hidden>兩步驟驗證</span></h2>
-        <p class="card-sub" data-step="password">請以管理者配發的帳號登入。</p>
+        <p class="card-sub" data-step="password">{{login_hint}}</p>
         <p class="card-sub" data-step="totp" hidden>請輸入驗證器 App 顯示的 6 位數驗證碼。</p>
+      </div>
+      <!-- OIDC 單一登入（data-sso 為 off 時不顯示）。next 由下方 script 帶上。 -->
+      <div class="sso" data-step="password">
+        <a class="sso-button" href="/login/oidc" id="sso-link">以公司帳號登入</a>
+        <div class="sso-divider" aria-hidden="true">或</div>
+        <p class="form-error" id="sso-error" role="alert" hidden></p>
+        <button type="button" class="local-toggle" id="local-toggle" aria-controls="password-form">緊急管理員登入</button>
       </div>
       <form method="post" action="/login" autocomplete="on" id="password-form" class="login-form" aria-labelledby="card-title">
         <div class="field">
@@ -700,8 +730,14 @@
     locked: "嘗試次數過多，請稍後再試。",
     insecure: "此登入只接受 HTTPS 或本機 localhost，請改走受保護入口。",
     disabled: "此帳號已停用，請聯絡管理者。",
-    unavailable: "登入服務暫時無法使用，請稍後再試。"
+    unavailable: "登入服務暫時無法使用，請稍後再試。",
+    sso: "公司帳號登入沒有完成，請重新登入。",
+    sso_unavailable: "公司帳號登入服務暫時無法使用，請稍後再試。",
+    sso_account: "這個公司帳號無法登入本系統，請聯絡管理者。",
+    sso_only: "請改以公司帳號登入。"
   };
+  // 這些錯誤來自公司帳號登入；其餘來自帳密表單（只允許公司帳號時要把表單展開才看得到錯誤）。
+  var SSO_ERRORS = { sso: 1, sso_unavailable: 1, sso_account: 1, sso_only: 1 };
   var DEFAULT_ERROR = "帳號或密碼錯誤。";
 
   if (totpStep) {
@@ -714,9 +750,24 @@
     document.getElementById("totp-form").hidden = false;
     document.getElementById("code").focus();
   }
+  var passwordForm = document.getElementById("password-form");
+  var localToggle = document.getElementById("local-toggle");
+  var openLocal = function () {
+    passwordForm.classList.add("is-open");
+    localToggle.classList.add("is-open");
+    localToggle.setAttribute("aria-expanded", "true");
+  };
+  localToggle.setAttribute("aria-expanded", "false");
+  localToggle.addEventListener("click", function () {
+    openLocal();
+    document.getElementById("username").focus();
+  });
   if (p.has("error")) {
-    var el = document.getElementById(totpStep ? "totp-error" : "error");
     var code = p.get("error");
+    var ssoError = document.getElementById("login-card").getAttribute("data-sso") !== "off"
+      && Object.prototype.hasOwnProperty.call(SSO_ERRORS, code);
+    if (!totpStep && !ssoError) openLocal();
+    var el = document.getElementById(totpStep ? "totp-error" : (ssoError ? "sso-error" : "error"));
     el.textContent = Object.prototype.hasOwnProperty.call(ERRORS, code) ? ERRORS[code] : DEFAULT_ERROR;
     el.hidden = false;
   }
@@ -725,6 +776,7 @@
     var fields = document.querySelectorAll(".next-field");
     for (var i = 0; i < fields.length; i++) fields[i].value = nx;
     document.getElementById("restart-link").href = "/login?next=" + encodeURIComponent(nx);
+    document.getElementById("sso-link").href = "/login/oidc?next=" + encodeURIComponent(nx);
   }
 
   // 送出中：按鈕換字並 disabled 防重複送出。只在 submit 事件裡改（原生驗證通過後才會觸發），

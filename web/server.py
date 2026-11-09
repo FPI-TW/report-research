@@ -74,6 +74,7 @@ from web.routers import features as features_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
 from web.routers import me_quota as me_quota_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
+from web.routers import oidc_login as oidc_login_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
@@ -255,8 +256,10 @@ errors.install(app)
 # 理由見 routers/health.py。
 # /api/branding 與 /api/branding/assets/ 底下：登入頁與 SPA 在登入前就要畫品牌；回應只有顯示用的名稱、
 # asset URL 與色票，asset 端點只交 profile 引用的檔（web/routers/branding.py）。
+# /login/oidc 與 /login/oidc/callback：OIDC 單一登入的起點與 IdP 導回點（還沒登入才需要；OIDC_ISSUER 沒設時回 404，
+# web/routers/oidc_login.py）。
 _AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed",
-                   "/api/branding"}
+                   "/api/branding", "/login/oidc", "/login/oidc/callback"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/", "/api/branding/assets/")
 # 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
 _EXTERNAL_PREFIX = "/external/"
@@ -453,6 +456,7 @@ app.include_router(report_file_routes.router)
 
 # 登入流程頁面路由（middleware require_login 仍在本檔，見上）
 app.include_router(auth_pages_routes.router)
+app.include_router(oidc_login_routes.router)  # /login/oidc*：OIDC 單一登入（OIDC_ISSUER 沒設時 404）
 app.include_router(account_security_routes.router)  # /api/me/*：TOTP 自助設定與權限提升
 
 # SPA / 靜態服務：configure 內含 /app/assets Mount → router（catch-all）→ /static 的

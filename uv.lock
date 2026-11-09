@@ -1304,6 +1304,18 @@ wheels = [
 ]
 
 [[package]]
+name = "joserfc"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/31/5c3f27e82c92a7bbe1f028033ff19e0251540395c9be244c01a50de42bdb/joserfc-1.8.0.tar.gz", hash = "sha256:cbf03cb2c6db8cc5289f1ef8718842e53dba244b4c0de5fefa0c0eaee4bde8db", size = 241023, upload-time = "2026-11-03T10:45:57.948Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/7e/7ffaae13415e8f51c8e8d5d1845f2de7a27ebf2717e97a38d7e7446d6030/joserfc-1.8.0-py3-none-any.whl", hash = "sha256:176b836ac7ed9a46a88629e24076314b475f33a75d0bad7f26146e572eed7c79", size = 73147, upload-time = "2026-11-03T10:45:56.531Z" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2651,6 +2663,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "flagembedding" },
     { name = "httpx" },
+    { name = "joserfc" },
     { name = "opencc-python-reimplemented" },
     { name = "pdfplumber" },
     { name = "pgvector" },
@@ -2679,6 +2692,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.136.3" },
     { name = "flagembedding", specifier = ">=1.2" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "joserfc", specifier = ">=1.0,<2" },
     { name = "opencc-python-reimplemented", specifier = ">=0.1.7" },
     { name = "pdfplumber", specifier = ">=0.11.10" },
     { name = "pgvector", specifier = ">=0.3" },

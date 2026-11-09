@@ -47,6 +47,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from app.config import get_settings
 from app.services import accounts, security_ops
 from app.services.accounts import User
 from web import auth, authz, deps
@@ -71,15 +72,26 @@ def _safe_next(raw: str | None) -> str:
     return raw
 
 
+# 登入卡副標，依 OIDC 單一登入的模式（off：沒設定／on：公司帳號與本地帳密並存／only：只允許公司帳號）。
+_LOGIN_HINTS = {
+    "off": "請以管理者配發的帳號登入。",
+    "on": "請以公司帳號或管理者配發的帳號登入。",
+    "only": "請以公司帳號登入。",
+}
+
+
 def _login_page() -> HTMLResponse:
     """登入頁：`web/static/login.html` 填上 profile 的品牌後回傳，並標記 no-cache（改版後免強制重整）。
 
     品牌在伺服器端注入而不是讓頁面自己去抓 `/api/branding`：登入頁是每個人的第一眼，先閃一次中性名稱再換成
     機構名不像樣，而且這頁刻意不載入任何外部 script。替換的值一律 HTML 跳脫；`{{brand_logo}}` 在 profile 沒有
     logo 時換成空字串（版面照常，只少一張圖）。每次都回 200 全量 body（約 50 KB，成本可忽略）。
+    `{{sso_mode}}`／`{{login_hint}}`：OIDC 單一登入的模式（`OIDC_ISSUER` 沒設＝off，與沒有這個功能時同一個畫面）。
     """
     brand = branding_payload()
     name = html.escape(brand["product_name"])
+    oidc = get_settings().oidc
+    sso_mode = ("only" if oidc.sso_only else "on") if oidc.enabled else "off"
     logo = brand["logo_light_url"]
     favicon = brand["favicon_url"]
     page = (deps.STATIC_DIR / "login.html").read_text(encoding="utf-8")
@@ -88,7 +100,9 @@ def _login_page() -> HTMLResponse:
         f'<img class="glyph" src="{html.escape(logo)}" width="64" height="64" alt="{name}" />' if logo else "",
     ).replace(
         "{{favicon_link}}", f'<link rel="icon" href="{html.escape(favicon)}" />' if favicon else "",
-    ).replace("{{product_name}}", name)
+    ).replace("{{product_name}}", name).replace("{{sso_mode}}", sso_mode).replace(
+        "{{login_hint}}", _LOGIN_HINTS[sso_mode],
+    )
     return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 
@@ -232,13 +246,18 @@ async def login_submit(
         return resp
     auth.record_failure(ip, now)
     # reason 只會是 unknown_user／bad_password／disabled；user_id 在帳號不存在時是 None（帳號欄打了什麼都不留）。
-    failure_reason = result.reason if result.reason in ("unknown_user", "bad_password", "disabled") else "unknown_user"
+    failure_reason = (result.reason if result.reason in ("unknown_user", "bad_password", "disabled", "sso_only")
+                      else "unknown_user")
     await _event("login.failure", reason=failure_reason,
                  user_id=result.user_id if failure_reason != "unknown_user" else None, ip=ip, user_agent=_ua(request))
     if result.reason == "disabled":
         # 只有密碼正確才會走到這裡，所以告訴對方「已停用」不會洩漏給亂猜的人。
         logger.warning("登入遭拒：帳號已停用 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
         return RedirectResponse(f"/login?error=disabled{err_q}", status_code=303)
+    if result.reason == "sso_only":
+        # 同上：密碼正確才會走到這裡（OIDC_SSO_ONLY 開啟、這個帳號不是緊急管理員）。
+        logger.warning("登入遭拒：只允許公司帳號登入 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
+        return RedirectResponse(f"/login?error=sso_only{err_q}", status_code=303)
     logger.warning(
         "登入失敗 ip=%s 帳號存在=%s 視窗內失敗次數=%s",
         ip,
@@ -272,7 +291,8 @@ async def me(user: User = Depends(authz.current_user)):
     那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。
 
     `mfa_enrollment_required`：管理員 TOTP 強制開啟、而這位管理員還沒開 TOTP（管理端點此時一律 403
-    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。"""
+    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。SSO 登入的管理員改看
+    `sso_mfa_required`（`web/authz.py`）。"""
     return {
         "id": user.id, "username": user.username, "role": user.role,
         "is_super": user.is_super, "scopes": sorted(user.scopes),
@@ -281,4 +301,9 @@ async def me(user: User = Depends(authz.current_user)):
         "mfa_enrollment_required": authz.mfa_enrollment_required(user),
         # 管理員 TOTP 強制政策是否作用在這個帳號上（管理員＋政策開啟）：前端據此不顯示「關閉兩步驟驗證」。
         "mfa_policy_locked": user.id is not None and accounts.admin_mfa_policy_locks(user.role),
+        # 這個 session 的登入方式（password／sso）。SSO 帳號的權限提升改走 GET /login/oidc?intent=elevate。
+        "auth_method": user.auth_method,
+        # 管理員 TOTP 強制開啟、這位是 SSO 登入的管理員，而 IdP 這次沒有表明做過多重驗證（管理端點此時一律 403
+        # `sso_mfa_required`）。前端據此提示以經過多重驗證的公司帳號重新登入。
+        "sso_mfa_required": authz.sso_mfa_required(user),
     }

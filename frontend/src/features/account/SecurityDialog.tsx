@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { renderSVG } from 'uqr'
 import { Modal } from '../../components/primitives/Modal'
 import { meSecurityApi, type TotpSetup } from '../../lib/accountSecurityApi'
+import { isSsoSession } from '../../lib/ssoElevation'
 import { useMe } from '../../lib/useMe'
 import { ElevationCancelledError, useElevationGate } from './useElevationGate'
 import styles from './Account.module.css'
@@ -59,7 +60,8 @@ export function SecurityPanel({ active, onElevatingChange }: {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const { guard, dialog, open: elevating } = useElevationGate(meSecurityApi.elevate, true)
+  const { guard, dialog, open: elevating } = useElevationGate(meSecurityApi.elevate, true,
+    isSsoSession(me.data?.auth_method))
   useEffect(() => { onElevatingChange?.(elevating) }, [elevating, onElevatingChange])
 
   const refresh = async () => {

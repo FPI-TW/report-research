@@ -3,6 +3,7 @@ import type { AuditEntry } from '../../lib/adminSchemas'
 /** 稽核 action → 中文。未知的 action（後端日後新增）原樣顯示代碼，不讓整列消失。 */
 const ACTION_LABELS: Record<string, string> = {
   'user.create': '建立帳號',
+  'user.sso_link': '綁定公司帳號',
   'user.set_role': '變更角色',
   'user.enable': '啟用帳號',
   'user.disable': '停用帳號',
@@ -61,10 +62,15 @@ const AUTH_EVENT_LABELS: Record<string, string> = {
   logout: '登出',
   'elevate.success': '重新驗證成功',
   'elevate.failure': '重新驗證失敗',
+  'login.sso_failure': '公司帳號登入失敗',
 }
 const AUTH_REASON_LABELS: Record<string, string> = {
   password: '密碼', totp: '兩步驟驗證', unknown_user: '帳號不存在', bad_password: '密碼錯誤', disabled: '帳號已停用',
   bad_code: '驗證碼錯誤', expired_challenge: '驗證逾時',
+  sso: '公司帳號', sso_only: '只允許公司帳號', state: '登入流程失效', idp_error: 'IdP 拒絕', token: 'ID token 無效',
+  claims: '缺少必要資訊', domain: '網域不允許', username_conflict: '帳號名稱已被使用', invalid_username: '帳號名稱不合規',
+  break_glass: '撞到緊急管理員帳號', sso_stale_auth: 'IdP 未重新驗證', sso_identity: '公司帳號不符',
+  sso_session: '登入狀態已失效',
 }
 
 export function authEventLabel(event: string, reason?: string | null): string {
@@ -92,9 +98,15 @@ export function roleLabel(role: string): string {
   return ROLE_LABELS[role] ?? role
 }
 
-/** 操作者：actor 為 null 是 CLI（scripts/create_admin.py），不是「不知道是誰」。 */
+/**
+ * 操作者：actor 為 null 是 CLI（scripts/create_admin.py）或系統行為，不是「不知道是誰」。
+ * 公司帳號（OIDC）首次登入的自動建帳與綁定（detail.via 為 sso_jit／sso）是系統行為。
+ */
 export function actorLabel(entry: AuditEntry): string {
   if (entry.actor_username) return entry.actor_username
+  if (entry.actor_user_id == null && (entry.detail.via === 'sso_jit' || entry.detail.via === 'sso')) {
+    return '系統（公司帳號登入）'
+  }
   if (entry.actor_user_id == null) return '指令列（CLI）'
   return '（已不存在的帳號）'
 }

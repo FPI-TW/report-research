@@ -1,14 +1,18 @@
 import { useState } from 'react'
 import { meSecurityApi } from '../../lib/accountSecurityApi'
 import { ApiError } from '../../lib/api'
+import { startSsoElevation } from '../../lib/ssoElevation'
 import { Field } from './controls'
 import { FormDialog } from './Dialog'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
 
-/** 「重新驗證身分」對話框（密碼＋開了兩步驟驗證時的 6 位數驗證碼）。流程在 `useElevate`。 */
-export function ElevateDialog({ what, needTotp, onDone, onCancel }: {
-  what: string; needTotp: boolean; onDone: (elevatedUntil: string) => void; onCancel: () => void
+/**
+ * 「重新驗證身分」對話框（密碼＋開了兩步驟驗證時的 6 位數驗證碼）。流程在 `useElevate`。
+ * SSO 登入的帳號（`sso`）沒有本地密碼：改成回公司帳號重新登入，回來後再做一次原本的操作。
+ */
+export function ElevateDialog({ what, needTotp, sso = false, onDone, onCancel }: {
+  what: string; needTotp: boolean; sso?: boolean; onDone: (elevatedUntil: string) => void; onCancel: () => void
 }) {
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -34,6 +38,14 @@ export function ElevateDialog({ what, needTotp, onDone, onCancel }: {
       }
       setBusy(false)
     }
+  }
+
+  if (sso) {
+    return (
+      <FormDialog open top title="重新驗證身分" width={400} submitLabel="以公司帳號重新驗證" busy={false}
+        body={<>「{what}」需要重新驗證。完成公司帳號登入後回到這一頁，再執行一次這項操作；10 分鐘內不用再驗證。</>}
+        onSubmit={startSsoElevation} onClose={onCancel}>{null}</FormDialog>
+    )
   }
 
   return (

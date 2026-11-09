@@ -1,13 +1,18 @@
 import { useState, type FormEvent } from 'react'
 import { Modal } from '../../components/primitives/Modal'
 import { ApiError } from '../../lib/api'
+import { startSsoElevation } from '../../lib/ssoElevation'
 import type { ElevateFn } from './useElevationGate'
 import styles from './Account.module.css'
 
-/** 重新驗證身分的對話框（密碼＋開了 TOTP 時的驗證碼）。流程控制在 `useElevationGate`。 */
-export function ElevationDialog({ open, needTotp, elevate, onDone, onCancel }: {
+/**
+ * 重新驗證身分的對話框（密碼＋開了 TOTP 時的驗證碼）。流程控制在 `useElevationGate`。
+ * SSO 登入的帳號（`sso`）改成回公司帳號重新登入。
+ */
+export function ElevationDialog({ open, needTotp, sso = false, elevate, onDone, onCancel }: {
   open: boolean
   needTotp: boolean
+  sso?: boolean
   elevate: ElevateFn
   onDone: () => void
   onCancel: () => void
@@ -40,6 +45,20 @@ export function ElevationDialog({ open, needTotp, elevate, onDone, onCancel }: {
     } finally {
       setBusy(false)
     }
+  }
+
+  if (sso) {
+    return (
+      <Modal open={open} onClose={cancel} title="重新驗證身分" className={styles.compactModal}>
+        <div className={styles.form}>
+          <p className={styles.hint}>這項操作需要以公司帳號重新登入。回到這一頁後再執行一次；10 分鐘內不必再驗證。</p>
+          <div className={styles.actions}>
+            <button type="button" className={styles.secondary} onClick={cancel}>取消</button>
+            <button type="button" className={styles.primary} onClick={startSsoElevation}>以公司帳號重新驗證</button>
+          </div>
+        </div>
+      </Modal>
+    )
   }
 
   return (

@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ElevationCancelledError } from '../../features/account/useElevationGate'
 import type { Me } from '../../lib/adminSchemas'
 import { ApiError } from '../../lib/api'
+import { isSsoSession } from '../../lib/ssoElevation'
 import { useMe } from '../../lib/useMe'
 import { ElevateDialog } from './ElevateDialog'
 
@@ -64,6 +65,7 @@ export function useElevate(): { elevated: <T>(what: string, action: () => Promis
 
   const dialog = pending && (
     <ElevateDialog what={pending.what} needTotp={Boolean(me.data?.totp_enabled)}
+      sso={isSsoSession(me.data?.auth_method)}
       onDone={until => finish(until)} onCancel={() => finish(null)} />
   )
   return { elevated, dialog }

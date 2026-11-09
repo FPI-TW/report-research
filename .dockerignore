@@ -1,0 +1,42 @@
+# 映像的 build context 排除清單（deploy/container/Dockerfile，context 是 repo 根）。
+# 目的有二：映像絕不能帶走祕密與資料（tests/test_container_deploy.py 逐項釘住），context 也不要大到上 GB。
+# 新增執行期產物或祕密檔的落點時，這裡與 .gitignore 都要加。
+
+# 祕密與環境檔（任何層級、任何變體；範本放行）
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# 執行期資料、研報原檔、備份
+data/
+研報自動匯入/
+backups/
+**/*.dump
+
+# 版控、相依與建置產物（前端在映像內重新 build）
+.git/
+.github/
+.venv/
+.uv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+frontend/node_modules/
+frontend/dist/
+
+# 測試不進映像（執行期用不到；假祕密也不該跟著出貨）。例外是前後端共用的 SSE 事件契約：
+# 前端 build 的 tsc 會讀它（frontend/tsconfig.json 的 @fixtures 別名）。
+tests/
+!tests/fixtures/sse_events.json
+
+# 開發工具的暫存
+.playwright-mcp/
+.playwright-cli/
+.superpowers/
+.claude/
+.codex/
+.orca/

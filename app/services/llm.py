@@ -1,8 +1,9 @@
 """統一 LLM 串流客戶端：`llm_http` 是唯一的 backend。
 
-`stream_completion` 只接受 `llm_models.HTTP_MODELS` 白名單內的 model，交給
-`llm_http.astream_chat`（首字期限、錯誤 kind、partial，見 `_stream_http`）。其他名稱（含 `claude-*`、
-CLI 別名、打錯字、空字串）一律拋 `LLMUnavailableError(kind="config")`，`allow_web=True` 也是——
+`stream_completion` 只接受目前 provider 白名單內的 model（`llm_models.allowed_models`：`openai`／`opencode_go` 是
+內建的 `HTTP_MODELS`，其他 provider 是設定宣告的名稱），交給 `llm_http.astream_chat`（首字期限、錯誤 kind、partial，
+見 `_stream_http`；各 provider 的差異全在 `llm_http`，這一層的重試與截斷語意與 provider 無關）。其他名稱
+（含 `claude-*`、CLI 別名、打錯字、空字串）一律拋 `LLMUnavailableError(kind="config")`，`allow_web=True` 也是——
 不會被送到付費端點，也沒有備援可以改走。
 
 **網搜目前沒有後端**（原本靠已移除的 claude CLI 的 WebSearch）。時效題在 `allow_web=True` 拿到 config

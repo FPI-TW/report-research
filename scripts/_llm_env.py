@@ -50,7 +50,11 @@ LLM 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 r
   明確失敗。
   通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否一致，**永遠不印金鑰本身**。
 
-`LLM_PROVIDER=opencode_go`（測試環境）時檢查的是 `OPENCODE_GO_API_KEY`，通過時印 `OpenCode Go 金鑰 fp=…`。
+`LLM_PROVIDER=opencode_go`（測試環境）時檢查的是 `OPENCODE_GO_API_KEY`，通過時印 `OpenCode Go 金鑰 fp=…`；其他 provider
+同理（`llm_models.PROVIDER_KEY_ENV`）。內建以外的 provider（`azure_openai`、`anthropic`、`openai_compatible`）另檢查
+端點設定（`llm_models.config_problems`：必填的端點旋鈕、Azure 的 api-version、宣告模型的格式），有問題 rc=2 並說出
+是哪個旋鈕——
+與 web 的啟動自檢、`llm_http` 送出前的檢查同一份判準。
 
 另有 `python -m scripts._llm_env <環境檔> …`（`main`）：比對幾份環境檔的金鑰指紋與 `LLM_PROVIDER`，與上面同一套
 解析（`file_key_fingerprint`），輪替後核對 `.env` 與 llm 檔用（docs/production_resilience.md）。
@@ -85,6 +89,8 @@ DEFAULT_LLM_ENV_FILE = "/etc/default/report-mark-llm"
 EXAMPLE = "deploy/systemd/report-mark-llm.env.example"
 KEY = "OPENAI_API_KEY"
 GO_KEY = "OPENCODE_GO_API_KEY"
+# 所有 provider 的金鑰鍵名（預設的 OpenAI 在前）：載入時記哪些鍵在環境裡是空值、檔裡有沒有填，`main` 逐一比對。
+ALL_KEYS: tuple[str, ...] = tuple(dict.fromkeys(llm_models.PROVIDER_KEY_ENV.values()))
 # `main` 逐份比對的鍵：兩個金鑰，加上 `LLM_PROVIDER`——web 讀 repo 根 .env、批次讀這份環境檔，provider
 # 不一致時兩邊會走不同的供應商（一邊花 OpenAI、一邊花 Go），而且各自的金鑰檢查都會通過。
 PROVIDER_KEY = "LLM_PROVIDER"
@@ -162,7 +168,7 @@ def _key_name() -> str:
 def load_llm_env() -> None:
     path = env_file_path()
     preset_empty = sorted(
-        k for k in (KEY, GO_KEY) if os.environ.get(k) is not None and not (os.environ.get(k) or "").strip()
+        k for k in ALL_KEYS if os.environ.get(k) is not None and not (os.environ.get(k) or "").strip()
     )
     state: dict[str, object] = {
         "path": path, "error": None, "duplicates": [], "file_keys": [], "preset_empty": preset_empty,
@@ -183,7 +189,7 @@ def load_llm_env() -> None:
     parsed = [p for p in (_parse_line(line) for line in text.splitlines()) if p is not None]
     counts = Counter(k for k, _ in parsed)
     duplicates = sorted(k for k, n in counts.items() if n > 1)
-    _STATE["file_keys"] = sorted({k for k, v in parsed if k in (KEY, GO_KEY) and v.strip()})
+    _STATE["file_keys"] = sorted({k for k, v in parsed if k in ALL_KEYS and v.strip()})
     if duplicates:
         # 不載入：哪一行生效取決於讀的人（先到先贏 vs 後者覆蓋），任何一個選擇都可能是錯的。
         _STATE["duplicates"] = duplicates
@@ -275,6 +281,9 @@ def _model_source(task: str | None, model: str) -> str:
     raw = (os.environ.get(knob) or "").strip()
     if raw == model:
         return f"{knob}={model}"
+    default_raw = (os.environ.get(llm_models.DEFAULT_MODEL_ENV) or "").strip()
+    if not raw and default_raw == model and resolve_model(task) == model:
+        return f"{llm_models.DEFAULT_MODEL_ENV}={model}（任務 {task}）"
     if not raw and resolve_model(task) == model:
         prov_raw = (os.environ.get("LLM_PROVIDER") or "").strip()
         # 印原始值（不是正規化後的 provider()）：人要拿它去對環境檔裡的那一行。
@@ -316,13 +325,19 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
     unknown = [m for m in names if not is_http_model(m)]
     if unknown:
         _fail(
-            f"模型名不在白名單：{', '.join(unknown)}（只接受 {'、'.join(sorted(llm_models.HTTP_MODELS))}，"
+            f"模型名不在白名單：{', '.join(unknown)}（只接受 {llm_models.allowed_models_label()}，"
             "沒有其他 backend；"
             f"來源：{'、'.join(sorted({_model_source(t, m) for t, m in pairs if not is_http_model(m)}))}）"
         )
     _warn_if_not_deploy_root()
     if not names:
         return
+    problems = llm_models.config_problems()
+    if problems:
+        _fail(
+            f"LLM 端點設定有誤（LLM_PROVIDER={provider()}）：{'；'.join(problems)}。"
+            f"本段要用 {', '.join(names)}，每次呼叫都會以設定錯誤失敗；檢查 shell、unit 的 Environment= 與 {path}"
+        )
     tripped = _fresh_breaker()
     if tripped:
         when = f"本輪 sync（{sync_round_id()}）" if sync_round_id() else f"{BREAKER_TTL_S // 60} 分鐘內"
@@ -340,6 +355,18 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
         )
     label = llm_models.PROVIDER_LABEL[provider()]
     _say(f"{label} 金鑰 fp={fingerprint(key)}（模型：{', '.join(names)}）")
+
+
+def _endpoint_knobs(prov: str) -> list[str]:
+    """`main` 要逐份比對的非祕密端點旋鈕；內建 provider 回空（見 `main`）。"""
+    if prov in llm_models.BUILTIN_MODEL_PROVIDERS:
+        return []
+    knobs = [llm_models.ENDPOINT_ENV[prov], llm_models.DECLARED_MODELS_ENV[prov]]
+    if prov == llm_models.PROVIDER_AZURE_OPENAI:
+        knobs += [llm_models.AZURE_API_VERSION_ENV, llm_models.AZURE_REASONING_ENV]
+    if prov == llm_models.PROVIDER_OPENAI_COMPATIBLE:
+        knobs.append(llm_models.COMPAT_REASONING_ENV)
+    return knobs + [llm_models.DEFAULT_MODEL_ENV]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -375,8 +402,8 @@ def main(argv: list[str] | None = None) -> int:
     first = next(iter(readable.values()), [])
     first_prov = next((v for k, v in first if k == PROVIDER_KEY), "")
     current = llm_models.key_env({PROVIDER_KEY: first_prov})
-    filled = {k for kv in readable.values() for k, v in kv if k in (KEY, GO_KEY) and v}
-    keys = [current] + [k for k in (KEY, GO_KEY) if k != current and k in filled]
+    filled = {k for kv in readable.values() for k, v in kv if k in ALL_KEYS and v}
+    keys = [current] + [k for k in ALL_KEYS if k != current and k in filled]
     for key in keys:
         fps: set[str | None] = set()
         for p, kv in readable.items():
@@ -401,6 +428,17 @@ def main(argv: list[str] | None = None) -> int:
         provs.add(prov)
         duplicated = duplicated or len(values) > 1
     ok = ok and len(provs) <= 1
+    # 內建以外的 provider：端點與宣告旋鈕也要兩份一致（web 與批次打不同的端點、認不同的白名單時，金鑰比對照樣會過）。
+    # 內建兩個 provider 不比：它們的端點有預設值，既有部署只核對金鑰與 provider（行為不變）。
+    for knob in _endpoint_knobs(llm_models.provider({PROVIDER_KEY: first_prov})):
+        seen: set[str] = set()
+        for p, kv in readable.items():
+            values = [v for k, v in kv if k == knob]
+            value = values[0] if values else ""
+            print(f"{p}  {knob}={value}" if value else f"{p}  （沒有 {knob} 或值為空）")
+            seen.add(value)
+            duplicated = duplicated or len(values) > 1
+        ok = ok and len(seen) <= 1
     if duplicated:
         print("有重複的鍵，不能判定一致")
     else:

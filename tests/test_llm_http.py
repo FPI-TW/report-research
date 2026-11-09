@@ -118,12 +118,20 @@ class BuildBodyTests(unittest.TestCase):
         json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     def test_no_provider_specific_fields_in_body(self):
-        """body 兩條路徑一字不差：差異（Go 的 session header）只在 header，不再有 `user_id`、`provider` 參數。"""
+        """openai 與 opencode_go 的 body 一字不差：差異（Go 的 session header）只在 header，沒有 `user_id` 參數。
+
+        `provider` 參數是給其他 provider 的（Azure、Anthropic、自架的 body 形狀不同，tests/test_llm_providers.py）。
+        """
         body = lh.build_body("gpt-6-luna", "q", max_tokens=16)
         self.assertNotIn("user_id", body)
         params = inspect.signature(lh.build_body).parameters
         self.assertNotIn("user_id", params)
-        self.assertNotIn("provider", params)
+        for kw in ({}, {"stream": False, "temperature": 0, "response_format": {"type": "json_object"}}):
+            with self.subTest(kw=kw):
+                self.assertEqual(
+                    json.dumps(lh.build_body("gpt-6-luna", "q", max_tokens=16, provider="openai", **kw)),
+                    json.dumps(lh.build_body("gpt-6-luna", "q", max_tokens=16, provider="opencode_go", **kw)),
+                )
 
     def test_session_id_shape(self):
         self.assertRegex(lh._session_id("web ask/主答"), r"^[A-Za-z0-9_-]+$")
@@ -1258,9 +1266,15 @@ class ConftestGuardTests(unittest.TestCase):
     """
 
     def test_key_and_endpoint_are_neutralized(self):
-        for key, base in (("OPENAI_API_KEY", "OPENAI_BASE_URL"), ("OPENCODE_GO_API_KEY", "OPENCODE_GO_BASE_URL")):
-            self.assertEqual(os.environ.get(key), "")
-            self.assertEqual(os.environ.get(base), "http://127.0.0.1:9")
+        """每個 provider 的金鑰都是空的、端點都不可達（清單直接取 llm_models，新增 provider 漏改 conftest 會紅）。"""
+        for prov in lm.PROVIDERS:
+            key, base = lm.PROVIDER_KEY_ENV[prov], lm.ENDPOINT_ENV[prov]
+            with self.subTest(prov=prov):
+                self.assertEqual(os.environ.get(key), "")
+                self.assertEqual(os.environ.get(base), "http://127.0.0.1:9")
+        for knob in (*lm.DECLARED_MODELS_ENV.values(), lm.AZURE_API_VERSION_ENV, lm.DEFAULT_MODEL_ENV,
+                     lm.AZURE_REASONING_ENV, lm.COMPAT_REASONING_ENV):
+            self.assertEqual(os.environ.get(knob), "", knob)
 
     def test_real_env_file_cannot_override(self):
         from web.env_loader import load_env_file
@@ -1297,7 +1311,9 @@ class ConftestGuardTests(unittest.TestCase):
                     ):
                         assigned.add(target.slice.value)
         self.assertLessEqual(
-            {"OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENCODE_GO_API_KEY", "OPENCODE_GO_BASE_URL"}, assigned,
+            {*lm.PROVIDER_KEY_ENV.values(), *lm.ENDPOINT_ENV.values(), *lm.DECLARED_MODELS_ENV.values(),
+             lm.AZURE_API_VERSION_ENV, lm.DEFAULT_MODEL_ENV, lm.AZURE_REASONING_ENV, lm.COMPAT_REASONING_ENV},
+            assigned,
         )
 
 

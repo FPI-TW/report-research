@@ -134,6 +134,16 @@ trap cleanup EXIT
 
 die() { echo "!! $*" >&2; exit 1; }
 
+# 連線方式：docker（預設；主機上的 DB 在容器裡，以 docker exec 跑 pg_dump）或 direct（容器部署的排程角色：
+# 本機直接跑 pg_dump／pg_isready，連線由 libpq 的 PG* 環境變數提供——deploy/container/entrypoint.py 的
+# scheduler_env 從 REPORT_MARK_DB_URL 換算，密碼不進 argv）。
+DB_BACKUP_VIA="${DB_BACKUP_VIA:-$(_default_key DB_BACKUP_VIA)}"
+: "${DB_BACKUP_VIA:=docker}"
+case "$DB_BACKUP_VIA" in
+  docker|direct) ;;
+  *) die "DB_BACKUP_VIA=$DB_BACKUP_VIA 不認得（只收 docker／direct）→ 中止。" ;;
+esac
+
 # ── 1) 落點必須是真的掛載，而且可寫 ───────────────────────────────────────
 # 為什麼掛載不可用要 fail 而不是退回本地：備份的全部價值就在「跟 pgdata 不同一塊磁碟」。
 # 靜默寫本地會產出一份看起來成功、實際上跟 pgdata 一起死的備份，而且會餵飽
@@ -181,9 +191,14 @@ rm -f "$PROBE" 2>/dev/null || true
 
 # ── 2) DB 要活著 ──────────────────────────────────────────────────────────
 READY_RC=0
-"$DOCKER_BIN" exec "$DB_CONTAINER" pg_isready -U postgres >/dev/null 2>&1 || READY_RC=$?
-[ "$READY_RC" -eq 0 ] || die "DB 容器 $DB_CONTAINER 不可用（rc=$READY_RC，DOCKER_BIN=$DOCKER_BIN）→ 中止。\
+if [ "$DB_BACKUP_VIA" = direct ]; then
+  pg_isready -q || READY_RC=$?
+  [ "$READY_RC" -eq 0 ] || die "DB 不可用（直接連線 ${PGHOST:-?}:${PGPORT:-?}，rc=$READY_RC）→ 中止。"
+else
+  "$DOCKER_BIN" exec "$DB_CONTAINER" pg_isready -U postgres >/dev/null 2>&1 || READY_RC=$?
+  [ "$READY_RC" -eq 0 ] || die "DB 容器 $DB_CONTAINER 不可用（rc=$READY_RC，DOCKER_BIN=$DOCKER_BIN）→ 中止。\
 若本機的 docker 連不到 daemon，請設 DOCKER_BIN 指向 docker.exe。"
+fi
 
 # ── 3) pg_dump ────────────────────────────────────────────────────────────
 TABLE_ARGS=()
@@ -198,9 +213,14 @@ DUMP_RC=0
 # 還原進任何角色設定的叢集（還原時常常是臨時 DB，不是原本那個）。
 # **絕對不要加 -t（TTY）**：docker exec 配 TTY 會對 stdout 做行尾轉換，把二進位
 # dump 悄悄弄壞——檔案照樣產出、大小也合理，直到還原那天才發現。
-"$DOCKER_BIN" exec -i "$DB_CONTAINER" \
-  pg_dump -U postgres -d "$DB_NAME" -Fc --no-owner --no-privileges "${TABLE_ARGS[@]}" \
-  >"$TMP" 2>"$TMP.err" || DUMP_RC=$?
+if [ "$DB_BACKUP_VIA" = direct ]; then
+  pg_dump -d "${PGDATABASE:-$DB_NAME}" -Fc --no-owner --no-privileges "${TABLE_ARGS[@]}" \
+    >"$TMP" 2>"$TMP.err" || DUMP_RC=$?
+else
+  "$DOCKER_BIN" exec -i "$DB_CONTAINER" \
+    pg_dump -U postgres -d "$DB_NAME" -Fc --no-owner --no-privileges "${TABLE_ARGS[@]}" \
+    >"$TMP" 2>"$TMP.err" || DUMP_RC=$?
+fi
 if [ "$DUMP_RC" -ne 0 ]; then
   echo "--- pg_dump stderr ---" >&2
   cat "$TMP.err" >&2 || true

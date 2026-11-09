@@ -1,0 +1,134 @@
+# 廷豐智能研報（通用框架）的單機部署：一份應用映像、多個角色＋pgvector。說明見 docs/CONTAINER_DEPLOYMENT.md。
+#
+#   cp .env.example .env               # 填必填值（不要把 .env 進版控）
+#   docker compose run --rm migrate    # 首次安裝：空庫建到 head；升級時先備份再升級
+#   docker compose up -d               # web／worker／scheduler／postgres
+#   docker compose --profile clamav up -d   # 要開上傳（UPLOAD_ENABLED=1）時一併起 clamd
+#
+# 與 deploy/docker-compose.yml（廷豐測試環境的對外邊緣：nginx＋cloudflared）無關，刻意分開：那份是主機層，
+# 這份是框架本體。對外 TLS／反向代理由部署方自備，見文件「對外入口」。
+#
+# 共用 data volume 是硬性前提：LLM 批次鎖、上傳 worker 的整輪鎖都是 data/ 底下的 flock，
+# web／worker／scheduler 必須看到同一個檔（tests/test_container_deploy.py 守）。
+name: ${COMPOSE_PROJECT_NAME:-report-mark}
+
+x-app: &app
+  image: ${REPORT_MARK_IMAGE:-report-mark:latest}
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: true
+  environment: &app-env
+    # 預設連同一份 compose 的 postgres；用外部 DB（例如雲端託管）時在 .env 直接設 REPORT_MARK_DB_URL。
+    REPORT_MARK_DB_URL: ${REPORT_MARK_DB_URL:-postgresql+asyncpg://research:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}@postgres:5432/research}
+    PROFILE_DIR: /app/profile
+    CLAMD_HOST: ${CLAMD_HOST:-clamav}
+    TZ: ${TZ:-Asia/Taipei}
+  volumes:
+    - data:/app/data
+    # 備份落點（每日備份、migrate 前的全庫備份、稽核錨點、刪帳 tombstone）。主機目錄必須先存在且
+    # UID 10001 可寫；刻意不讓 Docker 自動建立——打錯路徑時寧可起不來，也不要寫進一個沒人看的新目錄。
+    - type: bind
+      source: ${BACKUP_HOST_DIR:?BACKUP_HOST_DIR 必填（建議與 Docker 資料不同磁碟）}
+      target: /app/backups
+      bind:
+        create_host_path: false
+    # profile 目錄（profile.toml、assets/、plugins/、eval/）；唯讀。
+    - type: bind
+      source: ${PROFILE_HOST_DIR:?PROFILE_HOST_DIR 必填（profile 目錄）}
+      target: /app/profile
+      read_only: true
+      bind:
+        create_host_path: false
+  depends_on:
+    postgres:
+      condition: service_healthy
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  postgres:
+    # 與現行部署相同的 PostgreSQL 16＋pgvector；釘到 pgvector 的 patch 版（程式要求 ≥ 0.8，見 app/services/db.py）。
+    image: pgvector/pgvector:0.8.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: research
+      POSTGRES_DB: research
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}
+      TZ: ${TZ:-Asia/Taipei}
+    # HNSW 建索引與平行查詢用 /dev/shm；Docker 預設 64 MB 會讓大批入庫以 "could not resize shared memory" 失敗。
+    shm_size: ${POSTGRES_SHM_SIZE:-1g}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # 刻意不對主機發佈埠：只有同一個 compose 網路裡的角色連得到。要從主機操作用
+    # `docker compose exec postgres psql -U research research`，或另加 override 檔發佈到 127.0.0.1。
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research -d research"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  web:
+    <<: *app
+    command: ["web"]
+    ports:
+      # 只綁 loopback：對外一律經部署方的 TLS 反向代理（明文 HTTP 不會建立非本機的登入 session）。
+      - "${WEB_PUBLISH:-127.0.0.1:8097}:8097"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/readyz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+  worker:
+    <<: *app
+    command: ["worker"]
+
+  scheduler:
+    <<: *app
+    command: ["scheduler"]
+
+  # one-shot：docker compose run --rm migrate（不隨 up 啟動）。
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+    profiles: ["migrate"]
+    environment:
+      <<: *app-env
+      # 對已有資料的庫升級時才需要；值必須逐字等於 host:port/db（migrate 會印出正確的值）。
+      REPORT_MARK_MIGRATE_CONFIRM: ${REPORT_MARK_MIGRATE_CONFIRM:-}
+
+  # 選配：上傳的病毒掃描（UPLOAD_ENABLED=1 才需要）。freshclam 會連 ClamAV 的病毒碼伺服器——
+  # 這是零外連的例外，關掉或改用內部鏡像的方法見文件「零外連清單」。
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    profiles: ["clamav"]
+    mem_limit: 2g
+    environment:
+      TZ: Etc/UTC
+      FRESHCLAM_CHECKS: "4"
+    volumes:
+      - clamav-db:/var/lib/clamav
+      - ../clamav/conf:/etc/clamav:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  data:
+  clamav-db:

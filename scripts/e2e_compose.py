@@ -242,6 +242,20 @@ def http_checks(c: Checks, compose: Compose, base: str, password: str, *, real_l
         c.check("/api/search 有結果", r.status_code == 200 and data.get("total", 0) > 0 and data.get("results"),
                 f"{r.status_code} total={data.get('total')}")
 
+        from scripts.demo_corpus import BROKERS
+
+        names = {x.get("source") for x in data.get("results") or []}
+        c.check("發行機構顯示 profile 名單的名稱", bool(names - {None}) and names <= set(BROKERS.values()) | {None},
+                str(sorted(n for n in names if n)))
+
+        if not real_llm:
+            r = h.get("/api/radar/instruments", params={"market": "US"})
+            codes = {x.get("instrument_code") for x in (r.json().get("items") or [])} if r.status_code == 200 else set()
+            c.check("美股標的進雷達", r.status_code == 200 and "NVDA" in codes, f"{r.status_code} {sorted(codes)}")
+        r = h.get("/api/brief/latest")
+        c.check("/api/brief/latest 有簡報", r.status_code == 200 and r.json().get("status") == "ready",
+                f"{r.status_code} {r.text[:80]}")
+
         r = h.get("/api/search", params={"q": "騰訊", "market": "HK"})
         c.check("未啟用的市場被拒（422 market_disabled）",
                 r.status_code == 422 and r.json().get("code") == "market_disabled", f"{r.status_code} {r.text[:120]}")
@@ -280,7 +294,7 @@ def http_checks(c: Checks, compose: Compose, base: str, password: str, *, real_l
 # ── DB 與檔案 ──────────────────────────────────────────────────────────
 
 
-def corpus_checks(c: Checks, compose: Compose, expected: dict) -> None:
+def corpus_checks(c: Checks, compose: Compose, expected: dict, *, real_llm: bool = False) -> None:
     n = int(compose.psql("SELECT count(*) FROM research.research_report"))
     c.check("入庫份數", n == expected["ingested"], f"{n}／預期 {expected['ingested']}")
 
@@ -297,6 +311,15 @@ def corpus_checks(c: Checks, compose: Compose, expected: dict) -> None:
     c.check("側檔的 source 生效", not bad_sources, f"不符：{bad_sources[:3]}")
     bad_markets = [f for f, m in expected["markets"].items() if by_name.get(Path(f).name, ("",) * 4)[3] != m]
     c.check("市場（側檔或標註）", not bad_markets, f"不符：{bad_markets[:3]}")
+    # profile 的 [sources] 名單（沒有側檔的研報）與 [instruments] 代號格式（標註出的美股 ticker）。
+    bad_fn_sources = [f for f, s in expected.get("filename_sources", {}).items()
+                      if by_name.get(Path(f).name, ("",) * 3)[2] != s]
+    c.check("沒有側檔的研報由 profile 名單從檔名推得發行機構", not bad_fn_sources, f"不符：{bad_fn_sources[:3]}")
+    if not real_llm:  # 真實 LLM 照標註 prompt 只給 4 碼代碼，美股 ticker 不保證出現
+        missing_targets = [f for f, code in expected.get("tagged_stock_targets", {}).items()
+                           if code not in by_name.get(Path(f).name, ("",) * 5)[4].split(";")]
+        c.check("標註出的個股代號依 profile 格式保留（含美股 ticker）", not missing_targets,
+                f"缺：{missing_targets[:3]}")
     hk = [v for v in by_name.values() if v[3] == "HK"]
     c.check("未啟用市場的研報照常入庫（子集不是可見性）", len(hk) == 1, f"HK={len(hk)}")
     meta_n = int(compose.psql("SELECT count(*) FROM research.report_metadata"))
@@ -319,6 +342,12 @@ def corpus_checks(c: Checks, compose: Compose, expected: dict) -> None:
     c.check("摘錄有產出且錨定", takeaways > 0, f"{takeaways} 條已錨定")
     signals = int(compose.psql("SELECT count(*) FROM research.report_signal"))
     c.check("訊號有產出", signals > 0, f"{signals} 列")
+    if not real_llm:
+        us = set(compose.psql("SELECT DISTINCT instrument_code FROM research.report_signal WHERE market = 'US'")
+                 .split())
+        c.check("美股標的有訊號", set(expected.get("radar_us", [])) <= us, f"US={sorted(us)}")
+    briefs = int(compose.psql("SELECT count(*) FROM research.report_brief"))
+    c.check("每日簡報已產生（profile 的 [brief].after_hour=0）", briefs == 1, f"{briefs} 列")
     titles = int(compose.psql("SELECT count(*) FROM research.research_report WHERE title IS NOT NULL"))
     c.check("標題（側檔＋LLM）", titles >= len(expected["metadata_titles"]), f"{titles} 份有標題")
 
@@ -398,7 +427,7 @@ def run(args) -> int:
         (work / "connector_sync.log").write_text(sync_out, encoding="utf-8")
         print(sync_out[-4000:], flush=True)
         checks.check("connector_sync.py --force 退出碼 0", sync.returncode == 0, f"rc={sync.returncode}")
-        corpus_checks(checks, compose, expected)
+        corpus_checks(checks, compose, expected, real_llm=args.real_llm)
 
         bf = compose.run("run", "--rm", "-T", "scheduler", "python", "scripts/backfill_tiers.py", "--tier", "3",
                          "--scheduled", timeout=args.sync_timeout, capture=True, check=False)

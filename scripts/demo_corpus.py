@@ -19,7 +19,7 @@
 不上傳到 bucket。
 
 用法：
-  uv run python scripts/demo_corpus.py --out /tmp/demo-corpus                 # 預設 30 份、日期以今天為錨
+  uv run python scripts/demo_corpus.py --out /tmp/demo-corpus                 # 預設 32 份、日期以今天為錨
   uv run python scripts/demo_corpus.py --out DIR --anchor-date 2026-11-10    # 指定錨點日（完全可重現）
   uv run python scripts/demo_corpus.py --out DIR --plan-only                 # 只寫 expected.json 與側檔，不渲染 PDF
 
@@ -99,6 +99,10 @@ def _plan_specs() -> list[tuple[str, str | None, str, str]]:
         (MACRO_TOPICS[3], "dune", "invalid_json"))]
     # 未啟用市場（示範 profile 只開 TW／US／MACRO）的研報照常入庫：子集管的是篩選，不是可見性。
     specs += [("HK", "0700", "birch", "full")]
+    # 美股 NVDA 補到訊號子集的門檻（≥3 家券商、≥5 份）：沒有側檔或側檔不給 stock_targets 的這幾份要經標註
+    # 才有標的，profile 的 [instruments] 收字母 ticker 時美股才進得了訊號與雷達（廷豐的 4 碼規則會全部丟掉）。
+    # 加在最後：不改動前面各份的索引（i % 9 決定落在哪一層）。
+    specs += [("US", "NVDA", "birch", "none"), ("US", "NVDA", "cobalt", "partial")]
     return specs
 
 
@@ -284,6 +288,12 @@ def expected(reports: list[Report], anchor: date) -> dict:
         "metadata_sources": {r.file: r.broker for r in ok if r.sidecar != "none"},
         "markets": {r.file: r.market for r in ok},
         "stock_code": {r.file: r.code for r in ok if r.code},
+        # 側檔沒給 stock_targets（partial、none）的個股報告：標的只能來自標註，經 profile 的代號格式驗證。
+        "tagged_stock_targets": {r.file: r.code for r in ok if r.code and r.sidecar in ("partial", "none")},
+        # 沒有側檔：發行機構只能由 profile 的名單從檔名推得（檔名帶發行機構代碼）。
+        "filename_sources": {r.file: r.broker for r in ok if r.sidecar == "none"},
+        # 該進雷達的美股標的（訊號子集的門檻要靠標註出的 ticker 才湊得到）。
+        "radar_us": sorted({r.code for r in ok if r.market == "US" and r.code} & {"NVDA"}),
         "no_sidecar": sorted(r.file for r in reports if r.sidecar == "none"),
     }
 

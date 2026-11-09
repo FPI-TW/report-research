@@ -59,6 +59,32 @@ class DemoProfileTests(unittest.TestCase):
         self.assertLess(d.backfill.max_reports_per_round, t.backfill.max_reports_per_round)
         self.assertLess(d.backfill.daily_token_limit, t.backfill.daily_token_limit)
 
+    def test_generic_assumptions_differ_from_tingfong(self):
+        """fw-generic：代號格式、發行機構名單、簡報作息都是 profile 的設定；示範券商開美股 ticker、用自己的名單。"""
+        d, t = self.demo, self.tf
+        rule = d.instruments.normalize_code
+        self.assertEqual([rule(v) for v in ("2330", "00878", "nvda", "BRK.B", "NVIDIA")],
+                         ["2330", "00878", "NVDA", "BRK.B", None])
+        self.assertEqual([t.instruments.normalize_code(v) for v in ("2330", "00878", "NVDA")], ["2330", None, None])
+        self.assertEqual(dict(d.sources.display), demo_corpus.BROKERS)
+        self.assertFalse(set(d.sources.display) & set(t.sources.display))
+        self.assertEqual({s for _, s in d.sources.filename_tokens}, set(demo_corpus.BROKERS))
+        self.assertEqual((d.brief.after_hour, t.brief.after_hour), (0, 9))
+
+    def test_corpus_filenames_resolve_to_their_broker(self):
+        """沒有側檔的研報靠檔名推得發行機構；檔名裡的美股 ticker 不被當成發行機構。"""
+        from unittest.mock import patch
+
+        from app import profile as P
+        from app.services import filename
+
+        with patch.object(filename, "get_profile", return_value=self.demo):
+            for r in demo_corpus.plan(ANCHOR):
+                with self.subTest(file=r.file):
+                    self.assertEqual(filename.parse_filename(Path(r.file).name).source, r.broker)
+            self.assertIsNone(filename.parse_filename("20251001_JPM_Chase.pdf").source)
+        self.assertEqual(P.get_profile().sources, self.tf.sources)  # patch 只在區塊內
+
     def test_names_say_fictional(self):
         self.assertIn("虛構", self.demo.institution.name)
 

@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.profile import get_profile
 from app.services.filename import BROKER_MAP, SOURCE_DISPLAY, source_display
 from app.services.tagging import INSTRUMENT_DISPLAY, MARKET_DISPLAY
 from app.services.textnorm import norm_for_match
@@ -33,7 +34,7 @@ def detect_overview(q: str) -> bool:
     return any(c in s for c in _OVERVIEW_CUES_NORM)
 
 
-# 市場同義詞 → findb 代碼（明確列出常見口語；不重用 LEGACY_TO_FINDB 的「期貨→WTX」，
+# 市場同義詞 → 標準市場代碼（明確列出常見口語；不重用 LEGACY_TO_FINDB 的「期貨→WTX」，
 # 避免與商品類型 futures 衝突——「台指期」才歸 WTX 市場，「期貨」歸商品類型）
 _MARKET_SYNONYMS: dict[str, str] = {
     "台股": "TW", "台灣": "TW", "美股": "US", "美國": "US",
@@ -361,8 +362,10 @@ async def aggregate_facets(
     )
 
 
-OVERVIEW_SYSTEM_PROMPT = (
-    "你是「廷豐研報」的研究問答助理，正在回答一個『語料總覽/統計』問題。\n"
+# 稱謂由 profile 注入（app/profile.py 的 [prompt]），在呼叫時渲染；OVERVIEW_SYSTEM_PROMPT 這個舊名由檔尾的
+# 模組 __getattr__ 提供（理由同 answer.py 檔尾）。
+_OVERVIEW_RULES = (
+    "，正在回答一個『語料總覽/統計』問題。\n"
     "下方『分面統計』是系統對符合條件的全部研報，由資料庫精確算出的數字。請遵守：\n"
     "1. 只能引用『分面統計』提供的數字與清單，嚴禁自行臆測或捏造任何數量。\n"
     "2. 一律用繁體中文、條理清楚作答；針對使用者的問法（例如問『種類』）回應。\n"
@@ -371,6 +374,10 @@ OVERVIEW_SYSTEM_PROMPT = (
     "4. 結尾可提示使用者可至檢索頁套用相同條件查看全部研報。\n"
     "5. 樣本研報已附編號，可在對應句末標註 [1]、[2]。"
 )
+
+
+def overview_system_prompt() -> str:
+    return f"你是「{get_profile().prompt.system_name}」的研究問答助理" + _OVERVIEW_RULES
 
 
 def _fmt_pairs(pairs: list[tuple[str, int]], label_map: dict[str, str] | None) -> str:
@@ -456,3 +463,9 @@ def render_overview_text(ov: CorpusOverview, locale: str = "zh-Hant") -> str:
             # 標題優先：檔名多是券商流水號，列進答案裡讀者看不懂
             parts.append(f"[{i}] {title or fn}{f'（{ds}）' if ds else ''}")
     return "\n".join(parts)
+
+
+def __getattr__(name: str):
+    if name == "OVERVIEW_SYSTEM_PROMPT":
+        return overview_system_prompt()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

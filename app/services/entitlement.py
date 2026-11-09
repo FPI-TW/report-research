@@ -2,7 +2,7 @@
 
 四個維度，每個維度內是 OR、維度之間是 AND：
 
-- `markets`：必填、非空（findb 市場代碼，對照 `app/services/tagging.py`）。
+- `markets`：必填、非空（profile 啟用的標準市場代碼，對照 `app/services/tagging.py` 與 `app/profile.py`）。
 - `sources`／`report_types`／`instrument_types`：`None`＝該維度不限。
 
 **過濾一律下推到 SQL**（`sql()`，由 `store.search_chunks_meta`／`store.search_chunks_lexical`

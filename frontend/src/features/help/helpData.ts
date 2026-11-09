@@ -17,7 +17,7 @@ export type HelpSectionId = (typeof HELP_TOC)[number]['id']
 
 export const sectionDomId = (id: HelpSectionId) => `help-${id}`
 
-/** 市場代碼表的「範圍」欄；代碼與名稱沿用 `lib/meta`（與 findb 對齊的那一份）。 */
+/** 市場代碼表的「範圍」欄；代碼與名稱沿用 `lib/meta`（標準市場代碼）。 */
 export const MARKET_SCOPE: Record<(typeof MARKET_ORDER)[number], string> = {
   TW: '台灣上市櫃個股與產業',
   US: '美國個股與市場，多為外資英文報告',

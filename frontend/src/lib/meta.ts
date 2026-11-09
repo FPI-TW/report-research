@@ -25,8 +25,16 @@ export const MARKET_ORDER = ['TW', 'US', 'HK', 'CN', 'WTX', 'FX', 'MACRO', 'GLOB
 export function marketColor(code: string): string {
   return MARKETS[code]?.color ?? FALLBACK
 }
+// profile 的顯示名稱覆寫（`lib/marketsConfig.ts` 抓到 `/api/markets` 時寫入；放在這裡是為了不讓兩個模組互相 import）。
+let labelOverrides: Readonly<Record<string, string>> = {}
+
+export function setMarketLabelOverrides(next: Readonly<Record<string, string>>): void {
+  labelOverrides = next
+}
+
+/** 市場顯示名稱：profile 覆寫 → 標準名稱 → 代碼本身。 */
 export function marketLabel(code: string): string {
-  return MARKETS[code]?.label ?? code
+  return labelOverrides[code] ?? MARKETS[code]?.label ?? code
 }
 /** 市場 chip 統一「淡底深字」：底色為市場色 10% 混白。 */
 export function marketTint(code: string): { background: string; color: string } {

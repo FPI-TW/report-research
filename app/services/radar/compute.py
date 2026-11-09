@@ -11,6 +11,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+from app.profile import get_profile
 from app.services.filename import source_display
 from app.services.radar import scale
 from app.services.radar.queries import CoverageCounts, RatingChangeRow
@@ -42,7 +43,6 @@ from app.services.radar.schemas import (
 )
 from app.services.radar.types import Change, Signal
 from app.services.signal_extract import THESIS_DIMENSIONS
-from app.services.tagging import MARKET_DISPLAY
 
 WINDOW_DAYS = {"30": 30, "90": 90, "180": 180, "all": None}
 FIVE_LEVELS = ("buy", "overweight", "neutral", "underweight", "sell")
@@ -592,7 +592,7 @@ def build_overview(
         note=f"{coverage.brokers_extracted}/{coverage.brokers_total} 家券商已擷取",
     )
     return RadarOverviewResponse(
-        market=market, market_display=MARKET_DISPLAY.get(market),
+        market=market, market_display=get_profile().markets.display_names.get(market),
         instrument_code=coverage.instrument_code, instrument_name=coverage.instrument_name,
         window=window, as_of=_iso(as_of), coverage=cov,
         rating=rating, target_price=target, eps=eps, thesis=thesis,
@@ -744,7 +744,7 @@ def build_rating_changes(rows: list[RatingChangeRow]) -> RatingChangesResponse:
         items.append(
             RatingChangeItem(
                 market=row.market,
-                market_display=MARKET_DISPLAY.get(row.market),
+                market_display=get_profile().markets.display_names.get(row.market),
                 instrument_code=row.instrument_code,
                 instrument_name=row.instrument_name,
                 broker=row.broker,

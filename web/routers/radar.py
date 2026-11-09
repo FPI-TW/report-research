@@ -13,6 +13,7 @@ from collections import Counter
 from fastapi import APIRouter, HTTPException, Query
 
 from app.config import get_settings
+from app.profile import get_profile
 from app.services.radar import (
     build_broker_history,
     build_events_page,
@@ -34,8 +35,8 @@ from app.services.radar.schemas import (
     StanceFilter,
     Window,
 )
-from app.services.tagging import MARKET_DISPLAY
 from web import deps
+from web.market_scope import check_market_filter
 from web.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ async def radar_instruments(
     兩條路徑回同一個形狀；`with_consensus=false` 與 stance 併用時，stance 仍會強制算共識
     （不算就沒有東西可篩），這是刻意的——回一份沒被篩過的清單比多算一次更糟。
     """
+    check_market_filter(market)
     t0 = time.monotonic()
     cache_key = (market, q, limit, offset, sort, stance, with_consensus)
     cached = _CATALOG_CACHE.get(cache_key)
@@ -145,7 +147,7 @@ async def radar_instruments(
     items = [
         RadarInstrumentItem(
             market=r.market,
-            market_display=MARKET_DISPLAY.get(r.market),
+            market_display=get_profile().markets.display_names.get(r.market),
             instrument_code=r.instrument_code,
             instrument_name=r.instrument_name,
             broker_count=r.broker_count,

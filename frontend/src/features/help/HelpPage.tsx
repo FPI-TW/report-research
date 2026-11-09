@@ -7,7 +7,8 @@ import { useStableRect } from '@/lib/useStableRect'
 import { copyText } from '../../lib/clipboard'
 import { useFeatures } from '../../lib/useFeatures'
 import { useIsMac } from '../../lib/useIsMac'
-import { MARKET_ORDER, marketColor, marketLabel } from '../../lib/meta'
+import { useEnabledMarkets } from '../../lib/marketsConfig'
+import { marketColor, marketLabel, type MARKET_ORDER } from '../../lib/meta'
 import { preloadRoute, type RouteKey } from '../../lib/routePreload'
 import { showToast } from '../../lib/toast'
 import { useWebSearchPaused } from '../../lib/useWebSearch'
@@ -142,8 +143,11 @@ function Cite({ n }: { n: number }) {
  *
  * 文案描述的是**現在的**頁面：改了某一頁的動線，這裡的步驟、示範與快捷鍵表（`helpData.ts`）要一起改。
  */
+type MarketCode = (typeof MARKET_ORDER)[number]
+
 export default function HelpPage() {
   useFeatures()
+  const enabledMarkets = useEnabledMarkets()
   const webPaused = useWebSearchPaused()
   const mac = useIsMac()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -252,7 +256,7 @@ export default function HelpPage() {
                     <tr><th scope="col">代碼</th><th scope="col">市場</th><th scope="col">範圍</th></tr>
                   </thead>
                   <tbody>
-                    {MARKET_ORDER.map(code => (
+                    {(enabledMarkets as readonly MarketCode[]).map(code => (
                       <tr key={code}>
                         <td className={styles.mktCode} style={{ color: marketColor(code) }}>{code}</td>
                         <td>{marketLabel(code)}</td>

@@ -537,7 +537,7 @@ def render_text(r: dict) -> str:
     hours = w["hours"]
     span = f"{hours:.1f} 小時" if hours >= 1 else f"{hours * 60:.0f} 分鐘"
     out.append("═" * WIDTH)
-    out.append("廷豐智能研報 — 硬體用量實測報告")
+    out.append("硬體用量實測報告")
     out.append("═" * WIDTH)
     out.append(
         f"觀測窗期  {w['start'][:19].replace('T', ' ')} → {w['end'][:19].replace('T', ' ')}（{span}）"

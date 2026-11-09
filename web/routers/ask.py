@@ -34,6 +34,7 @@ from app.services.llm import LLMUnavailableError
 from web import authz, deps
 from web.concurrency import ConcurrencyGate
 from web.errors import AppError
+from web.market_scope import check_market_filter
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     if not question:
         raise HTTPException(status_code=400, detail="question 不可為空")
     mkt = req.market if req.market and req.market != "全部" else None
+    check_market_filter(mkt)
     instr = (
         req.instrument_type
         if req.instrument_type and req.instrument_type != "全部"

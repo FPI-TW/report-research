@@ -1,4 +1,5 @@
-import { MARKET_ORDER, marketLabel } from '../../lib/meta'
+import { useEnabledMarkets } from '../../lib/marketsConfig'
+import { marketLabel } from '../../lib/meta'
 import styles from './MarketChipBar.module.css'
 
 const ALL = 'ALL'
@@ -11,13 +12,14 @@ interface Props {
    * （後端分面是對已篩選的命中集合計算），此時寧可不顯示也不編造。
    */
   counts?: Record<string, number>
-  /** 要列出的市場；省略＝全部。搜尋態只列有命中的市場，零命中的不佔版面。 */
+  /** 要列出的市場；省略＝profile 啟用的全部市場。搜尋態只列有命中的市場，零命中的不佔版面。 */
   codes?: readonly string[]
 }
 
 /** 市場篩選膠囊（32px，含篇數）。選取中的是石墨實心，不用市場色——選取是狀態，不是市場。 */
 export function MarketChipBar({ value, onChange, counts, codes }: Props) {
-  const chips = [ALL, ...(codes ?? MARKET_ORDER)]
+  const enabled = useEnabledMarkets()
+  const chips = [ALL, ...(codes ?? enabled)]
   return (
     <div className={styles.bar} role="group" aria-label="市場篩選">
       {chips.map(code => {

@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { MotionConfig } from 'motion/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { applyAdminThemeEarly } from './lib/adminTheme'
+import { loadBranding } from './lib/branding'
+import { loadMarkets } from './lib/marketsConfig'
 import { tfTransition } from './lib/motionTokens'
 import { createQueryClient } from './lib/queryClient'
 // 自架字型（不連 Google Fonts）：Inter 帶 opsz 軸；JetBrains Mono 只給標的代號。
@@ -16,6 +18,11 @@ const queryClient = createQueryClient()
 
 // 直接開管理後台時先把主題寫上 <html>，外殼的 chunk 下載完之前不會先閃一次亮底。
 applyAdminThemeEarly()
+
+// 品牌（免登入）與市場子集（profile）：不等它們回來就開始畫，抓到之後才換上機構名、logo 與市場選單；
+// 抓不到時留在中性預設與全部標準市場（lib/branding.ts、lib/marketsConfig.ts）。
+void loadBranding()
+void loadMarkets()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 廷豐智能研報：把「重建不回來」的那幾張表 pg_dump 到 NAS。
+# 把「重建不回來」的那幾張表 pg_dump 到 NAS。
 #
 # 為什麼只備二十張表而不是整庫：語料層（research_report / report_chunk）雖然大，
 # 但確定重跑得回來——研報原檔還在 NAS，extract → tag → ingest 全程 checkpoint 可續。

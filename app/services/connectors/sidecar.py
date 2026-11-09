@@ -41,6 +41,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import hashlib
 import io
 import json
@@ -291,16 +292,17 @@ def apply_to_tag(tag: MarketTag | None, meta: Metadata) -> MarketTag | None:
         if not meta.skips_tagging():
             return None
         tag = MarketTag(market=None, is_research=True, confidence=1.0)
-    stock = list(meta.stock_targets) if meta.has("stock_targets") else list(tag.stock_targets or [])
-    futures = list(meta.futures_targets) if meta.has("futures_targets") else list(tag.futures_targets or [])
-    return MarketTag(
-        market=meta.market if meta.has("market") else tag.market,
-        is_research=True if meta.has("market") else tag.is_research,
-        confidence=1.0 if meta.skips_tagging() else tag.confidence,
-        instrument_types=(list(meta.instrument_types) if meta.has("instrument_types")
-                          else list(tag.instrument_types or [])),
-        relates_stock=bool(stock) if meta.has("stock_targets") else tag.relates_stock,
-        relates_futures=bool(futures) if meta.has("futures_targets") else tag.relates_futures,
-        stock_targets=stock,
-        futures_targets=futures,
-    )
+    # 只換掉側檔有給的欄位（dataclasses.replace）：沒給的原樣沿用標註結果，不讀出來再判斷。
+    # 給了 market＝提供方明確分類為研究報告（doc_type 由 is_research 推得，見 tagging.doc_type_for）。
+    changes: dict = {}
+    if meta.has("market"):
+        changes.update(market=meta.market, is_research=True)
+    if meta.skips_tagging():
+        changes["confidence"] = 1.0
+    if meta.has("instrument_types"):
+        changes["instrument_types"] = list(meta.instrument_types)
+    if meta.has("stock_targets"):
+        changes.update(stock_targets=list(meta.stock_targets), relates_stock=bool(meta.stock_targets))
+    if meta.has("futures_targets"):
+        changes.update(futures_targets=list(meta.futures_targets), relates_futures=bool(meta.futures_targets))
+    return dataclasses.replace(tag, **changes)

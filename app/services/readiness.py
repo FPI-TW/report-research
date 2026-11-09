@@ -9,10 +9,10 @@
 - `embedding`：BGE-M3 已載入，或權重在本機 HF 快取裡可以離線載入（只看檔案、不載模型；
   背景暖機要數十秒，就緒不必等它跑完——第一個查詢會等暖機，但不會失敗）。
 - `profile`：`app.profile.get_profile()` 驗證通過（profile 啟動時嚴格驗證、錯就拒起）。
-  `app/profile.py` 還不存在的版本（profile 機制由另一條工作線加入）視為通過——沒有 profile 可驗。
-- `llm`：送達路徑（`LLM_PROVIDER`）是合法值，而且 `llm_models.diagnose` 沒有 ERROR（金鑰有值、
-  模型名在白名單、網搜總閘沒開）。**不呼叫 LLM**：額度與連線是 `/healthz/llm` 的事，就緒不該因為
-  供應商一時不通而把整個站台從負載平衡器摘掉（檢索、閱讀頁、雷達、簡報都不需要 LLM）。
+  找不到 `app.profile` 這個模組本身（沒有 profile 機制的舊版程式）視為通過——沒有 profile 可驗。
+- `llm`：送達路徑（`LLM_PROVIDER`）是合法值，而且 `llm_models.diagnose` 沒有 ERROR（金鑰有值、模型名在
+  目前 provider 的白名單、端點設定沒有錯、網搜總閘沒開）。**不呼叫 LLM**：額度與連線是 `/healthz/llm` 的事，
+  就緒不該因為供應商一時不通而把整個站台從負載平衡器摘掉（檢索、閱讀頁、雷達、簡報都不需要 LLM）。
 
 每一項都不拋例外：判斷本身失敗就是「不就緒」。
 """
@@ -77,11 +77,14 @@ def llm_config_ready(env: Mapping[str, str] | None = None) -> bool:
         return False  # provider() 會退回預設並記 ERROR；就緒判定不跟著放過拼錯的值
     prov = llm_models.provider(env)
     resolved = llm_models.resolve_all(llm_models.ONLINE_TASKS, env=env)
+    # 與 web/server.py 的啟動自檢同一組判準（白名單與端點設定都依目前 provider）。
     findings = llm_models.diagnose(
         resolved,
         has_key=bool((env.get(llm_models.key_env(env)) or "").strip()),
         web_enabled=get_settings().ask_enable_web,
         prov=prov,
+        allowed=llm_models.allowed_models(env),
+        problems=llm_models.config_problems(env),
     )
     return not any(level >= logging.ERROR for level, _ in findings)
 

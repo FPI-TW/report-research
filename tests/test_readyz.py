@@ -113,6 +113,11 @@ class LlmConfigReadyTests(unittest.TestCase):
     def test_misspelled_provider_is_not_ready_even_though_runtime_falls_back(self):
         self.assertFalse(readiness.llm_config_ready({"LLM_PROVIDER": "opanai", "OPENAI_API_KEY": self.KEY}))
 
+    def test_endpoint_config_problem_is_not_ready(self):
+        """框架另外的 provider 沒有預設端點：缺了就是設定錯，就緒不放行。"""
+        env = {"LLM_PROVIDER": "openai_compatible", "OPENAI_COMPATIBLE_API_KEY": self.KEY}
+        self.assertFalse(readiness.llm_config_ready(env))
+
     def test_model_outside_whitelist(self):
         env = {"OPENAI_API_KEY": self.KEY, llm_models.TASK_ENV[llm_models.ONLINE_TASKS[0]]: "claude-x"}
         self.assertFalse(readiness.llm_config_ready(env))

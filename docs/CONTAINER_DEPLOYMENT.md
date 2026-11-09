@@ -167,7 +167,7 @@ docker compose up -d
 
 | 整合 | 預設 | 開法 | 會連到哪裡 |
 |---|---|---|---|
-| LLM | 開（必填） | `LLM_PROVIDER`＋對應金鑰；端點可指到內部閘道 | 設定的端點 |
+| LLM | 開（必填） | `LLM_PROVIDER`＋對應金鑰；端點可指到內部閘道或自架的相容端點（`openai_compatible`，旋鈕見 repo 根 `.env.example`） | 設定的端點 |
 | 物件儲存 | 關（`OBJECT_STORAGE_MODE=local`，原檔在 `data` volume） | `OBJECT_STORAGE_MODE=hybrid`／`r2`＋`R2_*` | S3 相容端點 |
 | 網搜 | 關（`ASK_ENABLE_WEB=0`；沒有後端，保持關） | — | — |
 | 告警 webhook | 關（`REPORT_MARK_ALERT_WEBHOOK` 空） | 設 webhook URL | 該 URL |

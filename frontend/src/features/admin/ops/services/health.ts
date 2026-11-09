@@ -1,6 +1,7 @@
 import type { LampTone } from '../../../../components/console'
 import type { OpsDependencyNode, OpsServiceStatus } from '../../../../lib/generated/adminApi'
 import { needsAttention } from '../opsLabels'
+import { t } from '@/i18n'
 
 /**
  * 服務的燈號：只有異常會亮。失敗、找不到＝紅；核心服務沒在跑（`needsAttention` 的另一半）＝橘；
@@ -17,12 +18,12 @@ export function serviceTone(s: OpsServiceStatus): LampTone {
 type Health = OpsDependencyNode['health']
 
 const HEALTH_TONE: Record<Health, LampTone> = { ok: 'ok', degraded: 'warn', down: 'bad', unknown: 'idle' }
-const HEALTH_LABELS: Record<Health, string> = { ok: '正常', degraded: '降級', down: '故障', unknown: '不明' }
+const HEALTH_LABELS: Record<Health, string> = { get ok() { return t('admin.ops.services.health.ok') }, get degraded() { return t('admin.ops.services.health.degraded') }, get down() { return t('admin.ops.services.health.down') }, get unknown() { return t('admin.ops.services.health.unknown') } }
 
 export const NODE_KIND_LABELS: Record<OpsDependencyNode['kind'], string> = {
   systemd: 'systemd',
-  container: '容器',
-  external: '外部',
+  get container() { return t('admin.ops.services.health.container') },
+  get external() { return t('admin.ops.services.health.external') },
 }
 
 /** 依賴圖節點的燈號（健康判讀由後端算好，這裡只對應顏色）。 */
@@ -32,7 +33,7 @@ export function nodeTone(n: Pick<OpsDependencyNode, 'health'>): LampTone {
 
 /** 外部依賴沒有探針時，「不明」其實是「未監控」——標籤講清楚，不讓人以為壞了。 */
 export function healthLabel(n: OpsDependencyNode): string {
-  if (n.health === 'unknown' && n.kind === 'external' && !n.probe) return '未監控'
+  if (n.health === 'unknown' && n.kind === 'external' && !n.probe) return t('admin.ops.services.health.unmonitored')
   return HEALTH_LABELS[n.health]
 }
 

@@ -8,6 +8,7 @@ import { ratingParts, ratingPartsText } from './consensusData'
 import { RatingDistBar } from './RatingDistBar'
 import shared from './shared.module.css'
 import styles from './InstrumentTable.module.css'
+import { t } from '@/i18n'
 
 /**
  * 欄位定義：表頭與骨架共用。`sortedBy` 讓表頭的 `aria-sort` 對得上工具列的排序下拉——
@@ -19,12 +20,12 @@ const COLUMNS: ReadonlyArray<{
   align?: 'right'
   sortedBy?: CatalogSort[]
 }> = [
-  { key: 'name', label: '標的', sortedBy: ['code'] },
-  { key: 'rating', label: '共識評等' },
-  { key: 'dist', label: '評等分布' },
-  { key: 'change', label: '近期變化' },
-  { key: 'coverage', label: '資料涵蓋', sortedBy: ['reports', 'brokers'] },
-  { key: 'latest', label: '最新研報', align: 'right', sortedBy: ['latest'] },
+  { key: 'name', get label() { return t('radar.instrumentTable.instrument') }, sortedBy: ['code'] },
+  { key: 'rating', get label() { return t('radar.instrumentTable.consensusRating') } },
+  { key: 'dist', get label() { return t('radar.instrumentTable.ratingDistribution') } },
+  { key: 'change', get label() { return t('radar.instrumentTable.recentChanges') } },
+  { key: 'coverage', get label() { return t('radar.instrumentTable.coverage') }, sortedBy: ['reports', 'brokers'] },
+  { key: 'latest', get label() { return t('radar.instrumentTable.latestReport') }, align: 'right', sortedBy: ['latest'] },
 ]
 
 const SKELETON_ROWS = 5
@@ -47,7 +48,7 @@ interface Props {
  */
 export function InstrumentTable({ items, sort, hrefFor, loading, fallback }: Props) {
   return (
-    <div className={`${shared.tile} ${styles.frame}`} role="table" aria-label="券商共識標的" aria-busy={loading || undefined}>
+    <div className={`${shared.tile} ${styles.frame}`} role="table" aria-label={t('radar.instrumentTable.consensusInstruments')} aria-busy={loading || undefined}>
       <div role="rowgroup">
         <div role="row" className={`${styles.grid} ${styles.head}`}>
           {COLUMNS.map(c => (
@@ -148,7 +149,7 @@ function InstrumentRow({ item, index, href }: { item: RadarInstrumentItem; index
             <span className={`${styles.distText} ${shared.num}`}>{ratingPartsText(parts)}</span>
           </>
         ) : (
-          <span className={styles.muted}>{stance ? '尚無評等' : '資料擷取中'}</span>
+          <span className={styles.muted}>{stance ? t('radar.instrumentTable.noRatingYet') : t('radar.instrumentTable.extractingData')}</span>
         )}
       </span>
 
@@ -157,12 +158,12 @@ function InstrumentRow({ item, index, href }: { item: RadarInstrumentItem; index
           ? changes.map(c => (
             <span key={c.text} className={`${shared[c.tone]} ${styles.changePart} ${shared.num}`}>{c.text}</span>
           ))
-          : <span className={styles.muted}>{stance ? '無變動' : '—'}</span>}
+          : <span className={styles.muted}>{stance ? t('radar.instrumentTable.noChange') : '—'}</span>}
       </span>
 
       <span role="cell" className={styles.coverage}>
-        <span className={shared.num}>{item.broker_count}</span> 家券商
-        <span className={styles.reports}><span className={shared.num}>{item.report_count}</span> 篇</span>
+        <span className={shared.num}>{item.broker_count}</span>{' '}{t('radar.instrumentTable.brokers')}
+        <span className={styles.reports}><span className={shared.num}>{item.report_count}</span>{' '}{t('radar.instrumentTable.reports')}</span>
       </span>
 
       <span role="cell" className={`${styles.date} ${styles.right} ${shared.num}`}>

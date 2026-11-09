@@ -1,5 +1,6 @@
 import { STATUS_LABELS, type SystemStatus, type SystemStatusLevel } from '../../lib/useSystemStatus'
 import styles from './SystemStatus.module.css'
+import { t } from '@/i18n'
 
 const DOT_CLASS: Record<SystemStatusLevel, string> = {
   ok: styles.ok,
@@ -20,9 +21,9 @@ export function StatusDot({ level, className }: { level: SystemStatusLevel; clas
 export function SystemStatusRow({ status }: { status: SystemStatus }) {
   const label = STATUS_LABELS[status.status]
   return (
-    <div className={styles.row} role="status" aria-label={`系統狀態：${label}`}>
+    <div className={styles.row} role="status" aria-label={t('shell.systemStatus.systemStatus', { label })}>
       <div className={styles.main}>
-        <span className={styles.label}>系統狀態</span>
+        <span className={styles.label}>{t('shell.systemStatus.systemStatus2')}</span>
         {status.status !== 'ok' && <span className={styles.message}>{status.message}</span>}
       </div>
       <span className={styles.value} data-level={status.status}>

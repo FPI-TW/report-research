@@ -9,6 +9,7 @@ import { CopyIconButton } from './CopyIconButton'
 import { ThinkingSteps } from './ThinkingSteps'
 import { sourceItems } from './sourceItems'
 import styles from './AssistantMessage.module.css'
+import { t } from '@/i18n'
 
 // 回答下方直接列出的來源卡片數（其餘收進「全部 N 則來源」）。
 const MINI_SOURCES = 3
@@ -26,7 +27,7 @@ interface Props {
   onNoticeRetry: () => void
   onErrorRetry: () => void
   onRegenerate: () => void
-  onFollowup: (t: string) => void
+  onFollowup: (item: string) => void
   onSetVersion: (i: number) => void
   disabled?: boolean
 }
@@ -38,9 +39,9 @@ export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, o
     // 使用者反覆改寫同一題，每一次再吃一輪完整檢索。離題題才是換個說法就有救。
     const retry = turn.noticeKind === 'time_sensitive'
       ? undefined
-      : { label: '換個說法重新提問', onClick: onNoticeRetry }
+      : { label: t('ask.assistantMessage.rephraseAndAskAgain'), onClick: onNoticeRetry }
     // 網搜暫停期間剝掉「可開網搜」那一句（理由見 noticeDisplayText）。
-    const text = turn.noticeText == null ? '無法回答此問題' : noticeDisplayText(turn.noticeText, turn.noticeKind, webPaused)
+    const text = turn.noticeText == null ? t('ask.assistantMessage.canTAnswerThisQuestion') : noticeDisplayText(turn.noticeText, turn.noticeKind, webPaused)
     return <Callout variant="warning" action={retry}>{text}</Callout>
   }
 
@@ -71,16 +72,16 @@ export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, o
       {/* 停止標記跟著「目前顯示的版本」走：live 是停止輪（phase）或 pager 正切在
           某個被停止的舊版（view.stopped），兩者都要標——否則停止的部分答案在版本
           切換時會偽裝成完整回答。 */}
-      {view.stopped && <div className={styles.stopped}><span className={styles.stoppedMark} aria-hidden="true" />已停止生成</div>}
+      {view.stopped && <div className={styles.stopped}><span className={styles.stoppedMark} aria-hidden="true" />{t('ask.assistantMessage.generationStopped')}</div>}
       {turn.phase === 'error' && (
         <div className={styles.fail} role="alert">
           <CircleAlert size={18} strokeWidth={1.8} className={styles.failIcon} aria-hidden />
           <span className={styles.failText}>
-            <span className={styles.failTitle}>回答沒有完成</span>
-            <span className={styles.failMsg}>{turn.errorText ?? '查詢逾時或失敗'}</span>
+            <span className={styles.failTitle}>{t('ask.assistantMessage.theAnswerDidnTFinish')}</span>
+            <span className={styles.failMsg}>{turn.errorText ?? t('ask.assistantMessage.theQueryTimedOutOr')}</span>
           </span>
           <button type="button" className={styles.btn} onClick={onErrorRetry} disabled={disabled}>
-            <RotateCw size={14} strokeWidth={1.8} aria-hidden />重試
+            <RotateCw size={14} strokeWidth={1.8} aria-hidden />{t('ask.assistantMessage.retry')}
           </button>
         </div>
       )}
@@ -92,14 +93,14 @@ export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, o
                 <span className={styles.num}>{s.n}</span>
                 {s.kind === 'report'
                   ? <span className={styles.mkt} style={marketTint(s.market)}>{marketLabel(s.market)}</span>
-                  : <span className={`${styles.mkt} ${styles.webTag}`}>網路</span>}
+                  : <span className={`${styles.mkt} ${styles.webTag}`}>{t('ask.assistantMessage.web')}</span>}
                 <span className={s.kind === 'report' ? styles.miniDate : styles.miniHost}>{s.kind === 'report' ? s.date : s.host}</span>
               </span>
               <span className={styles.miniTitle}>{s.title}</span>
             </button>
           ))}
           <button type="button" className={styles.allSrc} onClick={() => onOpenSources(view)}>
-            全部 {items.length} 則來源<ArrowRight size={14} strokeWidth={1.8} aria-hidden />
+            {t('ask.assistantMessage.allSources', { length: items.length })}<ArrowRight size={14} strokeWidth={1.8} aria-hidden />
           </button>
         </div>
       )}
@@ -110,25 +111,25 @@ export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, o
               切換狀態同時給 aria-pressed，否則亮起與否只有視覺上看得出來。 */}
           {isLive && view.qaId && (
             <>
-              <button type="button" className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'like' ? null : 'like')} aria-label="讚" aria-pressed={view.feedback === 'like'}>
+              <button type="button" className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'like' ? null : 'like')} aria-label={t('ask.assistantMessage.helpful')} aria-pressed={view.feedback === 'like'}>
                 <ThumbsUp size={15} strokeWidth={1.8} aria-hidden />
               </button>
-              <button type="button" className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'dislike' ? null : 'dislike')} aria-label="倒讚" aria-pressed={view.feedback === 'dislike'}>
+              <button type="button" className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'dislike' ? null : 'dislike')} aria-label={t('ask.assistantMessage.notHelpful')} aria-pressed={view.feedback === 'dislike'}>
                 <ThumbsDown size={15} strokeWidth={1.8} aria-hidden />
               </button>
             </>
           )}
-          {view.answer && <CopyIconButton text={view.answer} label="複製回答" className={styles.act} checkClassName={styles.copied} />}
-          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>
+          {view.answer && <CopyIconButton text={view.answer} label={t('ask.assistantMessage.copyAnswer')} className={styles.act} checkClassName={styles.copied} />}
+          <button type="button" className={styles.act} onClick={onRegenerate} aria-label={t('ask.assistantMessage.regenerate')} title={t('ask.assistantMessage.regenerate')} disabled={disabled}>
             <RefreshCw size={15} strokeWidth={1.8} aria-hidden />
           </button>
           {turn.versionCount > 1 && (
             <span className={styles.pager}>
-              <button type="button" className={`${styles.act} ${styles.pagerBtn}`} disabled={turn.versionIndex === 0} aria-label="上一版" onClick={() => onSetVersion(turn.versionIndex - 1)}>
+              <button type="button" className={`${styles.act} ${styles.pagerBtn}`} disabled={turn.versionIndex === 0} aria-label={t('ask.assistantMessage.previousVersion')} onClick={() => onSetVersion(turn.versionIndex - 1)}>
                 <ChevronLeft size={14} strokeWidth={2} aria-hidden />
               </button>
               <span className={styles.pagerText}>{turn.versionIndex + 1} / {turn.versionCount}</span>
-              <button type="button" className={`${styles.act} ${styles.pagerBtn}`} disabled={turn.versionIndex === turn.versionCount - 1} aria-label="下一版" onClick={() => onSetVersion(turn.versionIndex + 1)}>
+              <button type="button" className={`${styles.act} ${styles.pagerBtn}`} disabled={turn.versionIndex === turn.versionCount - 1} aria-label={t('ask.assistantMessage.nextVersion')} onClick={() => onSetVersion(turn.versionIndex + 1)}>
                 <ChevronRight size={14} strokeWidth={2} aria-hidden />
               </button>
             </span>
@@ -137,7 +138,7 @@ export function AssistantMessage({ turn, isLast = true, onCite, onOpenSources, o
       )}
       {isLast && isLive && turn.followups.length > 0 && settled && (
         <div className={styles.followups}>
-          <div className={styles.fuHead}>延伸提問</div>
+          <div className={styles.fuHead}>{t('ask.assistantMessage.followUpQuestions')}</div>
           {turn.followups.map((f, i) => (
             <button key={i} type="button" className={styles.fu} style={{ animationDelay: `${(i + 3) * 0.04}s` }} onClick={() => onFollowup(f)} disabled={disabled}>
               <CornerDownRight size={15} strokeWidth={1.8} className={styles.fuIcon} aria-hidden />

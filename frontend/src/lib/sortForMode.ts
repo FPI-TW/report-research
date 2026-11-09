@@ -1,10 +1,11 @@
 import type { SearchMode, SortValue } from './searchFilters'
+import { t } from '@/i18n'
 
 export interface SortOption { value: SortValue; label: string }
 
 // 已移除日期排序可選項：搜尋只留「相關度」；瀏覽無可選排序（固定新→舊，見 normalizeSort 預設）。
 const SEARCH_OPTS: SortOption[] = [
-  { value: 'relevance', label: '相關度' },
+  { value: 'relevance', get label() { return t('lib.sortForMode.relevance') } },
 ]
 const BROWSE_OPTS: SortOption[] = []
 

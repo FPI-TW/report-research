@@ -42,6 +42,12 @@
 逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
 廷豐 profile 的代碼與 findb 對齊，是廷豐的跨 repo 契約，不是框架的。
 
+## 語系
+
+`[locale]` 決定介面（與問答輸出）的語系：`default` 是使用者沒選過語言時的預設，`available` 是可選的語系（框架固定的
+`LOCALES` 的子集）。section 缺席時兩種都開、預設 `zh-Hant`。`[institution]` 的 `*_en` 是英文介面用的名稱，沒給就沿用
+原名（`Institution.localized`）；字串本身在 `frontend/src/i18n/`，profile 不覆寫介面文字。
+
 ## 文件類型
 
 `[doc_types]` 宣告文件類型（`research_report.doc_type`）與每種類型啟用的功能（`DOC_FEATURES`，框架固定的詞彙）。
@@ -83,6 +89,18 @@ class Institution:
     name: str  # 機構名（例如免責聲明的「非○○之立場」）
     product_name: str  # 產品全名（頁面標題、側欄、登入頁）
     short_name: str  # 簡稱
+    # 英文介面用的名稱（選填）。沒給就沿用上面的原名；只影響介面，prompt 的稱謂看 [prompt].system_name_en。
+    name_en: str = ""
+    product_name_en: str = ""
+    short_name_en: str = ""
+
+    def localized(self, locale: str) -> tuple[str, str, str]:
+        """(機構名, 產品名, 簡稱)：英文介面先用 *_en，沒給就用原名。"""
+        if locale == "en":
+            product = self.product_name_en or self.product_name
+            short = self.short_name_en or (self.product_name_en if self.product_name_en else self.short_name)
+            return (self.name_en or self.name, product, short)
+        return (self.name, self.product_name, self.short_name)
 
 
 @dataclass(frozen=True)
@@ -130,6 +148,16 @@ class Markets:
 @dataclass(frozen=True)
 class Security:
     totp_issuer: str  # 驗證器 App 顯示的發行者名稱（otpauth URI 的 issuer）
+
+
+# 介面語系（frontend/src/i18n 的字典與 app/services/locale.py 的輸出語言共用這組代碼）。
+LOCALES: tuple[str, ...] = ("zh-Hant", "en")
+
+
+@dataclass(frozen=True)
+class Locale:
+    default: str = "zh-Hant"  # 使用者沒選過語言時的介面與回答語言
+    available: tuple[str, ...] = LOCALES  # 使用者可選的語系（順序＝選單順序）；只有一個時不顯示切換
 
 
 # 文件類型可啟用的功能（框架固定的詞彙；`app/services/doc_types.py` 的 docstring 寫每一項管到哪些查詢）。
@@ -227,6 +255,7 @@ class Profile:
     # 後續 lane 的新 section 欄位一律加在這裡之後、帶預設值（例如 `x: X = field(default_factory=X)`）。
     connectors: Connectors = field(default_factory=Connectors)
     backfill: Backfill = field(default_factory=Backfill)
+    locale: Locale = field(default_factory=Locale)
 
 
 # ── 驗證輔助 ─────────────────────────────────────────────────────────────
@@ -355,11 +384,14 @@ def _section(name: str) -> Callable[[_Parser], _Parser]:
 
 @_section("institution")
 def _parse_institution(table: dict, ctx: _Ctx) -> Institution:
-    ctx.reject_unknown(table, {"name", "product_name", "short_name"})
+    ctx.reject_unknown(table, {"name", "product_name", "short_name", "name_en", "product_name_en", "short_name_en"})
     name = ctx.string(table, "name", max_len=40)
     product_name = ctx.string(table, "product_name", max_len=60)
     return Institution(name=name, product_name=product_name,
-                       short_name=ctx.string(table, "short_name", default=product_name, max_len=40))
+                       short_name=ctx.string(table, "short_name", default=product_name, max_len=40),
+                       name_en=ctx.string(table, "name_en", default="", max_len=80),
+                       product_name_en=ctx.string(table, "product_name_en", default="", max_len=80),
+                       short_name_en=ctx.string(table, "short_name_en", default="", max_len=60))
 
 
 @_section("branding")
@@ -556,6 +588,27 @@ def _parse_backfill(table: dict, ctx: _Ctx) -> Backfill:
         max_reports_per_round=_int_in(ctx, table, "max_reports_per_round", defaults.max_reports_per_round, 1, 5000,
                                       "max_reports_per_round"),
     )
+
+
+@_section("locale")
+def _parse_locale(table: dict, ctx: _Ctx) -> Locale:
+    ctx.reject_unknown(table, {"default", "available"})
+    available = ctx.string_list(table, "available")
+    if available is None:
+        available = list(LOCALES)
+    if not available:
+        raise ctx.error("available", "至少要開放一個語系")
+    seen: set[str] = set()
+    for i, code in enumerate(available):
+        if code not in LOCALES:
+            raise ctx.error(f"available[{i}]", f"不支援的語系 {code!r}（可用：{'、'.join(LOCALES)}）")
+        if code in seen:
+            raise ctx.error(f"available[{i}]", f"重複的語系：{code!r}")
+        seen.add(code)
+    default = ctx.string(table, "default", default=available[0], max_len=10)
+    if default not in available:
+        raise ctx.error("default", f"預設語系 {default!r} 不在 available 裡（{'、'.join(available)}）")
+    return Locale(default=default, available=tuple(available))
 
 
 # ── 載入與快取 ───────────────────────────────────────────────────────────

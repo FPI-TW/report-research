@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { rejectEvent, type RawSSEEvent } from './readSSE'
+import { t } from '@/i18n'
 
 export const sourceSchema = z.object({
   n: z.number().int(),
@@ -78,15 +79,15 @@ export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
     case 'status': { const r = askStatusData.safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : rejectEvent(raw.event, r.error) }
     case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : rejectEvent(raw.event, r.error) }
     case 'ext_sources': { const r = z.array(extSourceSchema).safeParse(raw.data); return r.success ? { event: 'ext_sources', data: r.data } : rejectEvent(raw.event, r.error) }
-    case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : rejectEvent(raw.event, 'data 非字串')
-    case 'notice': return typeof raw.data === 'string' ? { event: 'notice', data: raw.data } : rejectEvent(raw.event, 'data 非字串')
+    case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : rejectEvent(raw.event, t('lib.askSchemas.dataIsNotAString'))
+    case 'notice': return typeof raw.data === 'string' ? { event: 'notice', data: raw.data } : rejectEvent(raw.event, t('lib.askSchemas.dataIsNotAString'))
     case 'followups': {
       const r = z.array(z.string()).safeParse(raw.data)
       return r.success ? { event: 'followups', data: r.data } : rejectEvent(raw.event, r.error)
     }
     case 'done': { const r = askDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : rejectEvent(raw.event, r.error) }
     case 'error': { const r = askErrorData.safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : rejectEvent(raw.event, r.error) }
-    default: return rejectEvent(raw.event, '未宣告的事件種類')
+    default: return rejectEvent(raw.event, t('lib.askSchemas.undeclaredEventType'))
   }
 }
 

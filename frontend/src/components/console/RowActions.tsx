@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { Icon } from '../primitives/Icon'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
+import { t } from '@/i18n'
 
 export interface RowAction {
   label: string
@@ -62,8 +63,8 @@ export function RowActions({ primary, more, label }: Props) {
     if (!open) return
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus()
     const onDown = (e: Event) => {
-      const t = e.target as Node
-      if (!menuRef.current?.contains(t) && !btnRef.current?.contains(t)) close()
+      const item = e.target as Node
+      if (!menuRef.current?.contains(item) && !btnRef.current?.contains(item)) close()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.stopPropagation(); close(true); return }
@@ -99,11 +100,11 @@ export function RowActions({ primary, more, label }: Props) {
         <button ref={btnRef} type="button" className={`${c.btn} ${c.btnSm} ${o.moreBtn}`} aria-haspopup="menu"
           aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label}
           onClick={() => setOpen(v => !v)}>
-          更多<Icon name="chevronDown" size={12} />
+          {t('admin.console.rowActions.more')}<Icon name="chevronDown" size={12} />
         </button>
       )}
       {open && createPortal(
-        <div ref={menuRef} id={menuId} className={o.menu} role="menu" aria-label={label ?? '更多操作'}
+        <div ref={menuRef} id={menuId} className={o.menu} role="menu" aria-label={label ?? t('admin.console.rowActions.moreActions')}
           style={pos ? { top: pos.top, right: pos.right } : { visibility: 'hidden' }} onClick={stop}>
           {ordered.map((item, i) => (
             <div key={item.label} role="none">

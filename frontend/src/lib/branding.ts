@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { z } from 'zod'
+import { getLocale, isLocale, subscribeLocale, t, type Locale } from '@/i18n'
 
 /**
  * 執行期品牌（`GET /api/branding`，免登入；後端 `web/routers/branding.py`，設定來源 `app/profile.py`）。
@@ -12,11 +13,21 @@ import { z } from 'zod'
  * QueryClient，測試以 `setBranding()` 模擬後端的答案）。
  *
  * 欄位一律 `optional()`／`nullish()`：前後端版本錯開時，少一個欄位不能讓整份解析失敗、退回中性預設。
+ *
+ * 名稱依介面語系挑（`[institution]` 的 `*_en`，沒給就用原名；profile 沒給名稱時是中性預設的譯名）：`Branding` 的三個
+ * 名稱是 getter，讀的當下才依語系決定，切換語系不必重抓。`locale` 是 profile 的 `[locale]`（預設語系與開放的語系）。
  */
 export const brandingResponseSchema = z.object({
   institution_name: z.string().optional(),
   product_name: z.string().optional(),
   short_name: z.string().optional(),
+  institution_name_en: z.string().optional(),
+  product_name_en: z.string().optional(),
+  short_name_en: z.string().optional(),
+  locale: z.object({
+    default: z.string().optional(),
+    available: z.array(z.string()).optional(),
+  }).optional(),
   logo_light_url: z.string().nullish(),
   logo_dark_url: z.string().nullish(),
   favicon_url: z.string().nullish(),
@@ -36,18 +47,38 @@ export interface Branding {
   faviconUrl: string | null
   colorsLight: Record<string, string>
   colorsDark: Record<string, string>
+  /** profile 的預設語系；沒抓到（或不認得）是 null，由 `src/i18n` 退回 zh-Hant。 */
+  defaultLocale: Locale | null
+  /** profile 開放的語系；null＝全部。 */
+  availableLocales: Locale[] | null
 }
 
-export const NEUTRAL_BRANDING: Branding = {
-  institutionName: '本平台',
-  productName: '智能研報',
-  shortName: '智能研報',
+interface BrandNames { institutionName?: string; productName?: string; shortName?: string }
+
+/** 依目前語系挑名稱：英文介面先用 `*_en`、再用原名；兩者都沒有時是中性預設的譯名。 */
+function brandingWithNames(
+  zh: BrandNames,
+  en: BrandNames,
+  rest: Omit<Branding, 'institutionName' | 'productName' | 'shortName'>,
+): Branding {
+  const pick = (k: keyof BrandNames): string | undefined => (getLocale() === 'en' ? en[k] || zh[k] : zh[k])
+  return {
+    get institutionName() { return pick('institutionName') || t('lib.branding.thisPlatform') },
+    get productName() { return pick('productName') || t('lib.branding.researchIntelligence') },
+    get shortName() { return pick('shortName') || pick('productName') || t('lib.branding.researchIntelligence') },
+    ...rest,
+  }
+}
+
+export const NEUTRAL_BRANDING: Branding = brandingWithNames({}, {}, {
   logoLightUrl: null,
   logoDarkUrl: null,
   faviconUrl: null,
   colorsLight: {},
   colorsDark: {},
-}
+  defaultLocale: null,
+  availableLocales: null,
+})
 
 /**
  * profile 的強調色鍵 → 要覆寫的 CSS 變數（`styles/tokens.css` 的鎏金系列與管理後台的 `--ac-gold*`）。
@@ -68,17 +99,27 @@ export const ACCENT_CSS_VARS: Record<string, readonly string[]> = {
 const COLOR_RE = /^(#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d{1,3})\s*)?\))$/
 
 export function fromResponse(raw: z.infer<typeof brandingResponseSchema>): Branding {
-  const productName = raw.product_name?.trim() || NEUTRAL_BRANDING.productName
-  return {
-    institutionName: raw.institution_name?.trim() || NEUTRAL_BRANDING.institutionName,
-    productName,
-    shortName: raw.short_name?.trim() || productName,
+  const zh: BrandNames = {
+    institutionName: raw.institution_name?.trim(),
+    productName: raw.product_name?.trim(),
+    shortName: raw.short_name?.trim(),
+  }
+  const en: BrandNames = {
+    institutionName: raw.institution_name_en?.trim(),
+    productName: raw.product_name_en?.trim(),
+    shortName: raw.short_name_en?.trim(),
+  }
+  const available = (raw.locale?.available ?? []).filter(isLocale)
+  const def = raw.locale?.default
+  return brandingWithNames(zh, en, {
     logoLightUrl: raw.logo_light_url ?? null,
     logoDarkUrl: raw.logo_dark_url ?? raw.logo_light_url ?? null,
     faviconUrl: raw.favicon_url ?? null,
     colorsLight: raw.colors?.light ?? {},
     colorsDark: raw.colors?.dark ?? {},
-  }
+    defaultLocale: isLocale(def) ? def : null,
+    availableLocales: available.length ? available : null,
+  })
 }
 
 function declarations(colors: Record<string, string>): string {
@@ -153,6 +194,11 @@ export function setBranding(next: Branding | null): void {
 export function useBranding(): Branding {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
+
+// 切換語系時頁面標題跟著換（名稱是 getter，重新套用一次即可）。
+subscribeLocale(() => {
+  try { document.title = current.productName } catch { /* ignore */ }
+})
 
 /** 抓 `/api/branding`、寫進 store 並套用到文件；失敗就留在中性預設（只記一筆警告，不拋）。 */
 export async function loadBranding(): Promise<Branding> {

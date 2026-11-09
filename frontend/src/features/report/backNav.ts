@@ -1,14 +1,15 @@
 import { useLocation, useNavigate } from 'react-router'
+import { t } from '@/i18n'
 
 /** 連進閱讀頁的來源頁。返回鈕的文字就是它的頁名（交接包「閱讀頁」第 1 點）。 */
 export type ReportSource = 'library' | 'assistant' | 'consensus' | 'brief' | 'help'
 
 const SOURCE_LABEL: Record<ReportSource, string> = {
-  library: '研報庫',
-  assistant: '研究助理',
-  consensus: '券商共識',
-  brief: '每日簡報',
-  help: '使用說明',
+  get library() { return t('report.backNav.library') },
+  get assistant() { return t('report.backNav.assistant') },
+  get consensus() { return t('report.backNav.consensus') },
+  get brief() { return t('report.backNav.dailyBrief') },
+  get help() { return t('report.backNav.help') },
 }
 
 /**
@@ -94,7 +95,7 @@ export function useBackNav() {
   const prevPath = from ? null : previousPath(depth)
   const source = from ?? (prevPath ? sourceFromPath(prevPath) : null)
   return {
-    label: source ? SOURCE_LABEL[source] : '上一頁',
+    label: source ? SOURCE_LABEL[source] : t('report.backNav.back'),
     go: () => navigate(-depth),
     childState: { from: source ?? undefined, depth: depth + 1 } satisfies ReportLinkState,
   }

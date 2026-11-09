@@ -6,6 +6,7 @@ import { Icon } from '../../../components/primitives/Icon'
 import { fmtBytes } from '../uploadLabels'
 import { UPLOADS_KEY, useUploadQueue, type QueueItem, type QueueStatus } from '../useAdminUploads'
 import u from '../Uploads.module.css'
+import { t } from '@/i18n'
 
 /** 拖放區：整塊是一顆按鈕（點一下開檔案選擇），也收拖進來的檔案。可一次多份，只收 PDF。 */
 function Dropzone({ maxBytes, onFiles }: { maxBytes: number; onFiles: (files: File[]) => void }) {
@@ -30,7 +31,7 @@ function Dropzone({ maxBytes, onFiles }: { maxBytes: number; onFiles: (files: Fi
         onDrop={onDrop}
       >
         <Icon name="upload" size={18} />
-        拖放 PDF 到這裡，或點一下選擇檔案（單檔上限 {fmtBytes(maxBytes)}）
+        {t('admin.uploads.uploadIntake.dropPdfsHereOrClick', { maxBytes: fmtBytes(maxBytes) })}
       </button>
       <input
         ref={inputRef}
@@ -38,7 +39,7 @@ function Dropzone({ maxBytes, onFiles }: { maxBytes: number; onFiles: (files: Fi
         accept=".pdf,application/pdf"
         multiple
         hidden
-        aria-label="選擇要上傳的 PDF"
+        aria-label={t('admin.uploads.uploadIntake.choosePdfsToUpload')}
         onChange={e => {
           const files = Array.from(e.target.files ?? [])
           e.target.value = '' // 同一份檔案再選一次也要觸發 change
@@ -50,12 +51,12 @@ function Dropzone({ maxBytes, onFiles }: { maxBytes: number; onFiles: (files: Fi
 }
 
 const QUEUE_LABEL: Record<QueueStatus, string> = {
-  queued: '排隊中',
-  uploading: '上傳中',
-  done: '已上傳',
-  error: '上傳失敗',
-  skipped: '未上傳',
-  cancelled: '已取消',
+  get queued() { return t('admin.uploads.uploadIntake.queued') },
+  get uploading() { return t('admin.uploads.uploadIntake.uploading') },
+  get done() { return t('admin.uploads.uploadIntake.uploaded') },
+  get error() { return t('admin.uploads.uploadIntake.uploadFailed') },
+  get skipped() { return t('admin.uploads.uploadIntake.notUploaded') },
+  get cancelled() { return t('admin.uploads.uploadIntake.canceled') },
 }
 const QUEUE_TONE: Record<QueueStatus, Tone> = {
   queued: 'idle', uploading: 'info', done: 'ok', error: 'bad', skipped: 'bad', cancelled: 'idle',
@@ -72,11 +73,11 @@ function QueueRow({ item, onCancel, onOpen }: { item: QueueItem; onCancel: (id: 
         <span className={`${c.muted} ${c.num}`}>{fmtBytes(item.size)}</span>
         <Chip tone={QUEUE_TONE[item.status]}>{QUEUE_LABEL[item.status]}</Chip>
         {(item.status === 'queued' || item.status === 'uploading') && (
-          <Button size="sm" onClick={() => onCancel(item.id)}>取消</Button>
+          <Button size="sm" onClick={() => onCancel(item.id)}>{t('admin.uploads.uploadIntake.cancel')}</Button>
         )}
       </div>
       {item.status === 'uploading' && (
-        <div className={u.progress} role="progressbar" aria-label={`${item.name} 上傳進度`}
+        <div className={u.progress} role="progressbar" aria-label={t('admin.uploads.uploadIntake.uploadProgress', { name: item.name })}
           aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
           <div className={u.progressBar} style={{ width: `${pct}%` }} />
           <span className={u.progressText}>{pct}%</span>
@@ -86,7 +87,7 @@ function QueueRow({ item, onCancel, onOpen }: { item: QueueItem; onCancel: (id: 
         <p className={bad ? u.queueError : u.queueNote} role={bad ? 'alert' : undefined}>
           {item.message}
           {uploadId && (
-            <> <button type="button" className={c.linkBtn} onClick={() => onOpen(uploadId)}>查看這筆上傳</button></>
+            <> <button type="button" className={c.linkBtn} onClick={() => onOpen(uploadId)}>{t('admin.uploads.uploadIntake.viewThisUpload')}</button></>
           )}
         </p>
       )}
@@ -116,10 +117,10 @@ export function UploadIntake({ onOpen }: { onOpen: (uploadId: string) => void })
     <>
       <Dropzone maxBytes={queue.maxBytes} onFiles={queue.addFiles} />
       {queue.items.length > 0 && (
-        <Card title="上傳佇列" labelledBy="upload-queue-title"
-          hint={busy ? '上傳中請留在這一頁，離開會中止還沒完成的上傳。' : undefined}
-          right={finished ? <Button size="sm" onClick={queue.clearFinished}>清除已結束的項目</Button> : undefined}>
-          <ul className={u.queue} aria-label="上傳佇列">
+        <Card title={t('admin.uploads.uploadIntake.uploadQueue')} labelledBy="upload-queue-title"
+          hint={busy ? t('admin.uploads.uploadIntake.stayOnThisPageWhile') : undefined}
+          right={finished ? <Button size="sm" onClick={queue.clearFinished}>{t('admin.uploads.uploadIntake.clearFinishedItems')}</Button> : undefined}>
+          <ul className={u.queue} aria-label={t('admin.uploads.uploadIntake.uploadQueue')}>
             {queue.items.map(it => <QueueRow key={it.id} item={it} onCancel={queue.cancel} onOpen={onOpen} />)}
           </ul>
         </Card>

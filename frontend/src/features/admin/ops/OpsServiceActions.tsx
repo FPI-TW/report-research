@@ -2,6 +2,7 @@ import { Button, DrawerFootNote } from '../../../components/console'
 import type { OpsServiceStatus } from '../../../lib/generated/adminApi'
 import { WRITE_ACTION_LABELS, useServiceActions, writeActionsOf } from './services/useServiceActions'
 import styles from './services/Services.module.css'
+import { t } from '@/i18n'
 
 /**
  * 詳情抽屜底部的動作列：一句權限說明＋「重新啟動」或「立即執行」。沒有 `ops.operate`、或 catalog 沒對這個
@@ -13,8 +14,8 @@ export function OpsServiceActions({ service }: { service: Pick<OpsServiceStatus,
   if (!canOperate || actions.length === 0) return null
   return (
     <>
-      <DrawerFootNote>需要 ops.operate，執行前會要求重新驗證</DrawerFootNote>
-      <div className={styles.footActions} role="group" aria-label="服務操作">
+      <DrawerFootNote>{t('admin.ops.opsServiceActions.requiresOpsOperateReVerification')}</DrawerFootNote>
+      <div className={styles.footActions} role="group" aria-label={t('admin.ops.opsServiceActions.serviceActions')}>
         {actions.map(a => (
           <Button key={a} variant="primary" disabled={busy} onClick={() => request(service.name, a)}>
             {WRITE_ACTION_LABELS[a]}

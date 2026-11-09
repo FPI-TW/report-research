@@ -1,8 +1,9 @@
 import styles from './Lamp.module.css'
+import { t } from '@/i18n'
 
 export type LampTone = 'bad' | 'warn' | 'ok' | 'info' | 'idle'
 
-const TONE_LABEL: Record<LampTone, string> = { bad: '異常', warn: '注意', ok: '正常', info: '進行中', idle: '閒置' }
+const TONE_LABEL: Record<LampTone, string> = { get bad() { return t('primitives.lamp.error') }, get warn() { return t('primitives.lamp.warning') }, get ok() { return t('primitives.lamp.ok') }, get info() { return t('primitives.lamp.inProgress') }, get idle() { return t('primitives.lamp.idle') } }
 
 /**
  * 燈號：6px 圓點（深色主題帶光暈，值在 tokens.css 的 `--ac-*`）。

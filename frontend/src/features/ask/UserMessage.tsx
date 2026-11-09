@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Pencil } from 'lucide-react'
 import { CopyIconButton } from './CopyIconButton'
 import styles from './UserMessage.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   text: string
-  onEdit: (t: string) => void
+  onEdit: (item: string) => void
   disabled?: boolean
 }
 
@@ -47,12 +48,12 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
           // 進入編輯游標停在文末（比照 ChatGPT）；autoFocus 在部分瀏覽器落在文首
           onFocus={e => { const el = e.currentTarget; el.setSelectionRange(el.value.length, el.value.length) }}
           autoFocus
-          aria-label="編輯提問"
+          aria-label={t('ask.userMessage.editQuestion')}
           disabled={disabled}
         />
         <div className={styles.editActions}>
-          <button type="button" className={styles.btn} onClick={() => setEditing(false)} disabled={disabled}>取消</button>
-          <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={submitEdit} disabled={disabled}>重新提問</button>
+          <button type="button" className={styles.btn} onClick={() => setEditing(false)} disabled={disabled}>{t('ask.userMessage.cancel')}</button>
+          <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={submitEdit} disabled={disabled}>{t('ask.userMessage.askAgain')}</button>
         </div>
       </div>
     )
@@ -65,13 +66,13 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
     <div className={styles.row}>
       <div className={styles.bubble}>{text}</div>
       <div className={styles.actions}>
-        <CopyIconButton text={text} label="複製提問" className={styles.act} checkClassName={styles.copied} />
+        <CopyIconButton text={text} label={t('ask.userMessage.copyQuestion')} className={styles.act} checkClassName={styles.copied} />
         <button
           type="button"
           className={styles.act}
           onClick={() => { setDraft(text); setEditing(true) }}
-          aria-label="編輯"
-          title="編輯"
+          aria-label={t('ask.userMessage.edit')}
+          title={t('ask.userMessage.edit')}
           disabled={disabled}
         >
           <Pencil size={15} strokeWidth={1.8} aria-hidden />

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import shared from './shared.module.css'
 import styles from './RadarSkeleton.module.css'
+import { t } from '@/i18n'
 
 function Skel({ w, h, style }: { w: number | string; h: number; style?: CSSProperties }) {
   return <span className={shared.skel} style={{ width: w, height: h, ...style }} />
@@ -12,7 +13,7 @@ function Skel({ w, h, style }: { w: number | string; h: number; style?: CSSPrope
  */
 export function RadarSkeleton() {
   return (
-    <div aria-busy="true" aria-label="載入中" data-testid="radar-skeleton">
+    <div aria-busy="true" aria-label={t('radar.radarSkeleton.loading')} data-testid="radar-skeleton">
       <div className={styles.cards}>
         {Array.from({ length: 3 }, (_, i) => (
           <div key={i} className={`${shared.tile} ${styles.card}`}>

@@ -5,6 +5,7 @@ import { fmtShortDate, fmtValue, RATING_DISPLAY } from './radarFormat'
 import { useBrokerHistory } from './useRadar'
 import shared from './shared.module.css'
 import styles from './BrokerHistory.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   code: string
@@ -35,14 +36,14 @@ export function BrokerHistory({ code, market, broker, window, targetCurrency, on
   if (q.isError || !q.data) {
     return (
       <div className={styles.error} role="alert">
-        歷程載入失敗
-        <button type="button" className={styles.retry} onClick={() => void q.refetch()}>重試</button>
+        {t('radar.brokerHistory.couldnTLoadHistory')}
+        <button type="button" className={styles.retry} onClick={() => void q.refetch()}>{t('radar.brokerHistory.retry')}</button>
       </div>
     )
   }
 
   const { snapshots, diffs } = q.data
-  if (!snapshots.length) return <p className={styles.empty}>沒有歷程資料</p>
+  if (!snapshots.length) return <p className={styles.empty}>{t('radar.brokerHistory.noHistory')}</p>
 
   return (
     <ol className={styles.list}>
@@ -57,15 +58,15 @@ export function BrokerHistory({ code, market, broker, window, targetCurrency, on
             >
               <span className={styles.dot} data-latest={i === 0 || undefined} aria-hidden="true" />
               <span className={`${styles.date} ${shared.num}`}>{fmtShortDate(s.report_date)}</span>
-              <span><span className={shared.srOnly}>{' 評等 '}</span><span>{RATING_DISPLAY[s.rating]}</span></span>
+              <span><span className={shared.srOnly}>{t('radar.brokerHistory.rating')}</span><span>{RATING_DISPLAY[s.rating]}</span></span>
               <span className={shared.num}>
-                <span className={shared.srOnly}>{' 目標價 '}</span>
+                <span className={shared.srOnly}>{t('radar.brokerHistory.targetPrice')}</span>
                 <span>{s.target_price != null ? fmtValue(s.target_price) : '—'}</span>
                 {s.target_price != null && currency && currency !== targetCurrency
                   ? <span className={styles.ccy}>{currency}</span>
                   : null}
               </span>
-              <span className={styles.note}><span className={shared.srOnly}>{' 備註 '}</span><span>{historyNote(diffs[i])}</span></span>
+              <span className={styles.note}><span className={shared.srOnly}>{t('radar.brokerHistory.note')}</span><span>{historyNote(diffs[i])}</span></span>
             </button>
           </li>
         )

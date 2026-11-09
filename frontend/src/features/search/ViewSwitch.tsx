@@ -2,12 +2,13 @@ import { Tabs, TabsList, TabsTrigger } from '../../components/animate-ui/compone
 import { List, Table2, type LucideIcon } from 'lucide-react'
 import type { ViewMode } from '../../lib/searchFilters'
 import styles from './ViewSwitch.module.css'
+import { t } from '@/i18n'
 
 interface Props { view: ViewMode; onChange: (v: ViewMode) => void }
 
 const OPTIONS: { v: ViewMode; icon: LucideIcon; aria: string }[] = [
-  { v: 'cards', icon: List, aria: '列表檢視' },
-  { v: 'table', icon: Table2, aria: '表格檢視' },
+  { v: 'cards', icon: List, get aria() { return t('search.viewSwitch.listView') } },
+  { v: 'table', icon: Table2, get aria() { return t('search.viewSwitch.tableView') } },
 ]
 
 /**
@@ -18,7 +19,7 @@ const OPTIONS: { v: ViewMode; icon: LucideIcon; aria: string }[] = [
 export function ViewSwitch({ view, onChange }: Props) {
   return (
     <Tabs value={view} onValueChange={v => onChange(v as ViewMode)} className={styles.tabs}>
-      <TabsList aria-label="檢視切換" className={styles.list}>
+      <TabsList aria-label={t('search.viewSwitch.viewSwitch')} className={styles.list}>
         {OPTIONS.map(o => (
           <TabsTrigger key={o.v} value={o.v} aria-label={o.aria} className={styles.trigger} whileTap={{ scale: 0.94 }}>
             <o.icon size={15} strokeWidth={1.8} aria-hidden />

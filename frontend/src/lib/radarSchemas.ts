@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MARKET_ORDER } from './meta'
+import { t } from '@/i18n'
 
 export const marketSchema = z.enum(MARKET_ORDER)
 export type Market = z.infer<typeof marketSchema>
@@ -65,7 +66,7 @@ const ratingDistributionSchema = z.array(ratingBucketCountSchema).length(5).supe
   const keys = items.map(item => item.rating)
   if (new Set(keys).size !== FIVE_LEVEL_RATINGS.length
       || FIVE_LEVEL_RATINGS.some(key => !keys.includes(key))) {
-    ctx.addIssue({ code: 'custom', message: '評等分布必須完整且不得重複' })
+    ctx.addIssue({ code: 'custom', message: t('lib.radarSchemas.ratingDistributionMustBeComplete') })
   }
 })
 
@@ -139,7 +140,7 @@ const thesisDimensionsSchema = z.array(thesisDimensionSchema).length(4).superRef
   const keys = items.map(item => item.dimension)
   if (new Set(keys).size !== THESIS_DIMENSIONS.length
       || THESIS_DIMENSIONS.some(key => !keys.includes(key))) {
-    ctx.addIssue({ code: 'custom', message: '四向觀點必須完整且不得重複' })
+    ctx.addIssue({ code: 'custom', message: t('lib.radarSchemas.fourWayViewMustBe') })
   }
 })
 
@@ -231,7 +232,7 @@ const thesisCellsSchema = z.array(thesisCellSchema).length(4).superRefine((items
   const keys = items.map(item => item.dimension)
   if (new Set(keys).size !== THESIS_DIMENSIONS.length
       || THESIS_DIMENSIONS.some(key => !keys.includes(key))) {
-    ctx.addIssue({ code: 'custom', message: '券商四向觀點必須完整且不得重複' })
+    ctx.addIssue({ code: 'custom', message: t('lib.radarSchemas.brokerFourWayViewMust') })
   }
 })
 

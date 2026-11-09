@@ -1,3 +1,5 @@
+import { t } from '@/i18n'
+
 export interface Rates {
   rpm: number | null
   cps: number | null
@@ -36,20 +38,20 @@ export function computeRates(cur: RateInputs, base: Baseline, elapsedSec: number
 
 /** 摘要/標註面板速率行（移植 eta.js）。remaining＝剩餘數，unit 例「摘要」「標註」。 */
 export function rateText(remaining: number, rate: number | null, unit: string): string {
-  if (rate == null) return '速率 計算中…'
-  const line = `速率 ${rate.toFixed(1)} ${unit}/分`
+  if (rate == null) return t('admin.ops.pipeline.rate.rateCalculating')
+  const line = t('admin.ops.pipeline.rate.rateMin', { rate: rate.toFixed(1), unit })
   if (rate < 0.05) return line
-  if (remaining <= 0) return `${line} · 已完成`
+  if (remaining <= 0) return t('admin.ops.pipeline.rate.done', { line })
   const mins = remaining / rate
-  const eta = mins < 90 ? `~${Math.round(mins)} 分` : `~${(mins / 60).toFixed(1)} 時`
-  return `${line} · 預估剩餘 ${eta}`
+  const eta = mins < 90 ? t('admin.ops.pipeline.rate.min', { mins: Math.round(mins) }) : t('admin.ops.pipeline.rate.h', { v: (mins / 60).toFixed(1) })
+  return t('admin.ops.pipeline.rate.aboutLeft', { line, eta })
 }
 
 /** 導入面板速率行（移植 eta.js）：無已知總量、不給 ETA，第二段放每秒片段數。 */
 export function ingestRateText(rpm: number | null, cps: number | null): string {
-  if (rpm == null) return '速率 計算中…'
-  const line = `速率 ${rpm.toFixed(1)} 篇/分`
-  return cps == null ? line : `${line} · ${cps.toFixed(1)} 片段/秒`
+  if (rpm == null) return t('admin.ops.pipeline.rate.rateCalculating')
+  const line = t('admin.ops.pipeline.rate.rateReportsMin', { rpm: rpm.toFixed(1) })
+  return cps == null ? line : t('admin.ops.pipeline.rate.chunksS', { line, cps: cps.toFixed(1) })
 }
 
 /** 千分位整數格式（穩定用 en-US 逗號）。 */

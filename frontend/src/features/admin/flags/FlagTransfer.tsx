@@ -7,13 +7,14 @@ import {
 } from '../../../lib/generated/adminApi'
 import { exportFilename, exportOverrideSummary, IMPORT_ACTION_LABELS } from './flagText'
 import s from './Flags.module.css'
+import { t } from '@/i18n'
 
 type Elevated = <T>(what: string, action: () => Promise<T>) => Promise<T>
 
-const WHAT = '匯入功能旗標'
+const what = () => t('admin.flags.flagTransfer.importFeatureFlags')
 
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.flags.flagTransfer.actionFailedTryAgain')
 }
 
 function download(doc: FlagExportDocument): string {
@@ -56,9 +57,9 @@ export function FlagTransfer({ canOperate, elevated, onApplied }: {
   const exportNow = async () => {
     setBusy(true)
     try {
-      toast(`已下載 ${download(await adminApi.exportFlags())}`)
+      toast(t('admin.flags.flagTransfer.downloaded', { download: download(await adminApi.exportFlags()) }))
     } catch (err) {
-      toast(`匯出失敗：${messageOf(err)}`, { tone: 'bad' })
+      toast(t('admin.flags.flagTransfer.exportFailed', { err: messageOf(err) }), { tone: 'bad' })
     } finally {
       setBusy(false)
     }
@@ -80,16 +81,16 @@ export function FlagTransfer({ canOperate, elevated, onApplied }: {
       if (!result.success) throw new Error('format')
       parsed = result.data
     } catch {
-      toast('這不是功能旗標的匯出檔（需要「匯出 JSON」下載的檔案）', { tone: 'bad' })
+      toast(t('admin.flags.flagTransfer.thisIsnTAFeature'), { tone: 'bad' })
       return
     }
     setBusy(true)
     try {
-      const res = await elevated(WHAT, () => adminApi.importFlags({ dry_run: true, document: parsed }))
+      const res = await elevated(what(), () => adminApi.importFlags({ dry_run: true, document: parsed }))
       setDoc(parsed)
       setPreview(res)
     } catch (err) {
-      if (!isElevationCancelled(err)) toast(`匯入預覽失敗：${messageOf(err)}`, { tone: 'bad' })
+      if (!isElevationCancelled(err)) toast(t('admin.flags.flagTransfer.importPreviewFailed', { err: messageOf(err) }), { tone: 'bad' })
       if (fileRef.current) fileRef.current.value = ''
     } finally {
       setBusy(false)
@@ -101,10 +102,10 @@ export function FlagTransfer({ canOperate, elevated, onApplied }: {
     setError(null)
     setBusy(true)
     try {
-      const res = await elevated(WHAT, () => adminApi.importFlags({ dry_run: false, document: doc }))
+      const res = await elevated(what(), () => adminApi.importFlags({ dry_run: false, document: doc }))
       const n = res.changes.filter((ch) => ch.action !== 'unchanged').length
       reset()
-      onApplied(`已套用匯入：${n} 個旗標有變更，每一筆都已寫入操作紀錄`)
+      onApplied(t('admin.flags.flagTransfer.importAppliedFlagsChangedEach', { n }))
     } catch (err) {
       // 對話框還開著：錯誤留在裡面，看得到是哪一份預覽失敗。
       if (!isElevationCancelled(err)) setError(messageOf(err))
@@ -117,56 +118,55 @@ export function FlagTransfer({ canOperate, elevated, onApplied }: {
 
   return (
     <>
-      <Button disabled={busy} onClick={() => { void exportNow() }} title="下載目前所有覆寫（不含環境上限）">
-        <Icon name="download" size={14} />匯出 JSON
+      <Button disabled={busy} onClick={() => { void exportNow() }} title={t('admin.flags.flagTransfer.downloadAllCurrentOverridesEnvironment')}>
+        <Icon name="download" size={14} />{t('admin.flags.flagTransfer.exportJson')}
       </Button>
       <Button disabled={busy || !canOperate} onClick={() => fileRef.current?.click()}
-        title={canOperate ? '選擇先前匯出的 JSON 檔；套用前會先列出每個旗標的差異' : '匯入需要 ops.operate 權限'}>
-        <Icon name="upload" size={14} />匯入
+        title={canOperate ? t('admin.flags.flagTransfer.chooseAPreviouslyExportedJson') : t('admin.flags.flagTransfer.importingRequiresTheOpsOperate')}>
+        <Icon name="upload" size={14} />{t('admin.flags.flagTransfer.import')}
       </Button>
       {canOperate && (
-        <input ref={fileRef} type="file" hidden aria-label="匯入檔案並預覽" accept="application/json,.json" disabled={busy}
+        <input ref={fileRef} type="file" hidden aria-label={t('admin.flags.flagTransfer.importFileAndPreview')} accept="application/json,.json" disabled={busy}
           onChange={(e) => { void pick(e.target.files?.[0]) }} />
       )}
-      <Dialog open={preview != null} onClose={reset} title="匯入預覽" width={720} closeButton locked={busy}>
+      <Dialog open={preview != null} onClose={reset} title={t('admin.flags.flagTransfer.importPreview')} width={720} closeButton locked={busy}>
         {preview && (
           <>
             {!preview.registry_version_match && (
               <div className={c.banner} data-tone="warn" role="note">
-                匯出檔的旗標清單版本（{preview.document_registry_version ?? '未知'}）與這個環境（{preview.registry_version}）不同：
-                兩邊程式版本可能不一致，請確認差異後再套用。
+                {t('admin.flags.flagTransfer.theExportSFlagRegistry')}{preview.document_registry_version ?? t('admin.flags.flagTransfer.unknown')}{t('admin.flags.flagTransfer.differsFromThisEnvironmentS', { registry_version: preview.registry_version })}
               </div>
             )}
             {preview.errors.length > 0 && (
               <div className={c.error} role="alert">
-                <p className={s.problemsHead}>有 {preview.errors.length} 個錯誤，整份不能套用：</p>
+                <p className={s.problemsHead}>{t('admin.flags.flagTransfer.errorsTheFileCanT', { length: preview.errors.length })}</p>
                 <ul className={s.problems}>
-                  {preview.errors.map((e, i) => <li key={`${e.key}-${i}`}><code>{e.key ?? '—'}</code>：{e.detail}</li>)}
+                  {preview.errors.map((e, i) => <li key={`${e.key}-${i}`}><code>{e.key ?? '—'}</code>{t('admin.flags.flagTransfer.text', { detail: e.detail })}</li>)}
                 </ul>
               </div>
             )}
             <div className={s.previewTable}>
               <table className={c.table}>
-                <thead><tr><th>旗標</th><th>動作</th><th>目前</th><th>匯入後</th></tr></thead>
+                <thead><tr><th>{t('admin.flags.flagTransfer.flag')}</th><th>{t('admin.flags.flagTransfer.action')}</th><th>{t('admin.flags.flagTransfer.current')}</th><th>{t('admin.flags.flagTransfer.afterImport')}</th></tr></thead>
                 <tbody>
                   {preview.changes.map((ch) => (
                     <tr key={ch.key}>
                       <td className={`${c.mono} ${c.t1}`}>{ch.key}</td>
                       <td className={ch.action === 'unchanged' ? c.muted : c.nowrap}>{IMPORT_ACTION_LABELS[ch.action]}</td>
                       <td className={s.wrap}>{exportOverrideSummary(ch.before)}</td>
-                      <td className={s.wrap}>{ch.action === 'delete' ? '沒有覆寫' : exportOverrideSummary(ch.after)}</td>
+                      <td className={s.wrap}>{ch.action === 'delete' ? t('admin.flags.flagTransfer.noOverride') : exportOverrideSummary(ch.after)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <p className={s.hint}>帳號以名稱對應（兩個環境的帳號 UUID 不同）；檔案裡沒列出的旗標不會被動到。</p>
+            <p className={s.hint}>{t('admin.flags.flagTransfer.accountsAreMatchedByName')}</p>
             {error && <p className={c.error} role="alert">{error}</p>}
             <div className={s.previewActions}>
-              <Button disabled={busy} onClick={reset}>取消</Button>
+              <Button disabled={busy} onClick={reset}>{t('admin.flags.flagTransfer.cancel')}</Button>
               <Button variant="primary" disabled={busy || preview.errors.length > 0 || changed.length === 0}
                 onClick={() => { void apply() }}>
-                {changed.length === 0 ? '沒有變更' : `套用 ${changed.length} 項變更`}
+                {changed.length === 0 ? t('admin.flags.flagTransfer.noChanges') : t('admin.flags.flagTransfer.applyChanges', { length: changed.length })}
               </Button>
             </div>
           </>

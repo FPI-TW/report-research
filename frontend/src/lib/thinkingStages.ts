@@ -1,4 +1,5 @@
 import type { AskStage } from './askSchemas'
+import { t } from '@/i18n'
 
 export type StepState = 'done' | 'active' | 'pending'
 export interface ThinkStep {
@@ -11,12 +12,12 @@ export interface ThinkStep {
 // 檢索開始（rerank 是整條路徑最長的靜默窗），而 agentic 的 evaluating 必然發生在第一輪
 // 檢索**之後**。兩者對調前，這一格會在檢索途中亮 40 秒都不動。
 const ORDER: { key: AskStage; name: string }[] = [
-  { key: 'understanding', name: '理解問題' },
-  { key: 'retrieved', name: '檢索研報' },
-  { key: 'evaluating', name: '評估補查' },
-  { key: 'reading', name: '閱讀整理' },
-  { key: 'searching_web', name: '網路補充' },
-  { key: 'generating', name: '生成回答' },
+  { key: 'understanding', get name() { return t('lib.thinkingStages.understandingTheQuestion') } },
+  { key: 'retrieved', get name() { return t('lib.thinkingStages.searchingReports') } },
+  { key: 'evaluating', get name() { return t('lib.thinkingStages.assessingFollowUpSearch') } },
+  { key: 'reading', get name() { return t('lib.thinkingStages.readingAndOrganizing') } },
+  { key: 'searching_web', get name() { return t('lib.thinkingStages.webSupplement') } },
+  { key: 'generating', get name() { return t('lib.thinkingStages.generatingTheAnswer') } },
 ]
 
 export function stagesToSteps(reached: AskStage[], webUsed: boolean): ThinkStep[] {

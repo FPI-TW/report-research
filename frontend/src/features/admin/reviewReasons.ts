@@ -1,4 +1,5 @@
 import type { ReviewItem } from '../../lib/reviewSchemas'
+import { t } from '@/i18n'
 
 function flagNumber(item: ReviewItem, key: string): number | null {
   const v = item.quality_flags?.[key]
@@ -14,15 +15,15 @@ function flagNumber(item: ReviewItem, key: string): number | null {
  */
 export function reasonText(item: ReviewItem, reason: string): string {
   switch (reason) {
-    case 'pages_failed': return `${item.pages_failed?.length ?? 0} 頁抽取失敗`
-    case 'low_score': return `品質分數 ${item.quality_score?.toFixed(2) ?? '—'}`
+    case 'pages_failed': return t('admin.reviewReasons.extractionFailedOnPages', { v: item.pages_failed?.length ?? 0 })
+    case 'low_score': return t('admin.reviewReasons.qualityScore', { v: item.quality_score?.toFixed(2) ?? '—' })
     case 'low_coverage': {
       const v = flagNumber(item, 'layout_coverage')
-      return v === null ? '版面覆蓋率過低' : `版面覆蓋率 ${(v * 100).toFixed(0)}%`
+      return v === null ? t('admin.reviewReasons.layoutCoverageTooLow') : t('admin.reviewReasons.layoutCoverage', { v: (v * 100).toFixed(0) })
     }
     case 'garbled': {
       const v = flagNumber(item, 'garbled_ratio')
-      return v === null ? '亂碼率過高' : `亂碼率 ${(v * 100).toFixed(1)}%`
+      return v === null ? t('admin.reviewReasons.garbledTextRateTooHigh') : t('admin.reviewReasons.garbledTextRate', { v: (v * 100).toFixed(1) })
     }
     default: return reason
   }

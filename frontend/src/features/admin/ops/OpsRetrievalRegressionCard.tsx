@@ -10,18 +10,19 @@ import { fmtDateTime } from '../auditLabels'
 import { HealthStatus } from './data/HealthStatus'
 import { OPS_KEY } from './useOps'
 import styles from './data/Data.module.css'
+import { t } from '@/i18n'
 
 type Reason = NonNullable<RetrievalRegressionResponse['reason']>
 type Verdict = NonNullable<RegressionComparison['summary']>['verdict']
 
 // 與 app/services/retrieval_regression.py 的 REASON_* 一致。
 const REASON_LABELS: Record<Reason, string> = {
-  db_unavailable: 'DB 連不上', low_memory: '可用記憶體不足', sync_running: 'sync 正在跑',
-  no_baseline: '還沒有基準', baseline_invalid: '基準檔不能用', incomparable: '基準與現況不可比',
-  dataset_invalid: '題集讀不了', embed_failed: '嵌入模型失敗', query_failed: 'DB 查詢失敗', unexpected: '未預期的錯誤',
+  get db_unavailable() { return t('admin.ops.opsRetrievalRegressionCard.dbUnreachable') }, get low_memory() { return t('admin.ops.opsRetrievalRegressionCard.notEnoughAvailableMemory') }, get sync_running() { return t('admin.ops.opsRetrievalRegressionCard.syncIsRunning') },
+  get no_baseline() { return t('admin.ops.opsRetrievalRegressionCard.noBaselineYet') }, get baseline_invalid() { return t('admin.ops.opsRetrievalRegressionCard.baselineFileUnusable') }, get incomparable() { return t('admin.ops.opsRetrievalRegressionCard.baselineNotComparableWithCurrent') },
+  get dataset_invalid() { return t('admin.ops.opsRetrievalRegressionCard.questionSetUnreadable') }, get embed_failed() { return t('admin.ops.opsRetrievalRegressionCard.embeddingModelFailed') }, get query_failed() { return t('admin.ops.opsRetrievalRegressionCard.dbQueryFailed') }, get unexpected() { return t('admin.ops.opsRetrievalRegressionCard.unexpectedError') },
 }
-const VERDICT_LABELS: Record<Verdict, string> = { ok: '沒有劣化', degraded: '劣化', incomparable: '不可比（基準太舊）' }
-const SCHEDULE = '每日 07:40 由 report-mark-retrieval-regression 執行（零 LLM；web 不跑檢索）'
+const VERDICT_LABELS: Record<Verdict, string> = { get ok() { return t('admin.ops.opsRetrievalRegressionCard.noRegression') }, get degraded() { return t('admin.ops.opsRetrievalRegressionCard.regressed') }, get incomparable() { return t('admin.ops.opsRetrievalRegressionCard.notComparableBaselineTooOld') } }
+const schedule = () => t('admin.ops.opsRetrievalRegressionCard.runDailyAt0740')
 
 function pct(v: number | null | undefined): string {
   return v == null ? '—' : `${Math.round(v * 100)}%`
@@ -43,7 +44,7 @@ function ReportList({ title, refs, total }: { title: string; refs: RegressionRep
   if (refs.length === 0) return null
   return (
     <div>
-      <div className={styles.listTitle}>{title}（{total} 篇{total > refs.length && `，列出前 ${refs.length} 篇`}）</div>
+      <div className={styles.listTitle}>{t('admin.ops.opsRetrievalRegressionCard.reports', { title, total })}{total > refs.length && t('admin.ops.opsRetrievalRegressionCard.showingTheFirst', { length: refs.length })}{t('admin.ops.opsRetrievalRegressionCard.text')}</div>
       <ul className={styles.list}>
         {refs.map(r => (
           <li key={r.file_hash}>
@@ -56,7 +57,7 @@ function ReportList({ title, refs, total }: { title: string; refs: RegressionRep
 }
 
 function QuestionRow({ q }: { q: RegressionQuestion }) {
-  const state = !q.comparable ? '不可比' : q.degraded ? '劣化' : '正常'
+  const state = !q.comparable ? t('admin.ops.opsRetrievalRegressionCard.notComparable') : q.degraded ? t('admin.ops.opsRetrievalRegressionCard.regressed') : t('admin.ops.opsRetrievalRegressionCard.ok')
   const tone = !q.comparable ? 'idle' : q.degraded ? 'bad' : 'ok'
   const changed = q.lost.length > 0 || q.gained.length > 0
   return (
@@ -66,9 +67,9 @@ function QuestionRow({ q }: { q: RegressionQuestion }) {
         <div className={styles.cellText}>{q.question}</div>
         {changed && (
           <details className={styles.details}>
-            <summary>流失 {q.lost_total}、新進 {q.gained_total} 篇</summary>
-            <ReportList title="基準有、現在不在前段的研報" refs={q.lost} total={q.lost_total} />
-            <ReportList title="基準沒有、現在進前段的舊研報" refs={q.gained} total={q.gained_total} />
+            <summary>{t('admin.ops.opsRetrievalRegressionCard.lostGained', { lost_total: q.lost_total, gained_total: q.gained_total })}</summary>
+            <ReportList title={t('admin.ops.opsRetrievalRegressionCard.reportsInTheBaselineNo')} refs={q.lost} total={q.lost_total} />
+            <ReportList title={t('admin.ops.opsRetrievalRegressionCard.olderReportsNotInThe')} refs={q.gained} total={q.gained_total} />
           </details>
         )}
       </td>
@@ -77,10 +78,10 @@ function QuestionRow({ q }: { q: RegressionQuestion }) {
       <td className={`${c.num} ${c.tdRight}`}>{pct(q.chunk_recall)}</td>
       <td className={`${c.num} ${c.tdRight}`}>{num(q.rbo)}</td>
       <td className={`${c.num} ${c.tdRight}`}>{q.excluded_new_reports}</td>
-      <td className={`${c.num} ${c.tdRight}`}>{q.hidden_reports}／{q.removed_reports}</td>
+      <td className={`${c.num} ${c.tdRight}`}>{t('admin.ops.opsRetrievalRegressionCard.text2', { hidden_reports: q.hidden_reports, removed_reports: q.removed_reports })}</td>
       <td>
         <Status tone={tone}>{state}</Status>
-        {q.lex_truncated && <div className={c.sub}>字面路截斷</div>}
+        {q.lex_truncated && <div className={c.sub}>{t('admin.ops.opsRetrievalRegressionCard.lexicalPathTruncated')}</div>}
       </td>
     </tr>
   )
@@ -88,45 +89,44 @@ function QuestionRow({ q }: { q: RegressionQuestion }) {
 
 function Summary({ c: cmp }: { c: RegressionComparison }) {
   const s = cmp.summary
-  const t = cmp.thresholds
+  const item = cmp.thresholds
   const b = cmp.baseline
   return (
-    <dl className={`${c.kv} ${styles.kvWide} ${styles.kvText}`} aria-label="檢索回歸摘要">
-      <dt>比對時間</dt>
-      <dd>{fmtDateTime(cmp.finished_at)}{cmp.duration_s != null && `（${Math.round(cmp.duration_s)} 秒）`}</dd>
+    <dl className={`${c.kv} ${styles.kvWide} ${styles.kvText}`} aria-label={t('admin.ops.opsRetrievalRegressionCard.retrievalRegressionSummary')}>
+      <dt>{t('admin.ops.opsRetrievalRegressionCard.comparedAt')}</dt>
+      <dd>{fmtDateTime(cmp.finished_at)}{cmp.duration_s != null && t('admin.ops.opsRetrievalRegressionCard.s', { duration_s: Math.round(cmp.duration_s) })}</dd>
       {s && (
         <>
-          <dt>結論</dt>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.verdict')}</dt>
           <dd>{VERDICT_LABELS[s.verdict]}</dd>
-          <dt>平均研報召回</dt>
-          <dd>{pct(s.mean_report_recall)}{t && `（門檻 ${pct(t.min_mean_recall)}）`}</dd>
-          <dt>崩掉的題數</dt>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.meanReportRecall')}</dt>
+          <dd>{pct(s.mean_report_recall)}{item && t('admin.ops.opsRetrievalRegressionCard.threshold', { min_mean_recall: pct(item.min_mean_recall) })}</dd>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.collapsedQuestions')}</dt>
           <dd>
             {s.degraded_questions}
-            {t && `（單題研報召回低於 ${pct(t.min_question_recall)}；超過 ${t.max_degraded_questions} 題即告警）`}
+            {item && t('admin.ops.opsRetrievalRegressionCard.perQuestionReportRecallBelow', { min_question_recall: pct(item.min_question_recall), max_degraded_questions: item.max_degraded_questions })}
           </dd>
-          <dt>可比較題數</dt>
-          <dd>{s.comparable}／{s.questions}</dd>
-          <dt>不排除新研報時</dt>
-          <dd>{pct(s.mean_raw_report_recall)}（只供參考：語料實際換了多少）</dd>
-          <dt>片段召回／RBO</dt>
-          <dd>{pct(s.mean_chunk_recall)}／{num(s.mean_rbo)}（只顯示，不判定）</dd>
-          <dt>不算劣化的變化</dt>
-          <dd>排除新研報 {s.excluded_new_reports}、基準研報被隱藏 {s.hidden_reports}、已下架 {s.removed_reports}</dd>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.comparableQuestions')}</dt>
+          <dd>{t('admin.ops.opsRetrievalRegressionCard.text3', { comparable: s.comparable, questions: s.questions })}</dd>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.withoutExcludingNewReports')}</dt>
+          <dd>{t('admin.ops.opsRetrievalRegressionCard.forReferenceOnlyHowMuch', { mean_raw_report_recall: pct(s.mean_raw_report_recall) })}</dd>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.chunkRecallRbo')}</dt>
+          <dd>{t('admin.ops.opsRetrievalRegressionCard.shownOnlyNotJudged', { mean_chunk_recall: pct(s.mean_chunk_recall), mean_rbo: num(s.mean_rbo) })}</dd>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.changesNotCountedAsRegression')}</dt>
+          <dd>{t('admin.ops.opsRetrievalRegressionCard.excludedNewReportsBaselineReports', { excluded_new_reports: s.excluded_new_reports, hidden_reports: s.hidden_reports, removed_reports: s.removed_reports })}</dd>
           {(s.lex_truncated_questions ?? 0) > 0 && (
             <>
-              <dt>字面路截斷</dt>
-              <dd>{s.lex_truncated_questions} 題（候選超過上限，這幾題每次跑的結果可能不同；單獨一兩題崩掉多半是這個）</dd>
+              <dt>{t('admin.ops.opsRetrievalRegressionCard.lexicalPathTruncated')}</dt>
+              <dd>{s.lex_truncated_questions}{' '}{t('admin.ops.opsRetrievalRegressionCard.questionsCandidatesOverTheLimit')}</dd>
             </>
           )}
         </>
       )}
       {b && (
         <>
-          <dt>基準</dt>
+          <dt>{t('admin.ops.opsRetrievalRegressionCard.baseline')}</dt>
           <dd>
-            擷取於 {fmtDateTime(b.captured_at)}，語料截點 {fmtDateTime(b.corpus_cutoff)}（{b.corpus_reports} 篇），
-            top-{b.k}、dense_scan {b.dense_scan}{b.simulated_as_of && '（驗證用的模擬截點）'}
+            {t('admin.ops.opsRetrievalRegressionCard.capturedAtCorpusCutoffReports', { captured_at: fmtDateTime(b.captured_at), corpus_cutoff: fmtDateTime(b.corpus_cutoff), corpus_reports: b.corpus_reports, k: b.k, dense_scan: b.dense_scan })}{b.simulated_as_of && t('admin.ops.opsRetrievalRegressionCard.simulatedCutoffForValidation')}
           </dd>
         </>
       )}
@@ -138,12 +138,12 @@ function Questions({ questions }: { questions: RegressionQuestion[] }) {
   if (questions.length === 0) return null
   return (
     <div className={c.tableWrap}>
-      <table className={c.table} aria-label="檢索回歸逐題">
+      <table className={c.table} aria-label={t('admin.ops.opsRetrievalRegressionCard.retrievalRegressionByQuestion')}>
         <thead>
           <tr>
-            <th>題號</th><th>題目</th><th className={c.tdRight}>研報召回</th><th className={c.tdRight}>不排除新研報</th>
-            <th className={c.tdRight}>片段召回</th><th className={c.tdRight}>RBO</th>
-            <th className={c.tdRight}>排除新研報</th><th className={c.tdRight}>隱藏／下架</th><th>狀態</th>
+            <th>{t('admin.ops.opsRetrievalRegressionCard.no')}</th><th>{t('admin.ops.opsRetrievalRegressionCard.question')}</th><th className={c.tdRight}>{t('admin.ops.opsRetrievalRegressionCard.reportRecall')}</th><th className={c.tdRight}>{t('admin.ops.opsRetrievalRegressionCard.withoutExcludingNew')}</th>
+            <th className={c.tdRight}>{t('admin.ops.opsRetrievalRegressionCard.chunkRecall')}</th><th className={c.tdRight}>RBO</th>
+            <th className={c.tdRight}>{t('admin.ops.opsRetrievalRegressionCard.newExcluded')}</th><th className={c.tdRight}>{t('admin.ops.opsRetrievalRegressionCard.hiddenRemoved')}</th><th>{t('admin.ops.opsRetrievalRegressionCard.status')}</th>
           </tr>
         </thead>
         <tbody>
@@ -161,12 +161,12 @@ function Questions({ questions }: { questions: RegressionQuestion[] }) {
 export default function OpsRetrievalRegressionCard() {
   const q = useRetrievalRegression()
   return (
-    <Card title="檢索回歸" labelledBy="dh-rr-title" right={q.data && <HealthStatus status={q.data.status} />}>
+    <Card title={t('admin.ops.opsRetrievalRegressionCard.retrievalRegression')} labelledBy="dh-rr-title" right={q.data && <HealthStatus status={q.data.status} />}>
       <div className={styles.body}>
-        {q.isPending && <p className={styles.idle}>載入中…</p>}
+        {q.isPending && <p className={styles.idle}>{t('admin.ops.opsRetrievalRegressionCard.loading')}</p>}
         {q.isError && (
           <p className={c.error}>
-            檢索回歸載入失敗：{q.error instanceof Error && q.error.message ? q.error.message : '請重試'}
+            {t('admin.ops.opsRetrievalRegressionCard.couldnTLoadRetrievalRegression')}{q.error instanceof Error && q.error.message ? q.error.message : t('admin.ops.opsRetrievalRegressionCard.tryAgain')}
           </p>
         )}
         {q.data && <Body d={q.data} />}
@@ -180,8 +180,7 @@ function Body({ d }: { d: RetrievalRegressionResponse }) {
   if (!d.available) {
     return (
       <p className={styles.idle}>
-        {d.unavailable_reason === 'missing' ? '還沒有結果檔' : `結果檔無法讀取（${d.unavailable_reason ?? ''}）`}。
-        {SCHEDULE}；第一次啟用前要先在主機上擷取基準（<code className={c.mono}>scripts/retrieval_regression.py capture</code>）。
+        {d.unavailable_reason === 'missing' ? t('admin.ops.opsRetrievalRegressionCard.noResultFileYet') : t('admin.ops.opsRetrievalRegressionCard.resultFileUnreadable', { v: d.unavailable_reason ?? '' })}{t('admin.ops.opsRetrievalRegressionCard.captureABaselineOnThe', { SCHEDULE: schedule() })}<code className={c.mono}>scripts/retrieval_regression.py capture</code>{t('admin.ops.opsRetrievalRegressionCard.text4')}
       </p>
     )
   }
@@ -190,24 +189,24 @@ function Body({ d }: { d: RetrievalRegressionResponse }) {
   return (
     <>
       <p className={c.meta}>
-        <span>最後一次執行 <b>{fmtDateTime(d.finished_at)}</b></span>
-        {d.exit_code != null && <span>退出碼 <b>{d.exit_code}</b></span>}
-        <span>{SCHEDULE}</span>
+        <span>{t('admin.ops.opsRetrievalRegressionCard.lastRun')}{' '}<b>{fmtDateTime(d.finished_at)}</b></span>
+        {d.exit_code != null && <span>{t('admin.ops.opsRetrievalRegressionCard.exitCode')}{' '}<b>{d.exit_code}</b></span>}
+        <span>{schedule()}</span>
       </p>
       {d.outcome === 'skipped' && (
-        <p className={styles.note}>最近一次略過：{reason ?? '原因不明'}（不告警）。下面是上一次真的比對的結果。</p>
+        <p className={styles.note}>{t('admin.ops.opsRetrievalRegressionCard.lastSkipped')}{reason ?? t('admin.ops.opsRetrievalRegressionCard.unknownReason')}{t('admin.ops.opsRetrievalRegressionCard.noAlertBelowIsThe')}</p>
       )}
       {d.outcome === 'error' && (
-        <p className={c.error}>無法比對（{reason ?? '原因不明'}）：{d.message}</p>
+        <p className={c.error}>{t('admin.ops.opsRetrievalRegressionCard.couldnTCompare')}{reason ?? t('admin.ops.opsRetrievalRegressionCard.unknownReason')}{t('admin.ops.opsRetrievalRegressionCard.text5')}{d.message}</p>
       )}
       {d.outcome === 'degraded' && d.message && <p className={c.error}>{d.message}</p>}
       {d.stale && (
-        <p className={c.banner} data-tone="warn">超過 48 小時沒有真的比對過：確認 timer 有在跑、或連續被略過的原因。</p>
+        <p className={c.banner} data-tone="warn">{t('admin.ops.opsRetrievalRegressionCard.noRealComparisonForOver')}</p>
       )}
-      {cmp ? <Summary c={cmp} /> : <p className={styles.note}>還沒有任何一次比對結果。</p>}
+      {cmp ? <Summary c={cmp} /> : <p className={styles.note}>{t('admin.ops.opsRetrievalRegressionCard.noComparisonResultsYet')}</p>}
       {cmp?.params_changed && cmp.baseline && (
         <p className={c.banner} data-tone="warn">
-          問答的 dense_scan 現在是 {cmp.dense_scan}，基準擷取時是 {cmp.baseline.dense_scan}：比的是現在的設定。確認是刻意調整後，重新擷取基準。
+          {t('admin.ops.opsRetrievalRegressionCard.qADenseScanIs')}{' '}{cmp.dense_scan}{t('admin.ops.opsRetrievalRegressionCard.butItWasWhenThe', { dense_scan: cmp.baseline.dense_scan })}
         </p>
       )}
     </>

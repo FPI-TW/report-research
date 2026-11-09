@@ -4,6 +4,7 @@ import { marketLabel, marketTint } from '../../lib/meta'
 import type { AnswerView } from '../../lib/askReducer'
 import { sourceItems } from './sourceItems'
 import styles from './SourcesDrawer.module.css'
+import { t } from '@/i18n'
 
 // 捲到卡片時與抽屜上下緣留的距離。
 const EDGE = 8
@@ -69,15 +70,15 @@ export function SourcesDrawer({ open, view, active, nonce, onClose, onOpenReport
   return (
     <aside
       className={`${styles.panel} ${open ? styles.panelOn : ''}`}
-      aria-label="引用來源"
+      aria-label={t('ask.sourcesDrawer.sources')}
       aria-hidden={!open}
       inert={!open}
     >
       <div className={styles.header}>
-        <h2 className={styles.title}>引用來源</h2>
+        <h2 className={styles.title}>{t('ask.sourcesDrawer.sources')}</h2>
         <span className={styles.count}>{items.length}</span>
         <span className={styles.spacer} />
-        <button type="button" className={styles.close} onClick={onClose} aria-label="關閉">
+        <button type="button" className={styles.close} onClick={onClose} aria-label={t('ask.sourcesDrawer.close')}>
           <X size={15} strokeWidth={1.8} aria-hidden />
         </button>
       </div>
@@ -93,7 +94,7 @@ export function SourcesDrawer({ open, view, active, nonce, onClose, onOpenReport
               <span className={styles.num}>{s.n}</span>
               {s.kind === 'report'
                 ? <span className={styles.mkt} style={marketTint(s.market)}>{marketLabel(s.market)}</span>
-                : <span className={`${styles.mkt} ${styles.webTag}`}>網路</span>}
+                : <span className={`${styles.mkt} ${styles.webTag}`}>{t('ask.sourcesDrawer.web')}</span>}
               {s.kind === 'web' && <span className={styles.host}>{s.host}</span>}
               <span className={styles.spacer} />
               {s.kind === 'report' && s.date && <span className={styles.date}>{s.date}</span>}
@@ -107,11 +108,11 @@ export function SourcesDrawer({ open, view, active, nonce, onClose, onOpenReport
                 aria-busy={pending === s.n || undefined}
                 disabled={pending != null && pending !== s.n}
               >
-                在閱讀頁開啟<ArrowRight size={13} strokeWidth={2} aria-hidden />
+                {t('ask.sourcesDrawer.openInReadingPage')}<ArrowRight size={13} strokeWidth={2} aria-hidden />
               </button>
             ) : (
               <a className={styles.lk} href={s.url} target="_blank" rel="noopener noreferrer">
-                開啟網頁<ArrowUpRight size={13} strokeWidth={2} aria-hidden />
+                {t('ask.sourcesDrawer.openWebPage')}<ArrowUpRight size={13} strokeWidth={2} aria-hidden />
               </a>
             )}
           </article>

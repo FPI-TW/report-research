@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { copyText } from '../../lib/clipboard'
 import { showToast } from '../../lib/toast'
+import { t } from '@/i18n'
 
 // 複製成功後綠勾停留的時間（交接包「互動／複製」）。
 const COPIED_MS = 1500
@@ -26,7 +27,7 @@ export function CopyIconButton({ text, label, className, checkClassName }: Props
         setCopied(true)
         timer.current = window.setTimeout(() => setCopied(false), COPIED_MS)
       },
-      () => showToast('無法複製，請手動選取文字'),
+      () => showToast(t('ask.copyIconButton.couldnTCopySelectThe')),
     )
   }
 

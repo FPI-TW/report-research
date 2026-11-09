@@ -13,6 +13,7 @@ import { ConversationList } from './ConversationList'
 import { AccountMenu } from './AccountMenu'
 import { useShell } from './shellContext'
 import styles from './Sidebar.module.css'
+import { t } from '@/i18n'
 
 interface NavDef {
   to: string
@@ -24,10 +25,10 @@ interface NavDef {
 }
 
 const NAV: NavDef[] = [
-  { to: '/library', label: '研報庫', icon: Library, preload: 'search', also: ['/report/'] },
-  { to: '/assistant', label: '研究助理', icon: MessageSquare, preload: 'ask' },
-  { to: '/consensus', label: '券商共識', icon: BarChart3, preload: 'radar' },
-  { to: '/brief', label: '每日簡報', icon: FileText, preload: 'brief' },
+  { to: '/library', get label() { return t('shell.sidebar.library') }, icon: Library, preload: 'search', also: ['/report/'] },
+  { to: '/assistant', get label() { return t('shell.sidebar.assistant') }, icon: MessageSquare, preload: 'ask' },
+  { to: '/consensus', get label() { return t('shell.sidebar.consensus') }, icon: BarChart3, preload: 'radar' },
+  { to: '/brief', get label() { return t('shell.sidebar.dailyBrief') }, icon: FileText, preload: 'brief' },
 ]
 
 /** 滑動高亮的過渡：Apple 式減速曲線，與交接包的 0.3s 一致。 */
@@ -47,10 +48,10 @@ function SearchRow({ register, kbd, mac, collapsed, onClick }: { register: Regis
   const ref = useRef<HTMLButtonElement>(null)
   useRegisterFluidHoverItem(register, 0, ref)
   return (
-    <RowTip show={collapsed} label={<span className={styles.tipKbd}>搜尋<kbd>{mac ? '⌘' : 'Ctrl'}</kbd><kbd>K</kbd></span>}>
+    <RowTip show={collapsed} label={<span className={styles.tipKbd}>{t('shell.sidebar.search')}<kbd>{mac ? '⌘' : 'Ctrl'}</kbd><kbd>K</kbd></span>}>
       <button ref={ref} type="button" className={styles.row} aria-haspopup="dialog" onClick={onClick}>
         <Search size={16} aria-hidden className={styles.icon} />
-        <span className={styles.label}>搜尋</span>
+        <span className={styles.label}>{t('shell.sidebar.search')}</span>
         <span className={styles.kbdHint} aria-hidden>{kbd}</span>
       </button>
     </RowTip>
@@ -107,11 +108,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const rows = useFluidHover(navRef)
   const active = activeIndexOf(pathname)
   const activeRect = useStableRect(rows, active)
-  const toggleLabel = collapsed ? '展開側欄' : '收合側欄'
+  const toggleLabel = collapsed ? t('shell.sidebar.expandSidebar') : t('shell.sidebar.collapseSidebar')
   const brand = useBranding()
 
   return (
-    <aside className={styles.sidebar} data-collapsed={collapsed} aria-label="側欄">
+    <aside className={styles.sidebar} data-collapsed={collapsed} aria-label={t('shell.sidebar.sidebar')}>
       <div className={styles.head}>
         <span className={styles.brand} aria-hidden={collapsed}>
           <BrandLogo size={22} alt="" />
@@ -124,7 +125,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         </Tooltip>
       </div>
 
-      <nav ref={navRef} className={styles.nav} aria-label="主導覽">
+      <nav ref={navRef} className={styles.nav} aria-label={t('shell.sidebar.mainNavigation')}>
         <FluidHoverHighlight rect={activeRect} session={0} fadeIn={false} transition={GLIDE} className={styles.hlActive} />
         <SearchRow register={rows.registerItem} kbd={`${mac ? '⌘' : 'Ctrl'} K`} mac={mac} collapsed={collapsed} onClick={openSearch} />
         {NAV.map((n, i) => (
@@ -138,11 +139,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
       <div className={styles.foot}>
         <AccountMenu variant="sidebar" collapsed={collapsed} />
-        <Tooltip content="使用說明" side="top" sideOffset={6}>
+        <Tooltip content={t('shell.sidebar.help')} side="top" sideOffset={6}>
           <Link
             to="/help"
             className={styles.help}
-            aria-label="使用說明"
+            aria-label={t('shell.sidebar.help')}
             aria-hidden={collapsed}
             inert={collapsed}
             onPointerEnter={() => preloadRoute('help')}

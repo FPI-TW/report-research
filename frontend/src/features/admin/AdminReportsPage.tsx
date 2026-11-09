@@ -22,12 +22,13 @@ import {
   useReportVisibility, type StatusFilter,
 } from './useAdminReports'
 import { namesPreview, useSelection, type BulkOutcome } from './useSelection'
+import { t } from '@/i18n'
 
 const STATUS_OPTIONS: readonly SegOption<StatusFilter>[] = [
-  { value: 'all', label: '全部' },
-  { value: 'published', label: '已發布' },
-  { value: 'draft', label: '草稿' },
-  { value: 'hidden', label: '已隱藏' },
+  { value: 'all', get label() { return t('admin.adminReportsPage.all') } },
+  { value: 'published', get label() { return t('admin.adminReportsPage.published') } },
+  { value: 'draft', get label() { return t('admin.adminReportsPage.draft') } },
+  { value: 'hidden', get label() { return t('admin.adminReportsPage.hidden') } },
 ]
 
 const stop = (e: MouseEvent) => e.stopPropagation()
@@ -77,66 +78,64 @@ function AdminReports() {
     const names = new Map(targets.map(r => [r.file_hash, displayTitle(r)]))
     const res = await bulk.mutateAsync({ fileHashes: targets.map(r => r.file_hash), hidden: hide, reason })
     sel.clear()
-    const title = hide ? '批次隱藏' : '批次恢復'
+    const title = hide ? t('admin.adminReportsPage.hideSelected') : t('admin.adminReportsPage.restoreSelected')
     const skipped = res.results.filter(r => r.status === 'skipped').map(r => ({
-      name: names.get(r.file_hash) ?? r.file_hash.slice(0, 12), detail: r.detail ?? r.code ?? '略過',
+      name: names.get(r.file_hash) ?? r.file_hash.slice(0, 12), detail: r.detail ?? r.code ?? t('admin.adminReportsPage.skipped'),
     }))
-    toast(`${title}：成功 ${res.ok} 筆、略過 ${skipped.length} 筆`)
+    toast(t('admin.adminReportsPage.succeededSkipped', { title, ok: res.ok, length: skipped.length }))
     // 有被略過的才留下逐筆原因（toast 2.6 秒就消失，原因要看得完）。
     setOutcome(skipped.length > 0 ? { title, ok: res.ok, skipped } : null)
   }
   const restore = (r: AdminReportItem) => {
     setRestoreFor(null)
     visibility.mutate({ fileHash: r.file_hash, hidden: false }, {
-      onSuccess: () => { closeDrawerFor(r); toast(`已恢復「${short(displayTitle(r))}」`) },
-      onError: err => toast(`恢復失敗：${messageOf(err)}`, { tone: 'bad' }),
+      onSuccess: () => { closeDrawerFor(r); toast(t('admin.adminReportsPage.restored', { short: short(displayTitle(r)) })) },
+      onError: err => toast(t('admin.adminReportsPage.restoreFailed', { err: messageOf(err) }), { tone: 'bad' }),
     })
   }
 
   return (
     <ConsolePage>
       <PageHeader
-        summary="查研報、隱藏不該出現的研報或恢復；可勾選多筆一次處理。"
+        summary={t('admin.adminReportsPage.findReportsHideOnesThat')}
         help={<>
-          隱藏必須填原因，每一筆操作都會留在「操作紀錄」（不含原因全文）。被隱藏或尚未發布的研報從檢索、問答、閱讀頁、雷達、總覽、
-          簡報與原檔全部排除，批次照常處理、恢復即生效。隱藏以檔案內容（file_hash）為鍵，重新入庫也不會失效。
-          草稿是上傳後還沒發布的研報，要到「上傳研報」發布或退回。
+          {t('admin.adminReportsPage.hidingRequiresAReasonAnd')}
         </>}
       />
-      <div className={c.tiles} role="group" aria-label="研報數量">
-        <StatTile label="語料" value={fmtCount(counts.data?.total)} unit="篇" />
-        <StatTile label="已隱藏" value={fmtCount(counts.data?.hidden)} />
-        <StatTile label="上傳草稿" value={fmtCount(counts.data?.draft)} />
+      <div className={c.tiles} role="group" aria-label={t('admin.adminReportsPage.reportCount')}>
+        <StatTile label={t('admin.adminReportsPage.corpus')} value={fmtCount(counts.data?.total)} unit={t('admin.adminReportsPage.reports')} />
+        <StatTile label={t('admin.adminReportsPage.hidden')} value={fmtCount(counts.data?.hidden)} />
+        <StatTile label={t('admin.adminReportsPage.uploadDrafts')} value={fmtCount(counts.data?.draft)} />
       </div>
       <div className={`${c.toolbar} ${chosen.length > 0 ? s.toolbarSticky : ''}`}>
         <form className={s.search} onSubmit={search} role="search">
-          <SearchInput value={draft} onChange={v => setDraft(v.slice(0, 200))} placeholder="標題／檔名／券商關鍵字" width={260} />
-          <Button type="submit">搜尋</Button>
+          <SearchInput value={draft} onChange={v => setDraft(v.slice(0, 200))} placeholder={t('admin.adminReportsPage.titleFileNameBrokerKeyword')} width={260} />
+          <Button type="submit">{t('admin.adminReportsPage.search')}</Button>
         </form>
-        <Segmented label="狀態" options={STATUS_OPTIONS} value={status} onChange={v => { setStatus(v); goTo(0) }} />
+        <Segmented label={t('admin.adminReportsPage.status')} options={STATUS_OPTIONS} value={status} onChange={v => { setStatus(v); goTo(0) }} />
         <div className={c.toolbarSpacer} />
         {chosen.length > 0 && (
-          <div className={c.bulk} role="toolbar" aria-label="批次操作">
-            <span className={s.bulkCount}>已選 {chosen.length} 篇</span>
+          <div className={c.bulk} role="toolbar" aria-label={t('admin.adminReportsPage.batchActions')}>
+            <span className={s.bulkCount}>{t('admin.adminReportsPage.selected', { length: chosen.length })}</span>
             <Button size="sm" variant="dangerText" disabled={toHide.length === 0 || bulk.isPending}
-              title={toHide.length === 0 ? '選取的研報都已隱藏' : undefined}
-              onClick={() => setBulkHideFor(toHide)}>批次隱藏（{toHide.length}）</Button>
+              title={toHide.length === 0 ? t('admin.adminReportsPage.allSelectedReportsAreAlready') : undefined}
+              onClick={() => setBulkHideFor(toHide)}>{t('admin.adminReportsPage.hideSelected2', { length: toHide.length })}</Button>
             <Button size="sm" disabled={toRestore.length === 0 || bulk.isPending}
-              title={toRestore.length === 0 ? '選取的研報都沒有被隱藏' : undefined}
-              onClick={() => setBulkRestoreFor(toRestore)}>批次恢復（{toRestore.length}）</Button>
-            <Button size="sm" className={c.btnGhost} onClick={sel.clear}>清除</Button>
+              title={toRestore.length === 0 ? t('admin.adminReportsPage.noneOfTheSelectedReports') : undefined}
+              onClick={() => setBulkRestoreFor(toRestore)}>{t('admin.adminReportsPage.restoreSelected2', { length: toRestore.length })}</Button>
+            <Button size="sm" className={c.btnGhost} onClick={sel.clear}>{t('admin.adminReportsPage.clear')}</Button>
           </div>
         )}
       </div>
       <BulkResultPanel outcome={outcome} onClose={() => setOutcome(null)} />
-      <Card title="研報清單" labelledBy="admin-reports-title"
-        right={<ExportCsvButton href={adminCsvUrls.exportReports({ q: q || undefined, ...statusQuery(status) })} what="研報清單" />}>
+      <Card title={t('admin.adminReportsPage.reportList')} labelledBy="admin-reports-title"
+        right={<ExportCsvButton href={adminCsvUrls.exportReports({ q: q || undefined, ...statusQuery(status) })} what={t('admin.adminReportsPage.reportList')} />}>
         {reports.isPending ? (
-          <p className={c.empty}>載入中…</p>
+          <p className={c.empty}>{t('admin.adminReportsPage.loading')}</p>
         ) : reports.isError ? (
-          <div className={c.cardBody}><p className={c.error} role="alert">研報清單載入失敗：{messageOf(reports.error)}</p></div>
+          <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.adminReportsPage.couldnTLoadReports', { error: messageOf(reports.error) })}</p></div>
         ) : items.length === 0 ? (
-          <p className={c.empty}>{filtered ? '沒有符合條件的研報' : '還沒有任何研報'}</p>
+          <p className={c.empty}>{filtered ? t('admin.adminReportsPage.noMatchingReports') : t('admin.adminReportsPage.noReportsYet')}</p>
         ) : (
           <>
             <div className={c.tableWrap}>
@@ -146,7 +145,7 @@ function AdminReports() {
                     <th className={c.thCheck}>
                       <SelectAllBox ids={selectable} selected={sel.selected} onChange={on => sel.setAll(selectable, on)} />
                     </th>
-                    <th>研報</th><th>券商／市場</th><th>報告日／入庫</th><th>狀態</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
+                    <th>{t('admin.adminReportsPage.report')}</th><th>{t('admin.adminReportsPage.brokerMarket')}</th><th>{t('admin.adminReportsPage.reportDateIngested')}</th><th>{t('admin.adminReportsPage.status')}</th><th className={`${c.tdRight} ${c.stickyRight}`}>{t('admin.adminReportsPage.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -158,9 +157,9 @@ function AdminReports() {
                       <tr key={r.file_hash} className={`${c.rowClickable} ${checked ? c.rowSelected : ''}`}
                         onClick={() => setOpenHash(r.file_hash)}>
                         <td className={c.tdCheck} onClick={stop}>
-                          <input type="checkbox" className={c.check} aria-label={`選取「${name}」`}
+                          <input type="checkbox" className={c.check} aria-label={t('admin.adminReportsPage.select', { name })}
                             checked={checked} disabled={st === 'draft'}
-                            title={st === 'draft' ? '草稿不能隱藏或恢復，到上傳審核發布或退回' : undefined}
+                            title={st === 'draft' ? t('admin.adminReportsPage.draftsCanTBeHidden') : undefined}
                             onChange={() => sel.toggle(r.file_hash)} />
                         </td>
                         <td className={s.titleCell}>
@@ -170,8 +169,8 @@ function AdminReports() {
                         </td>
                         <td>{r.source || '—'}<div className={c.sub}>{r.market || '—'}</div></td>
                         <td className={c.num}>
-                          <div title="報告日">{r.report_date ? r.report_date.slice(0, 10) : '—'}</div>
-                          <div className={c.sub} title="入庫">{fmtDateTime(r.created_at)}</div>
+                          <div title={t('admin.adminReportsPage.reportDate')}>{r.report_date ? r.report_date.slice(0, 10) : '—'}</div>
+                          <div className={c.sub} title={t('admin.adminReportsPage.ingested')}>{fmtDateTime(r.created_at)}</div>
                         </td>
                         <td className={s.statusCell}>
                           <Status tone={STATUS_TONE[st]}>{STATUS_LABEL[st]}</Status>
@@ -179,17 +178,17 @@ function AdminReports() {
                             <div className={`${c.truncate} ${s.reason}`} title={r.hidden_reason}>{r.hidden_reason}</div>
                           )}
                           {r.visibility_updated_at && (
-                            <div className={c.sub}>{r.visibility_updated_by ?? '—'}・{fmtDateTime(r.visibility_updated_at)}</div>
+                            <div className={c.sub}>{r.visibility_updated_by ?? '—'}{t('common.separator')}{fmtDateTime(r.visibility_updated_at)}</div>
                           )}
                         </td>
                         <td className={`${c.tdActions} ${c.stickyRight}`}>
                           {st === 'draft' ? (
-                            <Link to={DRAFT_REVIEW_PATH} className={`${c.btn} ${c.btnSm}`} title="到上傳審核發布或退回"
-                              onClick={stop}>前往審核</Link>
+                            <Link to={DRAFT_REVIEW_PATH} className={`${c.btn} ${c.btnSm}`} title={t('admin.adminReportsPage.publishOrRejectInUpload')}
+                              onClick={stop}>{t('admin.adminReportsPage.goToReview')}</Link>
                           ) : st === 'hidden' ? (
-                            <RowActions primary={{ label: '恢復', onClick: () => setRestoreFor(r), disabled: visibility.isPending }} />
+                            <RowActions primary={{ label: t('admin.adminReportsPage.restore'), onClick: () => setRestoreFor(r), disabled: visibility.isPending }} />
                           ) : (
-                            <RowActions primary={{ label: '隱藏', onClick: () => setHideFor(r), disabled: visibility.isPending }} />
+                            <RowActions primary={{ label: t('admin.adminReportsPage.hide'), onClick: () => setHideFor(r), disabled: visibility.isPending }} />
                           )}
                         </td>
                       </tr>
@@ -199,12 +198,12 @@ function AdminReports() {
               </table>
             </div>
             <div className={c.pager}>
-              <span>{`第 ${offset + 1}–${offset + items.length} 筆，共 ${reports.data.total} 筆`}</span>
+              <span>{t('admin.adminReportsPage.of', { v: offset + 1, v2: offset + items.length, total: reports.data.total })}</span>
               <div className={c.pagerBtns}>
                 <Button size="sm" disabled={offset === 0}
-                  onClick={() => goTo(Math.max(0, offset - REPORTS_PAGE_SIZE))}>上一頁</Button>
+                  onClick={() => goTo(Math.max(0, offset - REPORTS_PAGE_SIZE))}>{t('admin.adminReportsPage.previous')}</Button>
                 <Button size="sm" disabled={reports.data.next_offset == null}
-                  onClick={() => { if (reports.data.next_offset != null) goTo(reports.data.next_offset) }}>下一頁</Button>
+                  onClick={() => { if (reports.data.next_offset != null) goTo(reports.data.next_offset) }}>{t('admin.adminReportsPage.next')}</Button>
               </div>
             </div>
           </>
@@ -220,13 +219,13 @@ function AdminReports() {
         onRestore={setRestoreFor}
       />
       <HideDialog report={hideFor} onClose={() => setHideFor(null)}
-        onDone={r => { closeDrawerFor(r); toast(`已隱藏「${short(displayTitle(r))}」`) }} />
+        onDone={r => { closeDrawerFor(r); toast(t('admin.adminReportsPage.hid', { short: short(displayTitle(r)) })) }} />
       <ConfirmDialog
         open={restoreFor != null}
         tone="safe"
-        title={restoreFor ? `恢復「${displayTitle(restoreFor)}」？` : ''}
-        body="恢復後立即重新出現在檢索、問答與閱讀頁。"
-        confirmLabel="恢復"
+        title={restoreFor ? t('admin.adminReportsPage.restore2', { restoreFor: displayTitle(restoreFor) }) : ''}
+        body={t('admin.adminReportsPage.onceRestoredItReappearsIn')}
+        confirmLabel={t('admin.adminReportsPage.restore')}
         onConfirm={() => { if (restoreFor) restore(restoreFor) }}
         onCancel={() => setRestoreFor(null)}
       />
@@ -235,15 +234,15 @@ function AdminReports() {
       <ConfirmDialog
         open={bulkRestoreFor != null}
         tone="safe"
-        title={`恢復 ${bulkRestoreFor?.length ?? 0} 篇研報？`}
+        title={t('admin.adminReportsPage.restoreReports', { v: bulkRestoreFor?.length ?? 0 })}
         body={bulkRestoreFor
-          ? `${namesPreview(bulkRestoreFor.map(r => displayTitle(r)))}。恢復後立即重新出現在檢索與問答；每篇各留一筆操作紀錄。`
+          ? t('admin.adminReportsPage.onceRestoredTheyReappearIn', { namesPreview: namesPreview(bulkRestoreFor.map(r => displayTitle(r))) })
           : ''}
-        confirmLabel={`恢復 ${bulkRestoreFor?.length ?? 0} 篇`}
+        confirmLabel={t('admin.adminReportsPage.restoreReports2', { v: bulkRestoreFor?.length ?? 0 })}
         onConfirm={() => {
           const targets = bulkRestoreFor ?? []
           setBulkRestoreFor(null)
-          runBulk(targets, false).catch(err => toast(`批次恢復失敗：${messageOf(err)}`, { tone: 'bad' }))
+          runBulk(targets, false).catch(err => toast(t('admin.adminReportsPage.batchRestoreFailed', { err: messageOf(err) }), { tone: 'bad' }))
         }}
         onCancel={() => setBulkRestoreFor(null)}
       />
@@ -254,7 +253,7 @@ function AdminReports() {
 export default function AdminReportsPage() {
   return (
     <RequireAdmin>
-      <RequireScope scope="reports.manage" title="研報管理"><AdminReports /></RequireScope>
+      <RequireScope scope="reports.manage" title={t('admin.adminReportsPage.reports2')}><AdminReports /></RequireScope>
     </RequireAdmin>
   )
 }

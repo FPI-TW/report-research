@@ -11,7 +11,7 @@ import { Sidebar } from './Sidebar'
 import { MobileTabBar } from './MobileTabBar'
 import { CommandPalette } from './CommandPalette'
 import { ToastHost } from './ToastHost'
-import { ShellContext, type SettingsTab, type ShellActions } from './shellContext'
+import { ShellContext, takeReopenSettings, type SettingsTab, type ShellActions } from './shellContext'
 import styles from './AppShell.module.css'
 
 export function AppShell() {
@@ -22,7 +22,10 @@ export function AppShell() {
   const reduced = useReducedMotion()
   const brand = useBranding()
   const [searchOpen, setSearchOpen] = useState(false)
-  const [settings, setSettings] = useState<{ open: boolean; tab: SettingsTab }>({ open: false, tab: 'account' })
+  const [settings, setSettings] = useState<{ open: boolean; tab: SettingsTab }>(() => {
+    const tab = takeReopenSettings()
+    return tab ? { open: true, tab } : { open: false, tab: 'account' }
+  })
 
   const actions = useMemo<ShellActions>(() => ({
     openSearch: () => setSearchOpen(true),

@@ -8,22 +8,23 @@ import { useOpsIncident } from '../useOps'
 import { SeverityBadge, StatusBadge } from './IncidentBadges'
 import { endText, eventTone } from './incidentText'
 import styles from './Incidents.module.css'
+import { t } from '@/i18n'
 
 function JournalExcerpt({ event }: { event: IncidentEventItem }) {
   if (!event.journal_excerpt) return null
   const range = event.journal_since && event.journal_until
-    ? `${fmtDateTime(event.journal_since)} ～ ${fmtDateTime(event.journal_until)}`
+    ? t('admin.ops.incidents.incidentDrawer.text', { journal_since: fmtDateTime(event.journal_since), journal_until: fmtDateTime(event.journal_until) })
     : null
   return (
     <details className={styles.journal}>
       <summary>
-        journal 片段{range && `（${range}）`}
+        {t('admin.ops.incidents.incidentDrawer.journalExcerpt')}{range && t('admin.ops.incidents.incidentDrawer.text2', { range })}
         {event.journal_units && <span> {event.journal_units}</span>}
       </summary>
       {event.journal_truncated && (
-        <p className={styles.warnNote}>片段已截斷（有大小上限）；完整 log 請在主機上以 journalctl 查。</p>
+        <p className={styles.warnNote}>{t('admin.ops.incidents.incidentDrawer.excerptTruncatedSizeLimitQuery')}</p>
       )}
-      <pre className={`${c.log} ${styles.journalLog}`} aria-label="journal 片段" tabIndex={0}>{event.journal_excerpt}</pre>
+      <pre className={`${c.log} ${styles.journalLog}`} aria-label={t('admin.ops.incidents.incidentDrawer.journalExcerpt')} tabIndex={0}>{event.journal_excerpt}</pre>
     </details>
   )
 }
@@ -31,21 +32,21 @@ function JournalExcerpt({ event }: { event: IncidentEventItem }) {
 function Detail({ incident }: { incident: IncidentDetail }) {
   return (
     <>
-      <DrawerSection title="摘要">
+      <DrawerSection title={t('admin.ops.incidents.incidentDrawer.summary')}>
         <dl className={c.kv}>
-          <dt>元件</dt><dd>{componentLabel(incident.component)}（{incident.component}）</dd>
-          <dt>嚴重度</dt><dd><SeverityBadge severity={incident.severity} /></dd>
-          <dt>開始</dt><dd>{fmtDateTime(incident.opened_at)}</dd>
-          <dt>結束</dt><dd>{endText(incident)}</dd>
-          <dt>持續</dt><dd>{fmtDuration(incident.duration_seconds)}</dd>
-          <dt>原因</dt><dd>{incident.reason}</dd>
-          {incident.summary && <><dt>說明</dt><dd>{incident.summary}</dd></>}
-          {incident.probe_unit && <><dt>探針</dt><dd>{incident.probe_unit}</dd></>}
-          <dt>主機</dt><dd>{incident.host}</dd>
+          <dt>{t('admin.ops.incidents.incidentDrawer.component')}</dt><dd>{t('admin.ops.incidents.incidentDrawer.text3', { component: componentLabel(incident.component), component2: incident.component })}</dd>
+          <dt>{t('admin.ops.incidents.incidentDrawer.severity')}</dt><dd><SeverityBadge severity={incident.severity} /></dd>
+          <dt>{t('admin.ops.incidents.incidentDrawer.started')}</dt><dd>{fmtDateTime(incident.opened_at)}</dd>
+          <dt>{t('admin.ops.incidents.incidentDrawer.ended')}</dt><dd>{endText(incident)}</dd>
+          <dt>{t('admin.ops.incidents.incidentDrawer.duration')}</dt><dd>{fmtDuration(incident.duration_seconds)}</dd>
+          <dt>{t('admin.ops.incidents.incidentDrawer.reason')}</dt><dd>{incident.reason}</dd>
+          {incident.summary && <><dt>{t('admin.ops.incidents.incidentDrawer.description')}</dt><dd>{incident.summary}</dd></>}
+          {incident.probe_unit && <><dt>{t('admin.ops.incidents.incidentDrawer.probe')}</dt><dd>{incident.probe_unit}</dd></>}
+          <dt>{t('admin.ops.incidents.incidentDrawer.host')}</dt><dd>{incident.host}</dd>
         </dl>
       </DrawerSection>
-      <DrawerSection title="狀態轉換（舊→新）">
-        {incident.events_truncated && <p className={styles.warnNote}>轉換太多，只顯示最早的 1000 則。</p>}
+      <DrawerSection title={t('admin.ops.incidents.incidentDrawer.stateTransitionsOldNew')}>
+        {incident.events_truncated && <p className={styles.warnNote}>{t('admin.ops.incidents.incidentDrawer.tooManyTransitionsOnlyThe')}</p>}
         <ol className={styles.timeline}>
           {incident.events.map(e => (
             <li key={e.event_id} className={styles.event}>
@@ -55,7 +56,7 @@ function Detail({ incident }: { incident: IncidentDetail }) {
                 <div className={styles.eventHead}>
                   <span className={styles.eventAction} data-tone={eventTone(e)}>{EVENT_ACTION_LABELS[e.action]}</span>
                   <SeverityBadge severity={e.severity} />
-                  <span>{e.notified ? '已通知' : '未送出通知'}</span>
+                  <span>{e.notified ? t('admin.ops.incidents.incidentDrawer.notified') : t('admin.ops.incidents.incidentDrawer.notificationNotSent')}</span>
                   <span className={styles.eventReason}>{e.reason}</span>
                 </div>
                 {e.summary && <p className={styles.eventSummary}>{e.summary}</p>}
@@ -79,13 +80,13 @@ export function IncidentDrawer({ incidentId, onClose }: { incidentId: string | n
   const i = q.data
   return (
     <Drawer open onClose={onClose} width={520}
-      title={i ? `${componentLabel(i.component)} 事件` : '事件詳情'}
+      title={i ? t('admin.ops.incidents.incidentDrawer.incident', { component: componentLabel(i.component) }) : t('admin.ops.incidents.incidentDrawer.incidentDetails')}
       status={i ? <StatusBadge status={i.status} /> : undefined}
-      subtitle={i ? (i.summary ? `${i.reason}・${i.summary}` : i.reason) : undefined}>
+      subtitle={i ? (i.summary ? `${i.reason}${t('common.separator')}${i.summary}` : i.reason) : undefined}>
       {q.isPending ? (
-        <DrawerSection><p className={styles.note}>載入中…</p></DrawerSection>
+        <DrawerSection><p className={styles.note}>{t('admin.ops.incidents.incidentDrawer.loading')}</p></DrawerSection>
       ) : q.isError ? (
-        <DrawerSection><OpsQueryError error={q.error} what="事件詳情" /></DrawerSection>
+        <DrawerSection><OpsQueryError error={q.error} what={t('admin.ops.incidents.incidentDrawer.incidentDetails')} /></DrawerSection>
       ) : (
         <Detail incident={q.data} />
       )}

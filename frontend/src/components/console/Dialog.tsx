@@ -6,6 +6,7 @@ import { Button } from './controls'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
 import { useRestoreFocus } from './useRestoreFocus'
+import { t } from '@/i18n'
 
 interface DialogProps {
   open: boolean
@@ -68,7 +69,7 @@ export function Dialog({
         <div className={o.dialogHead}>
           <h2 id={titleId} className={o.dialogTitle}>{title}</h2>
           {closeButton && (
-            <button type="button" className={c.iconBtn} onClick={onClose} title="關閉" aria-label="關閉"><Icon name="x" size={16} /></button>
+            <button type="button" className={c.iconBtn} onClick={onClose} title={t('admin.console.dialog.close')} aria-label={t('admin.console.dialog.close')}><Icon name="x" size={16} /></button>
           )}
         </div>
         {children}
@@ -106,7 +107,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, tone = 'danger'
     <Dialog open={open} onClose={onCancel} title={title} width={420} role="alertdialog" locked={busy}>
       <p className={o.dialogBody}>{body}</p>
       <div className={o.dialogActions}>
-        <Button onClick={onCancel} disabled={busy}>取消</Button>
+        <Button onClick={onCancel} disabled={busy}>{t('admin.console.dialog.cancel')}</Button>
         <Button variant={tone === 'safe' ? 'primary' : 'danger'} onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
       </div>
     </Dialog>
@@ -145,7 +146,7 @@ export function FormDialog({
         {children}
         {error && <p className={c.error} role="alert">{error}</p>}
         <div className={o.dialogActions}>
-          <Button onClick={onClose} disabled={busy}>取消</Button>
+          <Button onClick={onClose} disabled={busy}>{t('admin.console.dialog.cancel')}</Button>
           <Button type="submit" variant={submitTone} disabled={busy || submitDisabled}>{submitLabel}</Button>
         </div>
       </form>

@@ -1,11 +1,12 @@
 import type { LampTone } from '../../../../components/console'
 import type { IncidentEventItem, IncidentItem } from '../../../../lib/generated/adminApi'
 import { fmtDateTime } from '../../auditLabels'
+import { t } from '@/i18n'
 
 /** 結束欄：resolved 是恢復時間；lost 不知道何時結束，只能給最後一則轉換；firing 還沒結束。 */
 export function endText(i: IncidentItem): string {
   if (i.status === 'resolved') return fmtDateTime(i.resolved_at)
-  if (i.status === 'lost') return `不明（最後轉換 ${fmtDateTime(i.last_event_at)}）`
+  if (i.status === 'lost') return t('admin.ops.incidents.incidentText.unknownLastTransition', { last_event_at: fmtDateTime(i.last_event_at) })
   return '—'
 }
 

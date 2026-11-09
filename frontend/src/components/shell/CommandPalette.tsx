@@ -9,12 +9,13 @@ import { useConversations } from '../../lib/useConversations'
 import { useDebouncedValue } from '../../lib/useDebouncedValue'
 import { useShell } from './shellContext'
 import styles from './CommandPalette.module.css'
+import { t } from '@/i18n'
 
 interface Item {
   id: string
   label: string
   icon: LucideIcon
-  group: '對話' | '前往'
+  group: string
   run: () => void
 }
 
@@ -27,7 +28,7 @@ const GLIDE = { duration: 0.2, ease: [0.32, 0.72, 0, 1] as const }
  */
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Modal open={open} onClose={onClose} bare ariaLabel="搜尋" className={styles.dialog}>
+    <Modal open={open} onClose={onClose} bare ariaLabel={t('shell.commandPalette.search')} className={styles.dialog}>
       {open && <PaletteBody onClose={onClose} />}
     </Modal>
   )
@@ -72,21 +73,21 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
 
   const items = useMemo<Item[]>(() => {
     const go = (to: string) => () => { onClose(); navigate(to) }
-    const page = (id: string, label: string, icon: LucideIcon, run: () => void): Item => ({ id, label, icon, group: '前往', run })
+    const page = (id: string, label: string, icon: LucideIcon, run: () => void): Item => ({ id, label, icon, group: t('shell.commandPalette.goTo'), run })
     const pages: Item[] = [
-      page('new', '新對話', Plus, go('/assistant')),
-      page('library', '研報庫', Library, go('/library')),
-      page('assistant', '研究助理', MessageSquare, go('/assistant')),
-      page('consensus', '券商共識', BarChart3, go('/consensus')),
-      page('brief', '每日簡報', FileText, go('/brief')),
-      page('settings', '設定', Settings, () => { onClose(); openSettings('account') }),
-      page('help', '使用說明', CircleHelp, go('/help')),
+      page('new', t('shell.commandPalette.newConversation'), Plus, go('/assistant')),
+      page('library', t('shell.commandPalette.library'), Library, go('/library')),
+      page('assistant', t('shell.commandPalette.assistant'), MessageSquare, go('/assistant')),
+      page('consensus', t('shell.commandPalette.consensus'), BarChart3, go('/consensus')),
+      page('brief', t('shell.commandPalette.dailyBrief'), FileText, go('/brief')),
+      page('settings', t('shell.commandPalette.settings'), Settings, () => { onClose(); openSettings('account') }),
+      page('help', t('shell.commandPalette.help'), CircleHelp, go('/help')),
     ].filter(p => !query.trim() || p.label.includes(query.trim()))
     const conv: Item[] = convs.slice(0, 6).map((c): Item => ({
       id: `c-${c.conversation_id}`,
       label: c.title,
       icon: MessageSquare,
-      group: '對話',
+      group: t('shell.commandPalette.conversations'),
       run: go(`/assistant?c=${encodeURIComponent(c.conversation_id)}`),
     }))
     return [...conv, ...pages]
@@ -115,19 +116,19 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
           aria-expanded="true"
           aria-controls="cmd-list"
           aria-activedescendant={items.length ? `cmd-${items[cur].id}` : undefined}
-          aria-label="搜尋對話或頁面"
-          placeholder="搜尋對話或頁面"
+          aria-label={t('shell.commandPalette.searchConversationsOrPages')}
+          placeholder={t('shell.commandPalette.searchConversationsOrPages')}
           value={query}
           maxLength={200}
           autoFocus
           onChange={e => { setQuery(e.target.value); setSel(0) }}
           onKeyDown={onKeyDown}
         />
-        <button type="button" className={styles.close} aria-label="關閉" onClick={onClose}>
+        <button type="button" className={styles.close} aria-label={t('shell.commandPalette.close')} onClick={onClose}>
           <X size={14} strokeWidth={1.8} aria-hidden />
         </button>
       </div>
-      <div id="cmd-list" ref={listRef} role="listbox" aria-label="搜尋結果" className={`${styles.list} tf-scroll`}>
+      <div id="cmd-list" ref={listRef} role="listbox" aria-label={t('shell.commandPalette.searchResults')} className={`${styles.list} tf-scroll`}>
         <FluidHoverHighlight rect={rect} session={0} fadeIn={false} transition={GLIDE} className={styles.hl} />
         {items.map((it, i) => {
           const heading = it.group !== lastGroup ? it.group : null
@@ -139,7 +140,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
             </div>
           )
         })}
-        {items.length === 0 && <p className={styles.empty} role="status">沒有符合的結果</p>}
+        {items.length === 0 && <p className={styles.empty} role="status">{t('shell.commandPalette.noMatchingResults')}</p>}
       </div>
     </div>
   )

@@ -100,3 +100,41 @@ class BuildPromptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MinReportDateTests(unittest.TestCase):
+    """`--min-report-date`（連接器排程的標題積壓段只補分層回填的第二層）：不帶時查詢字串逐字不變。"""
+
+    def test_sql(self):
+        import generate_titles as gt
+
+        base = gt.build_candidates_sql(False, True, True, True)
+        tiered = gt.build_candidates_sql(False, True, True, True, True)
+        self.assertIn("AND r.report_date >= CAST(:min_report_date AS date) ", tiered)
+        self.assertEqual(tiered.replace("AND r.report_date >= CAST(:min_report_date AS date) ", ""), base)
+        self.assertNotIn("min_report_date", base)
+
+    def test_param_reaches_the_query(self):
+        import asyncio
+        from datetime import date
+        from unittest import mock
+
+        import generate_titles as gt
+
+        seen = {}
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def execute(self, sql, params):
+                seen.update(sql=str(sql), params=params)
+                return mock.Mock(all=lambda: [])
+
+        with mock.patch.object(gt, "SessionFactory", _Session):
+            asyncio.run(gt.fetch_candidates(5, min_report_date=date(2025, 11, 10)))
+        self.assertEqual(seen["params"]["min_report_date"], date(2025, 11, 10))
+        self.assertIn(":min_report_date", seen["sql"])

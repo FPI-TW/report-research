@@ -45,6 +45,7 @@ None、各批次也不套跳過條件，行為退回沒有這張表之前。
 """
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass
 from typing import Optional
@@ -89,23 +90,27 @@ def should_skip(rec: Optional[FailureRecord], model: str) -> bool:
     return rec.fail_count >= SKIP_AFTER_ROUNDS
 
 
-def skip_clause_sql(alias: str = "r") -> str:
+def skip_clause_sql(alias: str = "r", *, param_suffix: str = "") -> str:
     """WHERE 用的片段：排除該跳過的研報。參數由 `skip_params()` 提供。
 
     `alias` 是外層查詢裡 research_report 的別名，要有 `file_hash` 欄。
     IN 清單由本模組的常數產生，不是外部輸入。
+    `param_suffix`：同一句查詢要對多個任務各套一段時（`app/services/backfill_tiers.py`），參數名加後綴區分；
+    `skip_params()` 傳同一個後綴。
     """
+    if not re.fullmatch(r"[a-z0-9_]*", param_suffix):
+        raise ValueError(f"param_suffix 只能是小寫英數與底線：{param_suffix!r}")
     immediate = ", ".join(f"'{r}'" for r in sorted(SKIP_IMMEDIATELY))
     return (
         f"NOT EXISTS (SELECT 1 FROM {TABLE} f "
         f"WHERE f.file_hash = {alias}.file_hash "
-        "AND f.task = :llm_skip_task AND f.model = :llm_skip_model "
+        f"AND f.task = :llm_skip_task{param_suffix} AND f.model = :llm_skip_model{param_suffix} "
         f"AND (f.reason IN ({immediate}) OR f.fail_count >= {SKIP_AFTER_ROUNDS}))"
     )
 
 
-def skip_params(task: str, model: str) -> dict:
-    return {"llm_skip_task": task, "llm_skip_model": model}
+def skip_params(task: str, model: str, *, param_suffix: str = "") -> dict:
+    return {f"llm_skip_task{param_suffix}": task, f"llm_skip_model{param_suffix}": model}
 
 
 TABLE_READY_SQL = f"SELECT to_regclass('{TABLE}') IS NOT NULL"

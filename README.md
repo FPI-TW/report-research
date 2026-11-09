@@ -433,6 +433,18 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 
 給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。研報來源以 profile 的 `[connectors]` 接上（監看資料夾、S3 相容 bucket、插件；scheduler 的 `connectors` 工作輪詢入庫並跑下游批次），外部系統也可以經 `POST /external/v1/uploads` 送進上傳流程；設定與 metadata 側檔格式見 `docs/WORKFLOW.md`「資料來源連接器」。systemd timer 與容器排程的對照、零外連清單、備份還原、監控對接（`/metrics` 指標與告警規則、JSON 日誌欄位、版本對帳、通用 webhook 告警）見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
 
+### 首次導入（分層回填）
+
+數萬份歷史研報不一次跑完所有 LLM 派生：第一層（全部歷史）只做抽取、嵌入、標註；第二層（`report_date` 在最近 `[backfill].recent_months` 個月內）補摘要、標題、摘錄、訊號；第三層（更早與無日期）由背景在每日 token 上限內慢慢補。開跑前先估價（零 LLM、費率由使用者提供），步驟、進度與續跑見 `docs/WORKFLOW.md`「首次導入」。
+
+```bash
+make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"   # 估價：各層的 token、金額、時間（--json 給機器讀）
+uv run python scripts/backfill_tiers.py --tier 2 --dry-run         # 第二層會排入幾份（不呼叫 LLM）
+uv run python scripts/backfill_tiers.py --tier 2                   # 第二層
+make backfill-status                                               # 各層待補數與今天的背景用量
+# 第三層：profile 設 [backfill].background_enabled = true，scheduler 的 backfill-tiers 每小時補一輪
+```
+
 ### 其他維運入口
 
 辦公室主機的對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。上傳掃描：`make up-clamav`／`down-clamav`／`clamav-smoke`（`deploy/clamav/docker-compose.yml`，獨立 compose 專案、常駐 clamd 容器 `report-mark-clamav`，只綁 `127.0.0.1:3310`，常駐約 1.2–1.6 GB；`clamav-smoke` 驗 EICAR 要 FOUND、正常 PDF 要 OK，可帶 `SMOKE_PDF=…`），安裝、停用與故障處置見 `docs/production_resilience.md`「ClamAV（上傳掃描）」。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。

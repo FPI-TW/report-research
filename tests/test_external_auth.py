@@ -232,6 +232,8 @@ class ExternalRouteStructureTests(unittest.TestCase):
             {
                 "/external/v1/search": {"search"},
                 "/external/v1/reports/{report_id}/file-url": {"report.file"},
+                "/external/v1/uploads": {"report.upload"},
+                "/external/v1/uploads/{upload_id}": {"report.upload"},
             },
         )
 

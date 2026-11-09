@@ -40,7 +40,7 @@ from app.services.db import SessionFactory
 logger = logging.getLogger(__name__)
 
 # 金鑰能呼叫的端點（與 research.api_client.scopes 的 CHECK 逐字一致）。
-KEY_SCOPES: frozenset[str] = frozenset({"search", "report.file"})
+KEY_SCOPES: frozenset[str] = frozenset({"search", "report.file", "report.upload"})
 # 授權範圍的維度（與 research.api_client_entitlement.dimension 的 CHECK 逐字一致）。
 ENTITLEMENT_DIMENSIONS: tuple[str, ...] = ("market", "source", "report_type", "instrument_type")
 

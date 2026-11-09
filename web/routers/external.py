@@ -14,6 +14,15 @@
   失敗的那筆給 null、不讓整個搜尋失敗（fail-open）；`file-url` 端點才 HEAD 驗 sha256。
 - 不回目標價等雷達欄位。
 
+上傳（`POST /external/v1/uploads`，scope `report.upload`）：raw body、`Content-Type: application/pdf`，檔案進
+**現有的上傳流程**（隔離區 → 預檢與 ClamAV 掃描 → worker 入庫成草稿 → 管理員發布），不直接入庫。收檔的步驟與
+管理端的 `POST /api/admin/uploads` 相同（`web/routers/admin_uploads.py` 檔頭），差別只在：上傳者記成 API 用戶端
+（`report_upload.api_client_id`，`uploaded_by` 為 NULL）、每日配額依用戶端計數（`UPLOAD_DAILY_QUOTA`）、錯誤碼
+是對外文件（`docs/EXTERNAL_API.md`）的那一組。重複的檔案一律回 409 `upload_duplicate`，**不說**它在語料裡是
+已發布、草稿還是隱藏（那是內部狀態）。`GET /external/v1/uploads/{upload_id}` 只查得到自己收進來的上傳；狀態對外
+收斂成四種（`EXTERNAL_UPLOAD_STATUS`），不回掃描特徵、失敗細節與決策原因。CSRF 不適用：這組路徑只認 Bearer、
+不認 cookie。
+
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """
 from __future__ import annotations
@@ -21,14 +30,16 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services import feature_flags, quarantine, uploads
 from app.services.entitlement import Entitlement
 from app.services.filename import source_display
 from app.services.original_file_url import (
@@ -39,6 +50,18 @@ from app.services.original_file_url import (
     mint_original_url,
 )
 from app.services.retrieval import DENSE_SCAN_SEARCH, LEX_CAP_SEARCH
+from app.services.upload_intake import (
+    DuplicateInCorpusError,
+    IntakeError,
+    InvalidFilenameError,
+    KnownInfectedError,
+    NotPdfFilenameError,
+    QuotaExceededError,
+    UploadInProgressError,
+    UploadNotFoundError,
+    UploadRow,
+    sanitize_filename,
+)
 from app.services.visibility import visible_report_sql
 from web import deps
 from web.errors import AppError
@@ -50,6 +73,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 FILE_SCOPE = "report.file"
+UPLOAD_SCOPE = "report.upload"
+_MIB = 1024 * 1024
+_PDF_MEDIA_TYPE = "application/pdf"
+# File.lastModified（毫秒）的上限：datetime 能表示的最後一刻（9999-12-31）。
+_MAX_MTIME_MS = 253402300799999
+
+# 上傳狀態 → 對外的四種狀態。內部狀態（掃描中、清除排程…）會演進，對外只承諾這四種意思。
+EXTERNAL_UPLOAD_STATUS: dict[str, str] = {
+    uploads.STATE_QUARANTINED: "processing",
+    uploads.STATE_SCANNING: "processing",
+    uploads.STATE_CLEAN: "processing",
+    uploads.STATE_PROCESSING: "processing",
+    uploads.STATE_DRAFT: "pending_review",
+    uploads.STATE_PUBLISHED: "published",
+    uploads.STATE_DUPLICATE: "published",
+    uploads.STATE_INFECTED: "rejected",
+    uploads.STATE_BLOCKED: "rejected",
+    uploads.STATE_FAILED: "rejected",
+    uploads.STATE_REJECTED: "rejected",
+}
 
 
 def _utcnow() -> datetime:
@@ -174,6 +217,73 @@ async def _search_file_urls(report_ids: list[str], ent: Entitlement) -> dict[str
     return out
 
 
+def _upload_payload(row: UploadRow) -> dict:
+    return {
+        "upload_id": row.upload_id,
+        "file_hash": row.file_hash,
+        "file_name": row.original_name,
+        "size_bytes": row.size_bytes,
+        "status": EXTERNAL_UPLOAD_STATUS.get(row.state, "processing"),
+        "uploaded_at": _iso_utc(row.uploaded_at),
+        "updated_at": _iso_utc(row.state_changed_at),
+    }
+
+
+def _upload_intake_error(exc: IntakeError) -> AppError:
+    if isinstance(exc, (DuplicateInCorpusError, UploadInProgressError)):
+        return AppError(409, "upload_duplicate", "這份檔案已經收過了，不必重複上傳", extra={"file_hash": exc.file_hash})
+    if isinstance(exc, KnownInfectedError):
+        return AppError(422, "upload_rejected", "這份檔案先前已被拒收", extra={"file_hash": exc.file_hash})
+    if isinstance(exc, QuotaExceededError):
+        if exc.scope == "daily":
+            return AppError(429, "upload_quota_exceeded", f"今日上傳已達上限 {exc.limit} 份",
+                            extra={"limit": exc.limit, "used": exc.used})
+        return AppError(503, "upload_busy", "上傳處理量已滿，請稍後再試")
+    if isinstance(exc, NotPdfFilenameError):
+        return AppError(415, "upload_not_pdf", "只接受副檔名為 .pdf 的檔案")
+    if isinstance(exc, InvalidFilenameError):
+        return AppError(400, "invalid_filename", "檔名不合法")
+    if isinstance(exc, UploadNotFoundError):
+        return AppError(404, "upload_not_found", "查無此上傳")
+    return AppError(503, "unavailable", "服務暫時無法使用")
+
+
+def _declared_upload_length(request: Request) -> int | None:
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return None  # chunked：串流時邊寫邊計
+    raw = raw.strip()
+    if not raw.isdigit():
+        raise AppError(400, "invalid_request", "Content-Length 不合法")
+    return int(raw)
+
+
+def _upload_too_large(max_bytes: int) -> AppError:
+    return AppError(413, "upload_too_large", f"檔案超過上限 {max_bytes / _MIB:g} MB", extra={"max_bytes": max_bytes})
+
+
+async def _receive_upload(request: Request, writer: quarantine.QuarantineWriter, max_bytes: int):
+    """把 body 串流進隔離區；任何失敗（含用戶端斷線、取消）都刪掉 `.part`／`.bin`。"""
+    try:
+        writer.open()
+        async for chunk in request.stream():
+            writer.write(chunk)
+        return await asyncio.to_thread(writer.finalize)
+    except quarantine.UploadTooLarge as exc:
+        writer.discard()
+        raise _upload_too_large(max_bytes) from exc
+    except quarantine.NotPdf as exc:
+        writer.discard()
+        raise AppError(415, "upload_not_pdf", "檔案內容不是 PDF") from exc
+    except quarantine.QuarantineError as exc:
+        writer.discard()
+        logger.error("對外上傳：隔離區寫入失敗：%s", exc)
+        raise AppError(503, "upload_unavailable", "上傳暫時無法使用，請稍後再試") from exc
+    except BaseException:
+        writer.discard()
+        raise
+
+
 def _report_payload(group) -> dict:
     # 刻意不回命中段落（passages）：對外回應只給研報層級的欄位，要內文請取原檔。
     mr = group.meta_row
@@ -279,3 +389,95 @@ async def external_report_file_url(report_id: str, client=Depends(require_api_cl
         {"report_id": report_id, "file_url": url, "expires_at": _iso_utc(issued + timedelta(seconds=ttl))},
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.post("/external/v1/uploads", status_code=202)
+async def external_upload(
+    request: Request,
+    filename: str = Query(..., min_length=1, max_length=1024),
+    last_modified: int | None = Query(None, ge=0, le=_MAX_MTIME_MS),
+    client=Depends(require_api_client(UPLOAD_SCOPE)),
+):
+    """收一份研報 PDF 進上傳流程（隔離、掃描、入庫成草稿、管理員發布）；回 202 與上傳紀錄。"""
+    s = get_settings()
+    if not s.upload_enabled or not await feature_flags.policy("uploads.intake"):
+        raise AppError(503, "upload_unavailable", "上傳暫時無法使用，請稍後再試")
+    if (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower() != _PDF_MEDIA_TYPE:
+        raise AppError(415, "upload_not_pdf", "請以 Content-Type: application/pdf 上傳 PDF 檔案內容")
+    try:
+        name = sanitize_filename(filename)
+    except IntakeError as exc:
+        raise _upload_intake_error(exc) from exc
+    declared = _declared_upload_length(request)
+    if declared is not None and declared > s.upload_max_bytes:
+        raise _upload_too_large(s.upload_max_bytes)
+    if declared == 0:
+        raise AppError(415, "upload_not_pdf", "檔案是空的")
+
+    root = quarantine.quarantine_dir(s)
+    try:
+        quarantine.ensure_dirs(root)
+        quarantine.check_free_space(
+            root, needed_bytes=declared if declared is not None else s.upload_max_bytes,
+            min_free_bytes=s.upload_min_free_mb * _MIB,
+        )
+    except quarantine.QuarantineError as exc:
+        logger.error("對外上傳：隔離區不可用 dir=%s：%s", root, exc)
+        raise AppError(503, "upload_unavailable", "上傳暫時無法使用，請稍後再試") from exc
+    try:
+        async with deps.SessionFactory() as session:
+            await deps.upload_intake.check_quota(
+                session, actor_id=None, daily_quota=s.upload_daily_quota, max_in_flight=s.upload_max_in_flight,
+                api_client_id=client.id,
+            )
+    except IntakeError as exc:
+        raise _upload_intake_error(exc) from exc
+    except Exception as exc:
+        logger.exception("對外上傳：配額查詢失敗 client_id=%s", client.id)
+        raise AppError(503, "unavailable", "服務暫時無法使用") from exc
+
+    upload_id = str(uuid.uuid4())
+    writer = quarantine.QuarantineWriter(root, upload_id, max_bytes=s.upload_max_bytes)
+    stored = await _receive_upload(request, writer, s.upload_max_bytes)
+    mtime = None if last_modified is None else datetime.fromtimestamp(last_modified / 1000, tz=timezone.utc)
+    try:
+        async with deps.SessionFactory() as session:
+            try:
+                row = await deps.upload_intake.create_upload(
+                    session, upload_id=upload_id, file_hash=stored.sha256, original_name=name,
+                    size_bytes=stored.size_bytes, client_mtime=mtime, actor_id=None,
+                    daily_quota=s.upload_daily_quota, max_in_flight=s.upload_max_in_flight, api_client_id=client.id,
+                )
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+    except IntakeError as exc:
+        writer.discard()
+        raise _upload_intake_error(exc) from exc
+    except Exception as exc:
+        writer.discard()
+        logger.exception("對外上傳：紀錄寫入失敗，已刪除隔離區檔案 upload_id=%s", upload_id)
+        raise AppError(503, "unavailable", "服務暫時無法使用") from exc
+    except BaseException:
+        writer.discard()
+        raise
+    logger.info(
+        "external upload client_id=%s key_prefix=%s upload_id=%s size=%d",
+        client.id, client.key_prefix, upload_id, stored.size_bytes,
+    )
+    return JSONResponse(_upload_payload(row), status_code=202, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/external/v1/uploads/{upload_id}")
+async def external_upload_status(upload_id: str, client=Depends(require_api_client(UPLOAD_SCOPE))):
+    """查一筆自己收進來的上傳目前走到哪裡。"""
+    try:
+        async with deps.SessionFactory() as session:
+            row = await deps.upload_intake.get_client_upload(session, upload_id, client.id)
+    except IntakeError as exc:
+        raise _upload_intake_error(exc) from exc
+    except Exception as exc:
+        logger.exception("對外上傳狀態：查詢失敗 client_id=%s", client.id)
+        raise AppError(503, "unavailable", "服務暫時無法使用") from exc
+    return JSONResponse(_upload_payload(row), headers={"Cache-Control": "no-store"})

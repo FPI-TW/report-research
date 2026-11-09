@@ -45,6 +45,9 @@ class ReportRow:
     page_count: Optional[int] = None
     pages_failed: Optional[list[int]] = None
     needs_review: bool = False
+    # metadata 側檔給了標題時直接寫入（title_source='metadata'）；標題批次只挑 title IS NULL，就不再呼叫 LLM。
+    title: Optional[str] = None
+    title_source: Optional[str] = None
 
 
 # extraction_log.stopped_at 的封閉詞彙。**與 db/schema.sql 的 CHECK 逐字一致**
@@ -337,7 +340,7 @@ async def upsert_report(
                  report_type, language, instrument_types, relates_stock,
                  relates_futures, stock_targets, futures_targets, full_text,
                  extractor, extraction_version, quality_score, quality_flags,
-                 page_count, pages_failed, needs_review)
+                 page_count, pages_failed, needs_review, title, title_source)
             VALUES
                 (:id, :file_hash, :file_name, :file_path, :source_object_key, :market, :is_research,
                  :confidence, :stock_code, :company_name, :source, :report_date,
@@ -346,7 +349,7 @@ async def upsert_report(
                  CAST(:stock_targets AS text[]), CAST(:futures_targets AS text[]),
                  :full_text,
                  :extractor, :extraction_version, :quality_score, CAST(:quality_flags AS jsonb),
-                 :page_count, CAST(:pages_failed AS int[]), :needs_review)
+                 :page_count, CAST(:pages_failed AS int[]), :needs_review, :title, :title_source)
             """
         ),
         {
@@ -386,6 +389,24 @@ async def upsert_report(
 
     await session.commit()
     return report_id
+
+
+async def upsert_report_metadata(
+    session: AsyncSession, file_hash: str, *, connector: str, origin: str, metadata: dict
+) -> None:
+    """入庫時採用的 metadata 側檔寫進 `research.report_metadata`（以 file_hash 為鍵，同 hash 覆寫）。
+
+    不 commit：`ingest_one` 在 `upsert_report` 之前呼叫，由它內部那次 commit 一起落庫（同一筆交易）。
+    """
+    await session.execute(
+        text(
+            "INSERT INTO research.report_metadata (file_hash, connector, origin, metadata) "
+            "VALUES (:h, :c, :o, CAST(:m AS jsonb)) "
+            "ON CONFLICT (file_hash) DO UPDATE SET connector = EXCLUDED.connector, origin = EXCLUDED.origin, "
+            "metadata = EXCLUDED.metadata, updated_at = now()"
+        ),
+        {"h": file_hash, "c": connector, "o": origin[:1024], "m": json.dumps(metadata, ensure_ascii=False)},
+    )
 
 
 async def report_exists(session: AsyncSession, file_hash: str) -> bool:

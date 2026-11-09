@@ -15,8 +15,12 @@ const toneOf = (status: number) => (status < 300 ? 'ok' : status === 429 || stat
  *
  * 金鑰只放在這個元件的 state：不寫 localStorage、不放網址，換分頁或離開就消失；畫面上的 curl 指令
  * 一律用 `$API_KEY` 代替。試打是真的請求，會計入該用戶端的限流與每日額度，也會更新「最後使用」。
+ *
+ * 只列 GET 端點：上傳（POST）要送檔案內容，表單送不出來，改看說明文件裡的 curl 範例。
  */
-export function ApiTester({ endpoints, baseUrl }: { endpoints: readonly ApiEndpoint[]; baseUrl: string }) {
+export function ApiTester({ endpoints: all, baseUrl }: { endpoints: readonly ApiEndpoint[]; baseUrl: string }) {
+  const endpoints = all.filter(ep => ep.method === 'GET')
+  const untryable = all.filter(ep => ep.method !== 'GET')
   const [apiKey, setApiKey] = useState('')
   const [picked, setPicked] = useState(0)
   const [values, setValues] = useState<Record<string, Record<string, string>>>({})
@@ -60,6 +64,7 @@ export function ApiTester({ endpoints, baseUrl }: { endpoints: readonly ApiEndpo
           </Field>
           <p className={c.fieldHint}>
             金鑰只留在這個分頁，不會儲存。試打是真的請求：會計入該用戶端的限流與每日額度。
+            {untryable.length > 0 && <> {untryable.map(ep => `${ep.method} ${ep.path}`).join('、')} 要送檔案內容，請用說明文件的 curl 範例。</>}
           </p>
           <Segmented label="端點" value={String(endpoints.indexOf(endpoint))} wrap
             options={endpoints.map((ep, i) => ({ value: String(i), label: plainText(ep.path.replace('/external/v1', '')) }))}

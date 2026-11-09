@@ -675,3 +675,10 @@ test('試打：換到原檔連結端點，沒填 report_id 不能送', async () 
   fireEvent.click(screen.getByRole('button', { name: '送出' }))
   await waitFor(() => expect(fetchMock.mock.calls.some(([p]) => p === '/external/v1/reports/abc/file-url')).toBe(true))
 })
+
+test('試打：只列 GET 端點；上傳（POST）要送檔案內容，指向說明文件的 curl 範例', async () => {
+  mount({ at: '/admin/api-clients?tab=try' })
+  expect(await screen.findByRole('button', { name: '/uploads/{upload_id}' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '/uploads' })).not.toBeInTheDocument()
+  expect(screen.getByText(/POST \/external\/v1\/uploads 要送檔案內容/)).toBeInTheDocument()
+})

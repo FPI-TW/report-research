@@ -465,6 +465,9 @@ class Settings:
     host_beacon_watch: str = ""
     host_beacon_stale_minutes: int = 45
     host_beacon_feed_stale_hours: int = 7
+    # 資料來源連接器（app/services/connectors/、scripts/ingest_connectors.py）的狀態目錄：各連接器的處理紀錄
+    # （state/<名>.json）、失敗清單（failures.log）、本輪入庫 hashes 與計數。空字串＝repo 根 data/connectors/。
+    connector_data_dir: str = ""
 
 
 def _load() -> Settings:
@@ -681,6 +684,7 @@ def _load() -> Settings:
         host_beacon_watch=_beacon_name("HOST_BEACON_WATCH"),
         host_beacon_stale_minutes=_int_at_least("HOST_BEACON_STALE_MINUTES", 45, 15),
         host_beacon_feed_stale_hours=_int_at_least("HOST_BEACON_FEED_STALE_HOURS", 7, 4),
+        connector_data_dir=(os.getenv("CONNECTOR_DATA_DIR") or "").strip(),
     )
 
 

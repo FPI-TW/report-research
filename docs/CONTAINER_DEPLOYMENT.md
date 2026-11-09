@@ -135,7 +135,7 @@ docker compose up -d
 | `report-mark-retrieval-regression.timer` | scheduler | `retrieval-regression`（預設關）：07:40；要先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），會載入嵌入模型 |
 | `report-mark-r2-reconcile.timer` | scheduler | `r2-reconcile`（預設關）：週一 07:00；只在物件儲存開著時有意義 |
 | `report-mark-upload.timer` | worker | 常駐的 `worker` 服務，每 `UPLOAD_WORKER_INTERVAL_SECONDS` 秒一輪 |
-| `report-mark-sync.timer` | 廷豐主機層 | 來源同步（NAS 掛載／R2 inbox）；框架的匯入連接器另案提供 |
+| `report-mark-sync.timer` | 廷豐主機層 | 來源同步（NAS 掛載／R2 inbox）；框架的對應是下方框架專屬排程的 `connectors` |
 | `report-mark-freshness.timer` | 廷豐主機層 | 判讀 sync 殼的心跳，隨 sync 一起 |
 | `report-mark-beacon.timer` | 廷豐主機層 | 主機信標 |
 | `report-mark-load-observations.timer` | 廷豐主機層 | 主機監控 spool 匯入 |
@@ -155,6 +155,28 @@ docker compose up -d
 | `report-mark-security-health.timer` | 廷豐主機層 | 安全事件探針 |
 | `report-mark-security-incident.timer` | 廷豐主機層 | 事件處理 |
 
+### 框架專屬排程
+
+沒有對應 systemd timer 的工作（廷豐主機上同樣的事由主機層的 sync 殼做）。開關與上表相同（`SCHEDULER_DISABLE`／`SCHEDULER_ENABLE`）。
+
+| 工作 | 排程 | 說明 |
+|---|---|---|
+| `connectors` | `*/15 * * * *` | 預設開。`scripts/connector_sync.py`：profile `[connectors].enabled` 的連接器到了輪詢時間（各自的 `poll_minutes`，預設 180 分鐘）才跑一輪「落地新檔 → 入庫 → 摘要／標題／摘錄（`--hashes-file`）→ 訊號（`--limit`）→ 簡報 → 標題積壓（`--limit`）」，步驟與參數同 sync 鏈第 4 段起；沒有啟用的連接器、或都沒到期就是 no-op。設定、側檔格式與落地資料夾見 `docs/WORKFLOW.md`「資料來源連接器」 |
+
+連接器的資料夾要讓 web 與 scheduler 在**同一個路徑**看得到：入庫後 `research_report.file_path` 指向落地的檔案，`OBJECT_STORAGE_MODE=local` 時 web 從那裡交原檔。`s3`／`plugin` 的預設落地資料夾在 `data/connectors/<名稱>/`（`data` volume，已共用）；`folder` 監看的是部署方自己掛上的目錄（SMB／NFS 由主機掛載，框架不做 mount），以 compose 的 override 檔（與 docker-compose.yml 同目錄的 docker-compose.override.yml）把它以唯讀 bind 掛進 web 與 scheduler，`profile.toml` 的 `path` 寫容器裡的路徑：
+
+```yaml
+services:
+  web:
+    volumes:
+      - {type: bind, source: /srv/research-inbox, target: /srv/research-inbox, read_only: true, bind: {create_host_path: false}}
+  scheduler:
+    volumes:
+      - {type: bind, source: /srv/research-inbox, target: /srv/research-inbox, read_only: true, bind: {create_host_path: false}}
+```
+
+`s3` 連接器的憑證（`<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`，選填 `<env>_ENDPOINT`、`<env>_REGION`；`<env>` 是 profile 裡的 `env`）寫進 `deploy/compose/.env`，scheduler 讀得到即可。
+
 常駐服務：`report-mark-web.service` → `web`；維運代理（`report-mark-ops-agent*.service`）、`report-mark-metrics.service`、`report-mark-alert@.service` 屬廷豐主機層。容器裡的工作失敗只寫進容器日誌（`docker compose logs scheduler`），沒有 `OnFailure` 告警。
 
 ### 互斥
@@ -173,12 +195,14 @@ docker compose up -d
 | 告警 webhook | 關（`REPORT_MARK_ALERT_WEBHOOK` 空） | 設 webhook URL | 該 URL |
 | 上傳的病毒碼更新 | 只在起了 clamav profile 時 | `docker compose --profile clamav up -d` | freshclam 連 ClamAV 的病毒碼伺服器 |
 | 來源主機信標 | 關（`HOST_BEACON_WATCH` 空） | 廷豐主機層，框架不用 | 物件儲存 |
+| S3 相容來源（連接器） | 關（profile 沒有啟用 `kind = "s3"` 的連接器） | profile `[connectors]` 啟用＋`<env>_*` 憑證 | 設定的 bucket 端點 |
+| plugin 連接器 | 關（profile 沒有啟用 `kind = "plugin"` 的連接器） | profile 的 `plugins/<名稱>.py` | 由 plugin 決定（部署方自己的程式） |
 
 上傳要掃毒（fail-closed：clamd 不可用或病毒碼超過 72 小時，上傳停在隔離區不放行）。不能讓 freshclam 外連的環境，把 `deploy/clamav/conf/freshclam.conf` 的 `DatabaseMirror` 指到內部鏡像，或在 compose 的 clamav 服務設 `CLAMAV_NO_FRESHCLAMD=true` 並自行定期把病毒碼放進 `clamav-db` volume。
 
 ## 對外入口
 
-web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`），規則見 `docs/EXTERNAL_ACCESS.md`。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
+web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外上傳 API（`POST /external/v1/uploads`）的 body 最大到 `UPLOAD_MAX_BYTES`（預設 25 MiB），代理的 body 上限要比它寬（`deploy/nginx.conf` 給 `/external/` 30m），否則超限的請求拿到代理的 HTML 錯誤頁而不是 413 JSON。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`），規則見 `docs/EXTERNAL_ACCESS.md`。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
 
 ## 從主機部署遷入
 

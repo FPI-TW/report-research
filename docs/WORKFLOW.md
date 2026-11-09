@@ -155,6 +155,66 @@ uv run python eval/qa_adversarial.py --live --out /tmp/qa-adversarial-live.json
 
 第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪第 5 段剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。逾時這類環境型失敗不記。審查擋下、截斷、空回應、400、已吐字後逾時（`timeout_streamed`，期限型截斷：連續 3 輪才跳過、計入斷路器、可重放）也照原因記入（`API[...]` 錯誤不在腳本層重試）；行內標註被審查擋下的研報不入庫、計 `skip_blocked`（異常）、被 `max_tokens` 截斷的計 `skip_truncated`（異常），兩者 `failures_to_delta.py` 預設都不撈（期限型截斷記 `skip_untagged`、會撈），由人處置（`docs/production_resilience.md`「LLM 批次的失敗處置」）。批次斷路器的標記綁定 sync 輪次（殼每輪 export `SYNC_ROUND_ID`）：只擋同一輪後面呼叫 LLM 的段。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（讓 unit 找得到 `uv`）、`EXTRACTOR`、備份與 R2 變數、`SYNC_SOURCE`／`SYNC_INBOX_PUSH`；DB 不在本機時另設 `REPORT_MARK_DB_URL` 與 `PGSSLROOTCERT`（批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
 
+## 資料來源連接器（框架的導入路徑）：`scripts/ingest_connectors.py`
+
+給其他券商「快速導入」：在 profile 的 `[connectors]` 接上自己的研報來源，之後的去重、抽取、標註、入庫與下游批次全部共用。連接器只負責**把新檔落地到本機資料夾、附上 metadata 側檔**（`app/services/connectors/`）；之後逐篇交給 `scripts/_ingest_core.py` 的 `ingest_one`（與 sync、上傳 worker 同一份），以 `file_hash` 去重。廷豐的來源仍由上面的 sync 殼執行，廷豐 profile 只宣告對應（`enabled = []`），sync 鏈第 4 段起不變。
+
+| 類型 | 從哪裡來 | 落地 | 非祕密參數（`[connectors.sources.<名稱>]`） | 祕密 |
+|---|---|---|---|---|
+| `folder` | 本機資料夾（券商自己的 SMB／NFS 由主機或 compose volume 掛上，框架不做 mount） | 原地（`path`） | `path` | — |
+| `s3` | S3 相容 bucket 的 prefix（R2、MinIO、AWS S3）；廷豐的 R2 inbox 是它的一個實例（`scripts/r2_inbox.py pull` 共用 `app/services/connectors/s3.py` 的 `pull`） | `landing`（預設 `data/connectors/<名稱>/`）；只拉研報檔、同名 JSON 與根目錄的 `_metadata.csv`，本地沒有或大小不同才拉，保留物件 metadata 的 mtime | `prefix`（以 `/` 結尾）、`env`（環境變數前綴）、`landing` | `<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`，選填 `<env>_ENDPOINT`、`<env>_REGION`（預設 `auto`） |
+| `plugin` | profile 的 `plugins/<plugin>.py`（只載入 profile 以名稱明確引用的那一個檔，不掃描目錄） | `landing`；plugin 的 `fetch(landing, params) -> FetchReport` 把新檔與側檔寫進去 | `plugin`、`landing`、`[...params]`（字串、數字、布林） | plugin 自己讀環境變數 |
+
+共用參數：`kind`、`poll_minutes`（兩次輪詢的最短間隔，預設 180、5..10080）、`settle_seconds`（mtime 距今未滿就先不收，預設 60）。`[connectors].enabled` 是要輪詢的連接器（順序＝輪詢順序），空＝不輪詢。名稱、類型、必填參數、`prefix` 形狀、plugin 檔存在與否都在啟動時嚴格驗證（`app/profile.py`）；s3 缺環境變數、plugin 載入失敗（語法錯、import 錯、缺 `fetch`）在那一輪報成 `connector_error`，該連接器不跑，其他照跑。
+
+```toml
+[connectors]
+enabled = ["inbox", "drop"]
+
+[connectors.sources.inbox]
+kind = "s3"
+prefix = "research/"
+env = "CONNECTOR_INBOX"      # CONNECTOR_INBOX_BUCKET、CONNECTOR_INBOX_ACCESS_KEY_ID…
+poll_minutes = 60
+
+[connectors.sources.drop]
+kind = "folder"
+path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要在同一個路徑看得到
+```
+
+**一輪**（`scripts/ingest_connectors.py`，LLM 入口：取批次鎖、缺金鑰在取鎖前就 rc=2）：每個到期的連接器 `fetch()` → `base.scan()` 列出落地資料夾裡的研報檔（`.pdf`／`.docx`／`.doc`，略過 `.` 開頭與 `.part`／`.tmp`）並配上側檔、算指紋（大小、mtime、側檔內容）→ 處理紀錄裡指紋相同的略過 → 其餘逐篇 `ingest_one(metadata=…, connector=<名稱>)`。入庫後 `research_report.file_path` 指向落地的檔案，所以落地資料夾要長期保留（`OBJECT_STORAGE_MODE=local` 時 web 從那裡交原檔）。
+
+**重跑不重複入庫**：處理紀錄 `<CONNECTOR_DATA_DIR>/state/<名稱>.json`（`CONNECTOR_DATA_DIR` 預設 `data/connectors/`）只記「重跑不會不一樣」的結果——`ingested`、`skip_exists`、`skip_admin`、`skip_scanned`、`skip_non_research`、`skip_blocked`、`skip_truncated` 與側檔不合格；`fail`、`skip_untagged` 不記，下一輪重試。檔案或側檔改了指紋就變，會重送一次。紀錄遺失時最壞是重抽一次字、全部 `skip_exists`（`ingest_one` 以 file_hash 判斷已入庫），不會重複入庫；紀錄壞掉（不是合法 JSON）不會被當成空的，該連接器停下、記一筆 `connector_error` 等人處理。本輪入庫的 hashes 寫到 `<CONNECTOR_DATA_DIR>/last_hashes`（或 `--hashes-out`），計數寫 `last_stats`（`abnormal`＝`fail`＋`skip_untagged`＋`skip_blocked`＋`skip_truncated`＋`sidecar_invalid`＋`fetch_fail`＋`connector_error`），失敗清單 `failures.log`（`連接器<TAB>相對路徑<TAB>階段<TAB>原因`）；中途整批中止時已入庫的篇寫到 `<hashes_out>.partial`（同 sync）。
+
+**排程**（`scripts/connector_sync.py`，容器 scheduler 的 `connectors` 工作每 15 分鐘叫一次，見 `docs/CONTAINER_DEPLOYMENT.md`）：沒有到期的連接器就整輪不跑；到期時跑 `ingest_connectors.py`，再照抄 sync 鏈第 5 到 8 段——`generate_summaries`／`generate_titles`／`extract_takeaways` 帶 `--hashes-file`（本輪有新研報才跑）、`extract_signals --limit ${SYNC_SIGNAL_LIMIT:-100}`、`generate_brief`、`generate_titles --limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`（`tests/test_connector_sync.py` 對帳殼裡的步驟並釘住 `--limit` 永遠在）。下游 best-effort；匯入撞鎖（rc=75）時本輪結束，落地的檔案沒記進處理紀錄、下一輪自然再送；下游 rc=2 時本輪 hashes 保留成 `hashes_retained_<時間>.txt` 並印補跑指令。
+
+### metadata 側檔
+
+每份研報可附同名 JSON（例如 20261020_報告.pdf 旁邊放 20261020_報告.json），或在落地資料夾根目錄放一份 `_metadata.csv`（第一欄 `file` 是相對路徑，其餘欄名同下表，陣列以 `;` 分隔，空格子＝沒提供）。所有欄位選填、未知欄位一律拒收：
+
+| 欄位 | 格式 | 寫到哪裡 | 與 LLM 產出的關係 |
+|---|---|---|---|
+| `title` | 字串 ≤200 | `research_report.title`（`title_source='metadata'`） | 標題批次只挑 `title IS NULL`，不再為它呼叫 LLM |
+| `report_date` | `YYYY-MM-DD` | `report_date` | 優先於檔名與 mtime |
+| `source` | 發行機構代碼（小寫英數、`_`、`-`） | `source` | 優先於內文指紋與檔名 |
+| `market` | 標準市場代碼（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`） | `market` | 覆寫標註；給了就視為研究報告 |
+| `stock_targets` | 字串陣列（可空） | `stock_targets`、`relates_stock` | 覆寫標註；與 `market` 都給了就**不呼叫標註 LLM** |
+| `instrument_types` | `equity index futures options etf bond fx commodity crypto` 的子集 | `instrument_types` | 覆寫標註 |
+| `futures_targets` | `台指期 小型台指 電子期 金融期 個股期貨 其他` 的子集 | `futures_targets`、`relates_futures` | 覆寫標註 |
+| `analysts` | 字串陣列 | 只存 `research.report_metadata` | — |
+| `rating` | 字串（原文） | 只存 `research.report_metadata` | **不覆寫 `report_signal`** |
+| `target_price`、`target_currency` | 正數；三碼大寫幣別（要先有 `target_price`） | 只存 `research.report_metadata` | **不覆寫 `report_signal`** |
+
+```json
+{"title": "台積電：先進封裝上修", "report_date": "2026-11-01", "source": "acme", "market": "TW",
+ "stock_targets": ["2330"], "analysts": ["王小明"], "rating": "買進", "target_price": 1350, "target_currency": "TWD"}
+```
+
+- **嚴格驗證**（`app/services/connectors/sidecar.py`）：JSON 語法錯、型別錯、市場不是標準代碼、日期錯、同名研報檔不只一份（a.pdf 與 a.docx 共用 a.json）、同一份檔同時有 JSON 與 CSV 列、CSV 清單任一列不合格（整份不採信）——一律不入庫，寫進失敗清單並計成 `sidecar_invalid`（異常）；不退回「當作沒有側檔」。改好側檔後指紋改變，下一輪自動重送。
+- **保存**：驗證後的欄位（只含有給的鍵）在 `upsert_report` 之前、同一筆交易寫進 `research.report_metadata`（以 `file_hash` 為鍵、刻意無 FK，同 `report_visibility`；不可重建、在備份清單內）。側檔是人工提供的文字，**原樣保存，不經 `zh_hant.to_traditional()`**。
+- **訊號**：摘要、摘錄、`report_signal` 照常由 LLM 產出。雷達的評等與目標價需要逐字證據與錨定（`target_price_evidence`、`thesis_dimensions[*].evidence`），側檔的 `rating`／`target_price` 沒有證據，所以刻意不寫進 `report_signal`，只保存供查證；`extract_signals` 的 `--limit` 照舊。
+- **只在第一次入庫時套用**：已在庫的研報（`skip_exists`）不因側檔改變而改寫。全語料重建（`scripts/ingest_all.py`）不讀側檔（標註快取 `data/tags/` 只放 LLM 的結果）。
+
 ## 研報上傳：收檔、worker 與審核（`UPLOAD_ENABLED` 預設關閉）
 
 管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`），兩個環境目前都沒開。開之前該主機要先裝好 worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器並走完上線步驟（`docs/production_resilience.md`「上傳 worker」；正式環境兩者都沒裝，各主機現況見 `docs/DEPLOYMENT_STATUS.md`）。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。
@@ -256,7 +316,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 ### 對外 API（`/external/v1/*`）
 
-兩條端點：`GET /external/v1/search`（需 `search` scope）與 `GET /external/v1/reports/{report_id}/file-url`（需 `report.file` scope），參數與回應欄位見 README 的 API 表。路由在 `web/routers/external.py`，認證在 `web/external_auth.py`，用戶端規則在 `app/services/api_clients.py`、授權範圍在 `app/services/entitlement.py`，原檔連結與站內 `/api/report/{report_id}/file` 共用 `app/services/original_file_url.py`。交給 API 用戶端的說明是 `docs/EXTERNAL_API.md`（只寫用戶端需要知道的事），後台「API 用戶端」頁的「說明文件」分頁照它渲染（`{BASE_URL}` 代入當下站台）、「試打」分頁的端點與參數表單也從它解析；它與路由、參數、scope、錯誤碼、回應欄位的一致性由 `tests/test_external_api_doc.py` 對帳。
+四條端點：`GET /external/v1/search`（需 `search` scope）、`GET /external/v1/reports/{report_id}/file-url`（需 `report.file` scope）、`POST /external/v1/uploads` 與 `GET /external/v1/uploads/{upload_id}`（需 `report.upload` scope），參數與回應欄位見 README 的 API 表。路由在 `web/routers/external.py`，認證在 `web/external_auth.py`，用戶端規則在 `app/services/api_clients.py`、授權範圍在 `app/services/entitlement.py`，原檔連結與站內 `/api/report/{report_id}/file` 共用 `app/services/original_file_url.py`。交給 API 用戶端的說明是 `docs/EXTERNAL_API.md`（只寫用戶端需要知道的事），後台「API 用戶端」頁的「說明文件」分頁照它渲染（`{BASE_URL}` 代入當下站台）、「試打」分頁的端點與參數表單也從它解析；它與路由、參數、scope、錯誤碼、回應欄位的一致性由 `tests/test_external_api_doc.py` 對帳。
 
 **認證**：`Authorization: Bearer <api_key>`，一個 API 用戶端一把金鑰（`rmk_<8 hex>_<43 字元>`；DB 只存 sha256，原始金鑰只在建立／輪替時顯示一次）。`web/server.py` 的 session middleware 對 `/external/` 前綴整個放行（不查、不發 session cookie，免登入開發模式也不作用），認證完全由路由 dependency 負責；站內 `/api/*` 一律不認 Bearer。每個請求都查 DB（不快取），停用與輪替下一個請求就生效。檢查順序：解析標頭 → 查金鑰 → scope → 每分鐘限流 → 每日額度；未認證的請求拿到的是 401，不是參數驗證的 422。日誌只記 client id 與 `key_prefix`，不記原始金鑰。
 
@@ -275,6 +335,10 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | 503 | `api_auth_unavailable` | 查金鑰或計數額度時 DB 不可用 |
 | 503 | `api_client_misconfigured` | 用戶端的授權範圍無效（只可能是直接改 DB） |
 | 422 | `validation_error` | 已認證但參數超出範圍（例如 `limit` > 20、未知的 `sort`） |
+
+上傳端點另有一組錯誤碼（`upload_unavailable`、`upload_not_pdf`、`upload_too_large`、`upload_duplicate`、`upload_rejected`、`upload_quota_exceeded`、`upload_busy`、`upload_not_found`、`invalid_filename`、`invalid_request`），完整的表在 `docs/EXTERNAL_API.md`。
+
+**上傳**：`POST /external/v1/uploads` 的檔案進上一節的上傳流程（隔離區 → 預檢與 ClamAV → worker 入庫成草稿 → 管理員發布），不直接入庫；收檔步驟與 `POST /api/admin/uploads` 相同，差別是上傳者記成 API 用戶端（`report_upload.api_client_id`，`uploaded_by` 為 NULL；管理後台的上傳清單顯示「API：<用戶端名稱>」）、每日份數依用戶端計（`UPLOAD_DAILY_QUOTA`，帳號的個人覆寫不適用）、重複的檔案一律 409 `upload_duplicate`（不說它在語料裡是已發布、草稿還是隱藏）。`GET /external/v1/uploads/{upload_id}` 只查得到同一個用戶端收進來的上傳，狀態收斂成 `processing`／`pending_review`／`published`／`rejected`（`web/routers/external.py` 的 `EXTERNAL_UPLOAD_STATUS`），不回掃描特徵、失敗細節與決策原因。對外上傳不收 metadata 側檔（側檔只走輪詢型連接器）。
 
 **限流與額度**：每分鐘上限是每個用戶端一個 token bucket（容量＝`rate_limit_per_min`，每秒補 1/60），狀態在 web 行程記憶體、重啟即滿；管理員調低上限下一個請求就生效。被限流擋下的請求不碰 DB、不計入每日額度。每日額度（`daily_quota`）以**台北時間的日曆日**計，台北 0 點（UTC 16:00）重置；通過限流的請求不論結果都計入當日計數（含額度用完後被拒的那幾次）。
 

@@ -46,6 +46,8 @@ LOCKED_SCRIPTS = [
     "extract_takeaways.py",
     "extract_signals.py",
     "sync_new_reports.py",
+    # 連接器輪詢入庫：與 sync 同樣行內標註（_ingest_core）。
+    "ingest_connectors.py",
     # 上傳 worker：ingest 子命令的行內標註（_ingest_core）取鎖；cleanup 刪語料時也取（與 sync 的入庫互斥）。
     "process_uploads.py",
     # 每日簡報：取鎖的位置與其他支不同（在 generate() 內、只包住那一次 CLI 呼叫，

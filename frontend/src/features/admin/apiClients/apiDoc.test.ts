@@ -40,7 +40,7 @@ describe('docs/EXTERNAL_API.md', () => {
   it('解析得出每個端點的權限與參數表（試打表單的來源）', () => {
     expect(endpoints.length).toBeGreaterThan(0)
     for (const ep of endpoints) {
-      expect(ep.method).toBe('GET')
+      expect(['GET', 'POST']).toContain(ep.method)
       expect(ep.scope).toBeTruthy()
       expect(ep.summary).toBeTruthy()
       // 路徑裡的每個 {參數} 都要在參數表裡、而且標成 path

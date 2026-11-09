@@ -31,7 +31,7 @@ function FileInfo({ upload }: { upload: AdminUploadDetail }) {
     <DrawerSection title="檔案資訊">
       <dl className={c.kv}>
         <Row label="大小">{fmtBytes(upload.size_bytes)}</Row>
-        <Row label="上傳者">{dash(upload.uploaded_by)}</Row>
+        <Row label="上傳者">{dash(upload.uploaded_by ?? (upload.api_client ? `API：${upload.api_client}` : null))}</Row>
         <Row label="上傳時間">{fmtDateTime(upload.uploaded_at)}</Row>
         <Row label="檔案修改時間">{fmtDateTime(upload.client_mtime)}</Row>
         <Row label="狀態更新">{fmtDateTime(upload.state_changed_at)}</Row>

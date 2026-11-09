@@ -19,12 +19,15 @@ mtime 都不在——而匯入要靠 mtime 補 report_date（``fallback_report_d
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services.connectors.s3 import pull as pull_prefix  # noqa: E402
+
+# safe_relative 與 s3 連接器同一份（inbox 的 key 來自 bucket，不是可信輸入：絕對路徑、``..`` 一律拒收）。
+from app.services.connectors.sidecar import safe_relative  # noqa: E402,F401
 from app.services.object_storage import ObjectStorage, ObjectStorageError, get_object_storage  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,14 +47,6 @@ def delta_names(lines) -> list[str]:
         seen.add(name)
         out.append(name)
     return out
-
-
-def safe_relative(name: str) -> str | None:
-    """inbox 的 key 來自 bucket，不是可信輸入：絕對路徑、``..`` 一律拒收，免得寫出鏡像之外。"""
-    p = PurePosixPath(name)
-    if not name or p.is_absolute() or any(part in ("", ".", "..") for part in p.parts):
-        return None
-    return str(p)
 
 
 def push(storage: ObjectStorage, names: list[str], mirror: Path) -> tuple[int, int]:
@@ -74,32 +69,12 @@ def push(storage: ObjectStorage, names: list[str], mirror: Path) -> tuple[int, i
 
 
 def pull(storage: ObjectStorage, mirror: Path) -> tuple[list[str], int]:
-    """拉回本地沒有或大小不同的 inbox 物件；回傳（本輪新落地的相對路徑, 失敗數）。"""
-    landed: list[str] = []
-    failed = 0
-    for key, size in storage.list_objects(INBOX_PREFIX):
-        rel = safe_relative(key[len(INBOX_PREFIX):])
-        if rel is None:
-            print(f"[pull] 拒收不安全的 key：{key}", file=sys.stderr)
-            continue
-        target = mirror / rel
-        if target.is_file() and target.stat().st_size == size:
-            continue
-        tmp = target.with_name(f".{target.name}.part")
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            storage.download_to(key, tmp)
-            mtime = storage.head_object(key).get("Metadata", {}).get("mtime")
-            if mtime and mtime.isdigit():
-                os.utime(tmp, (int(mtime), int(mtime)))
-            # 先落地成 .part 再改名：中途被殺不會留下以正式檔名存在的半個檔。
-            os.replace(tmp, target)
-            landed.append(rel)
-        except (ObjectStorageError, OSError) as exc:
-            failed += 1
-            tmp.unlink(missing_ok=True)
-            print(f"[pull] 失敗：{key}：{exc}", file=sys.stderr)
-    return landed, failed
+    """拉回本地沒有或大小不同的 inbox 物件；回傳（本輪新落地的相對路徑, 失敗數）。
+
+    核心在 `app/services/connectors/s3.pull`（s3 連接器共用同一份）；這裡固定 prefix＝``inbox/``、
+    不限副檔名、接住 ObjectStorageError 與 OSError。
+    """
+    return pull_prefix(storage, INBOX_PREFIX, mirror, errors=(ObjectStorageError, OSError))
 
 
 def main() -> int:

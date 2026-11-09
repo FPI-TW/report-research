@@ -230,6 +230,20 @@ class Connectors:
 
 
 @dataclass(frozen=True)
+class Backfill:
+    """首次導入的分層回填（`scripts/backfill_tiers.py`；分層規則見 `app/services/backfill_tiers.py`）。
+
+    第一層（全部歷史：抽取、嵌入、標註）不受這裡控制；第二層是 `report_date` 在最近 `recent_months` 個月內的
+    研報（摘要、標題、摘錄、訊號），其餘（含 `report_date` 為 NULL）是第三層，由背景補齊在上限內慢慢補。
+    """
+
+    recent_months: int = 12  # 第二層的窗期（以 report_date 判斷，含邊界當天）
+    background_enabled: bool = False  # 第三層背景補齊（scheduler 的 backfill-tiers 工作）；預設關
+    daily_token_limit: int = 2_000_000  # 背景補齊每個台北日的 token 上限（輸入＋輸出）
+    max_reports_per_round: int = 100  # 背景補齊每輪最多處理幾份研報
+
+
+@dataclass(frozen=True)
 class Profile:
     root: Path
     institution: Institution
@@ -240,6 +254,7 @@ class Profile:
     doc_types: DocTypes = field(default_factory=_default_doc_types)
     # 後續 lane 的新 section 欄位一律加在這裡之後、帶預設值（例如 `x: X = field(default_factory=X)`）。
     connectors: Connectors = field(default_factory=Connectors)
+    backfill: Backfill = field(default_factory=Backfill)
     locale: Locale = field(default_factory=Locale)
 
 
@@ -556,6 +571,23 @@ def _parse_connectors(table: dict, ctx: _Ctx) -> Connectors:
             raise ctx.error(f"enabled[{i}]", f"重複的連接器：{name!r}")
         seen.add(name)
     return Connectors(enabled=tuple(enabled), sources=MappingProxyType(sources))
+
+
+@_section("backfill")
+def _parse_backfill(table: dict, ctx: _Ctx) -> Backfill:
+    ctx.reject_unknown(table, {"recent_months", "background_enabled", "daily_token_limit", "max_reports_per_round"})
+    defaults = Backfill()
+    enabled = table.get("background_enabled", defaults.background_enabled)
+    if not isinstance(enabled, bool):
+        raise ctx.error("background_enabled", f"必須是布林（true／false），目前是 {_type_name(enabled)}")
+    return Backfill(
+        recent_months=_int_in(ctx, table, "recent_months", defaults.recent_months, 1, 240, "recent_months"),
+        background_enabled=enabled,
+        daily_token_limit=_int_in(ctx, table, "daily_token_limit", defaults.daily_token_limit, 1, 10**10,
+                                  "daily_token_limit"),
+        max_reports_per_round=_int_in(ctx, table, "max_reports_per_round", defaults.max_reports_per_round, 1, 5000,
+                                      "max_reports_per_round"),
+    )
 
 
 @_section("locale")

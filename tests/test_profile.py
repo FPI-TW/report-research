@@ -269,6 +269,36 @@ class DocTypesSectionTests(_TmpCase):
         self.assertRejected(MINIMAL + "[doc_types.research]\nfeatures = []\n", "[doc_types].non_research", "必須宣告")
 
 
+class BackfillSectionTests(_TmpCase):
+    """[backfill]：分層回填的窗期與背景補齊上限（scripts/backfill_tiers.py）。"""
+
+    def test_defaults(self):
+        bf = self.load(MINIMAL).backfill
+        self.assertEqual((bf.recent_months, bf.background_enabled, bf.daily_token_limit, bf.max_reports_per_round),
+                         (12, False, 2_000_000, 100))
+
+    def test_tingfong_keeps_background_off(self):
+        """廷豐已全量跑完派生：背景補齊關（scheduler 的 backfill-tiers 是 no-op），sync 鏈照舊。"""
+        bf = P.get_profile().backfill
+        self.assertEqual((bf.recent_months, bf.background_enabled), (12, False))
+
+    def test_values(self):
+        bf = self.load(MINIMAL + "[backfill]\nrecent_months = 6\nbackground_enabled = true\n"
+                                 "daily_token_limit = 500000\nmax_reports_per_round = 20\n").backfill
+        self.assertEqual((bf.recent_months, bf.background_enabled, bf.daily_token_limit, bf.max_reports_per_round),
+                         (6, True, 500_000, 20))
+
+    def test_rejections(self):
+        self.assertRejected(MINIMAL + "[backfill]\nrecent_month = 6\n", "[backfill].recent_month", "未知的鍵")
+        self.assertRejected(MINIMAL + "[backfill]\nrecent_months = 0\n", "[backfill].recent_months", "介於")
+        self.assertRejected(MINIMAL + "[backfill]\nrecent_months = \"12\"\n", "[backfill].recent_months", "整數")
+        self.assertRejected(MINIMAL + "[backfill]\nbackground_enabled = \"yes\"\n",
+                            "[backfill].background_enabled", "布林")
+        self.assertRejected(MINIMAL + "[backfill]\ndaily_token_limit = 0\n", "[backfill].daily_token_limit", "介於")
+        self.assertRejected(MINIMAL + "[backfill]\nmax_reports_per_round = true\n",
+                            "[backfill].max_reports_per_round", "整數")
+
+
 class LocaleTests(_TmpCase):
     """[locale] 與 [institution] 的英文名稱：介面語系的 profile 設定（fail-closed）。"""
 

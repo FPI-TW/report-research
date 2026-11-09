@@ -59,6 +59,12 @@ landing = "研報自動匯入"
 env = "CONNECTOR_R2_INBOX"
 poll_minutes = 180
 
+[backfill]
+# 首次導入的分層回填（scripts/backfill_tiers.py；docs/WORKFLOW.md「首次導入」）。廷豐的語料已全量跑完派生，
+# sync 鏈照舊處理新研報；背景補齊因此關閉（scheduler 的 backfill-tiers 工作是 no-op），窗期只影響手動估價與查進度。
+recent_months = 12
+background_enabled = false
+
 [locale]
 # 介面與問答回答的語系（介面字串在 frontend/src/i18n/）：使用者沒選過語言時用 default，available 是可選的語系。
 # 預設中文＝改動前的行為；使用者在「設定 → 偏好 → 語言」或登入頁切換，偏好存在瀏覽器（tf.locale／tf_locale）。

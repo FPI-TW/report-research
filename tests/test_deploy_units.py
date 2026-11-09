@@ -167,7 +167,7 @@ class LlmEnvFileTests(unittest.TestCase):
         """金鑰與模型旋鈕只放 llm 檔：共用檔是其他 unit 也讀、`db_backup.sh` 會逐鍵讀的檔。"""
         offenders = [
             ln for ln in _live_lines(SYNC_ENV_EXAMPLE)
-            if re.match(r"(OPENAI_|OPENCODE_GO_|LLM_|[A-Z_]+_MODEL=)", ln)
+            if re.match(r"(OPENAI_|OPENCODE_GO_|AZURE_OPENAI_|ANTHROPIC_|LLM_|[A-Z_]+_MODELS?=)", ln)
         ]
         self.assertEqual(offenders, [])
 

@@ -818,12 +818,31 @@ systemctl list-timers report-mark-audit.timer                   # 應排在每�
 
 ### LLM 供應商與金鑰
 
-`LLM_PROVIDER` 只決定**送達路徑**，不決定模型：白名單、預設表、judge 系譜兩條路徑一律相同（`app/services/llm_models.py`），實作差異全在 `app/services/llm_http.py`。兩台主機**不共用金鑰**。
+`LLM_PROVIDER` 決定**送達路徑**，是每台主機固定的設定：**沒有備援後端、不做 failover**，加了其他 provider 之後這條不變量照舊成立——一台主機任何時刻只走一條路徑，那條路徑壞了就是壞了（處置見「LLM 帳號告警與處置」）。實作差異全在 `app/services/llm_http.py`（模組 docstring「各 provider 的對應規則」），重試、逾時、截斷與錯誤分類的語意各 provider 共用同一份；設定的解析與白名單在 `app/services/llm_models.py`。廷豐兩台主機**不共用金鑰**：
 
 | 主機 | `LLM_PROVIDER` | 金鑰 | 端點 |
 |---|---|---|---|
 | 正式（EC2） | `openai`（預設；未設、空值都是） | `OPENAI_API_KEY` | `https://api.openai.com/v1`；`OPENAI_BASE_URL` 可覆寫 |
 | 測試（辦公室主機） | `opencode_go` | `OPENCODE_GO_API_KEY` | `https://opencode.ai/inference/go/v1`；`OPENCODE_GO_BASE_URL` 可覆寫 |
+
+兩條路徑是同一顆模型：白名單（內建 `gpt-6-luna`）、預設表、judge 系譜一律相同，兩個環境的產出與量尺可以互相代表。
+
+框架另支援三條路徑，給其他部署用（廷豐不用）。端點、金鑰與模型名都是部署層設定，跟金鑰一樣放 repo 根 `.env` 與 `/etc/default/report-mark-llm` 兩份、逐字相同，不進 profile：
+
+| `LLM_PROVIDER` | 金鑰 | 端點與其他必填 | 可送的模型（白名單） |
+|---|---|---|---|
+| `azure_openai` | `AZURE_OPENAI_API_KEY`（`api-key` header） | `AZURE_OPENAI_ENDPOINT`（資源網址，如 `https://<資源>.openai.azure.com`）、`AZURE_OPENAI_API_VERSION`（沒有預設值；要選支援 `reasoning_effort` 與 `max_completion_tokens` 的版本） | `AZURE_OPENAI_DEPLOYMENTS`：`模型名=deployment名`，逗號分隔（請求路徑是 deployment） |
+| `anthropic` | `ANTHROPIC_API_KEY`（`x-api-key`＋`anthropic-version: 2023-06-01`） | `ANTHROPIC_BASE_URL` 選填，預設 `https://api.anthropic.com`（不含 `/v1`） | `ANTHROPIC_MODELS`：逗號分隔 |
+| `openai_compatible` | `OPENAI_COMPATIBLE_API_KEY`（Bearer；伺服器沒開認證時填任意非空值） | `OPENAI_COMPATIBLE_BASE_URL`（含 `/v1`，如 `http://vllm:8000/v1`） | `OPENAI_COMPATIBLE_MODELS`：逗號分隔，要與伺服器載入的名稱逐字相同 |
+
+- **白名單是安全閘門，沒有旋鈕可以關**：這三個 provider 沒有內建名稱，只認**目前** provider 的宣告旋鈕；宣告格式錯的那一筆不放行。不在白名單的名稱在送出前就失敗（線上 `config`、批次 rc=2），不會送到付費端點。
+- 預設表的名稱是 `gpt-6-luna`；部署沒有這顆模型時設 `LLM_DEFAULT_MODEL=<宣告過的名稱>`，就不必逐一設 13 個任務旋鈕（網搜那列照舊沒有模型）。任務旋鈕仍優先。
+- 能力旋鈕：`AZURE_OPENAI_SUPPORTS_REASONING_EFFORT`（預設 1）、`OPENAI_COMPATIBLE_SUPPORTS_REASONING_EFFORT`（預設 0）。設 0 時不送 `reasoning_effort`、交給伺服器預設——給不認這個欄位的 deployment 或自架伺服器用（否則每個請求 400）。推理本身一律關（`llm_http.REASONING_EFFORT` 是常數，不是旋鈕：開推理＝換量尺，要發 PR 並重新評測）；預設就會推理的自架模型，關推理要在伺服器端設定。
+- Anthropic 沒有 JSON 模式：judge 改以提示約束（系統提示本來就要求只輸出 JSON）＋嚴格解析，只容許一層包住全文的 markdown 圍欄；不是 JSON 就是 `invalid_json`。
+- 設定錯誤（缺必填旋鈕、宣告格式錯、能力旋鈕看不懂）在三處用同一份判準說出旋鈕名：web 啟動日誌記 ERROR（不擋啟動）、`/healthz/llm` 回 503 `misconfigured`（不探端點）、批次預檢 **rc=2**。
+- `/healthz/llm` 打各自的模型清單端點（不計費）：Azure `GET {endpoint}/openai/models?api-version=…`、Anthropic `GET {base}/v1/models`、自架 `GET {base}/models`。四家都沒有餘額 API，沒有用完前的預警；預算告警在各家後台設定。
+- 換 provider 等於換模型：與廷豐的評測基準線不可比，judge 自成量尺系譜（`declared:<模型名>`，`llm_models.judge_lineage`），要先為該部署建立自己的基準線。
+- 核對兩份環境檔（下面第 4 步的指令）時，這三個 provider 另逐份比對非祕密的端點與宣告旋鈕；廷豐兩條路徑只比金鑰與 `LLM_PROVIDER`（行為不變）。
 
 OpenAI 金鑰可以是限制權限的金鑰：Model capabilities 要能寫（Chat Completions），Models 讀取權限非必要。沒有它時 `/healthz/llm` 以 403 判斷金鑰已通過認證，少驗的只有模型清單。
 
@@ -842,7 +861,7 @@ OpenAI 金鑰可以是限制權限的金鑰：Model capabilities 要能寫（Cha
 
 **只有白名單上的 unit 載入 llm 檔**（sync 與上傳 worker），其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好（`tests/test_deploy_units.py` 釘住白名單）。批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）也放這份檔，讓手動與排程用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（同一支測試釘住）。web 讀的是 `.env` 的同名鍵。
 
-批次經 `scripts/_claude_cli.run_claude`（名稱是歷史值；`generate_brief` 也交給它）送出：模型名只接受白名單（`gpt-6-luna`），其他名稱（含 `claude-*`、舊模型名）在預檢與呼叫層都以整批 **rc=2** 中止、不送出。帳號層級的失敗（`auth`、`quota`、模型不存在）一律整批 **rc=2** 中止（不記跳過名單），處置見「LLM 帳號告警與處置」與「整批中止後的重放」。
+批次經 `scripts/_claude_cli.run_claude`（名稱是歷史值；`generate_brief` 也交給它）送出：模型名只接受白名單（廷豐是 `gpt-6-luna`；其他 provider 是宣告的名稱，見上表），其他名稱（含 `claude-*`、舊模型名）在預檢與呼叫層都以整批 **rc=2** 中止、不送出。帳號層級的失敗（`auth`、`quota`、模型不存在）一律整批 **rc=2** 中止（不記跳過名單），處置見「LLM 帳號告警與處置」與「整批中止後的重放」。
 
 安裝（範例檔檔頭有同樣的指令）：
 
@@ -854,7 +873,8 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的鍵），並在取批次鎖之前預檢。下列情況一律 **rc=2** 並說出原因，sync 殼把 rc=2 當帳號／環境型中止告警：
 
 - 有白名單模型卻沒有目前 `LLM_PROVIDER` 的金鑰（環境裡有空值要先 `unset` 那個鍵；PermissionError 要以有該群組權限的使用者執行）。這份檔不存在時也是這一條：批次不讀 repo 根 `.env`，拿不到金鑰。
-- 有不在白名單的模型名（含 `claude-*`）。
+- 有不在白名單的模型名（含 `claude-*`；`azure_openai`、`anthropic`、`openai_compatible` 是沒有宣告的名稱），訊息列出目前接受的名稱與模型名的來源旋鈕。
+- 目前 provider 的端點設定有誤（缺 `AZURE_OPENAI_ENDPOINT`、`AZURE_OPENAI_API_VERSION`、`OPENAI_COMPATIBLE_BASE_URL`，宣告格式錯等），訊息說出是哪個旋鈕。
 - `LLM_PROVIDER` 非空卻不是合法值（退役值或拼錯），訊息印出原始值。
 - 檔內有重複的鍵。**重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用不同的金鑰。
 
@@ -862,7 +882,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 變更或輪替金鑰、改 `LLM_PROVIDER`（不需要 `daemon-reload`，`EnvironmentFile` 每次啟動重讀；批次每輪重新讀檔）：
 
-1. 在 OpenAI 或 OpenCode 的主控台發一把新金鑰（舊的先別撤）。
+1. 在該 provider 的主控台（OpenAI、OpenCode、Azure 入口網站、Anthropic Console 或自架伺服器）發一把新金鑰（舊的先別撤）。
 2. 改兩份檔（repo 根 `.env` 與 `/etc/default/report-mark-llm`，後者用 `sudoedit`）的金鑰或 `LLM_PROVIDER`：**直接改那一行**，不要新增一行。
 3. 重啟 web：`sudo systemctl restart report-mark-web.service`。啟動日誌那行「LLM 模型：provider=…」說出生效的路徑。
 4. 核對兩份一致（只印雜湊前 8 碼，不印金鑰）。在 repo 根以讀得到 `/etc/default/report-mark-llm` 的使用者執行：
@@ -880,7 +900,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 | 類別 | kind | 批次行為 |
 |---|---|---|
-| 帳號層級 | `auth`（401）、`quota`（402、429 `insufficient_quota`、OpenCode Go 的用量上限）、`config`（404、模型不存在；白名單外的名稱在送出前就歸這類） | 整批 **rc=2** 中止；不記跳過名單（處置見「LLM 帳號告警與處置」） |
+| 帳號層級 | `auth`（401、403）、`quota`（402、429 `insufficient_quota`、OpenCode Go 的用量上限、Anthropic 的 `billing_error` 與 credit balance 不足）、`config`（404、模型不存在；白名單外的名稱在送出前就歸這類） | 整批 **rc=2** 中止；不記跳過名單（處置見「LLM 帳號告警與處置」） |
 | 暫時性 | `overloaded`（429、5xx）、`network` | 還沒吐字時傳輸層依 `Retry-After` 退避重試 ≤2 次（受總期限限制）；**已吐字（已計費）就不重試**，直接當單篇失敗；腳本層不再重試；計入斷路器 |
 | 單篇 | `content_filter`、`truncated`、`empty`、`bad_request`、`timeout_streamed`、`timeout`、`other` | 這篇這輪只打 1 次；前五種記入 `research.llm_task_failure`（審查與 `truncated` 1 次就跳過，其餘連續 3 輪）；`timeout_streamed` 與 `timeout` 計入斷路器 |
 
@@ -907,7 +927,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 **負責人**：LLM 帳號持有、預算與金鑰輪替都由 **Kashionz 一人**負責，不設代理人。
 
-**沒有用完前的預警**：OpenAI 與 OpenCode Go 都沒有查餘額的 API，`/healthz/llm` 只打 `GET /models`，判斷端點與金鑰能不能用；額度用完要等真實請求碰到才知道。OpenAI 的預算告警在 OpenAI 後台設定，這裡沒有對應的旋鈕或探針。
+**沒有用完前的預警**：OpenAI、OpenCode Go、Azure、Anthropic 都沒有查餘額的 API，`/healthz/llm` 只打模型清單端點（OpenAI 族 `GET /models`，各 provider 的路徑見「LLM 供應商與金鑰」），判斷端點與金鑰能不能用；額度用完要等真實請求碰到才知道。預算告警在各供應商後台設定，這裡沒有對應的旋鈕或探針。
 
 `/healthz/llm` 回 503 時問答就是停擺的。
 
@@ -922,7 +942,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 要停，照對象分開做：
 
-- **停問答主答**：repo 根 `.env` 設 `ASK_ANSWER_MODEL=off`（任何白名單外的名稱都行）並重啟 web。每題回「問答服務暫時無法使用（模型設定有誤）」、不送出主答請求；`/healthz/llm` 回 503 `misconfigured` → 探針退出碼 8 → **CRITICAL 事件（reason 是 `llm_misconfigured`）——刻意停用期間這是預期的**，恢復設定後送 RESOLVED。其餘 fail-open 的線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）各自解析模型、照常呼叫；要一個都不送，把它們的旋鈕（`ASK_INTENT_MODEL`、`ASK_CONDENSE_MODEL`、`QA_PLANNER_MODEL`、`ASK_FOLLOWUP_MODEL`、`FAITHFULNESS_MODEL`）也設成白名單外名稱（忠實度也可以 `ASK_FAITHFULNESS_ENABLED=0`），或直接把 `.env` 的 `OPENAI_API_KEY=`（測試環境是 `OPENCODE_GO_API_KEY=`）清空——所有線上呼叫在送出前就以 auth 失敗，`/healthz/llm` 回 503 `auth_failed`（同樣是退出碼 8、預期的）。
+- **停問答主答**：repo 根 `.env` 設 `ASK_ANSWER_MODEL=off`（任何白名單外的名稱都行）並重啟 web。每題回「問答服務暫時無法使用（模型設定有誤）」、不送出主答請求；`/healthz/llm` 回 503 `misconfigured` → 探針退出碼 8 → **CRITICAL 事件（reason 是 `llm_misconfigured`）——刻意停用期間這是預期的**，恢復設定後送 RESOLVED。其餘 fail-open 的線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）各自解析模型、照常呼叫；要一個都不送，把它們的旋鈕（`ASK_INTENT_MODEL`、`ASK_CONDENSE_MODEL`、`QA_PLANNER_MODEL`、`ASK_FOLLOWUP_MODEL`、`FAITHFULNESS_MODEL`）也設成白名單外名稱（忠實度也可以 `ASK_FAITHFULNESS_ENABLED=0`），或直接把 `.env` 的 `OPENAI_API_KEY=`（測試環境是 `OPENCODE_GO_API_KEY=`；其他 provider 是該 provider 的金鑰）清空——所有線上呼叫在送出前就以 auth 失敗，`/healthz/llm` 回 503 `auth_failed`（同樣是退出碼 8、預期的）。
 - **停批次**：`sudo systemctl stop report-mark-sync.timer`（要跨重開機再 `disable`）；排程批次裡會呼叫 LLM 的只有 sync 鏈，以及有裝的話上傳 worker（`report-mark-upload.timer`，同樣停掉）。停著期間 `make freshness` 會陸續報各段過期，這也是預期的。恢復時 `start`（或 `enable --now`）。
 
 #### 訊號從哪裡來

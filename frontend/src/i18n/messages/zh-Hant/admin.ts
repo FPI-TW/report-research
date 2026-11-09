@@ -2878,6 +2878,7 @@ const messages = {
   'admin.users.usersTable.batchActionsCanTInclude': '不能對自己做批次操作',
   'admin.users.usersTable.me': '你',
   'admin.users.usersTable.twoStepVerificationOn': '已開啟兩步驟驗證',
+  'admin.users.usersTable.companyAccountSso': '公司帳號（SSO）',
   'admin.users.usersTable.deletionScheduled': '排程刪除',
   'admin.users.usersTable.runsAt': '預定 {deletingAt} 執行',
   'admin.users.usersTable.activeSessions': '有效 session 數',

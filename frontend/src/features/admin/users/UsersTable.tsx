@@ -102,6 +102,7 @@ export function UsersTable({
                     {isSelf && <Chip tone="gold" mono>{t('admin.users.usersTable.me')}</Chip>}
                     {u.is_super && <Chip tone="gold" mono>super</Chip>}
                     {u.totp_enabled && <Chip tone="ok" mono title={t('admin.users.usersTable.twoStepVerificationOn')}>2FA</Chip>}
+                    {u.sso_bound && <Chip>{t('admin.users.usersTable.companyAccountSso')}</Chip>}
                   </div>
                 </td>
                 <td className={`${c.t3} ${c.nowrap}`}>{roleLabel(u.role)}</td>

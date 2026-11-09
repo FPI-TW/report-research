@@ -136,6 +136,9 @@ function AccountTab() {
       <dl className={styles.rows}>
         <div className={styles.row}><dt>{t('account.settingsDialog.username')}</dt><dd className={styles.num}>{name}</dd></div>
         <div className={styles.row}><dt>{t('account.settingsDialog.role')}</dt><dd>{role}</dd></div>
+        {me.data?.auth_method === 'sso' && (
+          <div className={styles.row}><dt>{t('account.settingsDialog.signInMethod')}</dt><dd>{t('account.settingsDialog.companyAccountSso')}</dd></div>
+        )}
         <div className={styles.row}><dt>{t('account.settingsDialog.password')}</dt><dd className={styles.muted}>{t('account.settingsDialog.resetByAnAdministrator')}</dd></div>
       </dl>
       <form method="post" action="/logout">

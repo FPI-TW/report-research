@@ -2881,6 +2881,7 @@ const messages: Messages<typeof zh> = {
   'admin.users.usersTable.batchActionsCanTInclude': 'Batch actions can\'t include one\'s own account',
   'admin.users.usersTable.me': 'Me',
   'admin.users.usersTable.twoStepVerificationOn': 'Two-step verification on',
+  'admin.users.usersTable.companyAccountSso': 'Company account (SSO)',
   'admin.users.usersTable.deletionScheduled': 'Deletion scheduled',
   'admin.users.usersTable.runsAt': 'Runs at {deletingAt}',
   'admin.users.usersTable.activeSessions': 'Active sessions',

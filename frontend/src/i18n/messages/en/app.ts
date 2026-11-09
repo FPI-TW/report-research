@@ -155,6 +155,8 @@ const messages: Messages<typeof zh> = {
   'account.settingsDialog.close': 'Close',
   'account.settingsDialog.username': 'Username',
   'account.settingsDialog.role': 'Role',
+  'account.settingsDialog.signInMethod': 'Sign-in method',
+  'account.settingsDialog.companyAccountSso': 'Company account (SSO)',
   'account.settingsDialog.password': 'Password',
   'account.settingsDialog.resetByAnAdministrator': 'Reset by an administrator',
   'account.settingsDialog.signOut': 'Sign out',

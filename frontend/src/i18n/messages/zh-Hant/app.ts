@@ -152,6 +152,8 @@ const messages = {
   'account.settingsDialog.close': '關閉',
   'account.settingsDialog.username': '使用者名稱',
   'account.settingsDialog.role': '角色',
+  'account.settingsDialog.signInMethod': '登入方式',
+  'account.settingsDialog.companyAccountSso': '公司帳號（SSO）',
   'account.settingsDialog.password': '密碼',
   'account.settingsDialog.resetByAnAdministrator': '由管理員重設',
   'account.settingsDialog.signOut': '登出',

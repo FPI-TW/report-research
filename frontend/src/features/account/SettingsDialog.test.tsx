@@ -47,6 +47,17 @@ test('↑↓ 切換分頁（垂直 tablist）', () => {
   expect(screen.getByRole('tab', { name: '關於' })).toHaveAttribute('aria-selected', 'true')
 })
 
+test('帳號：以公司帳號（SSO）登入時標出登入方式，帳密登入不標', async () => {
+  wrap('account', undefined, { auth_method: 'sso' })
+  expect(await screen.findByText('公司帳號（SSO）')).toBeInTheDocument()
+})
+
+test('帳號：帳密登入不標登入方式', async () => {
+  wrap('account')
+  expect(await screen.findAllByText('analyst')).not.toHaveLength(0)
+  expect(screen.queryByText('公司帳號（SSO）')).not.toBeInTheDocument()
+})
+
 test('偏好：切到 English，整個彈窗換成英文（介面語系與回答語言是同一個偏好）', async () => {
   wrap('prefs', undefined, {}, true)
   fireEvent.click(screen.getByRole('radio', { name: 'English' }))

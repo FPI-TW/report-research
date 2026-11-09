@@ -7,6 +7,8 @@ name = "廷豐"
 product_name = "廷豐智能研報"
 short_name = "廷豐研報"
 
+# 英文介面用的名稱（name_en、product_name_en、short_name_en）沒給：英文介面沿用上面的中文原名。
+
 [branding]
 logo_light = "logo.png"
 logo_dark = "logo.png"
@@ -56,3 +58,9 @@ prefix = "inbox/"
 landing = "研報自動匯入"
 env = "CONNECTOR_R2_INBOX"
 poll_minutes = 180
+
+[locale]
+# 介面與問答回答的語系（介面字串在 frontend/src/i18n/）：使用者沒選過語言時用 default，available 是可選的語系。
+# 預設中文＝改動前的行為；使用者在「設定 → 偏好 → 語言」或登入頁切換，偏好存在瀏覽器（tf.locale／tf_locale）。
+default = "zh-Hant"
+available = ["zh-Hant", "en"]

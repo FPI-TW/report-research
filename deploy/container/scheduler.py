@@ -10,6 +10,10 @@
 - `WORKER_UNITS`：改由常駐的 `worker` 服務（迴圈）取代的 timer。
 - `HOST_LAYER`：屬廷豐主機層、不進框架的 timer（探針、事件、信標、NAS、LINE bot、主機監控匯入、來源同步）。
 
+`enabled_by_profile_questions=True` 的工作（`retrieval-regression`）另在目前的 profile（`PROFILE_DIR`）自帶凍結題集
+（`profiles/<名稱>/eval/questions.json`，`eval/profile_eval.py` 的 `own_questions_path`）時自動排入：有題集才量得了。
+廷豐的題集留在 repo 的 `eval/`、不算 profile 自帶，所以預設 profile 下照舊是關。
+
 開關：`SCHEDULER_DISABLE`／`SCHEDULER_ENABLE`（逗號分隔的工作名）。名字打錯就拒絕啟動——拼錯的
 停用名單等於沒停用，那正是這類旋鈕靜默失效的方式。
 
@@ -23,6 +27,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Mapping
 
+from eval.profile_eval import active_profile_dir, own_questions_path
+
 DISABLE_ENV = "SCHEDULER_DISABLE"
 ENABLE_ENV = "SCHEDULER_ENABLE"
 
@@ -35,6 +41,8 @@ class Job:
     unit: str | None  # 對應的 systemd timer；None＝框架專屬（沒有 timer）
     default_enabled: bool = True
     note: str = ""
+    # profile 自帶凍結題集時自動開（見模組 docstring）；SCHEDULER_DISABLE 照樣關得掉。
+    enabled_by_profile_questions: bool = False
 
 
 def _py(script: str, *args: str) -> tuple[str, ...]:
@@ -58,8 +66,8 @@ JOBS: tuple[Job, ...] = (
     Job("delete-accounts", "0 * * * *", _py("execute_deletions.py"), "report-mark-delete-accounts.timer",
         note="tombstone 寫在備份 volume"),
     Job("retrieval-regression", "40 7 * * *", _py("retrieval_regression.py", "check"),
-        "report-mark-retrieval-regression.timer", default_enabled=False,
-        note="要先對這個部署擷取一次基準（capture）；會載入嵌入模型"),
+        "report-mark-retrieval-regression.timer", default_enabled=False, enabled_by_profile_questions=True,
+        note="profile 自帶凍結題集時自動開、讀那一份；要先對這個部署擷取一次基準（capture）；會載入嵌入模型"),
     Job("connectors", "*/15 * * * *", _py("connector_sync.py"), None,
         note="連接器輪詢入庫＋下游批次（sync 鏈第 4 段起）；各連接器依 profile 的 poll_minutes 決定到期，"
              "沒有啟用的連接器就是 no-op"),
@@ -117,7 +125,12 @@ def selected_jobs(env: Mapping[str, str]) -> list[Job]:
     both = sorted(disable & enable)
     if both:
         raise SchedulerConfigError(f"同一個工作同時列在 {DISABLE_ENV} 與 {ENABLE_ENV}：{'、'.join(both)}")
-    return [j for j in JOBS if j.name not in disable and (j.default_enabled or j.name in enable)]
+    own_questions = own_questions_path(active_profile_dir(env)) is not None
+    return [
+        j for j in JOBS
+        if j.name not in disable
+        and (j.default_enabled or j.name in enable or (j.enabled_by_profile_questions and own_questions))
+    ]
 
 
 # 每個工作都經這支包一層：結束時記一行退出碼與耗時，失敗時送通用 webhook 告警（預設關；deploy/container/run_job.py）。

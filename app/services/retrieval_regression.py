@@ -69,7 +69,8 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BASELINE = REPO_ROOT / "data" / "retrieval_regression" / "baseline.json"
 # 重用凍結題集（不另建、不改它；`tests/test_eval_question_contract.py` 守內容）。基準記下它的 sha256，
-# 題集一變就不可比——改題集等於換一把尺，要重新擷取。
+# 題集一變就不可比——改題集等於換一把尺，要重新擷取。這是預設（廷豐）；profile 自帶凍結題集
+# （`profiles/<名稱>/eval/questions.json`）時 CLI 改用那一份（`scripts/retrieval_regression.py` 的 `resolve_dataset`）。
 DATASET_REL = "eval/ragas_questions.json"
 DATASET = REPO_ROOT / DATASET_REL
 
@@ -366,6 +367,7 @@ def build_baseline(
     corpus_cutoff: datetime | None,
     corpus_reports: int,
     simulated_as_of: bool = False,
+    dataset_rel: str = DATASET_REL,
 ) -> dict:
     out_questions = []
     for q in questions:
@@ -383,7 +385,7 @@ def build_baseline(
         "corpus_cutoff": _iso(corpus_cutoff),
         "corpus_reports": int(corpus_reports),
         "simulated_as_of": bool(simulated_as_of),
-        "dataset": {"path": DATASET_REL, "sha256": dataset_sha256, "count": len(questions)},
+        "dataset": {"path": dataset_rel, "sha256": dataset_sha256, "count": len(questions)},
         "params": {"k": int(k), "dense_scan": int(dense_scan), "embed_model": EMBED_MODEL, "rbo_p": RBO_P},
         "questions": out_questions,
     }

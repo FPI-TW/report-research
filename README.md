@@ -403,6 +403,10 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 - 來源監看：EC2 的新研報全靠辦公室主機推上來，那台停機或來源段壞掉時 EC2 自己的 sync 照樣 rc=0。辦公室主機裝 `report-mark-beacon` 並設 `HOST_BEACON_NAME`，EC2 的 `.env` 設同名的 `HOST_BEACON_WATCH` 並裝 `report-mark-feed-health`、`report-mark-feed-incident`；細節在管理後台「維運 → 來源主機」，步驟見 `docs/production_resilience.md`「來源主機信標」。
 - 對外：`research.tingfong.com` 是 Cloudflare 橘雲 A record 指向 EC2 的 Elastic IP，不走 Tunnel。EC2 上以 apt 的 nginx 載入 `deploy/nginx-origin.conf`（裝到 `/etc/nginx/sites-available/report-mark`），以 Cloudflare Origin CA 憑證（`/etc/ssl/report-mark/`，不進 repo）聽 443、反代 `127.0.0.1:8097`；App 靠對端 127.0.0.1 信任它（`REPORT_MARK_TRUSTED_PROXY_CIDRS` 預設值），所以 `proxy_pass` 不能改成其他位址。Security Group 只放行 Cloudflare IPv4 範圍的 443（由 CloudFormation stack `report-research-staging` 管理）。三個前提缺一不可：橘雲不能關（Origin CA 只有 Cloudflare 信任）、Cloudflare SSL/TLS 模式 Full (strict)、Cloudflare IP 範圍變動時 nginx 的 `set_real_ip_from` 與 SG 的 prefix list 一起改。
 
+### 容器部署（docker compose）
+
+給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。systemd timer 與容器排程的對照、零外連清單、備份還原見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
+
 ### 其他維運入口
 
 辦公室主機的對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。上傳掃描：`make up-clamav`／`down-clamav`／`clamav-smoke`（`deploy/clamav/docker-compose.yml`，獨立 compose 專案、常駐 clamd 容器 `report-mark-clamav`，只綁 `127.0.0.1:3310`，常駐約 1.2–1.6 GB；`clamav-smoke` 驗 EICAR 要 FOUND、正常 PDF 要 OK，可帶 `SMOKE_PDF=…`），安裝、停用與故障處置見 `docs/production_resilience.md`「ClamAV（上傳掃描）」。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
@@ -418,6 +422,7 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 | `docs/WORKFLOW.md` | 端到端管線、逐階段 I/O 與參數、生產同步鏈、研報上傳、標籤詞彙、Web API 契約、物件儲存（R2）、排錯 |
 | `docs/EXTRACTION.md` | 抽取層現況：選型與授權、文件模型、回退、品質指標、快取、`extraction_log`、golden set、回填、切塊與樣板 |
 | `docs/DEPLOYMENT_STATUS.md` | 各主機的部署現況與待確認事項 |
+| `docs/CONTAINER_DEPLOYMENT.md` | 容器部署（映像＋docker compose）：系統需求、首次安裝、升級、備份與還原、systemd timer 對照表、零外連清單 |
 | `docs/production_resilience.md` | 部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
 | `docs/EXTERNAL_API.md` | 交給 API 用戶端的對外 API 說明（認證、權限與資料範圍、限流與額度、端點、錯誤碼、範例）；後台「API 用戶端」頁的「說明文件」與「試打」分頁直接取用 |
 | `docs/EXTERNAL_ACCESS.md` | 辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |

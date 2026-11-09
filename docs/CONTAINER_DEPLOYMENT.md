@@ -1,0 +1,195 @@
+# 容器部署（映像＋docker compose）
+
+給其他券商在自己環境自架的官方部署形態，也是廷豐測試環境之後的遷移目標（遷移本身另案進行）。單機或少數幾台 VM，一份應用映像跑四個角色，除了設定的 LLM 端點以外不需要任何外連。
+
+現有的 systemd 主機部署（`make serve`、`deploy/systemd/`，程序見 `docs/production_resilience.md`）不受影響：容器的 schema 閘門、排程與設定都只在容器 entrypoint 裡。
+
+## 檔案
+
+| 檔案 | 內容 |
+|---|---|
+| `deploy/container/Dockerfile` | 多階段映像：前端 build（node）→ Python 相依（`uv sync --frozen --no-dev`，CPU-only torch，與 `pyproject.toml`／`uv.lock` 一致）→ build 時下載並封入模型權重 → 非 root 執行映像。context 是 repo 根 |
+| `.dockerignore` | build context 的排除清單：`.env` 一切變體、`data/`、研報原檔、備份、`tests/`、相依與建置產物 |
+| `deploy/container/entrypoint.py` | 角色分派、schema 閘門、migrate 流程、上傳 worker 迴圈 |
+| `deploy/container/scheduler.py` | 排程工作清單與 systemd timer 的歸屬（下方對照表的真相來源） |
+| `deploy/container/fetch_models.py` | build 階段下載權重，並以離線模式真的載入一次 |
+| `deploy/compose/docker-compose.yml` | postgres、web、worker、scheduler、migrate（one-shot）、clamav（選配） |
+| `deploy/compose/.env.example` | 設定範本（假值；標【必填】的沒填就拒絕啟動） |
+
+Dockerfile 放在 `deploy/container/` 而不是 repo 根：repo 根的 `deploy/docker-compose.yml` 是廷豐測試環境的對外邊緣（nginx＋cloudflared），兩者無關；部署相關的真相來源都在 `deploy/` 底下。`.dockerignore` 必須在 build context 的根，所以在 repo 根。
+
+## 系統需求
+
+- Docker Engine 24 以上、Compose v2.24 以上（用到 `env_file` 的 `required` 與 bind 的 `create_host_path: false`）。BuildKit（Docker 23 起預設）。
+- x86_64 或 arm64（supercronic 兩種架構的雜湊都釘在 Dockerfile）。
+- 記憶體：web 常駐 BGE-M3 與 reranker；worker 入庫、scheduler 的 `backfill` 與 `retrieval-regression` 會各自再載一份嵌入模型。建議 16 GB 以上；開上傳（clamd 約 1.2–1.6 GB）再加 2 GB。實測數字見 `docs/CAPACITY.md`。
+- 磁碟：映像本身數 GB（torch 與兩份模型權重；確切大小以 `docker image ls` 為準）；語料與向量在 `pgdata` volume，研報原檔與上傳在 `data` volume。
+- 備份落點：一個與 Docker 資料不同磁碟（或網路儲存）的主機目錄。
+
+## 建置映像
+
+```bash
+docker build -f deploy/container/Dockerfile -t report-mark:<版本> .
+```
+
+- build 需要網路（npm、PyPI、download.pytorch.org、Hugging Face、supercronic 與 uv 的發布檔）；**執行期不需要**。離線環境可在有網路的機器 build、`docker save`／`docker load` 搬進去，或推到內部 registry。
+- 權重：嵌入用 `app/services/embed.py` 的 `MODEL_NAME`（BGE-M3），rerank 用 build arg `RERANK_MODEL`（預設與 `app/config.py` 相同）。改 rerank 模型要重 build，執行期的 `RERANK_MODEL` 也設同一個值。
+- build 的最後一步以非 root 身分、`HF_HUB_OFFLINE=1` 真的載入兩個模型；少了任何權重檔，build 就在那裡失敗。
+
+## 角色
+
+`docker compose` 以 `command` 指定角色（`entrypoint.py` 的第一個參數）：
+
+| 角色 | 做什麼 | 啟動前 |
+|---|---|---|
+| `web` | `uvicorn web.server:app`（:8097，單一行程） | 必填設定、schema 閘門 |
+| `worker` | 上傳 worker 迴圈：每 `UPLOAD_WORKER_INTERVAL_SECONDS`（預設 300）秒跑一輪 `scripts/process_uploads.sh` | schema 閘門 |
+| `scheduler` | supercronic 跑下方對照表的框架排程 | schema 閘門 |
+| `migrate` | one-shot：備份 → 確認 → `alembic upgrade head` | — |
+| `schema-version` | 只比一次版本並印出結論（唯讀；退出碼同 `make schema-version`） | — |
+| `create-admin` | `scripts/create_admin.py`，其餘參數照傳 | schema 閘門 |
+| 其他 | 原樣執行（例如 `bash`、`python scripts/llm_blocked.py`） | 不過閘門 |
+
+所有角色都要求 `REPORT_MARK_DB_URL` 有值（容器不使用程式內建的預設連線）；web 另外要求 `REPORT_MARK_SESSION_SECRET` 至少 32 字元且不是範本佔位值。
+
+### schema 閘門
+
+web、worker、scheduler、create-admin 啟動時只**檢查** schema 版本（與 `make schema-version` 同一個判斷，`scripts/schema_baseline.py` 的 `check_version`），不做任何變更：
+
+| DB 狀態 | 結果 |
+|---|---|
+| 一致 | 啟動 |
+| 落後 | 拒起（退出碼 1），印出 `docker compose run --rm migrate` |
+| 空庫、未接管、超前、不明確 | 拒起（退出碼 2），印出原因與下一步 |
+| 連不上 | 在 `SCHEMA_GATE_WAIT_SECONDS`（預設 120）秒內重試，仍連不上退出碼 3 |
+
+刻意不在啟動時自動 migrate：多個角色同時起來時誰先升級是競賽，而且升級前必須先有一份驗證過的全庫備份、必須由人逐字確認目標。
+
+## 首次安裝
+
+```bash
+cd deploy/compose
+cp .env.example .env && chmod 600 .env       # 填【必填】：POSTGRES_PASSWORD、REPORT_MARK_SESSION_SECRET、LLM 金鑰
+sudo install -d -o 10001 -g 10001 -m 0750 /srv/report-mark-backups   # BACKUP_HOST_DIR 指向它
+docker compose run --rm migrate              # 空庫：從 baseline 建到 head（免確認、不備份）
+docker compose run --rm web create-admin --username <名稱>   # 第一位管理員（互動輸入密碼）
+docker compose up -d
+curl -fsS http://127.0.0.1:8097/readyz       # {"status":"ok"}
+```
+
+- `PROFILE_HOST_DIR` 指向 profile 目錄（profile.toml、assets/、plugins/、eval/），唯讀掛到容器的 `/app/profile`（`PROFILE_DIR`）。
+- 掛載的主機目錄刻意不讓 Docker 自動建立：路徑打錯時寧可起不來。`data` 與 `pgdata` 是 named volume，第一次掛上時擁有者就是容器的 UID 10001。
+- `/readyz`（免登入）四項全過才 200：DB、嵌入模型（已載入或權重在映像裡）、profile、LLM 設定（不呼叫 LLM）。web 的 compose healthcheck 用它；`/healthz` 仍是只探 DB 的存活探測。
+
+## 升級
+
+```bash
+docker compose pull                            # 或換 .env 的 REPORT_MARK_IMAGE 成新版映像
+REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> docker compose run --rm migrate
+docker compose up -d
+```
+
+1. **換映像**。舊容器還在跑，不受影響。
+2. **migrate**。DB 已在新映像的 head 時什麼都不做；落後時依序：檢查 `REPORT_MARK_MIGRATE_CONFIRM` 逐字等於 `host:port/db`（不符就在備份前拒絕，並印出正確的值）→ 全庫 `pg_dump -Fc` 到 `MIGRATE_BACKUP_DIR`（預設備份落點底下的 `migrate/`）並驗證（可用空間 ≥ 庫大小＋2 GiB、`MIGRATE_DUMP_TIMEOUT_MIN` 分鐘內完成、PGDMP 檔頭、`pg_restore -l` 讀得出 TABLE DATA；與 `make schema-stamp-baseline` 同一套 preflight）→ `alembic upgrade head`（`db/migrations/env.py` 的守門對同一個確認值再判一次）→ 讀回版本必須一致。任何一步失敗都不升級，備份留在原地。
+3. **up -d**。新的 web／worker／scheduler 過閘門後啟動。
+
+compose 只把 `.env` 與 shell 裡明確傳入的變數交給容器：確認值寫在指令前（如上）或 `.env` 都可以，升級完把 `.env` 裡那行刪掉。回退只回退映像、不 downgrade DB：新映像加的表與欄位留著，舊映像對「超前」的 DB 會拒起，要回退就得連同 DB 從 migrate 前的備份還原。
+
+## 備份與還原
+
+| 備份 | 何時 | 落點 | 內容 |
+|---|---|---|---|
+| 每日（scheduler 的 `backup`） | 03:30 | `$BACKUP_HOST_DIR/daily/`、`weekly/` | `scripts/db_backup.sh` 的不可重建表（清單在該檔的 `BACKUP_TABLES`），保留 7 日＋4 週 |
+| migrate 前 | 每次升級 | `$BACKUP_HOST_DIR/migrate/` | 全庫（含語料與向量） |
+| 稽核錨點、刪帳 tombstone | 每日／每小時 | `$BACKUP_HOST_DIR/` | `audit-anchors.jsonl`、`account-tombstones.jsonl` |
+
+容器裡的每日備份直接連 DB（`DB_BACKUP_VIA=direct`，連線由 entrypoint 從 `REPORT_MARK_DB_URL` 換算成 libpq 環境變數，密碼不進 argv），其餘行為與主機版相同：落點必須是掛載點而且可寫，否則失敗、不退回本地路徑。語料層（`research_report`、`report_chunk`）不在每日備份裡，重建靠原檔重新入庫；要整庫保護就另外對 `pgdata` 做 volume 快照，或定期留一份 migrate 那種全庫備份。
+
+還原（以全庫備份為例；不可重建表的單表還原與演練步驟見 `docs/production_resilience.md`「備份與還原」）：
+
+```bash
+docker compose stop web worker scheduler
+docker compose exec -T postgres dropdb -U research research
+docker compose exec -T postgres createdb -U research research
+docker compose exec -T postgres pg_restore -U research -d research --no-owner < /srv/report-mark-backups/migrate/<檔名>.dump
+docker compose run --rm web python scripts/replay_deletions.py   # 還原後一定要跑：已刪除帳號的問答不能復活
+docker compose up -d
+```
+
+## systemd timer 對照表
+
+`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。框架排程在容器的 `TZ`（預設 Asia/Taipei）下解讀；預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
+
+| Timer | 歸屬 | 容器裡 |
+|---|---|---|
+| `report-mark-backfill.timer` | scheduler | `backfill`（預設開）：01:00，抽取版本回填，會載入嵌入模型 |
+| `report-mark-analytics-rollup.timer` | scheduler | `analytics-rollup`（預設開）：02:20 |
+| `report-mark-backup.timer` | scheduler | `backup`（預設開）：03:30，直接連 DB，落點是備份掛載 |
+| `report-mark-audit-anchor.timer` | scheduler | `audit-anchor`（預設開）：04:15，錨點寫在備份掛載 |
+| `report-mark-replay-deletions.timer` | scheduler | `replay-deletions`（預設開）：04:30 |
+| `report-mark-security-retention.timer` | scheduler | `security-retention`（預設開）：04:45 |
+| `report-mark-schema-check.timer` | scheduler | `schema-check`（預設開）：05:20；compose 的 postgres 帳號是 superuser，可做完整比對；外部 DB 沒有 CREATEDB 時設 `SCHEMA_CHECK_MODE=version` |
+| `report-mark-audit.timer` | scheduler | `db-audit`（預設開）：08:45 |
+| `report-mark-db-snapshot.timer` | scheduler | `db-snapshot`（預設開）：每小時 :40 |
+| `report-mark-delete-accounts.timer` | scheduler | `delete-accounts`（預設開）：每小時整點，tombstone 寫在備份掛載 |
+| `report-mark-retrieval-regression.timer` | scheduler | `retrieval-regression`（預設關）：07:40；要先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），會載入嵌入模型 |
+| `report-mark-r2-reconcile.timer` | scheduler | `r2-reconcile`（預設關）：週一 07:00；只在物件儲存開著時有意義 |
+| `report-mark-upload.timer` | worker | 常駐的 `worker` 服務，每 `UPLOAD_WORKER_INTERVAL_SECONDS` 秒一輪 |
+| `report-mark-sync.timer` | 廷豐主機層 | 來源同步（NAS 掛載／R2 inbox）；框架的匯入連接器另案提供 |
+| `report-mark-freshness.timer` | 廷豐主機層 | 判讀 sync 殼的心跳，隨 sync 一起 |
+| `report-mark-beacon.timer` | 廷豐主機層 | 主機信標 |
+| `report-mark-load-observations.timer` | 廷豐主機層 | 主機監控 spool 匯入 |
+| `report-mark-rollup-observations.timer` | 廷豐主機層 | 主機監控觀測的保留與聚合 |
+| `report-mark-health.timer` | 廷豐主機層 | web 探針（P5） |
+| `report-mark-incident.timer` | 廷豐主機層 | 事件處理（P5／Slack） |
+| `report-mark-container-health.timer` | 廷豐主機層 | 容器探針 |
+| `report-mark-container-incident.timer` | 廷豐主機層 | 事件處理 |
+| `report-mark-edge-health.timer` | 廷豐主機層 | 邊緣探針 |
+| `report-mark-edge-incident.timer` | 廷豐主機層 | 事件處理 |
+| `report-mark-feed-health.timer` | 廷豐主機層 | 來源主機信標探針 |
+| `report-mark-feed-incident.timer` | 廷豐主機層 | 事件處理 |
+| `report-mark-host-health.timer` | 廷豐主機層 | 主機資源探針 |
+| `report-mark-host-incident.timer` | 廷豐主機層 | 事件處理 |
+| `report-mark-linebot-health.timer` | 廷豐主機層 | LINE bot 探針 |
+| `report-mark-linebot-incident.timer` | 廷豐主機層 | 事件處理 |
+| `report-mark-security-health.timer` | 廷豐主機層 | 安全事件探針 |
+| `report-mark-security-incident.timer` | 廷豐主機層 | 事件處理 |
+
+常駐服務：`report-mark-web.service` → `web`；維運代理（`report-mark-ops-agent*.service`）、`report-mark-metrics.service`、`report-mark-alert@.service` 屬廷豐主機層。容器裡的工作失敗只寫進容器日誌（`docker compose logs scheduler`），沒有 `OnFailure` 告警。
+
+### 互斥
+
+各工作沿用 repo 既有的鎖：LLM 批次的 `data/.claude_cli.lock`（`scripts/_claude_lock.py`）、上傳 worker 的整輪鎖等，都是 `data/` 底下的 flock。web、worker、scheduler 掛同一個 `data` volume，flock 是核心層級、以檔案為準，跨容器照樣互斥（撞鎖 rc=75 是「不跑」不是「跑壞」）。supercronic 預設不讓同一個工作重疊。不要把 `data` 拆成各角色各自一份 volume，也不要把它放在不支援 flock 的網路檔案系統上。
+
+## 零外連清單
+
+執行期唯一預設的外連是設定的 LLM 端點。映像內：`HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1`（權重在映像裡）、`UV_OFFLINE=1`／`UV_NO_SYNC=1`（殼腳本裡的 `uv run` 直接用映像內的環境，不解析也不下載相依）。驗證方式：把 web 接到沒有對外路由的網路（compose 的 `internal: true` 網路，或 `docker run --network none`），`/readyz` 照樣是 200。
+
+| 整合 | 預設 | 開法 | 會連到哪裡 |
+|---|---|---|---|
+| LLM | 開（必填） | `LLM_PROVIDER`＋對應金鑰；端點可指到內部閘道 | 設定的端點 |
+| 物件儲存 | 關（`OBJECT_STORAGE_MODE=local`，原檔在 `data` volume） | `OBJECT_STORAGE_MODE=hybrid`／`r2`＋`R2_*` | S3 相容端點 |
+| 網搜 | 關（`ASK_ENABLE_WEB=0`；沒有後端，保持關） | — | — |
+| 告警 webhook | 關（`REPORT_MARK_ALERT_WEBHOOK` 空） | 設 webhook URL | 該 URL |
+| 上傳的病毒碼更新 | 只在起了 clamav profile 時 | `docker compose --profile clamav up -d` | freshclam 連 ClamAV 的病毒碼伺服器 |
+| 來源主機信標 | 關（`HOST_BEACON_WATCH` 空） | 廷豐主機層，框架不用 | 物件儲存 |
+
+上傳要掃毒（fail-closed：clamd 不可用或病毒碼超過 72 小時，上傳停在隔離區不放行）。不能讓 freshclam 外連的環境，把 `deploy/clamav/conf/freshclam.conf` 的 `DatabaseMirror` 指到內部鏡像，或在 compose 的 clamav 服務設 `CLAMAV_NO_FRESHCLAMD=true` 並自行定期把病毒碼放進 `clamav-db` volume。
+
+## 對外入口
+
+web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`），規則見 `docs/EXTERNAL_ACCESS.md`。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
+
+## 從主機部署遷入
+
+既有的主機部署（DB 已被 alembic 接管）遷到 compose 時，把整庫 `pg_dump -Fc` 還原進 compose 的 postgres，再 `docker compose run --rm migrate`（版本一致就什麼都不做）。還沒被 alembic 接管的既有庫，migrate 會拒絕：先在原主機走 `make schema-check`（必須零 drift）＋`make schema-stamp-baseline`。研報原檔與上傳搬進 `data` volume 時，`research_report.file_path` 的路徑要對得上容器裡的位置。
+
+## 疑難排解
+
+| 症狀 | 原因與處置 |
+|---|---|
+| 容器啟動就退出，日誌有「拒絕啟動」 | 必填設定或 schema 閘門；照訊息印出的指令做 |
+| `docker compose up` 報 `BACKUP_HOST_DIR`／`PROFILE_HOST_DIR` 不存在 | 主機目錄要先建（刻意不自動建立） |
+| 每日備份失敗「不可寫」 | 備份目錄的擁有者不是 UID 10001 |
+| `/readyz` 503、`/healthz` 200 | 看 web 日誌的「readyz 未就緒：…」：`embedding`（映像沒有權重，或 `RERANK_MODEL`／嵌入模型名與 build 時不同）、`profile`（profile 驗證失敗）、`llm`（金鑰空、模型名不在白名單、`LLM_PROVIDER` 拼錯） |
+| `scheduler` 拒絕啟動「不認得的工作名」 | `SCHEDULER_DISABLE`／`SCHEDULER_ENABLE` 拼錯；可用的名字在 `deploy/container/scheduler.py` |

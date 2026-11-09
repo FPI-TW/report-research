@@ -91,6 +91,8 @@ search-after.yml
 # 對外存取邊緣的秘密（隧道 token / Basic Auth 帳密）
 deploy/.env
 deploy/secrets/
+# 容器部署的設定（deploy/compose/.env.example 的實際值：DB 密碼、session 金鑰、LLM 金鑰）
+deploy/compose/.env
 
 # App 登入帳密 / session 金鑰(本機環境設定)
 /.env

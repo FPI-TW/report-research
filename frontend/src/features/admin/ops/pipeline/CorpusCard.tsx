@@ -5,8 +5,9 @@ import { marketColor, marketLabel } from '../../../../lib/meta'
 import type { MarketCount, Progress, SourceCount } from '../../../../lib/progressSchema'
 import { fmtInt } from './rate'
 import styles from './Pipeline.module.css'
+import { t } from '@/i18n'
 
-const UNIDENTIFIED = '未辨識'
+const unidentifiedLabel = () => t('admin.ops.pipeline.corpusCard.unidentified')
 const BROKER_PREVIEW = 8
 
 function Markets({ markets, reports }: { markets: MarketCount[]; reports: number }) {
@@ -14,12 +15,12 @@ function Markets({ markets, reports }: { markets: MarketCount[]; reports: number
   if (rows.length === 0) return <p className={styles.idle}>—</p>
   const max = Math.max(1, ...rows.map(m => m.count))
   return (
-    <div className={styles.markets} role="group" aria-label="市場分布">
+    <div className={styles.markets} role="group" aria-label={t('admin.ops.pipeline.corpusCard.marketDistribution')}>
       {rows.map(m => {
         const color = m.market ? marketColor(m.market) : 'var(--mkt-fallback)'
         return (
           <Fragment key={m.market ?? '__none__'}>
-            <span className={styles.marketName} title={m.market ?? undefined}>{m.market ? marketLabel(m.market) : '未分類'}</span>
+            <span className={styles.marketName} title={m.market ?? undefined}>{m.market ? marketLabel(m.market) : t('admin.ops.pipeline.corpusCard.uncategorized')}</span>
             <div className={styles.bar}>
               <div className={styles.barFill} style={{ width: `${((m.count / max) * 100).toFixed(1)}%`, background: color }} />
             </div>
@@ -41,7 +42,7 @@ function Markets({ markets, reports }: { markets: MarketCount[]; reports: number
  */
 function Brokers({ sources }: { sources: SourceCount[] | undefined }) {
   const [all, setAll] = useState(false)
-  if (sources === undefined) return <p className={styles.idle}>此版後端未提供券商統計</p>
+  if (sources === undefined) return <p className={styles.idle}>{t('admin.ops.pipeline.corpusCard.thisBackendVersionDoesnT')}</p>
   if (sources.length === 0) return <p className={styles.idle}>—</p>
   const rows = [...sources].sort((a, b) => b.count - a.count)
   const total = rows.reduce((s, r) => s + r.count, 0)
@@ -51,20 +52,20 @@ function Brokers({ sources }: { sources: SourceCount[] | undefined }) {
   return (
     <>
       <p className={styles.brokerSum}>
-        {`共 ${named} 家券商・${fmtInt(total)} 篇`}
-        {unidentified > 0 ? `（其中未辨識 ${fmtInt(unidentified)} 篇）` : ''}
+        {t('admin.ops.pipeline.corpusCard.brokersReports', { named, total: fmtInt(total) })}
+        {unidentified > 0 ? t('admin.ops.pipeline.corpusCard.unidentified2', { unidentified: fmtInt(unidentified) }) : ''}
       </p>
       <div className={`${c.tableWrap} ${styles.subTable}`}>
-        <table className={c.table} aria-label="券商分布">
+        <table className={c.table} aria-label={t('admin.ops.pipeline.corpusCard.brokerDistribution')}>
           <thead>
-            <tr><th>券商</th><th className={c.tdRight}>篇數</th><th className={c.tdRight}>占比</th><th>最新一篇</th></tr>
+            <tr><th>{t('admin.ops.pipeline.corpusCard.broker')}</th><th className={c.tdRight}>{t('admin.ops.pipeline.corpusCard.reports')}</th><th className={c.tdRight}>{t('admin.ops.pipeline.corpusCard.share')}</th><th>{t('admin.ops.pipeline.corpusCard.latestReport')}</th></tr>
           </thead>
           <tbody>
             {shown.map(r => (
               <tr key={r.source ?? '__none__'}>
                 {/* title 給原始代碼：中文名對不上時要查得到自己在看哪一個 source */}
                 <td title={r.source ?? undefined}>
-                  {r.source === null ? <span className={c.muted}>{UNIDENTIFIED}</span> : (r.display || r.source)}
+                  {r.source === null ? <span className={c.muted}>{unidentifiedLabel()}</span> : (r.display || r.source)}
                 </td>
                 <td className={`${c.num} ${c.tdRight}`}>{fmtInt(r.count)}</td>
                 <td className={`${c.num} ${c.tdRight} ${c.muted}`}>
@@ -78,7 +79,7 @@ function Brokers({ sources }: { sources: SourceCount[] | undefined }) {
       </div>
       {rows.length > BROKER_PREVIEW && (
         <Button size="sm" className={styles.more} onClick={() => setAll(v => !v)} aria-expanded={all}>
-          {all ? `只顯示前 ${BROKER_PREVIEW} 列` : `顯示全部 ${rows.length} 列`}
+          {all ? t('admin.ops.pipeline.corpusCard.showingOnlyTheFirstRows', { BROKER_PREVIEW }) : t('admin.ops.pipeline.corpusCard.showAllRows', { length: rows.length })}
         </Button>
       )}
     </>
@@ -87,19 +88,19 @@ function Brokers({ sources }: { sources: SourceCount[] | undefined }) {
 
 export function CorpusCard({ db }: { db: Progress['db'] }) {
   return (
-    <Card title="語料組成" labelledBy="pipeline-corpus-title">
+    <Card title={t('admin.ops.pipeline.corpusCard.corpusComposition')} labelledBy="pipeline-corpus-title">
       <div className={styles.body}>
         <div className={styles.kpis}>
-          <div><div className={styles.kpiValue}>{fmtInt(db.reports)}</div><div className={styles.kpiLabel}>研報</div></div>
-          <div><div className={styles.kpiValue}>{fmtInt(db.chunks)}</div><div className={styles.kpiLabel}>檢索片段</div></div>
+          <div><div className={styles.kpiValue}>{fmtInt(db.reports)}</div><div className={styles.kpiLabel}>{t('admin.ops.pipeline.corpusCard.reports2')}</div></div>
+          <div><div className={styles.kpiValue}>{fmtInt(db.chunks)}</div><div className={styles.kpiLabel}>{t('admin.ops.pipeline.corpusCard.searchChunks')}</div></div>
         </div>
         <div className={styles.corpus}>
           <div>
-            <h3 className={styles.subTitle}>市場分布</h3>
+            <h3 className={styles.subTitle}>{t('admin.ops.pipeline.corpusCard.marketDistribution')}</h3>
             <Markets markets={db.markets} reports={db.reports} />
           </div>
           <div>
-            <h3 className={styles.subTitle}>券商分布</h3>
+            <h3 className={styles.subTitle}>{t('admin.ops.pipeline.corpusCard.brokerDistribution')}</h3>
             <Brokers sources={db.sources} />
           </div>
         </div>

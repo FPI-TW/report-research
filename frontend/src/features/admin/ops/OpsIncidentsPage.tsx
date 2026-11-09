@@ -12,24 +12,19 @@ import { OpsQueryError } from './OpsShared'
 import { INCIDENT_COMPONENTS, INCIDENT_STATUS_LABELS, componentLabel, fmtDuration } from './opsLabels'
 import { INCIDENTS_PAGE_SIZE, useOpsIncidents } from './useOps'
 import styles from './incidents/Incidents.module.css'
+import { t } from '@/i18n'
 
 type IncidentStatus = IncidentItem['status']
 type StatusFilter = IncidentStatus | 'all'
 
 const STATUS_OPTIONS: SegOption<StatusFilter>[] = [
-  { value: 'all', label: '全部' },
-  { value: 'firing', label: INCIDENT_STATUS_LABELS.firing },
-  { value: 'resolved', label: INCIDENT_STATUS_LABELS.resolved },
-  { value: 'lost', label: INCIDENT_STATUS_LABELS.lost },
+  { value: 'all', get label() { return t('admin.ops.opsIncidentsPage.all') } },
+  { value: 'firing', get label() { return INCIDENT_STATUS_LABELS.firing } },
+  { value: 'resolved', get label() { return INCIDENT_STATUS_LABELS.resolved } },
+  { value: 'lost', get label() { return INCIDENT_STATUS_LABELS.lost } },
 ]
 
-const HELP = (
-  <>
-    主機上的事件偵測每次開事件、提醒、升級、恢復的紀錄（新→舊）。資料是 DB 投影（偵測端寫本機 spool、匯入器每 5 分鐘
-    匯入），不是告警的真相來源——即時告警看 Slack；DB 掛掉期間的事件恢復後補進來。
-    「結束不明」＝沒收到「已恢復」，但同一個元件之後又開了新事件：它必定已經結束，只是不知道何時。
-  </>
-)
+const help = () => t('admin.ops.opsIncidentsPage.everyOpenReminderEscalationAnd')
 
 /**
  * 事件：主機上的事件偵測（P5）每次開事件、提醒、升級、恢復的紀錄（新→舊）。資料是 DB 投影（P5 寫本機 spool、
@@ -48,52 +43,51 @@ export default function OpsIncidentsPage() {
     <>
       <PageHeader
         summary={q.data
-          ? `${q.data.total} 筆事件；每 5 分鐘匯入一次，即時告警以 Slack 為準。`
-          : '主機事件偵測的紀錄；即時告警以 Slack 為準。'}
-        help={HELP}
+          ? t('admin.ops.opsIncidentsPage.incidentsImportedEvery5Minutes', { total: q.data.total })
+          : t('admin.ops.opsIncidentsPage.hostIncidentDetectionRecordsSlack')}
+        help={help()}
         actions={(
           <>
-            <Segmented label="狀態" options={STATUS_OPTIONS} value={filter}
+            <Segmented label={t('admin.ops.opsIncidentsPage.status')} options={STATUS_OPTIONS} value={filter}
               onChange={v => { setFilter(v); setOffset(0) }} />
             <ExportCsvButton
               href={adminCsvUrls.exportIncidents({ status: status || undefined, component: component || undefined })}
-              what="事件清單"
+              what={t('admin.ops.opsIncidentsPage.incidentList')}
             />
           </>
         )}
       />
       <section className={c.card} aria-labelledby="ops-incidents-title">
         <div className={c.cardHead}>
-          <h2 id="ops-incidents-title" className={c.cardTitle}>事件清單</h2>
-          {q.data && <span className={c.cardHint}>{fmtDateTime(q.data.since)} ～ {fmtDateTime(q.data.until)}</span>}
+          <h2 id="ops-incidents-title" className={c.cardTitle}>{t('admin.ops.opsIncidentsPage.incidentList')}</h2>
+          {q.data && <span className={c.cardHint}>{t('admin.ops.opsIncidentsPage.text', { since: fmtDateTime(q.data.since), until: fmtDateTime(q.data.until) })}</span>}
           <div className={c.cardRight}>
             <label className={styles.inlineField}>
-              元件
+              {t('admin.ops.opsIncidentsPage.component')}
               <select className={c.select} value={component} onChange={e => { setComponent(e.target.value); setOffset(0) }}>
-                <option value="">全部</option>
+                <option value="">{t('admin.ops.opsIncidentsPage.all')}</option>
                 {INCIDENT_COMPONENTS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
               </select>
             </label>
           </div>
         </div>
         {q.isPending ? (
-          <p className={c.empty}>載入中…</p>
+          <p className={c.empty}>{t('admin.ops.opsIncidentsPage.loading')}</p>
         ) : q.isError ? (
-          <div className={c.cardBody}><OpsQueryError error={q.error} what="事件" /></div>
+          <div className={c.cardBody}><OpsQueryError error={q.error} what={t('admin.ops.opsIncidentsPage.incidents')} /></div>
         ) : (
           <>
             {q.data.items.length === 0 ? (
               <p className={c.empty}>
-                這段期間沒有事件。若主機上確實發過告警卻一直是空的，確認匯入器
-                （report-mark-load-observations.timer）在跑、spool 目錄 data/ops_spool/ 可寫。
+                {t('admin.ops.opsIncidentsPage.noIncidentsInThisPeriod')}
               </p>
             ) : (
               <div className={c.tableWrap}>
-                <table className={c.table} aria-label="事件清單">
+                <table className={c.table} aria-label={t('admin.ops.opsIncidentsPage.incidentList')}>
                   <thead>
                     <tr>
-                      <th>元件</th><th>狀態</th><th>嚴重度</th><th>開始</th><th>結束</th><th>持續</th><th>原因</th>
-                      <th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
+                      <th>{t('admin.ops.opsIncidentsPage.component')}</th><th>{t('admin.ops.opsIncidentsPage.status')}</th><th>{t('admin.ops.opsIncidentsPage.severity')}</th><th>{t('admin.ops.opsIncidentsPage.started')}</th><th>{t('admin.ops.opsIncidentsPage.ended')}</th><th>{t('admin.ops.opsIncidentsPage.duration')}</th><th>{t('admin.ops.opsIncidentsPage.reason')}</th>
+                      <th className={`${c.tdRight} ${c.stickyRight}`}>{t('admin.ops.opsIncidentsPage.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -103,7 +97,7 @@ export default function OpsIncidentsPage() {
                         onClick={() => setIncident(i.incident_id)}>
                         <td>
                           {componentLabel(i.component)}
-                          <div className={c.sub}>{i.kind === 'monitor_blind' ? '監控失明' : i.component}</div>
+                          <div className={c.sub}>{i.kind === 'monitor_blind' ? t('admin.ops.opsIncidentsPage.monitoringBlind') : i.component}</div>
                         </td>
                         <td><StatusBadge status={i.status} /></td>
                         <td><SeverityBadge severity={i.severity} /></td>
@@ -116,7 +110,7 @@ export default function OpsIncidentsPage() {
                           {i.summary && <div className={c.sub}>{i.summary}</div>}
                         </td>
                         <td className={`${c.tdActions} ${c.stickyRight}`}>
-                          <RowActions primary={{ label: '詳情', onClick: () => setIncident(i.incident_id) }} />
+                          <RowActions primary={{ label: t('admin.ops.opsIncidentsPage.details'), onClick: () => setIncident(i.incident_id) }} />
                         </td>
                       </tr>
                     ))}
@@ -126,14 +120,14 @@ export default function OpsIncidentsPage() {
             )}
             {(offset > 0 || q.data.has_more) && (
               <div className={c.pager}>
-                <span>第 {offset + 1}–{offset + q.data.items.length} 筆，共 {q.data.total} 筆</span>
+                <span>{t('admin.ops.opsIncidentsPage.of', { v: offset + 1, v2: offset + q.data.items.length, total: q.data.total })}</span>
                 <div className={c.pagerBtns}>
                   <Button size="sm" disabled={offset === 0}
                     onClick={() => setOffset(Math.max(0, offset - INCIDENTS_PAGE_SIZE))}>
-                    較新
+                    {t('admin.ops.opsIncidentsPage.newer')}
                   </Button>
                   <Button size="sm" disabled={!q.data.has_more} onClick={() => setOffset(q.data.next_offset ?? offset)}>
-                    較舊
+                    {t('admin.ops.opsIncidentsPage.older')}
                   </Button>
                 </div>
               </div>

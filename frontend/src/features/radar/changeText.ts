@@ -1,5 +1,6 @@
 import type { ChangeItem, Direction, SnapshotDiff } from '../../lib/radarSchemas'
 import { fmtSignedPct } from './radarFormat'
+import { t } from '@/i18n'
 
 export type Tone = 'up' | 'down' | 'flat'
 
@@ -17,8 +18,8 @@ const FIELD_ORDER: Record<ChangeItem['field'], number> = {
 }
 
 function verb(change: ChangeItem): string {
-  if (change.field === 'thesis') return change.direction === 'up' ? '轉強' : '轉弱'
-  return change.direction === 'up' ? '上修' : '下修'
+  if (change.field === 'thesis') return change.direction === 'up' ? t('radar.changeText.stronger') : t('radar.changeText.weaker')
+  return change.direction === 'up' ? t('radar.changeText.raised') : t('radar.changeText.cut')
 }
 
 export interface ChangeChip {
@@ -34,16 +35,16 @@ export interface ChangeChip {
 export function changeChip(change: ChangeItem): ChangeChip {
   const tone = change.comparable ? toneOf(change.direction) : 'flat'
   if (!change.comparable || change.direction === 'incomparable') {
-    const label = change.field === 'rating' ? '評等'
-      : change.field === 'target_price' ? '目標價'
+    const label = change.field === 'rating' ? t('radar.changeText.rating')
+      : change.field === 'target_price' ? t('radar.changeText.targetPrice')
         : change.field === 'eps' ? 'EPS' : change.label
-    return { label, value: '不可比較', tone: 'flat' }
+    return { label, value: t('radar.changeText.notComparable'), tone: 'flat' }
   }
   switch (change.field) {
     case 'rating':
-      return { label: '評等', value: change.label, tone }
+      return { label: t('radar.changeText.rating'), value: change.label, tone }
     case 'target_price':
-      return { label: '目標價', value: fmtSignedPct(change.pct_change) || verb(change), tone }
+      return { label: t('radar.changeText.targetPrice'), value: fmtSignedPct(change.pct_change) || verb(change), tone }
     case 'eps':
       return { label: 'EPS', value: fmtSignedPct(change.pct_change) || verb(change), tone }
     default:
@@ -54,8 +55,8 @@ export function changeChip(change: ChangeItem): ChangeChip {
 function phrase(change: ChangeItem): string {
   const pct = change.pct_change != null ? ` ${fmtSignedPct(change.pct_change)}` : ''
   switch (change.field) {
-    case 'rating': return `評等 ${change.label}`
-    case 'target_price': return `目標價${verb(change)}${pct}`
+    case 'rating': return t('radar.changeText.rating2', { label: change.label })
+    case 'target_price': return t('radar.changeText.targetPrice2', { change: verb(change), pct })
     case 'eps': return `EPS ${verb(change)}${pct}`
     default: return `${change.label}${verb(change)}`
   }
@@ -70,9 +71,9 @@ export function historyNote(diff: SnapshotDiff | undefined): string {
   const material = diff.changes
     .filter(isMaterial)
     .sort((a, b) => FIELD_ORDER[a.field] - FIELD_ORDER[b.field])
-  if (material.length) return material.slice(0, 2).map(phrase).join('，')
+  if (material.length) return material.slice(0, 2).map(phrase).join(t('radar.changeText.text'))
   const hasPrior = diff.has_prior_report ?? (diff.has_prior_comparable || diff.note !== '沒有更早研報')
-  if (!hasPrior) return '首次納入'
-  if (!diff.has_prior_comparable) return '無可比較的前次資料'
-  return '維持觀點'
+  if (!hasPrior) return t('radar.changeText.firstCoverage')
+  if (!diff.has_prior_comparable) return t('radar.changeText.noComparablePreviousData')
+  return t('radar.changeText.viewMaintained')
 }

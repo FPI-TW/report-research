@@ -1,4 +1,5 @@
 import { ApiError, errorCode, errorDetail, redirectToLogin } from '../../lib/api'
+import { t } from '@/i18n'
 
 /** 一次 CSV 下載的結果（取自回應標頭；後端 web/csv_export.py）。 */
 export type CsvDownload = { filename: string; rows: number | null; truncated: boolean }
@@ -20,7 +21,7 @@ export async function downloadCsv(url: string, fallbackName = 'export.csv'): Pro
   const resp = await fetch(url, { credentials: 'same-origin', cache: 'no-store' })
   if (resp.status === 401) {
     redirectToLogin()
-    throw new ApiError(401, '未登入')
+    throw new ApiError(401, t('admin.exportCsv.notSignedIn'))
   }
   if (!resp.ok) {
     let body: unknown = null

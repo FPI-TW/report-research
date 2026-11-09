@@ -40,7 +40,9 @@ INFO**。失敗／鎖定／遭拒是異常，值得在把 `LOG_LEVEL` 調成 WAR
 （`web.auth`）原封不動。
 """
 import html
+import json
 import logging
+import re
 import time
 from urllib.parse import quote
 
@@ -48,6 +50,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import get_settings
+from app.profile import get_profile
 from app.services import accounts, security_ops
 from app.services.accounts import User
 from web import auth, authz, deps
@@ -72,37 +75,87 @@ def _safe_next(raw: str | None) -> str:
     return raw
 
 
-# 登入卡副標，依 OIDC 單一登入的模式（off：沒設定／on：公司帳號與本地帳密並存／only：只允許公司帳號）。
-_LOGIN_HINTS = {
-    "off": "請以管理者配發的帳號登入。",
-    "on": "請以公司帳號或管理者配發的帳號登入。",
-    "only": "請以公司帳號登入。",
-}
+# 介面語系的 cookie（SPA 切換語言時寫，見 frontend/src/i18n/index.ts）；登入頁在 SPA 之外，靠它知道使用者選過什麼。
+LOCALE_COOKIE = "tf_locale"
+_LOCALE_COOKIE_MAX_AGE = 365 * 24 * 3600
+# 語言切換連結以該語言自己的名稱顯示（與設定彈窗的選項相同）。
+_LANGUAGE_NAMES = {"zh-Hant": "中文", "en": "English"}
+_PLACEHOLDER = re.compile(r"\{\{(t|tjs):([a-z0-9_]+)\}\}")
 
 
-def _login_page() -> HTMLResponse:
+def login_locale(request: Request) -> tuple[str, bool]:
+    """登入頁的語系與要不要寫 cookie。
+
+    依序：`?lang=`（登入頁上的語言切換連結；寫進 cookie，之後 SPA 也沿用）→ `tf_locale` cookie（SPA 寫的使用者偏好）
+    → profile 的 `[locale].default`。不看 `Accept-Language`：SPA 的預設是 profile 預設，登入頁跟著它，才不會登入前是
+    英文、登入後變中文。不在 profile 開放清單裡的值一律忽略。
+    """
+    loc = get_profile().locale
+    asked = request.query_params.get("lang")
+    if asked in loc.available:
+        return asked, True
+    stored = request.cookies.get(LOCALE_COOKIE)
+    if stored in loc.available:
+        return stored, False
+    return loc.default, False
+
+
+def _login_messages() -> dict[str, dict[str, str]]:
+    return json.loads((deps.STATIC_DIR / "login.i18n.json").read_text(encoding="utf-8"))["messages"]
+
+
+def _js_string(text: str) -> str:
+    """放進 <script> 的 JS 字串字面值：JSON 跳脫，另把 `<` 換成 \\u003c，字串裡不可能冒出 `</script>`。"""
+    out = json.dumps(text, ensure_ascii=False)
+    return out.replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def _lang_switch(locale: str) -> str:
+    links = []
+    for code in get_profile().locale.available:
+        if code == locale:
+            continue
+        attr_id = ' id="lang-switch"' if not links else ""
+        links.append(f'<a class="lang-switch"{attr_id} href="/login?lang={quote(code)}" hreflang="{html.escape(code)}"'
+                     f' lang="{html.escape(code)}">{html.escape(_LANGUAGE_NAMES.get(code, code))}</a>')
+    return "".join(links)
+
+
+def _login_page(locale: str = "zh-Hant") -> HTMLResponse:
     """登入頁：`web/static/login.html` 填上 profile 的品牌後回傳，並標記 no-cache（改版後免強制重整）。
 
     品牌在伺服器端注入而不是讓頁面自己去抓 `/api/branding`：登入頁是每個人的第一眼，先閃一次中性名稱再換成
     機構名不像樣，而且這頁刻意不載入任何外部 script。替換的值一律 HTML 跳脫；`{{brand_logo}}` 在 profile 沒有
     logo 時換成空字串（版面照常，只少一張圖）。每次都回 200 全量 body（約 50 KB，成本可忽略）。
     `{{sso_mode}}`／`{{login_hint}}`：OIDC 單一登入的模式（`OIDC_ISSUER` 沒設＝off，與沒有這個功能時同一個畫面）。
+
+    介面字串在 `web/static/login.i18n.json`：`{{t:鍵}}` 換成 HTML 跳脫的字、`{{tjs:鍵}}` 換成 JS 字串字面值，語系由
+    `login_locale` 決定。先換字串再換品牌：標題的字串裡帶 `{{product_name}}`。品牌名稱依語系
+    （`[institution]` 的 `*_en`）。
     """
     brand = branding_payload()
-    name = html.escape(brand["product_name"])
+    msgs = _login_messages()
+
+    def text(key: str) -> str:
+        entry = msgs[key]
+        return entry.get(locale) or entry["zh-Hant"]
+
+    name = html.escape(get_profile().institution.localized(locale)[1])
     oidc = get_settings().oidc
     sso_mode = ("only" if oidc.sso_only else "on") if oidc.enabled else "off"
     logo = brand["logo_light_url"]
     favicon = brand["favicon_url"]
     page = (deps.STATIC_DIR / "login.html").read_text(encoding="utf-8")
+    page = _PLACEHOLDER.sub(
+        lambda m: html.escape(text(m.group(2))) if m.group(1) == "t" else _js_string(text(m.group(2))), page)
     page = page.replace(
         "{{brand_logo}}",
         f'<img class="glyph" src="{html.escape(logo)}" width="64" height="64" alt="{name}" />' if logo else "",
     ).replace(
         "{{favicon_link}}", f'<link rel="icon" href="{html.escape(favicon)}" />' if favicon else "",
     ).replace("{{product_name}}", name).replace("{{sso_mode}}", sso_mode).replace(
-        "{{login_hint}}", _LOGIN_HINTS[sso_mode],
-    )
+        "{{login_hint}}", html.escape(text(f"hint_{sso_mode}")),
+    ).replace("{{lang}}", html.escape(locale)).replace("{{lang_switch}}", _lang_switch(locale))
     return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 
@@ -172,9 +225,15 @@ async def _login_totp_step(request: Request, code: str, nxt: str, err_q: str, no
 @router.get("/login")
 async def login_page(request: Request):
     nxt = _safe_next(request.query_params.get("next"))
+    locale, remember = login_locale(request)
     if await _cookie_user(request) is not None:
-        return RedirectResponse(nxt, status_code=302)
-    return _login_page()
+        resp = RedirectResponse(nxt, status_code=302)
+    else:
+        resp = _login_page(locale)
+    if remember:
+        # 不設 HttpOnly：SPA 讀它當使用者偏好（src/i18n）。不是祕密，SameSite=Lax 即可。
+        resp.set_cookie(LOCALE_COOKIE, locale, max_age=_LOCALE_COOKIE_MAX_AGE, path="/", samesite="lax")
+    return resp
 
 
 @router.post("/login")

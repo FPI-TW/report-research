@@ -1,6 +1,7 @@
 import type { TrendPoint } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
 import styles from './OpsTrendChart.module.css'
+import { t } from '@/i18n'
 
 const W = 600
 const H = 160
@@ -11,7 +12,7 @@ type Seg = { x: number; y: number; lo: number | null; hi: number | null }[]
 function segments(points: TrendPoint[], t0: number, t1: number, y0: number, y1: number): Seg[] {
   const span = t1 - t0 || 1
   const yspan = y1 - y0 || 1
-  const sx = (t: number) => ((t - t0) / span) * W
+  const sx = (item: number) => ((item - t0) / span) * W
   const sy = (v: number) => H - ((v - y0) / yspan) * H
   const out: Seg[] = []
   let cur: Seg = []
@@ -21,9 +22,9 @@ function segments(points: TrendPoint[], t0: number, t1: number, y0: number, y1: 
       cur = []
       continue
     }
-    const t = new Date(p.t).getTime()
+    const item = new Date(p.t).getTime()
     cur.push({
-      x: sx(t), y: sy(p.value), lo: p.min == null ? null : sy(p.min), hi: p.max == null ? null : sy(p.max),
+      x: sx(item), y: sy(p.value), lo: p.min == null ? null : sy(p.min), hi: p.max == null ? null : sy(p.max),
     })
   }
   if (cur.length) out.push(cur)
@@ -41,7 +42,7 @@ export function OpsTrendChart({ points, label, format }: {
 }) {
   const values = points.flatMap(p => [p.value, p.min, p.max]).filter((v): v is number => v != null)
   if (values.length === 0) {
-    return <p className={styles.empty}>這段期間沒有資料。</p>
+    return <p className={styles.empty}>{t('admin.ops.opsTrendChart.noDataInThisPeriod')}</p>
   }
   const times = points.map(p => new Date(p.t).getTime())
   const t0 = Math.min(...times)
@@ -60,7 +61,7 @@ export function OpsTrendChart({ points, label, format }: {
           <span>{format(y0)}</span>
         </div>
         <svg className={styles.svg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
-          aria-label={`${label}趨勢，共 ${points.length} 點${latest?.value != null ? `，最新 ${format(latest.value)}` : ''}`}>
+          aria-label={t('admin.ops.opsTrendChart.trendPoints', { label, length: points.length, v: latest?.value != null ? t('admin.ops.opsTrendChart.latest', { value: format(latest.value) }) : '' })}>
           <line className={styles.grid} x1="0" y1="0.5" x2={W} y2="0.5" vectorEffect="non-scaling-stroke" />
           <line className={styles.grid} x1="0" y1={H - 0.5} x2={W} y2={H - 0.5} vectorEffect="non-scaling-stroke" />
           {segs.map((s, i) => {
@@ -83,7 +84,7 @@ export function OpsTrendChart({ points, label, format }: {
       </div>
       <figcaption className={styles.xaxis}>
         <span>{fmtDateTime(new Date(t0).toISOString())}</span>
-        {latest?.value != null && <span className={styles.latest}>最新 {format(latest.value)}</span>}
+        {latest?.value != null && <span className={styles.latest}>{t('admin.ops.opsTrendChart.latest2', { value: format(latest.value) })}</span>}
         <span>{fmtDateTime(new Date(t1).toISOString())}</span>
       </figcaption>
     </figure>

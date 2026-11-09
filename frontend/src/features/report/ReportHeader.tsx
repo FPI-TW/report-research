@@ -9,6 +9,7 @@ import type { ReadingDoc } from '../../lib/readingSchemas'
 import { showToast } from '../../lib/toast'
 import { fmtDate, reportHref } from './readingFormat'
 import styles from './ReportHeader.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   doc: ReadingDoc
@@ -41,11 +42,11 @@ export function ReportHeader({ doc, back }: Props) {
     copyText(new URL(shareHref, window.location.origin).href).then(
       () => {
         setCopied(true)
-        showToast('已複製連結', { ok: true })
+        showToast(t('report.reportHeader.linkCopied'), { ok: true })
         if (timer.current) clearTimeout(timer.current)
         timer.current = setTimeout(() => setCopied(false), COPIED_MS)
       },
-      () => showToast('複製失敗，請手動複製網址'),
+      () => showToast(t('report.reportHeader.copyFailedCopyTheUrl')),
     )
   }
 
@@ -87,12 +88,12 @@ export function ReportHeader({ doc, back }: Props) {
             hybrid_search 參數 → /api/ask filters → answer prompt），另案處理。 */}
         <Link
           className={`${styles.btn} ${styles.btnPrimary}`}
-          to={`/assistant?q=${encodeURIComponent(`關於《${title}》：`)}`}
-          aria-label="就這篇提問：帶著這篇的標題到研究助理預填題目（檢索仍涵蓋全語料）"
-          title="帶著這篇的標題到研究助理預填題目；檢索範圍仍是全語料"
+          to={`/assistant?q=${encodeURIComponent(t('report.reportHeader.about', { title }))}`}
+          aria-label={t('report.reportHeader.askAboutThisReportPrefill')}
+          title={t('report.reportHeader.prefillAQuestionInThe')}
         >
           <MessageSquare size={15} strokeWidth={1.8} aria-hidden />
-          就這篇提問
+          {t('report.reportHeader.askAboutThisReport')}
         </Link>
         {/* 原始檔是後端端點、不是 SPA 路由：必須用原生 <a>。
             react-router 的 Link 會套上 router 的 basename（/app），
@@ -113,14 +114,14 @@ export function ReportHeader({ doc, back }: Props) {
             <File size={15} strokeWidth={1.6} aria-hidden />
             {/* 非 PDF（.docx）不能標成「原始 PDF」：那些研報右欄走的是文字後備，
                 文案已叫讀者「由頁首下載原始檔」，鈕上卻寫 PDF 會對不上。 */}
-            {doc.is_pdf ? '原始 PDF' : '原始檔'}
+            {doc.is_pdf ? t('report.reportHeader.originalPdf') : t('report.reportHeader.originalFile')}
           </a>
         )}
         <button
           type="button"
           className={`${styles.btn} ${styles.iconBtn}`}
-          aria-label={copied ? '已複製連結' : '複製連結'}
-          title={copied ? '已複製連結' : '複製連結'}
+          aria-label={copied ? t('report.reportHeader.linkCopied') : t('report.reportHeader.copyLink')}
+          title={copied ? t('report.reportHeader.linkCopied') : t('report.reportHeader.copyLink')}
           onClick={copyLink}
         >
           {copied

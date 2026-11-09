@@ -6,6 +6,7 @@ import { KIND_LABELS, KINDS, LIMIT_MAX, REASON_MAX, fmtInt, limitText, messageOf
 import { currentOf, draftOf, planChanges, type Draft, type QuotaChange } from './quotaPlan'
 import type { QuotaKind, QuotaMode } from './useQuota'
 import styles from './Quota.module.css'
+import { t } from '@/i18n'
 
 /**
  * 「調整上限」表單：問答／匯出／上傳各一列（上限＋設定），加一個備註。
@@ -40,8 +41,8 @@ export function QuotaLimitDialog({ user, isSuper, onClose, onSave }: {
   }
 
   return (
-    <FormDialog open title={`調整「${user.username}」的每日上限`} submitLabel="儲存" busy={busy} error={error}
-      body="只影響這個帳號，台北時間每天 0 點重置。上限 0＝完全不能用。"
+    <FormDialog open title={t('admin.quota.quotaLimitDialog.adjustDailyLimitsFor', { username: user.username })} submitLabel={t('admin.quota.quotaLimitDialog.save')} busy={busy} error={error}
+      body={t('admin.quota.quotaLimitDialog.affectsOnlyThisAccountResets')}
       submitDisabled={!plan.error && plan.changes.length === 0}
       onSubmit={() => { void submit() }} onClose={onClose}>
       {KINDS.map(kind => {
@@ -54,29 +55,29 @@ export function QuotaLimitDialog({ user, isSuper, onClose, onSave }: {
             <div className={styles.kindRow}>
               <span className={styles.kindLabel}>{label}</span>
               <input className={`${c.input} ${c.inputMono} ${styles.kindLimit}`} type="number" inputMode="numeric"
-                min={0} max={LIMIT_MAX} step={1} aria-label={`${label}每日上限`}
+                min={0} max={LIMIT_MAX} step={1} aria-label={t('admin.quota.quotaLimitDialog.dailyLimit', { label })}
                 value={d.mode === 'limit' ? d.limit : ''}
-                placeholder={d.mode === 'unlimited' ? '不限' : item ? `預設 ${fmtInt(item.default_limit)}` : '預設'}
+                placeholder={d.mode === 'unlimited' ? t('admin.quota.quotaLimitDialog.unlimited') : item ? t('admin.quota.quotaLimitDialog.default', { default_limit: fmtInt(item.default_limit) }) : t('admin.quota.quotaLimitDialog.default2')}
                 onChange={e => set(kind, { mode: 'limit', limit: e.target.value })} />
-              <select className={`${c.select} ${styles.kindMode}`} aria-label={`${label}設定`} value={d.mode}
+              <select className={`${c.select} ${styles.kindMode}`} aria-label={t('admin.quota.quotaLimitDialog.setting', { label })} value={d.mode}
                 onChange={e => set(kind, { mode: e.target.value as QuotaMode, limit: e.target.value === 'limit' ? d.limit : '' })}>
-                <option value="limit">指定上限</option>
-                <option value="default">程式預設</option>
-                {(isSuper || cur.mode === 'unlimited') && <option value="unlimited">不限</option>}
+                <option value="limit">{t('admin.quota.quotaLimitDialog.customLimit')}</option>
+                <option value="default">{t('admin.quota.quotaLimitDialog.codeDefault')}</option>
+                {(isSuper || cur.mode === 'unlimited') && <option value="unlimited">{t('admin.quota.quotaLimitDialog.unlimited')}</option>}
               </select>
             </div>
             {item && (
               <div className={styles.kindNow}>
-                目前：{item.mode === 'default' ? `程式預設 ${fmtInt(item.default_limit)}` : item.mode === 'unlimited' ? '不限' : `覆寫 ${limitText(item)}`}
-                ・今天已用 {fmtInt(item.used)}
-                {item.reason && <>・備註：{item.reason}</>}
+                {t('admin.quota.quotaLimitDialog.current')}{item.mode === 'default' ? t('admin.quota.quotaLimitDialog.codeDefault2', { default_limit: fmtInt(item.default_limit) }) : item.mode === 'unlimited' ? t('admin.quota.quotaLimitDialog.unlimited') : t('admin.quota.quotaLimitDialog.override', { item: limitText(item) })}
+                {t('admin.quota.quotaLimitDialog.usedToday', { used: fmtInt(item.used) })}
+                {item.reason && <>{t('admin.quota.quotaLimitDialog.note', { reason: item.reason })}</>}
               </div>
             )}
           </div>
         )
       })}
-      <Field label="備註（選填，只有管理員看得到）" counter={`${note.length}／${REASON_MAX}`}>
-        <input className={c.input} value={note} maxLength={REASON_MAX} placeholder="例如：研究週需求" autoComplete="off"
+      <Field label={t('admin.quota.quotaLimitDialog.noteOptionalVisibleToAdmins')} counter={t('admin.quota.quotaLimitDialog.text', { length: note.length, REASON_MAX })}>
+        <input className={c.input} value={note} maxLength={REASON_MAX} placeholder={t('admin.quota.quotaLimitDialog.eGResearchWeekDemand')} autoComplete="off"
           onChange={e => { setNote(e.target.value); setError(null) }} />
       </Field>
     </FormDialog>

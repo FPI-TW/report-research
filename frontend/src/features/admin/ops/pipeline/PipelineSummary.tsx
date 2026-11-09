@@ -7,13 +7,14 @@ import { PIPELINE_ROWS } from './pipelineMeta'
 import { PROGRESS_POLL_MS } from './useProgress'
 import { fmtInt } from './rate'
 import styles from './Pipeline.module.css'
+import { t } from '@/i18n'
 
-const TARGET_TEXT: Record<AttentionTarget, string> = { schedule: '看排程與執行', quality: '看品質' }
+const TARGET_TEXT: Record<AttentionTarget, string> = { get schedule() { return t('admin.ops.pipeline.pipelineSummary.viewScheduleAndRuns') }, get quality() { return t('admin.ops.pipeline.pipelineSummary.viewQuality') } }
 
 const VERDICT: Record<'ok' | 'warn' | 'bad', { lamp: LampTone; text: (n: number) => string }> = {
-  ok: { lamp: 'ok', text: () => '管線正常' },
-  warn: { lamp: 'warn', text: n => `需要注意・${n} 項` },
-  bad: { lamp: 'bad', text: n => `有異常・${n} 項` },
+  ok: { lamp: 'ok', text: () => t('admin.ops.pipeline.pipelineSummary.pipelineOk') },
+  warn: { lamp: 'warn', text: n => t('admin.ops.pipeline.pipelineSummary.needsAttention', { n }) },
+  bad: { lamp: 'bad', text: n => t('admin.ops.pipeline.pipelineSummary.errors', { n }) },
 }
 
 /**
@@ -27,11 +28,11 @@ export function PipelineSummary({ progress: p, stale }: { progress: Progress; st
   const running = PIPELINE_ROWS.filter(r => r.key !== 'web' && p.pipelines[r.key]).length
   const qa = p.evaluation?.qa
   const review: string[] = []
-  if (qa) review.push(`忠實度低於門檻 ${fmtInt(qa.below_min)} 筆`)
-  if (p.extraction) review.push(`抽取品質需複核 ${fmtInt(p.extraction.needs_review)} 篇`)
+  if (qa) review.push(t('admin.ops.pipeline.pipelineSummary.belowTheFaithfulnessThreshold', { below_min: fmtInt(qa.below_min) }))
+  if (p.extraction) review.push(t('admin.ops.pipeline.pipelineSummary.reportsNeedExtractionReview', { needs_review: fmtInt(p.extraction.needs_review) }))
 
   return (
-    <Card title="管線狀態" labelledBy="pipeline-summary-title">
+    <Card title={t('admin.ops.pipeline.pipelineSummary.pipelineStatus')} labelledBy="pipeline-summary-title">
       <div className={styles.body}>
         <div className={styles.verdictRow}>
           <div className={styles.verdict}>
@@ -40,21 +41,21 @@ export function PipelineSummary({ progress: p, stale }: { progress: Progress; st
             <span className={styles.verdictText}>{VERDICT[level].text(items.length)}</span>
           </div>
           <p className={c.meta}>
-            <span>更新於 <b>{p.ts}</b>（每 {PROGRESS_POLL_MS / 1000} 秒，分頁在背景時暫停）</span>
-            <span>執行中的批次 <b>{running}</b></span>
-            <span>研報 <b>{fmtInt(p.db.reports)}</b> 篇</span>
+            <span>{t('admin.ops.pipeline.pipelineSummary.updatedAt')}{' '}<b>{p.ts}</b>{t('admin.ops.pipeline.pipelineSummary.everySPausedWhileThe', { v: PROGRESS_POLL_MS / 1000 })}</span>
+            <span>{t('admin.ops.pipeline.pipelineSummary.runningBatches')}{' '}<b>{running}</b></span>
+            <span>{t('admin.ops.pipeline.pipelineSummary.reports')}{' '}<b>{fmtInt(p.db.reports)}</b>{' '}{t('admin.ops.pipeline.pipelineSummary.reports2')}</span>
           </p>
         </div>
         {stale && (
           <p className={c.banner} data-tone="warn" role="alert">
-            最近一次更新失敗，畫面是上一次成功取得的資料；會在下一輪自動重試。
+            {t('admin.ops.pipeline.pipelineSummary.theLastRefreshFailedShowing')}
           </p>
         )}
         {items.length > 0 && (
-          <ul className={styles.items} aria-label="需要處理的項目">
+          <ul className={styles.items} aria-label={t('admin.ops.pipeline.pipelineSummary.itemsToHandle')}>
             {items.map(it => (
               <li key={it.text} className={`${c.banner} ${styles.item}`} data-tone={it.level}>
-                <Chip tone={it.level}>{it.level === 'bad' ? '異常' : '注意'}</Chip>
+                <Chip tone={it.level}>{it.level === 'bad' ? t('admin.ops.pipeline.pipelineSummary.errors2') : t('admin.ops.pipeline.pipelineSummary.warnings')}</Chip>
                 <span className={styles.itemText}>{it.text}</span>
                 <a className={c.link} href={`#${SECTION_ID[it.target]}`}>{TARGET_TEXT[it.target]}</a>
               </li>
@@ -63,9 +64,9 @@ export function PipelineSummary({ progress: p, stale }: { progress: Progress; st
         )}
         {review.length > 0 && (
           <p className={styles.review}>
-            <span>待人看：</span>
-            {review.map(t => <span key={t}>{t}</span>)}
-            <Link className={c.link} to="/admin/reviews">前往待複核</Link>
+            <span>{t('admin.ops.pipeline.pipelineSummary.awaitingReview')}</span>
+            {review.map(item => <span key={item}>{item}</span>)}
+            <Link className={c.link} to="/admin/reviews">{t('admin.ops.pipeline.pipelineSummary.goToReviewQueue')}</Link>
           </p>
         )}
       </div>

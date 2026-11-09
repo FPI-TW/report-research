@@ -7,18 +7,19 @@ import { isSsoSession } from '../../lib/ssoElevation'
 import { useMe } from '../../lib/useMe'
 import { ElevationCancelledError, useElevationGate } from './useElevationGate'
 import styles from './Account.module.css'
+import { t } from '@/i18n'
 
 const TOTP_KEY = ['me', 'totp'] as const
 
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('account.securityDialog.actionFailedTryAgain')
 }
 
 /** otpauth URI 的 QR code。固定白底黑碼（深色模式也一樣），驗證器 App 才掃得到。 */
 function TotpQr({ uri }: { uri: string }) {
   const svg = useMemo(() => renderSVG(uri, { border: 4, ecc: 'L' }), [uri])
   return (
-    <div className={styles.qr} role="img" aria-label="兩步驟驗證的 QR code" data-testid="totp-qr"
+    <div className={styles.qr} role="img" aria-label={t('account.securityDialog.qrCodeForTwoStep')} data-testid="totp-qr"
       dangerouslySetInnerHTML={{ __html: svg }} />
   )
 }
@@ -30,7 +31,7 @@ function TotpQr({ uri }: { uri: string }) {
 export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [elevating, setElevating] = useState(false)
   return (
-    <Modal open={open} onClose={() => { if (!elevating) onClose() }} title="帳號安全" className={styles.modal}>
+    <Modal open={open} onClose={() => { if (!elevating) onClose() }} title={t('account.securityDialog.accountSecurity')} className={styles.modal}>
       <SecurityPanel active={open} onElevatingChange={setElevating} />
     </Modal>
   )
@@ -94,13 +95,13 @@ export function SecurityPanel({ active, onElevatingChange }: {
       await meSecurityApi.totpConfirm(code.trim())
       setSetup(null)
       setCode('')
-      setNotice('已開啟兩步驟驗證。之後登入與敏感操作都需要輸入驗證碼。')
+      setNotice(t('account.securityDialog.twoStepVerificationIsOn'))
       await refresh()
     })
   }
   const disable = () => run(async () => {
     await guard(() => meSecurityApi.totpDisable())
-    setNotice('已關閉兩步驟驗證。')
+    setNotice(t('account.securityDialog.twoStepVerificationIsOff'))
     await refresh()
   })
 
@@ -111,42 +112,41 @@ export function SecurityPanel({ active, onElevatingChange }: {
     <>
         <div className={styles.form}>
           <p className={styles.status}>
-            兩步驟驗證
-            <span className={`${styles.badge} ${enabled ? '' : styles.badgeOff}`}>{enabled ? '已開啟' : '未開啟'}</span>
+            {t('account.securityDialog.twoStepVerification')}
+            <span className={`${styles.badge} ${enabled ? '' : styles.badgeOff}`}>{enabled ? t('account.securityDialog.on') : t('account.securityDialog.off')}</span>
           </p>
           {!setup && (
             <p className={styles.hint}>
-              開啟後，登入與敏感操作除了密碼，還要輸入驗證器 App（Google Authenticator、Microsoft Authenticator、
-              1Password 等）顯示的 6 位數驗證碼。
+              {t('account.securityDialog.whenOnSigningInAnd')}
             </p>
           )}
-          {status.isError && <p className={styles.error} role="alert">狀態載入失敗：{messageOf(status.error)}</p>}
+          {status.isError && <p className={styles.error} role="alert">{t('account.securityDialog.couldnTLoadStatus', { error: messageOf(status.error) })}</p>}
           {notice && <p className={styles.ok} role="status">{notice}</p>}
           {setup ? (
-            <form className={styles.form} onSubmit={confirm} aria-label="確認兩步驟驗證">
+            <form className={styles.form} onSubmit={confirm} aria-label={t('account.securityDialog.confirmTwoStepVerification')}>
               <div className={styles.setup}>
                 <TotpQr uri={setup.otpauth_uri} />
                 <div className={styles.steps}>
-                  <p className={styles.step}><span className={styles.stepNo}>1</span>用驗證器 App 掃描 QR code</p>
+                  <p className={styles.step}><span className={styles.stepNo}>1</span>{t('account.securityDialog.scanTheQrCodeWith')}</p>
                   <details className={styles.manual}>
-                    <summary>無法掃描？改用手動輸入金鑰</summary>
+                    <summary>{t('account.securityDialog.canTScanEnterThe')}</summary>
                     <p className={styles.secret} data-testid="totp-secret">{setup.secret}</p>
                   </details>
-                  <a className={styles.openApp} href={setup.otpauth_uri}>在這支手機上開啟驗證器</a>
+                  <a className={styles.openApp} href={setup.otpauth_uri}>{t('account.securityDialog.openTheAuthenticatorOnThis')}</a>
                   <label className={styles.field}>
-                    <span className={styles.step}><span className={styles.stepNo}>2</span>輸入 App 顯示的 6 位數驗證碼</span>
+                    <span className={styles.step}><span className={styles.stepNo}>2</span>{t('account.securityDialog.enterThe6DigitCode')}</span>
                     <input value={code} onChange={e => setCode(e.target.value)} inputMode="numeric"
-                      autoComplete="one-time-code" required maxLength={7} pattern="[0-9 ]*" aria-label="驗證碼" />
+                      autoComplete="one-time-code" required maxLength={7} pattern="[0-9 ]*" aria-label={t('account.securityDialog.verificationCode')} />
                   </label>
                 </div>
               </div>
-              <p className={styles.hint}>QR code 與金鑰只顯示這一次，關掉視窗後要重新設定。</p>
+              <p className={styles.hint}>{t('account.securityDialog.theQrCodeAndKey')}</p>
               {error && <p className={styles.error} role="alert">{error}</p>}
               <div className={styles.actions}>
                 <button type="button" className={styles.secondary} onClick={() => { setSetup(null); setError(null) }}>
-                  取消
+                  {t('account.securityDialog.cancel')}
                 </button>
-                <button type="submit" className={styles.primary} disabled={busy}>確認並開啟</button>
+                <button type="submit" className={styles.primary} disabled={busy}>{t('account.securityDialog.confirmAndTurnOn')}</button>
               </div>
             </form>
           ) : (
@@ -155,15 +155,14 @@ export function SecurityPanel({ active, onElevatingChange }: {
               <div className={styles.actions}>
                 {enabled && policyLocked ? (
                   <p className={styles.hint} data-testid="totp-policy-locked">
-                    管理員帳號在強制兩步驟驗證政策下不可自行關閉。遺失驗證器時，請由 super admin 或主機上的
-                    {' '}<code>create_admin.py --reset-totp</code> 重設。
+                    {t('account.securityDialog.administratorAccountsCanTTurn', { v: ' ' })}<code>create_admin.py --reset-totp</code>{' '}{t('account.securityDialog.toResetIt')}
                   </p>
                 ) : enabled ? (
                   <button type="button" className={`${styles.secondary} ${styles.danger}`} disabled={busy}
-                    onClick={() => void disable()}>關閉兩步驟驗證</button>
+                    onClick={() => void disable()}>{t('account.securityDialog.turnOffTwoStepVerification')}</button>
                 ) : (
                   <button type="button" className={styles.primary} disabled={busy || status.isPending}
-                    onClick={() => void begin()}>開啟兩步驟驗證</button>
+                    onClick={() => void begin()}>{t('account.securityDialog.turnOnTwoStepVerification')}</button>
                 )}
               </div>
             </>

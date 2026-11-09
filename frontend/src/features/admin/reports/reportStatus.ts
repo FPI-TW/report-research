@@ -1,5 +1,6 @@
 import type { LampTone } from '../../../components/console'
 import type { AdminReportItem } from '../../../lib/generated/adminApi'
+import { t } from '@/i18n'
 
 // 與後端 app/services/visibility.py 的 REASON_MAX_CHARS 相同；這裡只是提早提示，後端仍會再驗一次。
 export const REASON_MAX = 500
@@ -13,7 +14,7 @@ export function statusOf(r: Pick<AdminReportItem, 'hidden' | 'publication'>): Re
   return r.hidden ? 'hidden' : 'published'
 }
 
-export const STATUS_LABEL: Record<ReportStatus, string> = { published: '已發布', draft: '草稿', hidden: '已隱藏' }
+export const STATUS_LABEL: Record<ReportStatus, string> = { get published() { return t('admin.reports.reportStatus.published') }, get draft() { return t('admin.reports.reportStatus.draft') }, get hidden() { return t('admin.reports.reportStatus.hidden') } }
 export const STATUS_TONE: Record<ReportStatus, LampTone> = { published: 'ok', draft: 'idle', hidden: 'bad' }
 
 /** 草稿在上傳審核處理：沒有 file_hash → upload_id 的查詢端點，所以連到上傳清單的「待審草稿」分頁籤。 */
@@ -21,7 +22,7 @@ export const DRAFT_REVIEW_PATH = '/admin/uploads?tab=draft'
 
 /** 錯誤物件 → 給人看的訊息。後端 400／403／404 的 detail 由 requestJSON 放進 message，原樣顯示。 */
 export function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.reports.reportStatus.actionFailedTryAgain')
 }
 
 /** toast 用的短名稱：標題太長時截到 18 字。 */

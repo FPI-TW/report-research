@@ -3,6 +3,7 @@ import type {
 } from '../../lib/radarSchemas'
 import { brokerKey, brokerName } from './brokerKeys'
 import { RATING_DISPLAY } from './radarFormat'
+import { t } from '@/i18n'
 
 /** 五級評等由偏多到偏空；分布條、圖例與文字共用這個順序。 */
 export const RATING_ORDER = ['buy', 'overweight', 'neutral', 'underweight', 'sell'] as const satisfies readonly RatingNorm[]
@@ -26,7 +27,7 @@ export function ratingParts(distribution: readonly RatingBucketCount[]): RatingP
 
 /** 清單列的分布文字，例如「買進 6、加碼 2、中立 1」但以全形空白（U+3000）分隔，不用「·」。 */
 export function ratingPartsText(parts: readonly RatingPart[]): string {
-  return parts.map(p => `${p.label} ${p.count}`).join('\u3000')
+  return parts.map(p => `${p.label} ${p.count}`).join(t('radar.consensusData.text'))
 }
 
 /** 主要幣別那一組目標價：後端已依家數排序，`primary_currency` 就是第一組。 */

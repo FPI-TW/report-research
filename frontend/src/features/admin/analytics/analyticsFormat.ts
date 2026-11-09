@@ -1,12 +1,13 @@
 import type { AnalyticsCell, AnalyticsSpan, AnalyticsTopList } from '../../../lib/generated/adminApi'
+import { t } from '@/i18n'
 
 /** 範圍選項（天數，含今天；分段切換用，所以值是字串）。後端上限 731 天。 */
 export const RANGES = [
-  { value: '7', label: '7 天' },
-  { value: '30', label: '30 天' },
-  { value: '90', label: '90 天' },
-  { value: '180', label: '180 天' },
-  { value: '365', label: '1 年' },
+  { value: '7', get label() { return t('admin.analytics.analyticsFormat.7Days') } },
+  { value: '30', get label() { return t('admin.analytics.analyticsFormat.30Days') } },
+  { value: '90', get label() { return t('admin.analytics.analyticsFormat.90Days') } },
+  { value: '180', get label() { return t('admin.analytics.analyticsFormat.180Days') } },
+  { value: '365', get label() { return t('admin.analytics.analyticsFormat.1Year') } },
 ] as const
 export type RangeDays = (typeof RANGES)[number]['value']
 
@@ -18,14 +19,14 @@ export const fmtInt = (n: number | null | undefined): string => (n == null ? '�
  */
 export function cellText(c: AnalyticsCell, minUsers: number): string {
   if (!c.suppressed) return fmtInt(c.value)
-  return c.suppression_reason === 'complementary' ? '隱藏' : `<${minUsers}`
+  return c.suppression_reason === 'complementary' ? t('admin.analytics.analyticsFormat.hidden') : `<${minUsers}`
 }
 
 export function cellTitle(c: AnalyticsCell, minUsers: number): string {
-  if (!c.suppressed) return `${fmtInt(c.users)} 位使用者`
+  if (!c.suppressed) return t('admin.analytics.analyticsFormat.users', { users: fmtInt(c.users) })
   return c.suppression_reason === 'complementary'
-    ? '為避免以總數減其他格推算出被隱藏的那一格，一併隱藏'
-    : `少於 ${minUsers} 位使用者，不顯示數字`
+    ? t('admin.analytics.analyticsFormat.alsoHiddenSoTheHidden')
+    : t('admin.analytics.analyticsFormat.fewerThanUsersNumberNot', { minUsers })
 }
 
 /** 清單裡沒列出來的項目（開放詞彙連名稱都不給）的說明；沒有就回 null。 */
@@ -33,14 +34,14 @@ export function hiddenNote(list: AnalyticsTopList, minUsers: number): string | n
   const shown = list.cells.filter(c => c.suppressed).length
   const total = list.suppressed_count + list.complementary_count
   if (total - shown <= 0) return null
-  const parts = [`少於 ${minUsers} 人 ${fmtInt(list.suppressed_count)} 項`]
-  if (list.complementary_count > 0) parts.push(`為避免推算一併隱藏 ${fmtInt(list.complementary_count)} 項`)
-  return list.cells.length === 0 ? `所有項目都不顯示（${parts.join('、')}）` : `另有 ${fmtInt(total - shown)} 項不顯示（${parts.join('、')}）`
+  const parts = [t('admin.analytics.analyticsFormat.itemsUnderUsers', { minUsers, suppressed_count: fmtInt(list.suppressed_count) })]
+  if (list.complementary_count > 0) parts.push(t('admin.analytics.analyticsFormat.moreHiddenToPreventInference', { complementary_count: fmtInt(list.complementary_count) }))
+  return list.cells.length === 0 ? t('admin.analytics.analyticsFormat.noItemsShown', { parts: parts.join(t('admin.analytics.analyticsFormat.text')) }) : t('admin.analytics.analyticsFormat.moreNotShown', { fmtInt: fmtInt(total - shown), parts: parts.join(t('admin.analytics.analyticsFormat.text')) })
 }
 
 export function fmtMs(ms: number | null | undefined): string {
   if (ms == null) return '—'
-  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} 秒`
+  return ms < 1000 ? `${Math.round(ms)} ms` : t('admin.analytics.analyticsFormat.s', { v: (ms / 1000).toFixed(1) })
 }
 
 export function fmtScore(v: number | null | undefined): string {
@@ -69,23 +70,23 @@ export function shortDay(iso: string): string {
 }
 
 export function spanText(span: AnalyticsSpan): string {
-  const how = span.source === 'live' ? '即時查詢' : '每晚彙總'
-  return `${span.since} ～ ${span.until}：${how}`
+  const how = span.source === 'live' ? t('admin.analytics.analyticsFormat.liveQuery') : t('admin.analytics.analyticsFormat.nightlyRollup')
+  return t('admin.analytics.analyticsFormat.text2', { since: span.since, until: span.until, how })
 }
 
 export const ROUTE_TITLES: Record<string, string> = {
-  path: '路由類別',
-  decided_by: '判定者',
-  llm_model: '回答模型',
-  llm_error: 'LLM 錯誤種類',
+  get path() { return t('admin.analytics.analyticsFormat.routeCategory') },
+  get decided_by() { return t('admin.analytics.analyticsFormat.decidedBy') },
+  get llm_model() { return t('admin.analytics.analyticsFormat.answerModel') },
+  get llm_error() { return t('admin.analytics.analyticsFormat.llmErrorKind') },
 }
 
 // 與 app/services/scope_router.py 的五類、answer.py 的 decided_by 詞彙一致；沒列到的原樣顯示。
 const VALUE_LABELS: Record<string, Record<string, string>> = {
   path: {
-    corpus_qa: '語料問答', overview: '總覽', time_sensitive: '時效性', off_topic: '離題', advice_risk: '投資建議風險',
+    get corpus_qa() { return t('admin.analytics.analyticsFormat.corpusQA') }, get overview() { return t('admin.analytics.analyticsFormat.overview') }, get time_sensitive() { return t('admin.analytics.analyticsFormat.timeliness') }, get off_topic() { return t('admin.analytics.analyticsFormat.offTopic') }, get advice_risk() { return t('admin.analytics.analyticsFormat.investmentAdviceRisk') },
   },
-  decided_by: { precheck: '詞表預判', overview: '總覽判定', llm: 'LLM 分類', fail_open: '降級（fail-open）', unknown: '不明' },
+  decided_by: { get precheck() { return t('admin.analytics.analyticsFormat.lexiconPreCheck') }, get overview() { return t('admin.analytics.analyticsFormat.overviewDecision') }, get llm() { return t('admin.analytics.analyticsFormat.llmClassification') }, get fail_open() { return t('admin.analytics.analyticsFormat.degradedFailOpen') }, get unknown() { return t('admin.analytics.analyticsFormat.unknown') } },
 }
 
 export function routeValueLabel(name: string, key: string): string {
@@ -93,11 +94,11 @@ export function routeValueLabel(name: string, key: string): string {
 }
 
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
-  'review.update': '待複核處理',
-  'qa_content.read': '問答原文調閱',
-  'upload.create': '上傳收檔',
-  'upload.publish': '上傳發布',
-  'upload.reject': '上傳退回',
-  'report.hide': '研報隱藏',
-  'report.restore': '研報恢復',
+  get 'review.update'() { return t('admin.analytics.analyticsFormat.reviewHandling') },
+  get 'qa_content.read'() { return t('admin.analytics.analyticsFormat.qAContentAccess') },
+  get 'upload.create'() { return t('admin.analytics.analyticsFormat.uploadReceived') },
+  get 'upload.publish'() { return t('admin.analytics.analyticsFormat.uploadPublished') },
+  get 'upload.reject'() { return t('admin.analytics.analyticsFormat.uploadRejected') },
+  get 'report.hide'() { return t('admin.analytics.analyticsFormat.reportHidden') },
+  get 'report.restore'() { return t('admin.analytics.analyticsFormat.reportRestored') },
 }

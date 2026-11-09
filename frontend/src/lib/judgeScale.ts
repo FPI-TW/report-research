@@ -1,4 +1,5 @@
 import type { EvalSource } from './progressSchema'
+import { t } from '@/i18n'
 
 /**
  * 判準只看這三個鍵：管線分頁傳整份 `evaluation.qa`，待複核頁傳 `/api/review/judge-scale` 的回應
@@ -19,5 +20,5 @@ export function isNewScale(d: ScaleFields | null | undefined): boolean {
 
 /** 「新量尺（自 X 起，<judge 模型>）」；新尺尚無查核時不編日期。 */
 export function newScaleText(d: ScaleFields): string {
-  return `新量尺（${d.judge_since ? `自 ${d.judge_since} 起，` : '尚無查核，'}${d.judge_model}）`
+  return t('lib.judgeScale.newScale', { v: d.judge_since ? t('lib.judgeScale.since', { judge_since: d.judge_since }) : t('lib.judgeScale.noChecksYet'), judge_model: String(d.judge_model) })
 }

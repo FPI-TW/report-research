@@ -23,8 +23,9 @@ import {
 } from './adminNav'
 import { RequireAdmin } from './RequireAdmin'
 import styles from './AdminShell.module.css'
+import { t } from '@/i18n'
 
-const LAMP_TEXT = { bad: '有異常', warn: '需要注意' } as const
+const LAMP_TEXT = { get bad() { return t('admin.shell.adminShell.errors') }, get warn() { return t('admin.shell.adminShell.needsAttention') } } as const
 const IS_MAC = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.userAgent)
 const PALETTE_HINT = IS_MAC ? '⌘K' : 'Ctrl K'
 
@@ -90,16 +91,16 @@ export function AdminShell() {
       <aside className={styles.rail}>
         <BrandLogo size={30} className={styles.logo} theme={theme} />
         {domains.length > 0 && (
-          <nav ref={railRef} className={styles.domains} aria-label="管理領域">
+          <nav ref={railRef} className={styles.domains} aria-label={t('admin.shell.adminShell.adminAreas')}>
             {domains.map(d => <RailItem key={d.key} domain={d} on={d.key === here?.domain.key} signals={signals} />)}
           </nav>
         )}
         <div className={styles.railSpacer} />
-        <Link to="/library" className={styles.railAction} title="回到研報平台" aria-label="回到研報平台">
+        <Link to="/library" className={styles.railAction} title={t('admin.shell.adminShell.backToResearchPlatform')} aria-label={t('admin.shell.adminShell.backToResearchPlatform')}>
           <Icon name="arrowLeft" size={18} />
         </Link>
         <form method="post" action="/logout" className={styles.railForm}>
-          <button type="submit" className={styles.railAction} title="登出" aria-label="登出">
+          <button type="submit" className={styles.railAction} title={t('admin.shell.adminShell.signOut')} aria-label={t('admin.shell.adminShell.signOut')}>
             <Icon name="logout" size={18} />
           </button>
         </form>
@@ -108,20 +109,20 @@ export function AdminShell() {
       {domain && (
         <aside className={styles.panel}>
           <div className={styles.panelHead}>
-            <div className={styles.panelKicker}>{brand.productName}・管理後台</div>
+            <div className={styles.panelKicker}>{t('admin.shell.adminShell.adminConsole', { productName: brand.productName })}</div>
             <div className={styles.panelTitle}>{domain.label}</div>
           </div>
-          <nav ref={panelNavRef} className={styles.panelNav} aria-label="管理導覽">
+          <nav ref={panelNavRef} className={styles.panelNav} aria-label={t('admin.shell.adminShell.adminNavigation')}>
             {domain.groups.map((g, i) => (
               <PanelGroup key={g.label ?? i} group={g} pathname={pathname} signals={signals} />
             ))}
             {domain.key === 'home' && <AttentionGroup pages={pages} signals={signals} />}
           </nav>
           {env && (
-            <div className={styles.env} aria-label="環境">
+            <div className={styles.env} aria-label={t('admin.shell.adminShell.environment')}>
               <div className={styles.envName}><Lamp tone="ok" label="" />{env.environment}</div>
               <div>{env.host}</div>
-              <div>檢查於 {fmtDateTime(env.checked_at)}</div>
+              <div>{t('admin.shell.adminShell.checkedAt', { checked_at: fmtDateTime(env.checked_at) })}</div>
             </div>
           )}
         </aside>
@@ -129,7 +130,7 @@ export function AdminShell() {
 
       <div className={styles.column}>
         <header className={styles.topbar}>
-          <nav className={styles.crumb} aria-label="位置">
+          <nav className={styles.crumb} aria-label={t('admin.shell.adminShell.location')}>
             {here ? (
               <>
                 <span>{here.domain.label}</span>
@@ -137,13 +138,13 @@ export function AdminShell() {
                 <span className={styles.sep} aria-hidden="true">/</span>
                 <span className={styles.crumbPage} aria-current="page">{here.page.label}</span>
               </>
-            ) : <span>管理後台</span>}
+            ) : <span>{t('admin.shell.adminShell.adminConsole2')}</span>}
           </nav>
           <ThemeSwitch theme={theme} onChange={setTheme} />
           {ready && (
             <button type="button" className={styles.search} onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Meta+K Control+K">
               <Icon name="search" size={14} />
-              <span className={styles.searchLabel}>搜尋頁面</span>
+              <span className={styles.searchLabel}>{t('admin.shell.adminShell.searchPages')}</span>
               <kbd className={styles.kbd}>{PALETTE_HINT}</kbd>
             </button>
           )}
@@ -155,9 +156,9 @@ export function AdminShell() {
             </span>
           )}
           {elevated && (
-            <span className={styles.elevated} title="10 分鐘內不用再驗證"><Lamp tone="ok" label="" />已驗證</span>
+            <span className={styles.elevated} title={t('admin.shell.adminShell.noReVerificationNeededFor')}><Lamp tone="ok" label="" />{t('admin.shell.adminShell.verified')}</span>
           )}
-          <Link to="/library" className={styles.back}><Icon name="arrowLeft" size={14} />研報平台</Link>
+          <Link to="/library" className={styles.back}><Icon name="arrowLeft" size={14} />{t('admin.shell.adminShell.researchPlatform')}</Link>
         </header>
         <RequireAdmin>
           {mfaRequired ? (
@@ -208,7 +209,7 @@ function RailItem({ domain, on, signals }: { domain: AdminDomain; on: boolean; s
       to={domain.groups[0].pages[0].to}
       className={`${styles.railItem} ${on ? styles.railOn : ''}`}
       title={domain.label}
-      aria-label={dot ? `${domain.label}（${LAMP_TEXT[dot]}）` : domain.label}
+      aria-label={dot ? t('admin.shell.adminShell.text', { label: domain.label, LAMP_TEXT: LAMP_TEXT[dot] }) : domain.label}
       aria-current={on ? 'true' : undefined}
     >
       <Icon name={domain.icon} size={20} />
@@ -236,7 +237,7 @@ function AttentionGroup({ pages, signals }: { pages: readonly AdminPageEntry[]; 
   const ordered = [...lit].sort((a, b) => rank(signals[a.page.key]?.lamp) - rank(signals[b.page.key]?.lamp))
   return (
     <>
-      <div className={styles.groupLabel}>異常</div>
+      <div className={styles.groupLabel}>{t('admin.shell.adminShell.error')}</div>
       {ordered.map(e => <PanelItem key={e.page.key} page={e.page} on={false} signals={signals} />)}
     </>
   )
@@ -259,14 +260,14 @@ function PanelItem({ page, on, signals }: { page: AdminPage; on: boolean; signal
   )
 }
 
-function ThemeSwitch({ theme, onChange }: { theme: AdminTheme; onChange: (t: AdminTheme) => void }) {
+function ThemeSwitch({ theme, onChange }: { theme: AdminTheme; onChange: (item: AdminTheme) => void }) {
   return (
-    <div className={styles.themeSeg} role="group" aria-label="主題">
-      <button type="button" className={styles.themeBtn} title="深色" aria-label="深色"
+    <div className={styles.themeSeg} role="group" aria-label={t('admin.shell.adminShell.theme')}>
+      <button type="button" className={styles.themeBtn} title={t('admin.shell.adminShell.dark')} aria-label={t('admin.shell.adminShell.dark')}
         aria-pressed={theme === 'dark'} onClick={() => onChange('dark')}>
         <Moon size={15} strokeWidth={1.8} aria-hidden="true" />
       </button>
-      <button type="button" className={styles.themeBtn} title="亮色" aria-label="亮色"
+      <button type="button" className={styles.themeBtn} title={t('admin.shell.adminShell.light')} aria-label={t('admin.shell.adminShell.light')}
         aria-pressed={theme === 'light'} onClick={() => onChange('light')}>
         <Sun size={15} strokeWidth={1.8} aria-hidden="true" />
       </button>

@@ -9,6 +9,7 @@ import { ScheduleCard } from './ScheduleCard'
 import { PROGRESS_POLL_MS, useProgress } from './useProgress'
 import { useRates } from './useRates'
 import styles from './Pipeline.module.css'
+import { t } from '@/i18n'
 
 /**
  * 管線（/app/admin/operations/pipeline）：研報導入管線的即時狀態，原本是主平台的監控頁（/app/monitor），
@@ -24,25 +25,23 @@ export default function OpsPipelinePage() {
   const rates = useRates(q.data, q.dataUpdatedAt)
   const header = (
     <PageHeader
-      summary="研報導入管線的即時狀態：排程、產出覆蓋、品質與語料組成。"
+      summary={t('admin.ops.pipeline.opsPipelinePage.liveStateOfTheReport')}
       help={(
         <>
-          資料只來自 <code>/api/progress</code>（web 行程直接讀 DB 與 data/ 的 log，伺服器快取 15 秒），不經維運代理：
-          代理停掉、監控收集沒裝的主機上這頁照常。每 {PROGRESS_POLL_MS / 1000} 秒更新，分頁在背景時暫停。
-          待複核筆數刻意不進結論：它們常態非零，算進去燈號會永遠亮著。
+          {t('admin.ops.pipeline.opsPipelinePage.dataComesOnlyFrom')}{' '}<code>/api/progress</code>{t('admin.ops.pipeline.opsPipelinePage.theWebProcessReadsThe', { v: PROGRESS_POLL_MS / 1000 })}
         </>
       )}
       actions={(
         <Button onClick={() => { void q.refetch() }} disabled={q.isFetching}>
-          {q.isFetching ? '重新整理中…' : '重新整理'}
+          {q.isFetching ? t('admin.ops.pipeline.opsPipelinePage.refreshing') : t('admin.ops.pipeline.opsPipelinePage.refresh')}
         </Button>
       )}
     />
   )
-  if (q.isPending) return <>{header}<p className={c.empty}>載入中…</p></>
+  if (q.isPending) return <>{header}<p className={c.empty}>{t('admin.ops.pipeline.opsPipelinePage.loading')}</p></>
   if (!q.data) {
-    const msg = q.error instanceof Error && q.error.message ? q.error.message : '載入失敗，請重試'
-    return <>{header}<p className={c.error} role="alert">管線狀態載入失敗：{msg}</p></>
+    const msg = q.error instanceof Error && q.error.message ? q.error.message : t('admin.ops.pipeline.opsPipelinePage.couldnTLoadTryAgain')
+    return <>{header}<p className={c.error} role="alert">{t('admin.ops.pipeline.opsPipelinePage.couldnTLoadPipelineStatus', { msg })}</p></>
   }
   const p = q.data
   return (
@@ -56,7 +55,7 @@ export default function OpsPipelinePage() {
         <ExtractionCard extraction={p.extraction} />
       </div>
       <CorpusCard db={p.db} />
-      <p className={styles.foot}>資料來自 /api/progress（伺服器快取 15 秒）</p>
+      <p className={styles.foot}>{t('admin.ops.pipeline.opsPipelinePage.dataFromApiProgressServer')}</p>
     </>
   )
 }

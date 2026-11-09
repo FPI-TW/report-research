@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
 import { Search, X } from 'lucide-react'
 import styles from './SearchBar.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   /** 已套用的查詢（網址上的 q）。外部清空（「清除條件」）時輸入框跟著清空。 */
@@ -12,7 +13,7 @@ interface Props {
  * 研報庫搜尋框（56px、圓角 16）。按 Enter 才送出（交接包：Enter 後先顯示骨架），
  * 打字中不發請求——語意檢索每次都要做一次查詢嵌入，逐字送出只是在燒後端。
  *
- * `aria-label="搜尋研報"` 是外殼「按 / 聚焦搜尋框」找這個輸入框的依據（lib/useGlobalShortcuts.ts），不要改。
+ * `data-report-search` 是外殼「按 / 聚焦搜尋框」找這個輸入框的依據（lib/useGlobalShortcuts.ts）；不靠 aria-label，因為它隨介面語系改變。
  */
 export function SearchBar({ initial, onSubmit }: Props) {
   const [draft, setDraft] = useState(initial)
@@ -46,14 +47,15 @@ export function SearchBar({ initial, onSubmit }: Props) {
         type="search"
         className={styles.input}
         value={draft}
-        placeholder="搜尋產業、公司、事件"
-        aria-label="搜尋研報"
+        placeholder={t('search.searchBar.searchSectorsCompaniesEvents')}
+        aria-label={t('search.searchBar.searchReports')}
+        data-report-search
         enterKeyHint="search"
         onChange={e => setDraft(e.target.value)}
         onKeyDown={onKeyDown}
       />
       {draft && (
-        <button type="button" className={styles.clear} aria-label="清除搜尋" onClick={clear}>
+        <button type="button" className={styles.clear} aria-label={t('search.searchBar.clearSearch')} onClick={clear}>
           <X size={16} strokeWidth={1.8} aria-hidden />
         </button>
       )}

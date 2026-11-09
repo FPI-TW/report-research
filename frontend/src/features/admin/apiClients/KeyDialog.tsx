@@ -2,6 +2,7 @@ import { Button, Dialog, DialogActions, DialogBody, toast } from '../../../compo
 import { Icon } from '../../../components/primitives/Icon'
 import { copyText } from '../../../lib/clipboard'
 import local from '../ApiClients.module.css'
+import { t } from '@/i18n'
 
 export interface ShownKey { name: string; key: string }
 
@@ -15,19 +16,19 @@ export function KeyDialog({ shown, onClose }: { shown: ShownKey | null; onClose:
   const copy = () => {
     if (!shown) return
     copyText(shown.key).then(
-      () => toast('已複製金鑰'),
-      () => toast('複製失敗，請手動選取金鑰', { tone: 'bad' }),
+      () => toast(t('admin.apiClients.keyDialog.keyCopied')),
+      () => toast(t('admin.apiClients.keyDialog.copyFailedSelectTheKey'), { tone: 'bad' }),
     )
   }
   return (
-    <Dialog open={shown != null} onClose={onClose} title={shown ? `「${shown.name}」的新金鑰` : ''} width={500} dismissible={false}>
-      <DialogBody>這把金鑰只會顯示這一次。請現在複製，交給對方後再關閉。</DialogBody>
+    <Dialog open={shown != null} onClose={onClose} title={shown ? t('admin.apiClients.keyDialog.newKeyFor', { name: shown.name }) : ''} width={500} dismissible={false}>
+      <DialogBody>{t('admin.apiClients.keyDialog.thisKeyIsShownOnly')}</DialogBody>
       <div className={local.keyField}>
-        <code className={local.keyBox} aria-label="API 金鑰">{shown?.key}</code>
-        <Button className={local.keyCopy} onClick={copy} data-autofocus><Icon name="copy" size={14} />複製</Button>
+        <code className={local.keyBox} aria-label={t('admin.apiClients.keyDialog.apiKey')}>{shown?.key}</code>
+        <Button className={local.keyCopy} onClick={copy} data-autofocus><Icon name="copy" size={14} />{t('admin.apiClients.keyDialog.copy')}</Button>
       </div>
       <DialogActions>
-        <Button variant="primary" onClick={onClose}>我已複製，關閉</Button>
+        <Button variant="primary" onClick={onClose}>{t('admin.apiClients.keyDialog.copiedClose')}</Button>
       </DialogActions>
     </Dialog>
   )

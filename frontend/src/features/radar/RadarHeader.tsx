@@ -5,6 +5,7 @@ import { fmtShortDate, WINDOW_OPTIONS } from './radarFormat'
 import { Segmented } from './Segmented'
 import shared from './shared.module.css'
 import styles from './RadarHeader.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   market: Market
@@ -33,7 +34,7 @@ export function RadarHeader({
     <header className={styles.header}>
       <button type="button" className={styles.back} onClick={onBack}>
         <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
-        券商共識
+        {t('radar.radarHeader.consensus')}
       </button>
 
       <div className={styles.row}>
@@ -48,10 +49,10 @@ export function RadarHeader({
           <p className={styles.meta} aria-live="polite">
             {coverage ? (
               <>
-                <b className={shared.num}>{coverage.brokers_total}</b> 家券商，
-                <b className={shared.num}>{coverage.brokers_in_consensus}</b> 家納入共識，
-                <b className={shared.num}>{coverage.reports_available}</b> 篇研報
-                {asOf ? <>，<span className={styles.nowrap}>資料截至 <span className={shared.num}>{fmtShortDate(asOf)}</span></span></> : null}
+                <b className={shared.num}>{coverage.brokers_total}</b>{' '}{t('radar.radarHeader.brokers')}
+                <b className={shared.num}>{coverage.brokers_in_consensus}</b>{' '}{t('radar.radarHeader.inConsensus')}
+                <b className={shared.num}>{coverage.reports_available}</b>{' '}{t('radar.radarHeader.reports')}
+                {asOf ? <>{t('radar.radarHeader.text')}<span className={styles.nowrap}>{t('radar.radarHeader.dataAsOf')}{' '}<span className={shared.num}>{fmtShortDate(asOf)}</span></span></> : null}
               </>
             ) : null}
           </p>
@@ -59,13 +60,13 @@ export function RadarHeader({
         </div>
 
         <Segmented
-          label="期間"
+          label={t('radar.radarHeader.period')}
           options={WINDOW_OPTIONS}
           value={window}
           onChange={onWindowChange}
           itemWidth={64}
         />
-        <button type="button" className={shared.btn} onClick={() => onBrowseReports()}>相關研報</button>
+        <button type="button" className={shared.btn} onClick={() => onBrowseReports()}>{t('radar.radarHeader.relatedReports')}</button>
       </div>
     </header>
   )

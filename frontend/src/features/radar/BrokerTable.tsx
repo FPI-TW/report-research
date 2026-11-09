@@ -10,6 +10,7 @@ import { brokerTableTsv } from './consensusExport'
 import { epsFyLabel, fmtShortDate, fmtValue, RATING_DISPLAY } from './radarFormat'
 import shared from './shared.module.css'
 import styles from './BrokerTable.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   brokers: BrokerSummary[]
@@ -42,29 +43,29 @@ export function BrokerTable({
 
   function copyTable() {
     copyText(brokerTableTsv(rows, targetCurrency, epsGroup)).then(
-      () => showToast('已複製表格，可貼入試算表', { ok: true }),
-      () => showToast('複製失敗，請再試一次'),
+      () => showToast(t('radar.brokerTable.tableCopiedPasteItInto'), { ok: true }),
+      () => showToast(t('radar.brokerTable.copyFailedTryAgain')),
     )
   }
 
   return (
     <section className={styles.section} aria-labelledby={`${uid}-h`}>
       <div className={styles.headRow}>
-        <h2 id={`${uid}-h`} className={styles.heading}>各券商最新觀點</h2>
+        <h2 id={`${uid}-h`} className={styles.heading}>{t('radar.brokerTable.latestViewByBroker')}</h2>
         {rows.length ? (
-          <button type="button" className={styles.copy} onClick={copyTable}>複製表格</button>
+          <button type="button" className={styles.copy} onClick={copyTable}>{t('radar.brokerTable.copyTable')}</button>
         ) : null}
       </div>
 
       {rows.length ? (
         <div className={`${shared.tile} ${styles.frame}`}>
           <div className={`${styles.grid} ${styles.colHead}`} aria-hidden="true">
-            <span>券商</span>
-            <span>評等</span>
-            <span className={styles.right}>目標價</span>
+            <span>{t('radar.brokerTable.broker')}</span>
+            <span>{t('radar.brokerTable.rating')}</span>
+            <span className={styles.right}>{t('radar.brokerTable.targetPrice')}</span>
             <span className={styles.right}>EPS</span>
-            <span>近期變化</span>
-            <span className={styles.right}>最新研報</span>
+            <span>{t('radar.brokerTable.recentChanges')}</span>
+            <span className={styles.right}>{t('radar.brokerTable.latestReport')}</span>
           </div>
           <ul className={styles.list}>
             {rows.map(b => {
@@ -88,10 +89,10 @@ export function BrokerTable({
                     <span className={styles.broker}>
                       <ChevronRight size={13} strokeWidth={2} className={styles.chev} aria-hidden="true" />
                       <span className={styles.name}>{brokerName(b)}</span>
-                      {b.stale ? <span className={styles.stale}>期間外</span> : null}
+                      {b.stale ? <span className={styles.stale}>{t('radar.brokerTable.outsidePeriod')}</span> : null}
                     </span>
                     <span>
-                      <span className={shared.srOnly}>{' 評等 '}</span>
+                      <span className={shared.srOnly}>{t('radar.brokerTable.rating2')}</span>
                       <span
                         className={`${shared.badge} ${shared[b.latest_rating]}`}
                         title={b.latest_rating_raw || undefined}
@@ -100,7 +101,7 @@ export function BrokerTable({
                       </span>
                     </span>
                     <span className={`${styles.right} ${styles.value} ${shared.num}`}>
-                      <span className={shared.srOnly}>{' 目標價 '}</span>
+                      <span className={shared.srOnly}>{t('radar.brokerTable.targetPrice2')}</span>
                       {b.latest_target_price != null ? (
                         <>
                           <span>{fmtValue(b.latest_target_price)}</span>
@@ -108,7 +109,7 @@ export function BrokerTable({
                             ? <span className={styles.meta}>{currency}</span>
                             : null}
                         </>
-                      ) : <span className={styles.na}><span aria-hidden="true">—</span><span className={shared.srOnly}>未提供</span></span>}
+                      ) : <span className={styles.na}><span aria-hidden="true">—</span><span className={shared.srOnly}>{t('radar.brokerTable.notProvided')}</span></span>}
                     </span>
                     <span className={`${styles.right} ${styles.value} ${styles.eps} ${shared.num}`}>
                       <span className={shared.srOnly}>{' EPS '}</span>
@@ -119,14 +120,14 @@ export function BrokerTable({
                             <span className={styles.meta}>{epsFyLabel(b.latest_eps_fy, b.latest_eps_period)}</span>
                           ) : null}
                         </>
-                      ) : <span className={styles.na}><span aria-hidden="true">—</span><span className={shared.srOnly}>未提供</span></span>}
+                      ) : <span className={styles.na}><span aria-hidden="true">—</span><span className={shared.srOnly}>{t('radar.brokerTable.notProvided')}</span></span>}
                     </span>
                     <span className={styles.change} data-tone={b.recent_change_label ? tone : 'flat'}>
-                      <span className={shared.srOnly}>{' 近期變化 '}</span>
-                      <span>{b.recent_change_label || '無變動'}</span>
+                      <span className={shared.srOnly}>{t('radar.brokerTable.recentChanges2')}</span>
+                      <span>{b.recent_change_label || t('radar.brokerTable.noChange')}</span>
                     </span>
                     <span className={`${styles.right} ${styles.date} ${shared.num}`}>
-                      <span className={shared.srOnly}>{' 最新研報 '}</span>
+                      <span className={shared.srOnly}>{t('radar.brokerTable.latestReport2')}</span>
                       <span>{fmtShortDate(b.latest_report_date)}</span>
                     </span>
                   </button>
@@ -148,7 +149,7 @@ export function BrokerTable({
           </ul>
         </div>
       ) : (
-        <p className={styles.empty}>還沒有具名券商的觀點</p>
+        <p className={styles.empty}>{t('radar.brokerTable.noNamedBrokerViewsYet')}</p>
       )}
     </section>
   )

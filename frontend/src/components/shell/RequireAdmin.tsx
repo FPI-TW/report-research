@@ -4,6 +4,7 @@ import { Skeleton } from '../primitives/Skeleton'
 import { Icon } from '../primitives/Icon'
 import { useMe } from '../../lib/useMe'
 import styles from './RequireAdmin.module.css'
+import { t } from '@/i18n'
 
 /**
  * 管理頁（/admin/*）的顯示層守門。
@@ -20,7 +21,7 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   const me = useMe()
   if (me.isPending) {
     return (
-      <div className={styles.wrap} aria-busy="true" aria-label="確認權限中">
+      <div className={styles.wrap} aria-busy="true" aria-label={t('shell.requireAdmin.checkingPermissions')}>
         <Skeleton width={220} height={26} />
         <Skeleton width="100%" height={160} />
       </div>
@@ -35,9 +36,9 @@ export function AdminForbidden() {
     <div className={styles.wrap}>
       <div className={styles.card} role="alert">
         <Icon name="shield" size={28} />
-        <h1 className={styles.title}>需要管理員權限</h1>
-        <p className={styles.body}>這一頁只開放給管理員。若你需要帳號或審核相關的協助，請聯絡管理員。</p>
-        <Link to="/library" className={styles.back}>回到研報庫</Link>
+        <h1 className={styles.title}>{t('shell.requireAdmin.administratorAccessRequired')}</h1>
+        <p className={styles.body}>{t('shell.requireAdmin.thisPageIsOnlyAvailable')}</p>
+        <Link to="/library" className={styles.back}>{t('shell.requireAdmin.backToLibrary')}</Link>
       </div>
     </div>
   )

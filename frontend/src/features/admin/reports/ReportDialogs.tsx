@@ -7,11 +7,12 @@ import { useReportVisibility } from '../useAdminReports'
 import { namesPreview } from '../useSelection'
 import { REASON_MAX, messageOf } from './reportStatus'
 import s from './Reports.module.css'
+import { t } from '@/i18n'
 
 /** 原因欄：必填、最多 500 字；輸入框放寬到兩倍，超過時由送出前的檢查說明，不是默默截掉。 */
 function ReasonField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
-    <Field label="原因" counter={`${value.trim().length}／${REASON_MAX}`}>
+    <Field label={t('admin.reports.reportDialogs.reason')} counter={t('admin.reports.reportDialogs.text', { length: value.trim().length, REASON_MAX })}>
       <textarea className={c.textarea} rows={3} value={value} maxLength={REASON_MAX * 2} placeholder={placeholder}
         onChange={e => onChange(e.target.value)} />
     </Field>
@@ -20,8 +21,8 @@ function ReasonField({ value, onChange, placeholder }: { value: string; onChange
 
 /** 回 null 表示可以送出，否則是要顯示的錯誤。 */
 function checkReason(note: string): string | null {
-  if (!note) return '隱藏研報必須填寫原因'
-  if (note.length > REASON_MAX) return `原因最多 ${REASON_MAX} 字`
+  if (!note) return t('admin.reports.reportDialogs.aReasonIsRequiredTo')
+  if (note.length > REASON_MAX) return t('admin.reports.reportDialogs.reasonCanBeAtMost', { REASON_MAX })
   return null
 }
 
@@ -48,16 +49,16 @@ export function HideDialog({ report, onClose, onDone }: {
   return (
     <FormDialog
       open={report != null}
-      title={report ? `隱藏「${displayTitle(report)}」` : ''}
-      body="隱藏後檢索、問答、閱讀頁、雷達、簡報與原檔都看不到這份研報；批次照常處理，恢復後立即生效。原因只有管理員看得到。"
-      submitLabel={visibility.isPending ? '隱藏中…' : '隱藏'}
+      title={report ? t('admin.reports.reportDialogs.hide', { report: displayTitle(report) }) : ''}
+      body={t('admin.reports.reportDialogs.onceHiddenTheReportDisappears')}
+      submitLabel={visibility.isPending ? t('admin.reports.reportDialogs.hiding') : t('admin.reports.reportDialogs.hide2')}
       submitTone="danger"
       busy={visibility.isPending}
       error={error}
       onSubmit={submit}
       onClose={close}
     >
-      <ReasonField value={reason} onChange={setReason} placeholder="例如：非研究檔、內容有誤、重複上傳" />
+      <ReasonField value={reason} onChange={setReason} placeholder={t('admin.reports.reportDialogs.eGNotResearchIncorrect')} />
     </FormDialog>
   )
 }
@@ -92,9 +93,9 @@ export function BulkHideDialog({ targets, onClose, onSubmit }: {
   return (
     <FormDialog
       open={targets != null}
-      title={`隱藏 ${count} 篇研報`}
-      body="同一個原因套用到每一篇，每篇各留一筆操作紀錄；上傳草稿不能隱藏，會逐筆略過。"
-      submitLabel={busy ? '隱藏中…' : `隱藏 ${count} 篇`}
+      title={t('admin.reports.reportDialogs.hideReports', { count })}
+      body={t('admin.reports.reportDialogs.theSameReasonAppliesTo')}
+      submitLabel={busy ? t('admin.reports.reportDialogs.hiding') : t('admin.reports.reportDialogs.hideReports2', { count })}
       submitTone="danger"
       busy={busy}
       error={error}

@@ -1,13 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { AskEmptyState } from './AskEmptyState'
-import { AI_NOTE } from './Composer'
+import { aiNote } from './aiNote'
 
 test('標題、浮動輸入框、AI 聲明與 2×2 建議題', () => {
   render(<AskEmptyState value="" onChange={() => {}} onSubmit={() => {}} />)
   expect(screen.getByRole('heading', { name: '今天想研究什麼？' })).toBeInTheDocument()
   expect(screen.getByLabelText('輸入問題')).toHaveAttribute('placeholder', '輸入問題…')
-  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
+  expect(screen.getByText(aiNote())).toBeInTheDocument()
   expect(screen.getAllByRole('button', { name: /台股|外匯|總經|加密/ })).toHaveLength(4)
   // 不加說明性副標
   expect(screen.queryByText(/以自然語言/)).toBeNull()

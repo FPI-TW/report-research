@@ -8,6 +8,7 @@ import { ViewerBoundary } from './pdf/ViewerBoundary'
 import { StateBox } from './ReportStates'
 import stateStyles from './ReportStates.module.css'
 import styles from './PdfPane.module.css'
+import { t } from '@/i18n'
 
 // 懶載入：PDFium 的 WASM 與外掛加起來體積可觀，不該讓研究助理與研報庫一起背。
 const PdfViewer = lazy(() => import('./pdf/PdfViewer'))
@@ -40,9 +41,9 @@ function BuiltInViewer({ href, title }: { href: string; title: string }) {
   return (
     <div className={styles.pdfWrap}>
       <div className={styles.pdfBar}>
-        <span className={styles.pdfHint}>若下方無法顯示 PDF</span>
-        <a className={styles.pdfLink} href={href} target="_blank" rel="noopener noreferrer">在新分頁開啟</a>
-        <a className={styles.pdfLink} href={href} download>下載</a>
+        <span className={styles.pdfHint}>{t('report.pdfPane.ifThePdfDoesnT')}</span>
+        <a className={styles.pdfLink} href={href} target="_blank" rel="noopener noreferrer">{t('report.pdfPane.openInNewTab')}</a>
+        <a className={styles.pdfLink} href={href} download>{t('report.pdfPane.download')}</a>
       </div>
       <iframe className={styles.frame} src={href} title={title} />
     </div>
@@ -60,7 +61,7 @@ export function PdfPane({ doc, jump = null, marks, onJumpResult, onLoadState, on
   if (!doc.has_file) {
     return (
       <div className={styles.stage}>
-        <StateBox role="status" onCanvas icon={<FileX size={18} strokeWidth={1.8} />} title="找不到原始檔" />
+        <StateBox role="status" onCanvas icon={<FileX size={18} strokeWidth={1.8} />} title={t('report.pdfPane.originalFileNotFound')} />
       </div>
     )
   }
@@ -69,16 +70,16 @@ export function PdfPane({ doc, jump = null, marks, onJumpResult, onLoadState, on
   const title = displayTitle(doc)
 
   if (!doc.is_pdf) {
-    const ext = doc.file_name.split('.').pop()?.toUpperCase() ?? '檔案'
+    const ext = doc.file_name.split('.').pop()?.toUpperCase() ?? t('report.pdfPane.file')
     return (
       <div className={styles.stage}>
         <StateBox
           role="status"
           onCanvas
           icon={<FileWarning size={18} strokeWidth={1.8} />}
-          title={`${ext} 文件無法內嵌預覽`}
+          title={t('report.pdfPane.filesCanTBePreviewed', { ext })}
         >
-          <a className={stateStyles.btn} href={href} download>下載原始檔</a>
+          <a className={stateStyles.btn} href={href} download>{t('report.pdfPane.downloadOriginal')}</a>
         </StateBox>
       </div>
     )
@@ -97,7 +98,7 @@ export function PdfPane({ doc, jump = null, marks, onJumpResult, onLoadState, on
         fallback={<BuiltInViewer href={href} title={title} />}
         onError={onDegraded}
       >
-        <Suspense fallback={<div className={styles.booting} role="status">正在啟動 PDF 引擎…</div>}>
+        <Suspense fallback={<div className={styles.booting} role="status">{t('report.pdfPane.startingPdfEngine')}</div>}>
           <PdfViewer
             url={href}
             title={title}

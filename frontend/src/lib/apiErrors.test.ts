@@ -1,6 +1,7 @@
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, it, test, vi } from 'vitest'
 import { z } from 'zod'
 import { ApiError, errorDetail, requestJSON } from './api'
+import { setLocale } from '../i18n'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -38,4 +39,28 @@ test('requestJSON：沒有 code 的舊格式錯誤，ApiError.code 是 undefined
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'x' }), { status: 400 })))
   const err = await requestJSON('/api/admin/users', z.object({})).catch(e => e)
   expect((err as ApiError).code).toBeUndefined()
+})
+
+describe('錯誤訊息依介面語系', () => {
+  afterEach(() => setLocale('zh-Hant'))
+
+  it('中文介面照舊顯示後端的 detail', () => {
+    expect(errorDetail({ detail: '至少要保留一位啟用中的管理員', code: 'conflict' }, 409)).toBe('至少要保留一位啟用中的管理員')
+  })
+
+  it('英文介面依 code 顯示英文；未登記的 code 顯示原 detail', () => {
+    setLocale('en')
+    expect(errorDetail({ detail: '這項操作需要重新驗證密碼', code: 'elevation_required' }, 403))
+      .toBe('This action requires re-verifying the password.')
+    expect(errorDetail({ detail: '某個新錯誤', code: 'brand_new_code' }, 400)).toBe('某個新錯誤')
+  })
+
+  it('422 的驗證錯誤（pydantic 的英文 msg）兩種語系都照原文', () => {
+    setLocale('en')
+    expect(errorDetail({ detail: [{ msg: 'Field required' }], code: 'validation_error' }, 422)).toBe('Field required')
+  })
+
+  it('detail 是空的：用字典裡的訊息', () => {
+    expect(errorDetail({ detail: '', code: 'rate_limited' }, 429)).toBe('嘗試次數過多，請稍後再試')
+  })
 })

@@ -3,6 +3,7 @@ import { getJSON } from './api'
 import { readSSE, type RawSSEEvent } from './readSSE'
 import { conversationTurnSchema, qaVersionSchema, type ConversationTurn, type QaVersion } from './askSchemas'
 import type { Locale } from './useLocale'
+import { t } from '@/i18n'
 
 export function streamAsk(
   body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string; request_id?: string; locale?: Locale; web?: boolean },
@@ -96,7 +97,7 @@ export async function deleteConversation(id: string): Promise<void> {
   if (resp.status === 404 || resp.status === 405) {
     resp = await fetch(`${path}/delete`, { method: 'POST', credentials: 'same-origin' })
   }
-  if (!resp.ok) throw new Error(`刪除對話失敗（HTTP ${resp.status}）`)
+  if (!resp.ok) throw new Error(t('lib.askApi.couldnTDeleteTheConversation', { status: resp.status }))
   // 後端的契約是 200 + {"ok": bool}；ok=false 代表一列都沒刪到（查無此對話串）。
   // 主體解析失敗不當成刪除失敗——DELETE 成功但回應被代理改寫過的情況不該讓
   // 使用者以為東西還在（那會誘導他再按一次）。
@@ -105,7 +106,7 @@ export async function deleteConversation(id: string): Promise<void> {
     const body = (await resp.json()) as { ok?: unknown }
     if (typeof body?.ok === 'boolean') ok = body.ok
   } catch { /* 非 JSON 或空主體：視為成功，理由見上 */ }
-  if (!ok) throw new Error('刪除對話失敗：找不到該對話串')
+  if (!ok) throw new Error(t('lib.askApi.couldnTDeleteTheConversation2'))
 }
 
 /** value 'none' ＝取消評價（後端寫成 NULL）。刻意不是可為 null 的欄位——欄位漏送與

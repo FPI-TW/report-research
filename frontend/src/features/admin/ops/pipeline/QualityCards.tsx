@@ -6,6 +6,7 @@ import type { EvalSource, Evaluation, Extraction } from '../../../../lib/progres
 import { Bar, Count, Row } from './parts'
 import { fmtInt } from './rate'
 import styles from './Pipeline.module.css'
+import { t } from '@/i18n'
 
 function fmtScore(v: number | null): string {
   return v === null ? '—' : v.toFixed(3)
@@ -20,17 +21,17 @@ function fmtScore(v: number | null): string {
 function JudgeScale({ d }: { d: EvalSource }) {
   if (!d.judge_model) return null
   const other = d.other_judge_checked ?? 0
-  const since = isNewScale(d) ? '' : d.judge_since ? `，自 ${d.judge_since} 起` : ''
+  const since = isNewScale(d) ? '' : d.judge_since ? t('admin.ops.pipeline.qualityCards.since', { judge_since: d.judge_since }) : ''
   const counts = [
-    d.judge_checked !== undefined ? `該尺已查核 ${fmtInt(d.judge_checked)}` : null,
-    d.avg_n !== undefined ? `平均樣本數 ${fmtInt(d.avg_n)}` : null,
-  ].filter(Boolean).join('、')
+    d.judge_checked !== undefined ? t('admin.ops.pipeline.qualityCards.checkedByThisJudge', { judge_checked: fmtInt(d.judge_checked) }) : null,
+    d.avg_n !== undefined ? t('admin.ops.pipeline.qualityCards.avgSampleSize', { avg_n: fmtInt(d.avg_n) }) : null,
+  ].filter(Boolean).join(t('admin.ops.pipeline.qualityCards.text'))
   return (
     <p className={styles.note}>
-      {`fail-open、低於門檻與平均只計判定尺 ${d.judge_model}${since}`}
-      {counts && `（${counts}）`}
-      {other > 0 && `；另有 ${fmtInt(other)} 筆其他判定尺的結果只計入已查核數`}
-      。fail-open 代表 judge 異常、該筆實際未被查核。
+      {t('admin.ops.pipeline.qualityCards.failOpenBelowThresholdAnd', { judge_model: d.judge_model, since })}
+      {counts && t('admin.ops.pipeline.qualityCards.text2', { counts })}
+      {other > 0 && t('admin.ops.pipeline.qualityCards.resultsFromOtherJudgesCount', { other: fmtInt(other) })}
+      {t('admin.ops.pipeline.qualityCards.failOpenMeansTheJudge')}
     </p>
   )
 }
@@ -42,39 +43,39 @@ function JudgeScale({ d }: { d: EvalSource }) {
 export function FaithfulnessCard({ evaluation }: { evaluation: Evaluation | undefined }) {
   const qa = evaluation?.qa
   return (
-    <Card title="問答忠實度" hint="近 30 天" labelledBy="pipeline-faith-title">
+    <Card title={t('admin.ops.pipeline.qualityCards.qAFaithfulness')} hint={t('admin.ops.pipeline.qualityCards.last30Days')} labelledBy="pipeline-faith-title">
       <div className={styles.body}>
         {!evaluation ? (
-          <p className={styles.idle}>此版後端未提供查核統計</p>
+          <p className={styles.idle}>{t('admin.ops.pipeline.qualityCards.thisBackendVersionDoesnT')}</p>
         ) : !qa ? (
-          <p className={styles.idle}>近 30 天沒有可查核的問答</p>
+          <p className={styles.idle}>{t('admin.ops.pipeline.qualityCards.noCheckableQAIn')}</p>
         ) : (
           <>
             <div className={styles.rows}>
-              <Row label="已查核">
+              <Row label={t('admin.ops.pipeline.qualityCards.checked')}>
                 <div className={styles.line}>
-                  <span className={c.num} title="所有判定尺合計（覆蓋率）">
+                  <span className={c.num} title={t('admin.ops.pipeline.qualityCards.allJudgesCombinedCoverage')}>
                     <b>{fmtInt(qa.checked)}</b> / {fmtInt(qa.total)}
                   </span>
-                  <span className={`${c.muted} ${styles.small}`}>有取樣率、只查含數字的回答</span>
+                  <span className={`${c.muted} ${styles.small}`}>{t('admin.ops.pipeline.qualityCards.sampledOnlyAnswersContainingNumbers')}</span>
                 </div>
               </Row>
               <Row label="fail-open"><span className={c.num}><Count value={qa.degraded} /></span></Row>
-              <Row label="低於門檻">
+              <Row label={t('admin.ops.pipeline.qualityCards.belowThreshold')}>
                 <div className={styles.line}>
                   <span className={c.num}><Count value={qa.below_min} /></span>
-                  <span className={c.muted}>門檻 {evaluation.min_score}</span>
-                  <Link className={c.link} to="/admin/reviews">前往待複核</Link>
+                  <span className={c.muted}>{t('admin.ops.pipeline.qualityCards.threshold', { min_score: evaluation.min_score })}</span>
+                  <Link className={c.link} to="/admin/reviews">{t('admin.ops.pipeline.qualityCards.goToReviewQueue')}</Link>
                 </div>
               </Row>
-              <Row label="平均分數">
+              <Row label={t('admin.ops.pipeline.qualityCards.averageScore')}>
                 <div className={styles.line}>
                   <span className={c.num}><b>{fmtScore(qa.avg_score)}</b></span>
                   {isNewScale(qa) && <Chip tone="gold">{newScaleText(qa)}</Chip>}
                 </div>
               </Row>
-              <Row label="最後查核">
-                <span className={c.num}>{qa.latest ?? `尚無查核（門檻 ${evaluation.min_score}）`}</span>
+              <Row label={t('admin.ops.pipeline.qualityCards.lastChecked')}>
+                <span className={c.num}>{qa.latest ?? t('admin.ops.pipeline.qualityCards.noChecksYetThreshold', { min_score: evaluation.min_score })}</span>
               </Row>
             </div>
             <JudgeScale d={qa} />
@@ -87,11 +88,11 @@ export function FaithfulnessCard({ evaluation }: { evaluation: Evaluation | unde
 
 /** extraction_log 的 stopped_at 詞彙（與 `store.STOPPED_AT` 逐字對齊）。未知值原樣顯示，不吞掉。 */
 const STOPPED: readonly { key: string; label: string; color: string }[] = [
-  { key: 'ingested', label: '已入庫', color: 'var(--ac-ok)' },
-  { key: 'not_research', label: '非研報', color: 'var(--ac-idle)' },
-  { key: 'skip_admin', label: '行政件', color: 'var(--ac-l5)' },
-  { key: 'scanned', label: '無文字', color: 'var(--ac-warn)' },
-  { key: 'extract_error', label: '抽取失敗', color: 'var(--ac-bad)' },
+  { key: 'ingested', get label() { return t('admin.ops.pipeline.qualityCards.ingested') }, color: 'var(--ac-ok)' },
+  { key: 'not_research', get label() { return t('admin.ops.pipeline.qualityCards.nonResearch') }, color: 'var(--ac-idle)' },
+  { key: 'skip_admin', get label() { return t('admin.ops.pipeline.qualityCards.administrative') }, color: 'var(--ac-l5)' },
+  { key: 'scanned', get label() { return t('admin.ops.pipeline.qualityCards.noText') }, color: 'var(--ac-warn)' },
+  { key: 'extract_error', get label() { return t('admin.ops.pipeline.qualityCards.extractionFailed') }, color: 'var(--ac-bad)' },
 ]
 const UNKNOWN_STOP_COLOR = 'var(--ac-info)'
 
@@ -111,12 +112,12 @@ function stoppedRows(stoppedAt: Record<string, number>) {
 export function ExtractionCard({ extraction }: { extraction: Extraction | null | undefined }) {
   if (extraction === undefined || extraction === null) {
     return (
-      <Card title="抽取品質與回填" labelledBy="pipeline-extract-title">
+      <Card title={t('admin.ops.pipeline.qualityCards.extractionQualityAndBackfill')} labelledBy="pipeline-extract-title">
         <div className={styles.body}>
           <p className={styles.idle}>
             {extraction === undefined
-              ? '此版後端未提供抽取統計'
-              : 'schema 尚未套用（extraction_log 不存在），請執行 make schema'}
+              ? t('admin.ops.pipeline.qualityCards.thisBackendVersionDoesnT2')
+              : t('admin.ops.pipeline.qualityCards.schemaNotAppliedExtractionLog')}
           </p>
         </div>
       </Card>
@@ -126,24 +127,24 @@ export function ExtractionCard({ extraction }: { extraction: Extraction | null |
   const stops = stoppedRows(extraction.stopped_at)
   const stopTotal = stops.reduce((s, r) => s + r.value, 0)
   return (
-    <Card title="抽取品質與回填" hint={`目標 ${extraction.target_version}`} labelledBy="pipeline-extract-title">
+    <Card title={t('admin.ops.pipeline.qualityCards.extractionQualityAndBackfill')} hint={t('admin.ops.pipeline.qualityCards.target', { target_version: extraction.target_version })} labelledBy="pipeline-extract-title">
       <div className={styles.body}>
         <div className={styles.rows}>
-          <Row label="回填">
-            <Bar pct={b.pct} label="回填進度" gold />
+          <Row label={t('admin.ops.pipeline.qualityCards.backfill')}>
+            <Bar pct={b.pct} label={t('admin.ops.pipeline.qualityCards.backfillProgress')} gold />
             <div className={styles.line}>
               <span className={c.num}>{b.pct.toFixed(1)}%</span>
-              <span className={c.num}>已達 {extraction.target_version}：{fmtInt(b.done)}/{fmtInt(b.total)}</span>
-              <span className={c.num}>尚餘 {fmtInt(b.remaining)}</span>
-              <span className={c.muted}>{b.latest ? `最後寫入 ${b.latest}` : '尚無抽取紀錄'}</span>
+              <span className={c.num}>{t('admin.ops.pipeline.qualityCards.at', { target_version: extraction.target_version, done: fmtInt(b.done), total: fmtInt(b.total) })}</span>
+              <span className={c.num}>{t('admin.ops.pipeline.qualityCards.remaining', { remaining: fmtInt(b.remaining) })}</span>
+              <span className={c.muted}>{b.latest ? t('admin.ops.pipeline.qualityCards.lastWritten', { latest: b.latest }) : t('admin.ops.pipeline.qualityCards.noExtractionRecordsYet')}</span>
             </div>
           </Row>
-          <Row label="落點">
+          <Row label={t('admin.ops.pipeline.qualityCards.outcomes')}>
             {stops.length === 0 ? (
-              <span className={c.muted}>extraction_log 尚無列</span>
+              <span className={c.muted}>{t('admin.ops.pipeline.qualityCards.extractionLogHasNoRows')}</span>
             ) : (
               <>
-                <div className={styles.stack} role="img" aria-label="抽取落點分布">
+                <div className={styles.stack} role="img" aria-label={t('admin.ops.pipeline.qualityCards.extractionOutcomeDistribution')}>
                   {stops.map(s => (
                     <span key={s.key} style={{ width: `${stopTotal ? (s.value / stopTotal) * 100 : 0}%`, background: s.color }} />
                   ))}
@@ -159,20 +160,20 @@ export function ExtractionCard({ extraction }: { extraction: Extraction | null |
               </>
             )}
           </Row>
-          <Row label="要人看">
+          <Row label={t('admin.ops.pipeline.qualityCards.needsALook')}>
             <div className={styles.line}>
-              <span>需複核 <Count value={extraction.needs_review} /></span>
-              <span>頁級失敗 <Count value={extraction.pages_failed} /></span>
-              <Link className={c.link} to="/admin/reviews">前往待複核</Link>
+              <span>{t('admin.ops.pipeline.qualityCards.needsReview')}{' '}<Count value={extraction.needs_review} /></span>
+              <span>{t('admin.ops.pipeline.qualityCards.pageLevelFailures')}{' '}<Count value={extraction.pages_failed} /></span>
+              <Link className={c.link} to="/admin/reviews">{t('admin.ops.pipeline.qualityCards.goToReviewQueue')}</Link>
             </div>
           </Row>
-          <Row label="版本">
+          <Row label={t('admin.ops.pipeline.qualityCards.version')}>
             <div className={styles.chips}>
               {extraction.versions.map(v => <Chip key={v.version} tone="idle" mono>{v.version} {fmtInt(v.count)}</Chip>)}
             </div>
           </Row>
         </div>
-        <p className={styles.note}>品質只標記不擋：需複核與頁級失敗的研報仍可檢索。(unknown) 是尚未回填的舊列，回填跑完會歸零。</p>
+        <p className={styles.note}>{t('admin.ops.pipeline.qualityCards.qualityIsFlaggedNeverBlocking')}</p>
       </div>
     </Card>
   )

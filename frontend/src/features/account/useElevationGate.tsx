@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from '../../lib/api'
 import { ElevationDialog } from './ElevationDialog'
+import { t } from '@/i18n'
 
 /** 使用者在權限提升對話框按了取消：呼叫端通常直接忽略。 */
 export class ElevationCancelledError extends Error {
   constructor() {
-    super('已取消重新驗證')
+    super(t('account.useElevationGate.reVerificationCanceled'))
     this.name = 'ElevationCancelledError'
   }
 }

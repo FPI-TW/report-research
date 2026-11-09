@@ -1,6 +1,7 @@
 import { useEnabledMarkets } from '../../lib/marketsConfig'
 import { marketLabel } from '../../lib/meta'
 import styles from './MarketChipBar.module.css'
+import { t } from '@/i18n'
 
 const ALL = 'ALL'
 
@@ -21,10 +22,10 @@ export function MarketChipBar({ value, onChange, counts, codes }: Props) {
   const enabled = useEnabledMarkets()
   const chips = [ALL, ...(codes ?? enabled)]
   return (
-    <div className={styles.bar} role="group" aria-label="市場篩選">
+    <div className={styles.bar} role="group" aria-label={t('search.marketChipBar.marketFilter')}>
       {chips.map(code => {
         const active = value === code
-        const label = code === ALL ? '全部' : marketLabel(code)
+        const label = code === ALL ? t('search.marketChipBar.all') : marketLabel(code)
         const n = counts?.[code]
         return (
           <button

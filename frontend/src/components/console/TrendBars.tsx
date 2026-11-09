@@ -1,4 +1,5 @@
 import c from './TrendBars.module.css'
+import { t } from '@/i18n'
 
 export interface TrendBar { value: number | null; label: string }
 
@@ -26,10 +27,10 @@ export function TrendBars({ bars, label, format = String, highlightLast, thresho
   return (
     <figure className={c.wrap} aria-label={label}>
       <div className={c.plot} style={{ height }} role="img"
-        aria-label={`${label}：${bars.filter(b => b.value != null).length} 個資料點`}>
-        {threshold != null && <div className={c.threshold} style={{ bottom: pct(threshold) }} title={`門檻 ${format(threshold)}`} />}
+        aria-label={t('admin.console.trendBars.dataPoints', { label, length: bars.filter(b => b.value != null).length })}>
+        {threshold != null && <div className={c.threshold} style={{ bottom: pct(threshold) }} title={t('admin.console.trendBars.threshold', { threshold: format(threshold) })} />}
         {bars.map((b, i) => (
-          <div key={i} className={c.slot} title={b.value == null ? `${b.label}・沒有資料` : `${b.label}・${format(b.value)}`}>
+          <div key={i} className={c.slot} title={b.value == null ? t('admin.console.trendBars.noData', { label: b.label }) : `${b.label}${t('common.separator')}${format(b.value)}`}>
             {b.value != null && (
               <div className={c.bar} style={{ height: pct(b.value) }}
                 data-tone={threshold != null && b.value > threshold ? 'warn' : highlightLast && i === bars.length - 1 ? 'gold' : undefined} />

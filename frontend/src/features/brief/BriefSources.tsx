@@ -7,6 +7,7 @@ import { marketColor } from '../../lib/meta'
 import { OTHER_COLOR } from './briefContent'
 import { monthDay } from './briefDates'
 import styles from './BriefSources.module.css'
+import { t } from '@/i18n'
 
 // 收合時列幾篇（設計稿）。
 const COLLAPSED = 6
@@ -29,7 +30,7 @@ export function BriefSources({ reports, reportCount, className }: Props) {
   return (
     <section className={[className, styles.sources].filter(Boolean).join(' ')} aria-labelledby="brief-src">
       <div className={styles.head}>
-        <h2 id="brief-src" className={styles.label}>本期來源研報</h2>
+        <h2 id="brief-src" className={styles.label}>{t('brief.briefSources.sourceReports')}</h2>
         <span className={styles.count}>{reportCount}</span>
       </div>
       <ul id={listId} className={styles.list}>
@@ -60,7 +61,7 @@ export function BriefSources({ reports, reportCount, className }: Props) {
           aria-controls={listId}
           onClick={() => setOpen(o => !o)}
         >
-          {open ? '收合' : `其餘 ${hidden} 篇`}
+          {open ? t('brief.briefSources.collapse') : t('brief.briefSources.more', { hidden })}
           <ChevronDown
             size={13}
             strokeWidth={1.8}
@@ -70,7 +71,7 @@ export function BriefSources({ reports, reportCount, className }: Props) {
         </button>
       )}
       {unlisted > 0 && (open || hidden === 0) && (
-        <p className={styles.note}>另有 {unlisted} 篇未列入本期彙整。</p>
+        <p className={styles.note}>{t('brief.briefSources.moreReportsArenTIncluded', { unlisted })}</p>
       )}
     </section>
   )

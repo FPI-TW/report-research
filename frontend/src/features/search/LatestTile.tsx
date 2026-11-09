@@ -7,6 +7,7 @@ import { monthOf, shortDate } from './libraryFormat'
 import { PreviewLink } from './PreviewLink'
 import atoms from './atoms.module.css'
 import styles from './LatestTile.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   rows: ReportRow[]
@@ -27,10 +28,10 @@ export function LatestTile({ rows, totalReports, onPreview, onSeeAll, className,
       aria-labelledby="library-latest"
     >
       <div className={styles.head}>
-        <h2 id="library-latest" className={atoms.h2}>更多最新入庫</h2>
+        <h2 id="library-latest" className={atoms.h2}>{t('search.latestTile.moreRecentlyIngested')}</h2>
         {month && <span className={`${atoms.num} ${styles.month}`}>{month}</span>}
         <button type="button" className={`${atoms.lk} ${styles.more}`} onClick={onSeeAll}>
-          查看全部 <span className={atoms.num}>{totalReports.toLocaleString()}</span> 篇
+          {t('search.latestTile.viewAll')}{' '}<span className={atoms.num}>{totalReports.toLocaleString()}</span>{' '}{t('search.latestTile.reports')}
           <ChevronRight size={14} strokeWidth={1.8} aria-hidden />
         </button>
       </div>

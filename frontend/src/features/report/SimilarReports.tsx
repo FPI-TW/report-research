@@ -6,6 +6,7 @@ import type { ReportLinkState } from './backNav'
 import { fmtDate, reportHref } from './readingFormat'
 import panel from './panel.module.css'
 import styles from './SimilarReports.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   items: SimilarReport[]
@@ -28,10 +29,10 @@ export function SimilarReports({ items, isLoading, isError, onRetry, linkState }
   if (isError) {
     return (
       <section className={panel.sec} aria-labelledby="similar-heading">
-        <h2 id="similar-heading" className={panel.h}>相似研報</h2>
+        <h2 id="similar-heading" className={panel.h}>{t('report.similarReports.similarReports')}</h2>
         <div className={styles.failed} role="status">
-          <span>相似研報載入失敗。</span>
-          <button type="button" className={styles.retry} onClick={onRetry}>重試</button>
+          <span>{t('report.similarReports.couldnTLoadSimilarReports')}</span>
+          <button type="button" className={styles.retry} onClick={onRetry}>{t('report.similarReports.retry')}</button>
         </div>
       </section>
     )
@@ -41,7 +42,7 @@ export function SimilarReports({ items, isLoading, isError, onRetry, linkState }
 
   return (
     <section className={panel.sec} aria-labelledby="similar-heading">
-      <h2 id="similar-heading" className={panel.h}>相似研報</h2>
+      <h2 id="similar-heading" className={panel.h}>{t('report.similarReports.similarReports')}</h2>
       <div className={styles.list}>
         {items.map(item => {
           const broker = item.source_display || item.source || null

@@ -1,4 +1,5 @@
 import type { ReadingRatingNorm } from '../../lib/readingSchemas'
+import { t } from '@/i18n'
 
 /** file_hash 為 sha256 十六進位；非 64-hex 前端先擋一次（不打 API）。 */
 const HASH_RE = /^[0-9a-f]{64}$/i
@@ -17,12 +18,12 @@ export function reportHref(fileHash: string): string {
 }
 
 export const RATING_DISPLAY: Record<ReadingRatingNorm, string> = {
-  buy: '買進',
-  overweight: '加碼',
-  neutral: '中立',
-  underweight: '減碼',
-  sell: '賣出',
-  unknown: '未評等',
+  get buy() { return t('report.readingFormat.buy') },
+  get overweight() { return t('report.readingFormat.overweight') },
+  get neutral() { return t('report.readingFormat.neutral') },
+  get underweight() { return t('report.readingFormat.underweight') },
+  get sell() { return t('report.readingFormat.sell') },
+  get unknown() { return t('report.readingFormat.notRated') },
 }
 
 /** 日期只取 YYYY-MM-DD（後端可能帶時間）。缺值回 null，呼叫端整格不渲染。 */

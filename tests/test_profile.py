@@ -269,7 +269,85 @@ class DocTypesSectionTests(_TmpCase):
         self.assertRejected(MINIMAL + "[doc_types.research]\nfeatures = []\n", "[doc_types].non_research", "必須宣告")
 
 
+class BackfillSectionTests(_TmpCase):
+    """[backfill]：分層回填的窗期與背景補齊上限（scripts/backfill_tiers.py）。"""
+
+    def test_defaults(self):
+        bf = self.load(MINIMAL).backfill
+        self.assertEqual((bf.recent_months, bf.background_enabled, bf.daily_token_limit, bf.max_reports_per_round),
+                         (12, False, 2_000_000, 100))
+
+    def test_tingfong_keeps_background_off(self):
+        """廷豐已全量跑完派生：背景補齊關（scheduler 的 backfill-tiers 是 no-op），sync 鏈照舊。"""
+        bf = P.get_profile().backfill
+        self.assertEqual((bf.recent_months, bf.background_enabled), (12, False))
+
+    def test_values(self):
+        bf = self.load(MINIMAL + "[backfill]\nrecent_months = 6\nbackground_enabled = true\n"
+                                 "daily_token_limit = 500000\nmax_reports_per_round = 20\n").backfill
+        self.assertEqual((bf.recent_months, bf.background_enabled, bf.daily_token_limit, bf.max_reports_per_round),
+                         (6, True, 500_000, 20))
+
+    def test_rejections(self):
+        self.assertRejected(MINIMAL + "[backfill]\nrecent_month = 6\n", "[backfill].recent_month", "未知的鍵")
+        self.assertRejected(MINIMAL + "[backfill]\nrecent_months = 0\n", "[backfill].recent_months", "介於")
+        self.assertRejected(MINIMAL + "[backfill]\nrecent_months = \"12\"\n", "[backfill].recent_months", "整數")
+        self.assertRejected(MINIMAL + "[backfill]\nbackground_enabled = \"yes\"\n",
+                            "[backfill].background_enabled", "布林")
+        self.assertRejected(MINIMAL + "[backfill]\ndaily_token_limit = 0\n", "[backfill].daily_token_limit", "介於")
+        self.assertRejected(MINIMAL + "[backfill]\nmax_reports_per_round = true\n",
+                            "[backfill].max_reports_per_round", "整數")
+
+
+class LocaleTests(_TmpCase):
+    """[locale] 與 [institution] 的英文名稱：介面語系的 profile 設定（fail-closed）。"""
+
+    def test_default_when_absent(self):
+        prof = self.load(MINIMAL)
+        self.assertEqual((prof.locale.default, prof.locale.available), ("zh-Hant", ("zh-Hant", "en")))
+        # 沒給英文名稱：英文介面沿用原名。
+        self.assertEqual(prof.institution.localized("en"), ("測試機構", "測試研報平台", "測試研報平台"))
+        self.assertEqual(prof.institution.localized("zh-Hant"), ("測試機構", "測試研報平台", "測試研報平台"))
+
+    def test_english_names(self):
+        prof = self.load(MINIMAL + 'name_en = "Test Inst."\nproduct_name_en = "Test Research"\n')
+        self.assertEqual(prof.institution.localized("en"), ("Test Inst.", "Test Research", "Test Research"))
+        prof = self.load(MINIMAL + 'short_name = "測試"\nshort_name_en = "TR"\n')
+        self.assertEqual(prof.institution.localized("en"), ("測試機構", "測試研報平台", "TR"))
+        self.assertEqual(prof.institution.localized("zh-Hant")[2], "測試")
+
+    def test_parses_locale(self):
+        prof = self.load(MINIMAL + '[locale]\ndefault = "en"\navailable = ["en", "zh-Hant"]\n')
+        self.assertEqual((prof.locale.default, prof.locale.available), ("en", ("en", "zh-Hant")))
+        prof = self.load(MINIMAL + '[locale]\navailable = ["en"]\n')
+        self.assertEqual((prof.locale.default, prof.locale.available), ("en", ("en",)))  # 預設取第一個
+
+    def test_rejections(self):
+        self.assertRejected(MINIMAL + '[locale]\navailable = ["fr"]\n', "[locale].available[0]", "不支援的語系")
+        self.assertRejected(MINIMAL + '[locale]\navailable = ["en", "en"]\n', "[locale].available[1]", "重複")
+        self.assertRejected(MINIMAL + '[locale]\navailable = []\n', "[locale].available", "至少")
+        self.assertRejected(MINIMAL + '[locale]\ndefault = "en"\navailable = ["zh-Hant"]\n', "[locale].default", "不在")
+        self.assertRejected(MINIMAL + '[locale]\nfallback = "en"\n', "[locale].fallback", "未知的鍵")
+        self.assertRejected(MINIMAL + 'name_en = ""\n', "[institution].name_en", "空字串")
+
+    def test_tingfong_keeps_chinese_default(self):
+        """廷豐 profile：預設仍是中文（零回歸），兩種語系都可選；英文介面沿用原名。"""
+        prof = P.load_profile(REPO / "profiles" / "tingfong")
+        self.assertEqual(prof.locale.default, "zh-Hant")
+        self.assertEqual(set(prof.locale.available), {"zh-Hant", "en"})
+
+
 class ContractTests(unittest.TestCase):
+    def test_locales_match_output_language_and_frontend(self):
+        """profile 的語系詞彙＝問答輸出語言（app/services/locale.py）＝前端字典的語系（frontend/src/i18n）。"""
+        from app.services.locale import SUPPORTED_LOCALES
+
+        self.assertEqual(P.LOCALES, SUPPORTED_LOCALES)
+        src = (REPO / "frontend" / "src" / "i18n" / "index.ts").read_text(encoding="utf-8")
+        m = re.search(r"export const LOCALES: readonly Locale\[\] = \[([^\]]*)\]", src)
+        self.assertIsNotNone(m, "frontend/src/i18n/index.ts 應定義 LOCALES")
+        self.assertEqual(tuple(re.findall(r"'([^']+)'", m.group(1))), P.LOCALES)
+
     def test_every_registered_section_has_a_profile_field(self):
         """登記表與 Profile 欄位一一對應：後續 lane 加 section 漏了任何一邊都會在這裡紅。"""
         self.assertEqual(P.registered_sections(), P.section_fields())

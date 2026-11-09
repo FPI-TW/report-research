@@ -1,5 +1,6 @@
 import { ApiError } from '../../../lib/api'
 import type { OpsServiceStatus } from '../../../lib/generated/adminApi'
+import { t } from '@/i18n'
 
 export type Tier = OpsServiceStatus['tier']
 export type Summary = OpsServiceStatus['summary']
@@ -7,24 +8,24 @@ export type Summary = OpsServiceStatus['summary']
 export const TIERS: readonly Tier[] = ['critical', 'important', 'supporting']
 
 export const TIER_LABELS: Record<Tier, string> = {
-  critical: '核心',
-  important: '重要',
-  supporting: '輔助',
+  get critical() { return t('admin.ops.opsLabels.core') },
+  get important() { return t('admin.ops.opsLabels.important') },
+  get supporting() { return t('admin.ops.opsLabels.supporting') },
 }
 
 export const TIER_HINTS: Record<Tier, string> = {
-  critical: '壞了使用者馬上感覺得到',
-  important: '停了不會立刻出事，但資料或告警會開始落後',
-  supporting: '稽核、對帳、觀測',
+  get critical() { return t('admin.ops.opsLabels.usersNoticeImmediatelyWhenIt') },
+  get important() { return t('admin.ops.opsLabels.nothingBreaksRightAwayWhen') },
+  get supporting() { return t('admin.ops.opsLabels.auditReconciliationObservation') },
 }
 
 export const SUMMARY_LABELS: Record<Summary, string> = {
-  running: '運作中',
-  idle: '閒置',
-  failed: '失敗',
-  transitioning: '轉換中',
-  not_found: '找不到',
-  unknown: '未知',
+  get running() { return t('admin.ops.opsLabels.running') },
+  get idle() { return t('admin.ops.opsLabels.idle') },
+  get failed() { return t('admin.ops.opsLabels.failed') },
+  get transitioning() { return t('admin.ops.opsLabels.transitioning') },
+  get not_found() { return t('admin.ops.opsLabels.notFound') },
+  get unknown() { return t('admin.ops.opsLabels.unknown') },
 }
 
 /** 需要注意：失敗、找不到；核心服務只要不是運作中／轉換中也算（核心層都是常駐服務）。 */
@@ -37,11 +38,11 @@ export function needsAttention(s: OpsServiceStatus): boolean {
 export function stateText(s: OpsServiceStatus): string {
   if (s.systemd) {
     const { active_state: a, sub_state: sub } = s.systemd
-    return a ? (sub ? `${a}／${sub}` : a) : '—'
+    return a ? (sub ? t('admin.ops.opsLabels.text', { a, sub }) : a) : '—'
   }
   if (s.container) {
     const { status, health } = s.container
-    return status ? (health ? `${status}（${health}）` : status) : '—'
+    return status ? (health ? t('admin.ops.opsLabels.text2', { status, health }) : status) : '—'
   }
   return '—'
 }
@@ -74,44 +75,44 @@ export function fmtDuration(seconds: number | null | undefined): string {
   const s = Math.round(seconds)
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
-  if (h > 0) return `${h} 小時 ${m} 分`
-  if (m > 0) return `${m} 分 ${s % 60} 秒`
-  return `${s} 秒`
+  if (h > 0) return t('admin.ops.opsLabels.hMin', { h, m })
+  if (m > 0) return t('admin.ops.opsLabels.minS', { m, v: s % 60 })
+  return t('admin.ops.opsLabels.s', { s })
 }
 
 // ── 事件（/api/admin/incidents，P5 的 DB 投影）──────────────────────────────
 
 export const INCIDENT_STATUS_LABELS: Record<'firing' | 'resolved' | 'lost', string> = {
-  firing: '進行中',
-  resolved: '已恢復',
-  lost: '結束不明',
+  get firing() { return t('admin.ops.opsLabels.open') },
+  get resolved() { return t('admin.ops.opsLabels.recovered') },
+  get lost() { return t('admin.ops.opsLabels.endUnknown') },
 }
 
 export const INCIDENT_STATUS_HINTS: Record<'firing' | 'resolved' | 'lost', string> = {
-  firing: '還沒收到「已恢復」；最新狀態以 Slack 告警為準',
-  resolved: '主機上的事件偵測已送出「已恢復」',
-  lost: '沒收到「已恢復」，但同一個元件之後又開了新事件——它必定已經結束，只是不知道何時',
+  get firing() { return t('admin.ops.opsLabels.noRecoveredReceivedYetSlack') },
+  get resolved() { return t('admin.ops.opsLabels.theHostSIncidentDetection') },
+  get lost() { return t('admin.ops.opsLabels.noRecoveredWasReceivedBut') },
 }
 
 export const EVENT_ACTION_LABELS: Record<'FIRING' | 'REMINDER' | 'ESCALATED' | 'RESOLVED', string> = {
-  FIRING: '開始',
-  REMINDER: '提醒',
-  ESCALATED: '升級',
-  RESOLVED: '已恢復',
+  get FIRING() { return t('admin.ops.opsLabels.opened') },
+  get REMINDER() { return t('admin.ops.opsLabels.reminder') },
+  get ESCALATED() { return t('admin.ops.opsLabels.escalated') },
+  get RESOLVED() { return t('admin.ops.opsLabels.recovered') },
 }
 
 /** P5 各實例的元件名（deploy/systemd/*incident.service 的 INCIDENT_COMPONENT／INCIDENT_MONITOR_COMPONENT）。 */
 export const INCIDENT_COMPONENTS: { value: string; label: string }[] = [
-  { value: 'web', label: 'Web（本機 /healthz）' },
-  { value: 'edge', label: '對外邊緣' },
-  { value: 'container', label: '容器' },
-  { value: 'host', label: '主機資源' },
+  { value: 'web', get label() { return t('admin.ops.opsLabels.webLocalHealthz') } },
+  { value: 'edge', get label() { return t('admin.ops.opsLabels.externalEdge') } },
+  { value: 'container', get label() { return t('admin.ops.opsLabels.containers') } },
+  { value: 'host', get label() { return t('admin.ops.opsLabels.hostResources') } },
   { value: 'linebot', label: 'LINE bot' },
-  { value: 'monitor', label: 'Web 探針本身' },
-  { value: 'edge_monitor', label: '邊緣探針本身' },
-  { value: 'container_monitor', label: '容器探針本身' },
-  { value: 'host_monitor', label: '主機探針本身' },
-  { value: 'linebot_monitor', label: 'LINE bot 探針本身' },
+  { value: 'monitor', get label() { return t('admin.ops.opsLabels.webProbeItself') } },
+  { value: 'edge_monitor', get label() { return t('admin.ops.opsLabels.edgeProbeItself') } },
+  { value: 'container_monitor', get label() { return t('admin.ops.opsLabels.containerProbeItself') } },
+  { value: 'host_monitor', get label() { return t('admin.ops.opsLabels.hostProbeItself') } },
+  { value: 'linebot_monitor', get label() { return t('admin.ops.opsLabels.lineBotProbeItself') } },
 ]
 
 export function componentLabel(component: string): string {

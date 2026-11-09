@@ -6,6 +6,7 @@ import { Bar } from './parts'
 import { DERIVED_LABEL } from './pipelineMeta'
 import { fmtInt } from './rate'
 import styles from './Pipeline.module.css'
+import { t } from '@/i18n'
 
 /**
  * 派生資產的覆蓋與最後產出。**只列數字、不判新舊**：多久算過期由「資料健康」的批次新鮮度判
@@ -19,7 +20,7 @@ function CoverageRow({ name, scope, cov }: { name: string; scope: string; cov: S
     return (
       <tr>
         <td>{name} <span className={c.muted}>{scope}</span></td>
-        <td colSpan={3} className={c.muted}>此版後端未提供統計</td>
+        <td colSpan={3} className={c.muted}>{t('admin.ops.pipeline.coverageCard.thisBackendVersionDoesnT')}</td>
       </tr>
     )
   }
@@ -27,7 +28,7 @@ function CoverageRow({ name, scope, cov }: { name: string; scope: string; cov: S
   return (
     <tr>
       <td>{name} <span className={c.muted}>{scope}</span></td>
-      <td className={styles.barCell}><Bar pct={cov.pct} label={`${name}覆蓋`} /></td>
+      <td className={styles.barCell}><Bar pct={cov.pct} label={t('admin.ops.pipeline.coverageCard.coverage', { name })} /></td>
       <td className={`${c.num} ${c.tdRight}`}>
         {cov.pct.toFixed(1)}%
         <div className={c.sub}>{fmtInt(cov.done)}/{fmtInt(cov.total)}</div>
@@ -40,24 +41,24 @@ function CoverageRow({ name, scope, cov }: { name: string; scope: string; cov: S
 export function CoverageCard({ progress: p }: { progress: Progress }) {
   return (
     <Card
-      title="產出覆蓋"
+      title={t('admin.ops.pipeline.coverageCard.outputCoverage')}
       labelledBy="pipeline-coverage-title"
-      right={<Link className={`${c.btn} ${c.btnSm}`} to="../data-health" relative="path">看批次新鮮度</Link>}
+      right={<Link className={`${c.btn} ${c.btnSm}`} to="../data-health" relative="path">{t('admin.ops.pipeline.coverageCard.viewBatchFreshness')}</Link>}
     >
       <div className={c.tableWrap}>
-        <table className={c.table} aria-label="產出覆蓋">
+        <table className={c.table} aria-label={t('admin.ops.pipeline.coverageCard.outputCoverage')}>
           <thead>
-            <tr><th>項目</th><th>覆蓋</th><th className={c.tdRight}>比例</th><th>最後產出</th></tr>
+            <tr><th>{t('admin.ops.pipeline.coverageCard.item')}</th><th>{t('admin.ops.pipeline.coverageCard.coverage2')}</th><th className={c.tdRight}>{t('admin.ops.pipeline.coverageCard.share')}</th><th>{t('admin.ops.pipeline.coverageCard.lastOutput')}</th></tr>
           </thead>
           <tbody>
-            <CoverageRow name="報告摘要" scope="全庫" cov={p.summary} />
-            <CoverageRow name={DERIVED_LABEL.takeaways} scope="近 30 天" cov={p.takeaway} />
-            <CoverageRow name={DERIVED_LABEL.signals} scope="近 30 天" cov={p.signal} />
+            <CoverageRow name={t('admin.ops.pipeline.coverageCard.reportSummaries')} scope={t('admin.ops.pipeline.coverageCard.all')} cov={p.summary} />
+            <CoverageRow name={DERIVED_LABEL.takeaways} scope={t('admin.ops.pipeline.coverageCard.last30Days')} cov={p.takeaway} />
+            <CoverageRow name={DERIVED_LABEL.signals} scope={t('admin.ops.pipeline.coverageCard.last30Days')} cov={p.signal} />
           </tbody>
         </table>
       </div>
       <div className={`${c.cardFoot} ${styles.footNote}`}>
-        <span>摘錄與訊號刻意只跑子集，比例低不代表壞了；要看的是「最後產出」有沒有前進。是否過期由「資料健康」的批次新鮮度判斷。</span>
+        <span>{t('admin.ops.pipeline.coverageCard.takeawaysAndSignalsIntentionallyRun')}</span>
       </div>
     </Card>
   )

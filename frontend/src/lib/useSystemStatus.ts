@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { getJSON } from './api'
+import { t } from '@/i18n'
 
 /**
  * 一般使用者看的粗粒度系統狀態（`GET /api/status`，任何登入使用者可讀）。
@@ -16,12 +17,12 @@ export type SystemStatus = z.infer<typeof systemStatusSchema>
 export type SystemStatusLevel = SystemStatus['status']
 
 export const STATUS_LABELS: Record<SystemStatusLevel, string> = {
-  ok: '正常',
-  degraded: '部分異常',
-  unknown: '狀態未知',
+  get ok() { return t('lib.useSystemStatus.ok') },
+  get degraded() { return t('lib.useSystemStatus.partiallyDegraded') },
+  get unknown() { return t('lib.useSystemStatus.statusUnknown') },
 }
 
-const FALLBACK: SystemStatus = { status: 'unknown', message: '暫時無法取得系統狀態' }
+const FALLBACK: SystemStatus = { status: 'unknown', get message() { return t('lib.useSystemStatus.systemStatusTemporarilyUnavailable') } }
 
 export function useSystemStatus(): SystemStatus {
   const q = useQuery<SystemStatus>({

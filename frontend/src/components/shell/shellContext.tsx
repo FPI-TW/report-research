@@ -15,3 +15,18 @@ export const ShellContext = createContext<ShellActions>({ openSearch: noop, open
 export function useShell(): ShellActions {
   return useContext(ShellContext)
 }
+
+// 切換介面語系會重掛整棵畫面樹（src/i18n 的 LocaleBoundary），外殼的彈窗狀態跟著歸零。在設定彈窗裡換語言時
+// 先記下要回到的分頁，重掛後的外殼以它為初始狀態：使用者看到的是同一個彈窗換了語言，而不是彈窗消失。
+let reopen: SettingsTab | null = null
+
+export function reopenSettingsAfterRemount(tab: SettingsTab): void {
+  reopen = tab
+}
+
+/** 取出並清掉待重開的分頁（外殼的初始狀態用）。 */
+export function takeReopenSettings(): SettingsTab | null {
+  const tab = reopen
+  reopen = null
+  return tab
+}

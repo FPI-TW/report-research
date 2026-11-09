@@ -6,6 +6,7 @@ import { Field } from './controls'
 import { FormDialog } from './Dialog'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
+import { t } from '@/i18n'
 
 /**
  * 「重新驗證身分」對話框（密碼＋開了兩步驟驗證時的 6 位數驗證碼）。流程在 `useElevate`。
@@ -22,8 +23,8 @@ export function ElevateDialog({ what, needTotp, sso = false, onDone, onCancel }:
   const showCode = needTotp || askCode
 
   const submit = async () => {
-    if (!password) { setError('請輸入密碼'); return }
-    if (showCode && !/^\d{6}$/.test(code)) { setError('驗證碼是 6 位數字'); return }
+    if (!password) { setError(t('admin.console.elevateDialog.enterYourPassword')); return }
+    if (showCode && !/^\d{6}$/.test(code)) { setError(t('admin.console.elevateDialog.theCodeIs6Digits')); return }
     setError(null)
     setBusy(true)
     try {
@@ -32,9 +33,9 @@ export function ElevateDialog({ what, needTotp, sso = false, onDone, onCancel }:
     } catch (err) {
       if (err instanceof ApiError && err.code === 'totp_required') {
         setAskCode(true)
-        setError('這個帳號開了兩步驟驗證，請輸入驗證器上的 6 位數字')
+        setError(t('admin.console.elevateDialog.thisAccountUsesTwoStep'))
       } else {
-        setError(err instanceof Error && err.message ? err.message : '驗證失敗，請重試')
+        setError(err instanceof Error && err.message ? err.message : t('admin.console.elevateDialog.verificationFailedTryAgain'))
       }
       setBusy(false)
     }
@@ -42,24 +43,24 @@ export function ElevateDialog({ what, needTotp, sso = false, onDone, onCancel }:
 
   if (sso) {
     return (
-      <FormDialog open top title="重新驗證身分" width={400} submitLabel="以公司帳號重新驗證" busy={false}
-        body={<>「{what}」需要重新驗證。完成公司帳號登入後回到這一頁，再執行一次這項操作；10 分鐘內不用再驗證。</>}
+      <FormDialog open top title={t('admin.console.elevateDialog.confirmIdentity')} width={400} submitLabel={t('admin.console.elevateDialog.reVerifyWithCompanyAccount')} busy={false}
+        body={<>{t('admin.console.elevateDialog.requiresReVerificationSignIn', { what })}</>}
         onSubmit={startSsoElevation} onClose={onCancel}>{null}</FormDialog>
     )
   }
 
   return (
-    <FormDialog open top title="重新驗證身分" width={400} submitLabel={busy ? '驗證中…' : '驗證'} busy={busy}
-      body={<>「{what}」需要重新驗證。驗證後 10 分鐘內不用再輸入。</>}
+    <FormDialog open top title={t('admin.console.elevateDialog.confirmIdentity')} width={400} submitLabel={busy ? t('admin.console.elevateDialog.verifying') : t('admin.console.elevateDialog.verify')} busy={busy}
+      body={<>{t('admin.console.elevateDialog.requiresReVerificationNoNeed', { what })}</>}
       error={error} onSubmit={() => { void submit() }} onClose={onCancel}>
-      <Field label="密碼">
+      <Field label={t('admin.console.elevateDialog.password')}>
         <input className={c.input} type="password" value={password} autoComplete="current-password" maxLength={256}
           onChange={e => { setPassword(e.target.value); setError(null) }} />
       </Field>
       {showCode && (
-        <Field label="驗證碼">
+        <Field label={t('admin.console.elevateDialog.verificationCode')}>
           <input className={`${c.input} ${o.codeInput}`} value={code} inputMode="numeric" autoComplete="one-time-code"
-            placeholder="驗證器上的 6 位數字"
+            placeholder={t('admin.console.elevateDialog.6DigitCodeFromThe')}
             onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(null) }} />
         </Field>
       )}

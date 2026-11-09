@@ -1,6 +1,7 @@
 import type { JobItem } from '../../../../lib/generated/adminApi'
+import { t } from '@/i18n'
 
-export const LOST_HINT = '沒觀測到結束，之後已有新一輪開始（收集器停機或兩次觀測之間跑完）'
+export const lostHint = () => t('admin.ops.exec.jobs.noEndObservedAndA')
 
 /** 失敗＝已結束但 Result 不是 success。執行中與結果不明都不算失敗。 */
 export function jobFailed(job: JobItem): boolean {

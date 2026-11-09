@@ -3,6 +3,7 @@ import type { AnswerView, Turn } from '../../lib/askReducer'
 import { AssistantMessage } from './AssistantMessage'
 import { UserMessage } from './UserMessage'
 import styles from './TurnRow.module.css'
+import { t } from '@/i18n'
 
 /**
  * 一輪問答要用到的動作。**每一個都必須是穩定參考**（useCallback／setState），
@@ -41,13 +42,13 @@ interface Props {
  *   後端看到的是一題普通的提問。
  * - 其他情形（中間輪失敗之後又問了別的）：原地重送會把後面的輪次一起截掉，只好照舊新開一輪。
  */
-function retry(t: Turn, isLast: boolean, a: TurnActions) {
-  if (t.priorVersions.length > 0 || t.versionCount > 1) {
-    a.regenerate(t.id, t.qaId, t.question)
+function retry(item: Turn, isLast: boolean, a: TurnActions) {
+  if (item.priorVersions.length > 0 || item.versionCount > 1) {
+    a.regenerate(item.id, item.qaId, item.question)
   } else if (isLast) {
-    a.editResubmit(t.id, t.qaId, t.question)
+    a.editResubmit(item.id, item.qaId, item.question)
   } else {
-    a.submit(t.question)
+    a.submit(item.question)
     return
   }
   if (isLast) a.stickToBottom()
@@ -62,20 +63,20 @@ function retry(t: Turn, isLast: boolean, a: TurnActions) {
  * reducer 只替換正在串流的那一輪（其餘輪次維持同一個物件參考），所以只要 props 穩定，
  * memo 就能讓已完成的輪次完全不動。
  */
-export const TurnRow = memo(function TurnRow({ turn: t, busy, isLast, actions: a }: Props) {
+export const TurnRow = memo(function TurnRow({ turn: item, busy, isLast, actions: a }: Props) {
   return (
-    <section className={styles.turn} aria-label="一輪對話">
-      <UserMessage text={t.question} onEdit={q => a.editResubmit(t.id, t.qaId, q)} disabled={busy} />
+    <section className={styles.turn} aria-label={t('ask.turnRow.conversationTurn')}>
+      <UserMessage text={item.question} onEdit={q => a.editResubmit(item.id, item.qaId, q)} disabled={busy} />
       <AssistantMessage
-        turn={t}
+        turn={item}
         isLast={isLast}
         onCite={(n, view) => a.openSources(view, n)}
         onOpenSources={view => a.openSources(view, null)}
-        onFeedback={v => t.qaId && a.setFeedback(t.id, t.qaId, v)}
-        onNoticeRetry={() => a.setDraft(t.question)}
-        onErrorRetry={() => retry(t, isLast, a)}
+        onFeedback={v => item.qaId && a.setFeedback(item.id, item.qaId, v)}
+        onNoticeRetry={() => a.setDraft(item.question)}
+        onErrorRetry={() => retry(item, isLast, a)}
         onRegenerate={() => {
-          a.regenerate(t.id, t.qaId, t.question)
+          a.regenerate(item.id, item.qaId, item.question)
           if (isLast) a.stickToBottom()
         }}
         onFollowup={a.submit}
@@ -84,12 +85,12 @@ export const TurnRow = memo(function TurnRow({ turn: t, busy, isLast, actions: a
           // priorVersions「不完整」（而非只有「全空」）就先補載：歷史多版本輪
           // 直接重生後，本地只有剛快照的那一版，中間版本是洞——洞的索引會
           // fallback 到 live，pager 顯示的版號與內容對不上。
-          if (t.rootQaId && t.versionCount > 1 && t.priorVersions.length < t.versionCount - 1) {
-            void a.loadVersions(t.id, t.rootQaId).then(loaded => {
-              if (loaded) a.setVersion(t.id, i)
+          if (item.rootQaId && item.versionCount > 1 && item.priorVersions.length < item.versionCount - 1) {
+            void a.loadVersions(item.id, item.rootQaId).then(loaded => {
+              if (loaded) a.setVersion(item.id, i)
             })
           } else {
-            a.setVersion(t.id, i)
+            a.setVersion(item.id, i)
           }
         }}
       />

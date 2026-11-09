@@ -1,4 +1,5 @@
 import type { IconName } from '../primitives/Icon'
+import { t } from '@/i18n'
 
 /**
  * 管理後台的資訊架構：圖示軌的 7 個領域 → 次級面板的分組 → 頁面。
@@ -39,47 +40,47 @@ const ops = (key: AdminPageKey, label: string, path: string, requires?: AdminCap
   ({ key, label, to: `${OPS}/${path}`, scope: 'ops.read', requires })
 
 export const ADMIN_IA: readonly AdminDomain[] = [
-  { key: 'home', label: '總覽', icon: 'compass', groups: [
-    { pages: [{ key: 'home', label: '總覽', to: '/admin' }] },
+  { key: 'home', get label() { return t('admin.shell.adminNav.overview') }, icon: 'compass', groups: [
+    { pages: [{ key: 'home', get label() { return t('admin.shell.adminNav.overview') }, to: '/admin' }] },
   ] },
-  { key: 'content', label: '內容', icon: 'fileText', groups: [
+  { key: 'content', get label() { return t('admin.shell.adminNav.content') }, icon: 'fileText', groups: [
     { pages: [
-      { key: 'reviews', label: '待複核', to: '/admin/reviews' },
-      { key: 'reports', label: '研報管理', to: '/admin/reports', scope: 'reports.manage' },
-      { key: 'uploads', label: '上傳研報', to: '/admin/uploads', scope: 'reports.manage' },
+      { key: 'reviews', get label() { return t('admin.shell.adminNav.reviewQueue') }, to: '/admin/reviews' },
+      { key: 'reports', get label() { return t('admin.shell.adminNav.reports') }, to: '/admin/reports', scope: 'reports.manage' },
+      { key: 'uploads', get label() { return t('admin.shell.adminNav.uploadReports') }, to: '/admin/uploads', scope: 'reports.manage' },
     ] },
   ] },
-  { key: 'access', label: '存取', icon: 'user', groups: [
+  { key: 'access', get label() { return t('admin.shell.adminNav.access') }, icon: 'user', groups: [
     { pages: [
-      { key: 'users', label: '帳號管理', to: '/admin/users' },
-      { key: 'quota', label: '配額', to: '/admin/quota', scope: 'accounts.manage' },
-      { key: 'apiClients', label: 'API 用戶端', to: '/admin/api-clients', scope: 'api_clients.manage' },
+      { key: 'users', get label() { return t('admin.shell.adminNav.accounts') }, to: '/admin/users' },
+      { key: 'quota', get label() { return t('admin.shell.adminNav.quotas') }, to: '/admin/quota', scope: 'accounts.manage' },
+      { key: 'apiClients', get label() { return t('admin.shell.adminNav.apiClients') }, to: '/admin/api-clients', scope: 'api_clients.manage' },
     ] },
   ] },
-  { key: 'ops', label: '維運', icon: 'activity', groups: [
-    { label: '健康', pages: [
-      ops('services', '服務', 'services'), ops('dependencies', '依賴圖', 'dependencies'),
-      ops('remoteHosts', '來源主機', 'remote-hosts'), ops('incidents', '事件', 'incidents', 'monitoring'),
-    ] },
-    { label: '資料', pages: [
-      ops('pipeline', '管線', 'pipeline'), ops('dataHealth', '資料健康', 'data-health'), ops('database', '資料庫', 'database'),
-    ] },
-    { label: '執行', pages: [
-      ops('jobs', '排程工作', 'jobs', 'monitoring'), ops('logs', '日誌', 'logs'), ops('host', '主機', 'host', 'monitoring'), ops('diagnostics', '診斷', 'diagnostics'),
-    ] },
-    { label: '用量', pages: [ops('llmUsage', 'LLM 用量', 'llm-usage')] },
+  { key: 'ops', get label() { return t('admin.shell.adminNav.operations') }, icon: 'activity', groups: [
+    { get label() { return t('admin.shell.adminNav.health') }, get pages() { return [
+      ops('services', t('admin.shell.adminNav.services'), 'services'), ops('dependencies', t('admin.shell.adminNav.dependencies'), 'dependencies'),
+      ops('remoteHosts', t('admin.shell.adminNav.sourceHosts'), 'remote-hosts'), ops('incidents', t('admin.shell.adminNav.incidents'), 'incidents', 'monitoring'),
+    ] } },
+    { get label() { return t('admin.shell.adminNav.data') }, get pages() { return [
+      ops('pipeline', t('admin.shell.adminNav.pipeline'), 'pipeline'), ops('dataHealth', t('admin.shell.adminNav.dataHealth'), 'data-health'), ops('database', t('admin.shell.adminNav.database'), 'database'),
+    ] } },
+    { get label() { return t('admin.shell.adminNav.execution') }, get pages() { return [
+      ops('jobs', t('admin.shell.adminNav.scheduledJobs'), 'jobs', 'monitoring'), ops('logs', t('admin.shell.adminNav.logs'), 'logs'), ops('host', t('admin.shell.adminNav.host'), 'host', 'monitoring'), ops('diagnostics', t('admin.shell.adminNav.diagnostics'), 'diagnostics'),
+    ] } },
+    { get label() { return t('admin.shell.adminNav.usage') }, get pages() { return [ops('llmUsage', t('admin.shell.adminNav.llmUsage'), 'llm-usage')] } },
   ] },
-  { key: 'sec', label: '安全', icon: 'shield', groups: [
+  { key: 'sec', get label() { return t('admin.shell.adminNav.security') }, icon: 'shield', groups: [
     { pages: [
-      { key: 'security', label: '安全', to: '/admin/security', scope: 'audit.read' },
-      { key: 'audit', label: '操作紀錄', to: '/admin/audit' },
+      { key: 'security', get label() { return t('admin.shell.adminNav.security') }, to: '/admin/security', scope: 'audit.read' },
+      { key: 'audit', get label() { return t('admin.shell.adminNav.auditLog') }, to: '/admin/audit' },
     ] },
   ] },
-  { key: 'insight', label: '洞察', icon: 'trendUp', groups: [
-    { pages: [{ key: 'analytics', label: '使用分析', to: '/admin/analytics', scope: 'analytics.read' }] },
+  { key: 'insight', get label() { return t('admin.shell.adminNav.insights') }, icon: 'trendUp', groups: [
+    { pages: [{ key: 'analytics', get label() { return t('admin.shell.adminNav.analytics') }, to: '/admin/analytics', scope: 'analytics.read' }] },
   ] },
-  { key: 'settings', label: '設定', icon: 'filter', groups: [
-    { pages: [{ key: 'flags', label: '功能旗標', to: '/admin/flags', scope: 'ops.read' }] },
+  { key: 'settings', get label() { return t('admin.shell.adminNav.settings') }, icon: 'filter', groups: [
+    { pages: [{ key: 'flags', get label() { return t('admin.shell.adminNav.featureFlags') }, to: '/admin/flags', scope: 'ops.read' }] },
   ] },
 ]
 

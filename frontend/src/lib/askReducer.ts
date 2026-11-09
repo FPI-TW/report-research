@@ -1,4 +1,5 @@
 import type { AskEvent, AskStage, Source, ExtSource, ConversationTurn, NoticeKind, QaVersion } from './askSchemas'
+import { t } from '@/i18n'
 
 const HTTP = /^https?:\/\//i
 
@@ -87,8 +88,8 @@ export type AskAction =
   | { type: 'submit-edit'; id: string; question: string }
   | { type: 'load-versions'; id: string; versions: QaVersion[] }
 
-function mapTurn(turns: Turn[], id: string, fn: (t: Turn) => Turn): Turn[] {
-  return turns.map(t => (t.id === id ? fn(t) : t))
+function mapTurn(turns: Turn[], id: string, fn: (item: Turn) => Turn): Turn[] {
+  return turns.map(item => (item.id === id ? fn(item) : item))
 }
 
 /**
@@ -98,18 +99,18 @@ function mapTurn(turns: Turn[], id: string, fn: (t: Turn) => Turn): Turn[] {
  * 生成，原本的答案被吃掉了」。已串出部分文字時不回滾（部分答案本身有資訊價值，
  * error 分支會照常渲染它）。
  */
-function rollbackRegenIfEmpty(t: Turn): Turn {
-  if (t.answer !== '' || t.priorVersions.length === 0) return t
-  if (t.phase !== 'thinking' && t.phase !== 'streaming') return t
-  const prior = t.priorVersions[t.priorVersions.length - 1]
+function rollbackRegenIfEmpty(item: Turn): Turn {
+  if (item.answer !== '' || item.priorVersions.length === 0) return item
+  if (item.phase !== 'thinking' && item.phase !== 'streaming') return item
+  const prior = item.priorVersions[item.priorVersions.length - 1]
   return {
-    ...t,
+    ...item,
     answer: prior.answer, sources: prior.sources, extSources: prior.extSources,
     qaId: prior.qaId, thinkingMs: prior.thinkingMs, stages: prior.stages,
     feedback: prior.feedback, followups: prior.followups,
-    priorVersions: t.priorVersions.slice(0, -1),
-    versionCount: t.versionCount - 1,
-    versionIndex: t.priorVersions.length - 1,
+    priorVersions: item.priorVersions.slice(0, -1),
+    versionCount: item.versionCount - 1,
+    versionIndex: item.priorVersions.length - 1,
   }
 }
 
@@ -118,41 +119,41 @@ function applyAsk(turn: Turn, ev: AskEvent): Turn {
   // 清，是因為漏掉一個 case 的症狀是「答案都串出來了畫面還寫著排隊中」——一種不會
   // 報錯、只會讓人不信任介面的錯。
   if (ev.event === 'queued') return { ...turn, queuePosition: ev.data.position ?? 0 }
-  const t = turn.queuePosition === null ? turn : { ...turn, queuePosition: null }
+  const item = turn.queuePosition === null ? turn : { ...turn, queuePosition: null }
   switch (ev.event) {
     case 'status': {
       const stage = ev.data.stage
-      const stages = t.stages.includes(stage) ? t.stages : [...t.stages, stage]
+      const stages = item.stages.includes(stage) ? item.stages : [...item.stages, stage]
       return {
-        ...t, stages,
-        webUsed: t.webUsed || stage === 'searching_web',
-        retrievedCount: stage === 'retrieved' && ev.data.count != null ? ev.data.count : t.retrievedCount,
-        phase: stage === 'generating' && t.phase === 'thinking' ? 'streaming' : t.phase,
-        thinkingMs: ev.data.thinking_ms ?? t.thinkingMs,
+        ...item, stages,
+        webUsed: item.webUsed || stage === 'searching_web',
+        retrievedCount: stage === 'retrieved' && ev.data.count != null ? ev.data.count : item.retrievedCount,
+        phase: stage === 'generating' && item.phase === 'thinking' ? 'streaming' : item.phase,
+        thinkingMs: ev.data.thinking_ms ?? item.thinkingMs,
       }
     }
-    case 'sources': return { ...t, sources: ev.data }
-    case 'ext_sources': return { ...t, extSources: ev.data.filter(e => HTTP.test(e.url)) }
-    case 'token': return { ...t, answer: t.answer + ev.data, phase: t.isOfftopic ? 'notice' : 'streaming' }
-    case 'notice': return { ...t, phase: 'notice', isOfftopic: true, noticeText: ev.data }
-    case 'followups': return t  // followups 由 controller 派送專屬 action 處理；此處為型別窮盡的 no-op
+    case 'sources': return { ...item, sources: ev.data }
+    case 'ext_sources': return { ...item, extSources: ev.data.filter(e => HTTP.test(e.url)) }
+    case 'token': return { ...item, answer: item.answer + ev.data, phase: item.isOfftopic ? 'notice' : 'streaming' }
+    case 'notice': return { ...item, phase: 'notice', isOfftopic: true, noticeText: ev.data }
+    case 'followups': return item  // followups 由 controller 派送專屬 action 處理；此處為型別窮盡的 no-op
     case 'done': return {
-      ...t,
-      phase: t.isOfftopic ? 'notice' : 'done',
+      ...item,
+      phase: item.isOfftopic ? 'notice' : 'done',
       // 後端只在整串收尾改動了內容時才帶 answer（簡繁轉換或棄稿段移除）；沒帶就
       // 維持串流累積的那份。
       // 這裡是畫面與 qa_log 收斂到同一份文字的唯一時機（見 askSchemas 的欄位註解）。
-      answer: ev.data.answer ?? t.answer,
-      qaId: ev.data.qa_id ?? t.qaId,
-      noticeKind: ev.data.notice_kind ?? t.noticeKind,
-      rootQaId: ev.data.root_qa_id ?? t.rootQaId,
-      versionCount: ev.data.version_count ?? t.versionCount,
+      answer: ev.data.answer ?? item.answer,
+      qaId: ev.data.qa_id ?? item.qaId,
+      noticeKind: ev.data.notice_kind ?? item.noticeKind,
+      rootQaId: ev.data.root_qa_id ?? item.rootQaId,
+      versionCount: ev.data.version_count ?? item.versionCount,
       // done 時剛完成的答案即最新版，versionIndex 對齊最新——修正「重載多版本後直接重生」時
       // 伺服器權威 version_count 晚到、樂觀 versionIndex 未同步導致 isLive 誤 false 而隱藏回饋/追問鈕。
-      versionIndex: (ev.data.version_count ?? t.versionCount) - 1,
+      versionIndex: (ev.data.version_count ?? item.versionCount) - 1,
     }
     case 'error': {
-      const rolled = rollbackRegenIfEmpty(t)
+      const rolled = rollbackRegenIfEmpty(item)
       return { ...rolled, phase: 'error', errorText: ev.data.detail }
     }
   }
@@ -170,50 +171,50 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         queuePosition: null,
       }],
     }
-    case 'ask-event': return { turns: mapTurn(state.turns, action.id, t => applyAsk(t, action.event)) }
+    case 'ask-event': return { turns: mapTurn(state.turns, action.id, item => applyAsk(item, action.event)) }
     case 'ask-end': return {
-      turns: mapTurn(state.turns, action.id, t => {
+      turns: mapTurn(state.turns, action.id, item => {
         // queuePosition 一併清掉：排隊中就失敗（伺服器重啟、連線斷）時，留著會讓
         // 錯誤輪的思考卡標籤仍寫「排隊中…」——與 applyAsk 的「任何後續事件關閉排隊」
         // 同一條規則，只是這裡的後續事件是終局。
-        if (t.phase === 'notice' || t.phase === 'done' || t.phase === 'error' || t.phase === 'stopped') return t
-        return { ...rollbackRegenIfEmpty(t), phase: 'error', errorText: '查詢逾時或失敗', queuePosition: null }
+        if (item.phase === 'notice' || item.phase === 'done' || item.phase === 'error' || item.phase === 'stopped') return item
+        return { ...rollbackRegenIfEmpty(item), phase: 'error', errorText: t('lib.askReducer.theQueryTimedOutOr'), queuePosition: null }
       }),
     }
-    case 'feedback': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, feedback: action.value })) }
+    case 'feedback': return { turns: mapTurn(state.turns, action.id, item => ({ ...item, feedback: action.value })) }
     case 'load': return { turns: action.turns }
     case 'reset': return { turns: [] }
     case 'ask-stop': return {
       // queuePosition 清掉的理由同 ask-end：排隊中按停止，留著會讓「已停止」的輪
       // 同時顯示「排隊中…」與排隊說明，兩個狀態互相矛盾。
-      turns: mapTurn(state.turns, action.id, t => ({ ...t, phase: 'stopped', qaId: action.qaId ?? t.qaId, queuePosition: null })),
+      turns: mapTurn(state.turns, action.id, item => ({ ...item, phase: 'stopped', qaId: action.qaId ?? item.qaId, queuePosition: null })),
     }
-    case 'set-qa': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, qaId: action.qaId })) }
-    case 'followups': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, followups: action.data })) }
+    case 'set-qa': return { turns: mapTurn(state.turns, action.id, item => ({ ...item, qaId: action.qaId })) }
+    case 'followups': return { turns: mapTurn(state.turns, action.id, item => ({ ...item, followups: action.data })) }
     case 'regenerate-start': return {
-      turns: mapTurn(state.turns, action.id, t => {
+      turns: mapTurn(state.turns, action.id, item => {
         const snapshot: TurnVersion = {
-          answer: t.answer, sources: t.sources, extSources: t.extSources, qaId: t.qaId,
-          thinkingMs: t.thinkingMs, stages: t.stages, feedback: t.feedback, followups: t.followups,
-          stopped: t.phase === 'stopped',
+          answer: item.answer, sources: item.sources, extSources: item.extSources, qaId: item.qaId,
+          thinkingMs: item.thinkingMs, stages: item.stages, feedback: item.feedback, followups: item.followups,
+          stopped: item.phase === 'stopped',
         }
-        const priorVersions = [...t.priorVersions, snapshot]
+        const priorVersions = [...item.priorVersions, snapshot]
         return {
-          ...t, priorVersions, versionIndex: priorVersions.length,
+          ...item, priorVersions, versionIndex: priorVersions.length,
           phase: 'thinking', stages: ['understanding'], answer: '', thinkingMs: null,
           sources: [], extSources: [], followups: [], errorText: null, isOfftopic: false,
           noticeText: null, noticeKind: null, versionCount: priorVersions.length + 1, queuePosition: null,
         }
       }),
     }
-    case 'set-version': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, versionIndex: action.index })) }
+    case 'set-version': return { turns: mapTurn(state.turns, action.id, item => ({ ...item, versionIndex: action.index })) }
     case 'truncate-after': {
-      const idx = state.turns.findIndex(t => t.id === action.id)
+      const idx = state.turns.findIndex(item => item.id === action.id)
       return idx < 0 ? state : { turns: state.turns.slice(0, idx + 1) }
     }
     case 'submit-edit': return {
-      turns: mapTurn(state.turns, action.id, t => ({
-        ...t, question: action.question, phase: 'thinking', stages: ['understanding'],
+      turns: mapTurn(state.turns, action.id, item => ({
+        ...item, question: action.question, phase: 'thinking', stages: ['understanding'],
         answer: '', thinkingMs: null, sources: [], extSources: [], qaId: null, retrievedCount: null,
         isOfftopic: false, noticeText: null, noticeKind: null,
         feedback: null, errorText: null, followups: [],
@@ -221,15 +222,15 @@ export function askReducer(state: AskState, action: AskAction): AskState {
       })),
     }
     case 'load-versions': return {
-      turns: mapTurn(state.turns, action.id, t => {
-        if (action.versions.length === 0) return t
+      turns: mapTurn(state.turns, action.id, item => {
+        if (action.versions.length === 0) return item
         // 後端回全版本（由舊到新，末項=現用）；末項即目前顯示，其餘進 priorVersions
         const prior: TurnVersion[] = action.versions.slice(0, -1).map(v => ({
           answer: v.answer, sources: v.sources, extSources: v.ext_sources, qaId: v.qa_id,
           thinkingMs: v.thinking_ms, stages: v.stages, feedback: v.feedback, followups: [],
           stopped: v.stopped,
         }))
-        return { ...t, priorVersions: prior, versionIndex: prior.length, versionCount: action.versions.length }
+        return { ...item, priorVersions: prior, versionIndex: prior.length, versionCount: action.versions.length }
       }),
     }
   }

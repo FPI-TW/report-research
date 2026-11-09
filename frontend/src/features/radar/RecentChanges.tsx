@@ -5,6 +5,7 @@ import { changeChip } from './changeText'
 import { fmtShortDate } from './radarFormat'
 import shared from './shared.module.css'
 import styles from './RecentChanges.module.css'
+import { t } from '@/i18n'
 
 /** 收合時顯示的事件數。 */
 export const EVENT_PREVIEW = 3
@@ -39,7 +40,7 @@ export function RecentChanges({
     <section className={styles.section} aria-labelledby={id}>
       {/* 「查看全部」放在 h2 外面：放進去會被串進標題的可及名稱，而且展開後標題會跟著改名。 */}
       <div className={styles.headRow}>
-        <h2 id={id} className={styles.heading}>近期變化</h2>
+        <h2 id={id} className={styles.heading}>{t('radar.recentChanges.recentChanges')}</h2>
         {total > EVENT_PREVIEW ? (
           <button
             type="button"
@@ -48,7 +49,7 @@ export function RecentChanges({
             aria-controls={listId}
             onClick={onToggleAll}
           >
-            {showAll ? '收合' : `查看全部 ${total} 則`}
+            {showAll ? t('radar.recentChanges.collapse') : t('radar.recentChanges.viewAll', { total })}
           </button>
         ) : null}
       </div>
@@ -56,7 +57,7 @@ export function RecentChanges({
       {events.length ? (
         <div className={styles.list} id={listId}>
           {visible.map((ev, i) => {
-            const broker = ev.broker_display || ev.broker || '未標示券商'
+            const broker = ev.broker_display || ev.broker || t('radar.recentChanges.brokerNotSpecified')
             return (
               <button
                 key={`${ev.report_link.report_id}-${ev.report_date}-${i}`}
@@ -87,22 +88,22 @@ export function RecentChanges({
           })}
         </div>
       ) : (
-        <p className={styles.empty}>這段期間沒有評等、目標價或觀點的變化</p>
+        <p className={styles.empty}>{t('radar.recentChanges.noRatingTargetPriceOr')}</p>
       )}
 
       {showAll && isLoadingMore && events.length <= EVENT_PREVIEW ? (
-        <p className={styles.status} role="status">載入中…</p>
+        <p className={styles.status} role="status">{t('radar.recentChanges.loading')}</p>
       ) : null}
       {showAll && loadError ? (
         <div className={styles.more} role="alert">
-          <span className={styles.status}>載入完整事件失敗</span>
-          {onRetryLoad ? <button type="button" className={shared.btn} onClick={onRetryLoad}>重試</button> : null}
+          <span className={styles.status}>{t('radar.recentChanges.couldnTLoadAllEvents')}</span>
+          {onRetryLoad ? <button type="button" className={shared.btn} onClick={onRetryLoad}>{t('radar.recentChanges.retry')}</button> : null}
         </div>
       ) : null}
       {showAll && !loadError && hasMore && onLoadMore ? (
         <div className={styles.more}>
           <button type="button" className={shared.btn} disabled={isLoadingMore} onClick={onLoadMore}>
-            {isLoadingMore ? '載入中…' : `載入更多（還有 ${remaining} 則）`}
+            {isLoadingMore ? t('radar.recentChanges.loading') : t('radar.recentChanges.loadMoreRemaining', { remaining })}
           </button>
         </div>
       ) : null}

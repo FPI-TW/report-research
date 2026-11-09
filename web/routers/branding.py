@@ -2,8 +2,8 @@
 """品牌（免登入）：/api/branding（顯示用的名稱、logo／favicon URL、色票）與 /api/branding/assets/{name}。
 
 兩支都在 web/server.py 的免登入白名單：登入頁與 SPA 在登入前就要畫出品牌。所以這裡**只交顯示用的東西**——
-名稱、asset URL、強調色——不碰 profile 的其他 section（prompt 參數、市場子集、TOTP 發行者都不出現在回應裡），
-新增欄位前先想清楚它能不能給未登入的人看。
+名稱（含英文介面用的名稱）、asset URL、強調色與介面語系——不碰 profile 的其他 section（prompt 參數、市場子集、
+TOTP 發行者都不出現在回應裡），新增欄位前先想清楚它能不能給未登入的人看。
 
 asset 端點只交出 profile 引用的檔（`Branding.assets()`，以檔名查表、不拼路徑），目錄裡其他檔一律 404。
 URL 帶內容雜湊 `?v=`：雜湊相符時長快取（immutable），不符或沒帶時 no-cache＋ETag，換了 logo 重啟後不會卡舊圖。
@@ -36,6 +36,11 @@ def branding_payload() -> dict:
         "institution_name": inst.name,
         "product_name": inst.product_name,
         "short_name": inst.short_name,
+        # 英文介面用的名稱（profile 沒給就沿用原名）；前端以 optional() 宣告，舊版前端讀不到也照常。
+        "institution_name_en": inst.localized("en")[0],
+        "product_name_en": inst.localized("en")[1],
+        "short_name_en": inst.localized("en")[2],
+        "locale": {"default": profile.locale.default, "available": list(profile.locale.available)},
         "logo_light_url": asset_url(brand.logo_light),
         "logo_dark_url": asset_url(brand.logo_dark),
         "favicon_url": asset_url(brand.favicon),

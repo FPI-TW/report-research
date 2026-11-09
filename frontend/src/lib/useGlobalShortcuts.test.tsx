@@ -4,7 +4,7 @@ import { useGlobalShortcuts } from './useGlobalShortcuts'
 
 function Harness({ pathname = '/library', toggleSearch = vi.fn(), newChat = vi.fn() }) {
   useGlobalShortcuts({ toggleSearch, newChat, pathname })
-  return <input aria-label="搜尋研報" />
+  return <input aria-label="搜尋研報" data-report-search />
 }
 
 test('⌘／Ctrl K 開關搜尋；⌘／Ctrl Shift O 新對話', () => {

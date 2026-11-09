@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { BulkOutcome } from './useSelection'
 import c from '../../components/console/Console.module.css'
+import { t } from '@/i18n'
 
 /** 表頭的「全選本頁」：全部已選＝勾、部分已選＝半勾（indeterminate）、沒有可選的列＝停用。 */
-export function SelectAllBox({ ids, selected, onChange, label = '全選本頁' }: {
+export function SelectAllBox({ ids, selected, onChange, label = t('admin.bulkParts.selectAllOnThisPage') }: {
   ids: readonly string[]; selected: ReadonlySet<string>; onChange: (on: boolean) => void; label?: string
 }) {
   const ref = useRef<HTMLInputElement>(null)
@@ -22,18 +23,18 @@ export function SelectAllBox({ ids, selected, onChange, label = '全選本頁' }
 export function BulkResultPanel({ outcome, onClose }: { outcome: BulkOutcome | null; onClose: () => void }) {
   if (!outcome) return null
   const { title, ok, unchanged = 0, skipped } = outcome
-  const parts = [`成功 ${ok} 筆`]
-  if (unchanged) parts.push(`未變更 ${unchanged} 筆（已是目標狀態）`)
-  parts.push(`略過 ${skipped.length} 筆`)
+  const parts = [t('admin.bulkParts.succeeded', { ok })]
+  if (unchanged) parts.push(t('admin.bulkParts.unchangedAlreadyInTheTarget', { unchanged }))
+  parts.push(t('admin.bulkParts.skipped', { length: skipped.length }))
   return (
-    <section className={c.notice} aria-label="批次結果" role="status">
+    <section className={c.notice} aria-label={t('admin.bulkParts.batchResult')} role="status">
       <div className={c.noticeHead}>
-        <strong>{title}：{parts.join('、')}</strong>
-        <button type="button" className={`${c.btn} ${c.btnSm}`} onClick={onClose}>關閉</button>
+        <strong>{t('admin.bulkParts.text', { title })}{parts.join(t('admin.bulkParts.text2'))}</strong>
+        <button type="button" className={`${c.btn} ${c.btnSm}`} onClick={onClose}>{t('admin.bulkParts.close')}</button>
       </div>
       {skipped.length > 0 && (
         <ul className={c.noticeList}>
-          {skipped.map((s, i) => <li key={i}><strong>{s.name}</strong>：{s.detail}</li>)}
+          {skipped.map((s, i) => <li key={i}><strong>{s.name}</strong>{t('admin.bulkParts.text3', { detail: s.detail })}</li>)}
         </ul>
       )}
     </section>

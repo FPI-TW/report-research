@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { AlertCircle, FileX } from 'lucide-react'
 import styles from './ReportStates.module.css'
+import { t } from '@/i18n'
 
 interface StateBoxProps {
   icon: ReactNode
@@ -40,10 +41,10 @@ export function ReportNotFound() {
         level={1}
         role="status"
         icon={<FileX size={18} strokeWidth={1.8} />}
-        title="找不到這篇研報"
-        desc="研報可能已下架，或網址有誤。"
+        title={t('report.reportStates.reportNotFound')}
+        desc={t('report.reportStates.theReportMayHaveBeen')}
       >
-        <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/library">回到研報庫</Link>
+        <Link className={`${styles.btn} ${styles.btnPrimary}`} to="/library">{t('report.reportStates.backToLibrary')}</Link>
       </StateBox>
     </div>
   )
@@ -56,10 +57,10 @@ export function ReportLoadError({ onRetry }: { onRetry: () => void }) {
         level={1}
         role="alert"
         icon={<AlertCircle size={18} strokeWidth={1.8} />}
-        title="研報載入失敗"
-        desc="連線逾時，請稍後再試。"
+        title={t('report.reportStates.couldnTLoadTheReport')}
+        desc={t('report.reportStates.theConnectionTimedOutTry')}
       >
-        <button type="button" className={styles.btn} onClick={onRetry}>重試</button>
+        <button type="button" className={styles.btn} onClick={onRetry}>{t('report.reportStates.retry')}</button>
       </StateBox>
     </div>
   )

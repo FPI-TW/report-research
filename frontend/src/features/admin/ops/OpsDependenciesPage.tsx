@@ -10,20 +10,23 @@ import { TIER_LABELS } from './opsLabels'
 import { NODE_KIND_LABELS, healthLabel, nodeTone, serviceHref } from './services/health'
 import { useOpsDependencies } from './useOps'
 import styles from './services/Services.module.css'
+import { t } from '@/i18n'
 
-const HELP = (
-  <>
-    依賴關係由主機上的 Service Catalog 宣告（<code>deploy/ops/services.*.toml</code> 的 <code>depends_on</code> 與{' '}
-    <code>[[externals]]</code>），健康判讀與「上游壞掉 → 受影響的下游」由後端算。
-    外部依賴的狀態看指定探針最後一次的結果；沒有探針的是「未監控」，只有「故障」會往下游傳播。
-  </>
-)
+function Help() {
+  return (
+    <>
+      {t('admin.ops.opsDependenciesPage.dependenciesAreDeclaredByThe')}<code>deploy/ops/services.*.toml</code>
+      {t('admin.ops.opsDependenciesPage.for')}<code>depends_on</code>{t('admin.ops.opsDependenciesPage.and', { v: ' ' })}
+      <code>[[externals]]</code>{t('admin.ops.opsDependenciesPage.healthAndUpstreamDownAffected')}
+    </>
+  )
+}
 
 /** 受上游影響、但自己沒壞：圖上與清單都另外標出來（自己就壞了的節點只標故障）。 */
 const isAffected = (n: OpsDependencyNode) => n.affected && n.health !== 'down'
 
 function Names({ names }: { names: string[] }) {
-  return <>{names.join('、')}</>
+  return <>{names.join(t('admin.ops.opsDependenciesPage.text'))}</>
 }
 
 /** 外部依賴（R2、NAS…）沒有服務詳情；其餘連到服務頁的抽屜（`?service=`）。 */
@@ -40,7 +43,7 @@ function ImpactBanner({ data, byName }: { data: OpsDependencyGraph; byName: Map<
   if (data.down.length === 0) {
     return (
       <div className={c.banner} data-tone="ok" role="status">
-        沒有故障的節點{unknown > 0 && `（${unknown} 個狀態不明或未監控，不列入傳播）`}
+        {t('admin.ops.opsDependenciesPage.noFailingNodes')}{unknown > 0 && t('admin.ops.opsDependenciesPage.unknownOrUnmonitoredNotPropagated', { unknown })}
       </div>
     )
   }
@@ -49,23 +52,23 @@ function ImpactBanner({ data, byName }: { data: OpsDependencyGraph; byName: Map<
     <div className={c.banner} data-tone="bad" role="alert">
       <div className={styles.bannerBody}>
         <p>
-          {roots.length === 1 ? '根因' : '根因候選'}：
+          {roots.length === 1 ? t('admin.ops.opsDependenciesPage.rootCause') : t('admin.ops.opsDependenciesPage.rootCauseCandidates')}{t('admin.ops.opsDependenciesPage.text2')}
           {roots.map((name, i) => {
             const n = byName.get(name)
             return (
               <span key={name}>
-                {i > 0 && '、'}<b>{name}</b>{n?.description ? `（${n.description}）` : ''}
+                {i > 0 && t('admin.ops.opsDependenciesPage.text')}<b>{name}</b>{n?.description ? t('admin.ops.opsDependenciesPage.text3', { description: n.description }) : ''}
               </span>
             )
           })}
         </p>
         {data.affected.length > 0 ? (
-          <p>受影響的下游（{data.affected.length}）：<Names names={data.affected} /></p>
+          <p>{t('admin.ops.opsDependenciesPage.affectedDownstream', { length: data.affected.length })}<Names names={data.affected} /></p>
         ) : (
-          <p>沒有其他節點依賴它。</p>
+          <p>{t('admin.ops.opsDependenciesPage.nothingElseDependsOnIt')}</p>
         )}
         {data.down.length > roots.length && (
-          <p>同時故障、但上游也壞了：<Names names={data.down.filter(n => !roots.includes(n))} /></p>
+          <p>{t('admin.ops.opsDependenciesPage.alsoDownButWithA')}<Names names={data.down.filter(n => !roots.includes(n))} /></p>
         )}
       </div>
     </div>
@@ -74,31 +77,31 @@ function ImpactBanner({ data, byName }: { data: OpsDependencyGraph; byName: Map<
 
 function Legend() {
   return (
-    <ul className={styles.legend} aria-label="圖例">
-      <li><Lamp tone="ok" label="" />正常</li>
-      <li><Lamp tone="warn" label="" />降級</li>
-      <li><Lamp tone="bad" label="" />故障</li>
-      <li><Lamp tone="idle" label="" />不明／未監控</li>
-      <li><span className={styles.swatch} data-kind="affected" />受上游影響</li>
-      <li><span className={styles.swatch} data-kind="external" />外部依賴</li>
-      <li>箭頭指向被依賴的一方</li>
+    <ul className={styles.legend} aria-label={t('admin.ops.opsDependenciesPage.legend')}>
+      <li><Lamp tone="ok" label="" />{t('admin.ops.opsDependenciesPage.ok')}</li>
+      <li><Lamp tone="warn" label="" />{t('admin.ops.opsDependenciesPage.degraded')}</li>
+      <li><Lamp tone="bad" label="" />{t('admin.ops.opsDependenciesPage.down')}</li>
+      <li><Lamp tone="idle" label="" />{t('admin.ops.opsDependenciesPage.unknownUnmonitored')}</li>
+      <li><span className={styles.swatch} data-kind="affected" />{t('admin.ops.opsDependenciesPage.affectedByUpstream')}</li>
+      <li><span className={styles.swatch} data-kind="external" />{t('admin.ops.opsDependenciesPage.externalDependency')}</li>
+      <li>{t('admin.ops.opsDependenciesPage.arrowsPointToTheDependency')}</li>
     </ul>
   )
 }
 
 function nodeTitle(node: OpsDependencyNode): string {
-  return `${node.name}（${NODE_KIND_LABELS[node.kind]}・${TIER_LABELS[node.tier]}）：${healthLabel(node)}，`
-    + `${node.health_reason}${node.affected ? `；受 ${node.impacted_by.join('、')} 影響` : ''}`
+  return t('admin.ops.opsDependenciesPage.text4', { name: node.name, NODE_KIND_LABELS: NODE_KIND_LABELS[node.kind], TIER_LABELS: TIER_LABELS[node.tier], node: healthLabel(node) })
+    + `${node.health_reason}${node.affected ? t('admin.ops.opsDependenciesPage.affectedBy', { impacted_by: node.impacted_by.join(t('admin.ops.opsDependenciesPage.text')) }) : ''}`
 }
 
 function Graph({ data }: { data: OpsDependencyGraph }) {
   const layout = layoutGraph(data.nodes, data.edges)
   if (layout.nodes.length === 0) {
-    return <p className={c.empty}>catalog 沒有宣告任何依賴（depends_on）</p>
+    return <p className={c.empty}>{t('admin.ops.opsDependenciesPage.theCatalogDeclaresNoDependencies')}</p>
   }
   const label = data.down.length
-    ? `依賴圖：${data.down.length} 個節點故障、${data.affected.length} 個受影響；詳細內容見下方清單`
-    : `依賴圖：${layout.nodes.length} 個節點，沒有故障；詳細內容見下方清單`
+    ? t('admin.ops.opsDependenciesPage.dependencyGraphNodesDownAffected', { length: data.down.length, length2: data.affected.length })
+    : t('admin.ops.opsDependenciesPage.dependencyGraphNodesNoneDown', { length: layout.nodes.length })
   return (
     <div className={styles.graphBody}>
       <div className={styles.graphScroll}>
@@ -128,15 +131,15 @@ function Graph({ data }: { data: OpsDependencyGraph }) {
           </svg>
           {layout.nodes.map(({ node, x, y }) => (
             <NodeLink key={node.name} node={node} className={styles.node} title={nodeTitle(node)}
-              aria-label={`${node.name}：${isAffected(node) ? '受上游影響' : healthLabel(node)}`}
+              aria-label={t('admin.ops.opsDependenciesPage.text5', { name: node.name, v: isAffected(node) ? t('admin.ops.opsDependenciesPage.affectedByUpstream') : healthLabel(node) })}
               style={{ left: x, top: y, width: NODE_W, height: NODE_H }}
               data-testid={`node-${node.name}`} data-kind={node.kind} data-health={node.health}
               data-affected={node.affected ? 'true' : 'false'}>
               <Lamp tone={nodeTone(node)} label="" />
               <span className={styles.nodeName}>{node.name}</span>
               {isAffected(node)
-                ? <span className={styles.nodeTag} data-tone="warn">受影響</span>
-                : node.kind === 'external' && <span className={styles.nodeTag}>外部</span>}
+                ? <span className={styles.nodeTag} data-tone="warn">{t('admin.ops.opsDependenciesPage.affected')}</span>
+                : node.kind === 'external' && <span className={styles.nodeTag}>{t('admin.ops.opsDependenciesPage.external')}</span>}
             </NodeLink>
           ))}
         </div>
@@ -144,7 +147,7 @@ function Graph({ data }: { data: OpsDependencyGraph }) {
       <Legend />
       {layout.isolated.length > 0 && (
         <p className={styles.isolated}>
-          沒有依賴關係的節點：
+          {t('admin.ops.opsDependenciesPage.nodesWithoutDependencies')}
           {layout.isolated.map(n => (
             <NodeLink key={n.name} node={n} className={styles.depChip} title={n.health_reason}
               data-external={n.kind === 'external' ? 'true' : undefined}>
@@ -162,28 +165,28 @@ function NodeList({ data }: { data: OpsDependencyGraph }) {
   const rank = (n: OpsDependencyNode) => (n.health === 'down' ? 0 : n.affected ? 1 : n.health === 'degraded' ? 2 : 3)
   const nodes = [...data.nodes].sort((a, b) => rank(a) - rank(b))
   return (
-    <ul className={styles.list} aria-label="依賴清單">
+    <ul className={styles.list} aria-label={t('admin.ops.opsDependenciesPage.dependencyList')}>
       {nodes.map(n => (
         <li key={n.name} className={styles.item} data-testid={`item-${n.name}`}>
           <div className={styles.itemHead}>
             <NodeLink node={n} className={styles.itemName}>{n.name}</NodeLink>
             <Status tone={nodeTone(n)}>{healthLabel(n)}</Status>
-            {n.affected && <Chip tone="warn">受影響</Chip>}
-            <span className={styles.itemKind}>{NODE_KIND_LABELS[n.kind]}・{TIER_LABELS[n.tier]}</span>
+            {n.affected && <Chip tone="warn">{t('admin.ops.opsDependenciesPage.affected')}</Chip>}
+            <span className={styles.itemKind}>{NODE_KIND_LABELS[n.kind]}{t('common.separator')}{TIER_LABELS[n.tier]}</span>
           </div>
           {n.description && <div className={styles.itemText}>{n.description}</div>}
           <div className={styles.itemText}>
             {n.health_reason}
-            {n.observed_at && <span className={c.muted}>（{fmtDateTime(n.observed_at)}）</span>}
+            {n.observed_at && <span className={c.muted}>{t('admin.ops.opsDependenciesPage.text6', { observed_at: fmtDateTime(n.observed_at) })}</span>}
           </div>
           {n.affected && (
-            <div className={styles.itemImpact}>上游故障：<Names names={n.impacted_by} /></div>
+            <div className={styles.itemImpact}>{t('admin.ops.opsDependenciesPage.upstreamDown')}<Names names={n.impacted_by} /></div>
           )}
           {(n.depends_on.length > 0 || n.dependents.length > 0) && (
             <div className={styles.itemLinks}>
-              {n.depends_on.length > 0 && <span>依賴 <Names names={n.depends_on} /></span>}
-              {n.depends_on.length > 0 && n.dependents.length > 0 && '；'}
-              {n.dependents.length > 0 && <span>被 <Names names={n.dependents} /> 依賴</span>}
+              {n.depends_on.length > 0 && <span>{t('admin.ops.opsDependenciesPage.dependsOn')}{' '}<Names names={n.depends_on} /></span>}
+              {n.depends_on.length > 0 && n.dependents.length > 0 && t('admin.ops.opsDependenciesPage.text7')}
+              {n.dependents.length > 0 && <span>{t('admin.ops.opsDependenciesPage.dependedOnBy')}{' '}<Names names={n.dependents} />{' '}{t('admin.ops.opsDependenciesPage.dependsOn')}</span>}
             </div>
           )}
         </li>
@@ -193,8 +196,8 @@ function NodeList({ data }: { data: OpsDependencyGraph }) {
 }
 
 function summaryOf(data: OpsDependencyGraph): string {
-  if (data.down.length === 0) return `${data.nodes.length} 個節點，沒有故障。`
-  return `${data.nodes.length} 個節點，${data.down.length} 個故障、${data.affected.length} 個受影響。`
+  if (data.down.length === 0) return t('admin.ops.opsDependenciesPage.nodesNoneDown', { length: data.nodes.length })
+  return t('admin.ops.opsDependenciesPage.nodesDownAffected', { length: data.nodes.length, length2: data.down.length, length3: data.affected.length })
 }
 
 /**
@@ -207,31 +210,31 @@ export default function OpsDependenciesPage() {
   const data = q.data
   return (
     <>
-      <PageHeader summary={data ? summaryOf(data) : '服務之間的依賴，以及目前受影響的下游。'} help={HELP} />
+      <PageHeader summary={data ? summaryOf(data) : t('admin.ops.opsDependenciesPage.dependenciesBetweenServicesAndThe')} help={<Help />} />
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.ops.opsDependenciesPage.loading')}</p>
       ) : q.isError ? (
-        <OpsQueryError error={q.error} what="依賴圖" />
+        <OpsQueryError error={q.error} what={t('admin.ops.opsDependenciesPage.dependencyGraph')} />
       ) : (
         <>
           <ImpactBanner data={q.data} byName={new Map(q.data.nodes.map(n => [n.name, n]))} />
           <section className={c.card} aria-labelledby="ops-deps-graph-title">
             <div className={c.cardHead}>
-              <h2 id="ops-deps-graph-title" className={c.cardTitle}>依賴圖</h2>
-              <span className={c.cardHint}>只畫有依賴關係的節點；點節點看服務詳情</span>
+              <h2 id="ops-deps-graph-title" className={c.cardTitle}>{t('admin.ops.opsDependenciesPage.dependencyGraph')}</h2>
+              <span className={c.cardHint}>{t('admin.ops.opsDependenciesPage.onlyNodesWithDependenciesAre')}</span>
             </div>
             <Graph data={q.data} />
           </section>
           <section className={c.card} aria-labelledby="ops-deps-list-title">
             <div className={c.cardHead}>
-              <h2 id="ops-deps-list-title" className={c.cardTitle}>清單</h2>
-              <span className={c.cardHint}>有問題的排前面</span>
+              <h2 id="ops-deps-list-title" className={c.cardTitle}>{t('admin.ops.opsDependenciesPage.list')}</h2>
+              <span className={c.cardHint}>{t('admin.ops.opsDependenciesPage.problemsFirst')}</span>
             </div>
             <NodeList data={q.data} />
           </section>
           <p className={styles.meta}>
-            <span>{q.data.environment}・{q.data.host}</span>
-            <span>檢查時間 <b>{fmtDateTime(q.data.checked_at)}</b>（每 30 秒更新）</span>
+            <span>{q.data.environment}{t('common.separator')}{q.data.host}</span>
+            <span>{t('admin.ops.opsDependenciesPage.checkedAt')}{' '}<b>{fmtDateTime(q.data.checked_at)}</b>{t('admin.ops.opsDependenciesPage.refreshesEvery30S')}</span>
           </p>
         </>
       )}

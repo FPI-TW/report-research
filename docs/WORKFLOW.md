@@ -186,7 +186,7 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
 
 **重跑不重複入庫**：處理紀錄 `<CONNECTOR_DATA_DIR>/state/<名稱>.json`（`CONNECTOR_DATA_DIR` 預設 `data/connectors/`）只記「重跑不會不一樣」的結果——`ingested`、`skip_exists`、`skip_admin`、`skip_scanned`、`skip_non_research`、`skip_blocked`、`skip_truncated` 與側檔不合格；`fail`、`skip_untagged` 不記，下一輪重試。檔案或側檔改了指紋就變，會重送一次。紀錄遺失時最壞是重抽一次字、全部 `skip_exists`（`ingest_one` 以 file_hash 判斷已入庫），不會重複入庫；紀錄壞掉（不是合法 JSON）不會被當成空的，該連接器停下、記一筆 `connector_error` 等人處理。本輪入庫的 hashes 寫到 `<CONNECTOR_DATA_DIR>/last_hashes`（或 `--hashes-out`），計數寫 `last_stats`（`abnormal`＝`fail`＋`skip_untagged`＋`skip_blocked`＋`skip_truncated`＋`sidecar_invalid`＋`fetch_fail`＋`connector_error`），失敗清單 `failures.log`（`連接器<TAB>相對路徑<TAB>階段<TAB>原因`）；中途整批中止時已入庫的篇寫到 `<hashes_out>.partial`（同 sync）。
 
-**排程**（`scripts/connector_sync.py`，容器 scheduler 的 `connectors` 工作每 15 分鐘叫一次，見 `docs/CONTAINER_DEPLOYMENT.md`）：沒有到期的連接器就整輪不跑；到期時跑 `ingest_connectors.py`，再照抄 sync 鏈第 5 到 8 段——`generate_summaries`／`generate_titles`／`extract_takeaways` 帶 `--hashes-file`（本輪有新研報才跑）、`extract_signals --limit ${SYNC_SIGNAL_LIMIT:-100}`、`generate_brief`、`generate_titles --limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`（`tests/test_connector_sync.py` 對帳殼裡的步驟並釘住 `--limit` 永遠在）。下游 best-effort；匯入撞鎖（rc=75）時本輪結束，落地的檔案沒記進處理紀錄、下一輪自然再送；下游 rc=2 時本輪 hashes 保留成 `hashes_retained_<時間>.txt` 並印補跑指令。
+**排程**（`scripts/connector_sync.py`，容器 scheduler 的 `connectors` 工作每 15 分鐘叫一次，見 `docs/CONTAINER_DEPLOYMENT.md`）：沒有到期的連接器就整輪不跑；到期時跑 `ingest_connectors.py`，再照抄 sync 鏈第 5 到 8 段（唯一的差異是分層回填，見「首次導入」的「連接器排程的分層」）——`generate_summaries`／`generate_titles`／`extract_takeaways` 帶 `--hashes-file`（本輪有新研報才跑）、`extract_signals --limit ${SYNC_SIGNAL_LIMIT:-100}`、`generate_brief`、`generate_titles --limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`（`tests/test_connector_sync.py` 對帳殼裡的步驟並釘住 `--limit` 永遠在）。下游 best-effort；匯入撞鎖（rc=75）時本輪結束，落地的檔案沒記進處理紀錄、下一輪自然再送；下游 rc=2 時本輪 hashes 保留成 `hashes_retained_<時間>.txt` 並印補跑指令。
 
 ### metadata 側檔
 
@@ -214,6 +214,66 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
 - **保存**：驗證後的欄位（只含有給的鍵）在 `upsert_report` 之前、同一筆交易寫進 `research.report_metadata`（以 `file_hash` 為鍵、刻意無 FK，同 `report_visibility`；不可重建、在備份清單內）。側檔是人工提供的文字，**原樣保存，不經 `zh_hant.to_traditional()`**。
 - **訊號**：摘要、摘錄、`report_signal` 照常由 LLM 產出。雷達的評等與目標價需要逐字證據與錨定（`target_price_evidence`、`thesis_dimensions[*].evidence`），側檔的 `rating`／`target_price` 沒有證據，所以刻意不寫進 `report_signal`，只保存供查證；`extract_signals` 的 `--limit` 照舊。
 - **只在第一次入庫時套用**：已在庫的研報（`skip_exists`）不因側檔改變而改寫。全語料重建（`scripts/ingest_all.py`）不讀側檔（標註快取 `data/tags/` 只放 LLM 的結果）。
+
+## 首次導入：分層回填與事前估價（`scripts/estimate_backfill.py`、`scripts/backfill_tiers.py`）
+
+券商第一次導入時可能帶來數萬份歷史研報。每份跑完整的 LLM 派生（標註＋摘要＋標題＋摘錄＋訊號）要兩、三萬輸入 token（廷豐語料的實測平均：標註約 6.1k、摘要 5.9k、摘錄 6.7k、標題 2.6k、訊號 9.9k），所以分三層、開跑前先估價：
+
+| 層 | 範圍 | 做什麼 | 由誰跑 |
+|---|---|---|---|
+| 第一層 | 全部歷史 | 抽取、切塊、嵌入、標註（側檔同時給了 `market`＋`stock_targets` 就不呼叫標註 LLM）→ 可搜尋、可問答、可閱讀 | 既有的匯入：連接器（`scripts/ingest_connectors.py`）或全語料三支 |
+| 第二層 | `report_date` 在最近 `[backfill].recent_months` 個月內（預設 12，含窗期起點當天） | 摘要、標題、摘錄、訊號 | `scripts/backfill_tiers.py --tier 2`，一次跑完 |
+| 第三層 | 其餘：`report_date` 早於窗期，**或為 NULL** | 同第二層 | 背景補齊 `scripts/backfill_tiers.py --tier 3`（scheduler 的 `backfill-tiers`），每日上限內慢慢補 |
+
+- **`report_date` 為 NULL 歸第三層**：沒有日期的多半是檔名、內文、mtime 都推不出日期的舊檔，歸第二層會把它們當新檔付費。訊號擷取本來就不收無日期的研報。「最近 N 個月」是今天（台北時間）往前推 N 個曆月的同一天（月底夾到該月最後一天）。
+- **讀取路徑維持零 LLM**：第三層還沒補到的研報，閱讀頁照常顯示原文、沒有摘錄；不會在使用者打開時即時生成。
+- **不重複付費**：`backfill_tiers.py` 不另寫派生的實作，只挑出待補的研報、分批寫成 hashes 檔，再依序叫 `generate_summaries`、`generate_titles`、`extract_takeaways`（`--hashes-file`）與 `extract_signals`（`--hashes-file`＋`--limit`）。各批次照舊各自判斷已完成（`summary IS NULL`、`title IS NULL`、摘錄的版本與 `text_sha256`、訊號的子集與版本）、套跳過名單、取 LLM 批次鎖，所以中斷、重跑都不會重付。挑候選時也套同一份跳過名單（每項任務各一段 `llm_failures.skip_clause_sql`），內容型失敗的研報不會每輪重排。規則全文在 `app/services/backfill_tiers.py` 的模組 docstring。
+- 挑候選只看摘要、標題、摘錄；訊號只在同一份研報有其他派生要補時順帶跑（子集外的研報永遠不會有訊號列，拿它挑會讓同一批研報每輪重排）。擷取版本升級後的重跑走各批次的 `--reextract`，不經分層回填。
+
+### 步驟
+
+1. **抽取（零 LLM）**：語料放進 `研報自動匯入/` 後跑 `EXTRACTOR=pdfplumber uv run python scripts/extract_all.py`，得到抽取快取 `data/extracted/`。
+2. **估價**：`make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"`（或 `--input-rate`／`--output-rate`／`--currency`；`--json` 給機器讀）。輸出各層各任務的呼叫數、輸入／輸出 token、時間與金額，以及第三層以每日上限換算約需幾天。費率檔格式見 `scripts/estimate_backfill.py` 的 `parse_rates`：
+
+   ```toml
+   currency = "USD"
+   per_tokens = 1000000   # 價格是每多少 token（預設一百萬）
+   input = 0.0            # 填供應商的現行價格；程式不內建任何廠商價格
+   output = 0.0
+   [tasks.signal]         # 選填：個別任務的覆寫
+   output = 0.0
+   ```
+
+   token 以字元比例估（CJK 字 ×0.8、其他非空白字元 ÷3.5，加上各任務的 prompt 開銷，每項只算它實際送出的內文前綴）。係數沒有對真實 tokenizer 量過，**未校正時請當成 ±30% 的量級**；輸出 token 與每次秒數沒有實測時用保守的預設值（表上標「預設」）。要更準就先小跑一批（下面第 4 步的 `--max-reports 50`），再帶用量檔重估：`--usage-log`（預設 `data/llm_usage.jsonl`）以同一批研報的實測 ÷ 估計得出每項任務的輸入倍率，輸出與秒數改用實測平均（每項至少 20 筆）。
+3. **客戶簽字**後跑第一層：有 metadata 側檔時走連接器（`uv run python scripts/ingest_connectors.py --force`，側檔齊全的不呼叫標註 LLM；全語料三支的 `ingest_all.py` 不讀側檔），否則 `tag_all_cli.py`＋`ingest_all.py`（「完整重跑指令」）。也可以直接讓 scheduler 的連接器輪詢（`connectors` 工作）匯入：它是分層的——本輪新研報只把第二層交給摘要、標題、摘錄，訊號與標題積壓也只補第二層（見下方「連接器排程的分層」）——但第二層的派生會跟著每一輪匯入一起跑、費用分散在匯入期間；想要「先全部匯入、看過第二層的估價再開跑」就在首次導入期間設 `SCHEDULER_DISABLE=connectors`、手動跑匯入。
+4. **第二層**：`uv run python scripts/backfill_tiers.py --tier 2 --dry-run` 先看會排入幾份、估計多少 token（不呼叫 LLM、不取鎖），再去掉 `--dry-run` 開跑。可加 `--max-reports N`、`--token-limit N` 設上限、`--chunk N`（每批份數，預設 50；批與批之間放開 LLM 批次鎖，sync 擠得進來）、`--workers N`（傳給各批次）。也可以 `make estimate ESTIMATE_ARGS="--source db …"` 對已入庫的語料重估（只計還沒做的）。
+5. **第三層（背景）**：profile 設 `[backfill].background_enabled = true`（改 profile 後重啟 scheduler），scheduler 的 `backfill-tiers` 每小時 :50 跑一輪：每輪最多 `max_reports_per_round` 份（預設 100）、每個台北日最多 `daily_token_limit` token（預設 2,000,000；輸入＋輸出），新的先、NULL 日期最後，以 `nice` 降低優先權。到上限就停、下一輪再續，換日歸零。之後開回連接器輪詢接新研報。
+
+```toml
+[backfill]
+recent_months = 12            # 第二層窗期（1..240）
+background_enabled = false    # 第三層背景補齊（預設關；廷豐 profile 關）
+daily_token_limit = 2000000   # 每個台北日的 token 上限（輸入＋輸出）
+max_reports_per_round = 100   # 每輪最多幾份
+```
+
+### 連接器排程的分層（`scripts/connector_sync.py`）
+
+框架的連接器輪詢（scheduler 的 `connectors`）與廷豐的 sync 殼只差這裡（`connector_sync.FRAMEWORK_ONLY_DIFFERENCES`，`tests/test_connector_sync.py` 以白名單對帳）：
+
+- 本輪新入庫的研報只把 `report_date` 在窗期內的（第二層）以 `--hashes-file` 交給摘要、標題、摘錄；窗期外與 `report_date` 為 NULL 的留給第三層背景補齊。查不到本輪研報的日期（DB 錯誤）時退回不分層、照殼的行為跑，並記一行。
+- 訊號積壓（`--limit`）與標題積壓（`--limit`＋`--exclude-hashes-file` 排掉本輪全部新研報）另帶 `--min-report-date <窗期起點>`，只補第二層，不會繞過背景補齊的每日上限。
+- 所以背景補齊關著（`background_enabled = false`）時，日期早於窗期或沒有日期的新研報不會有摘要、標題、摘錄與訊號；要補就開背景補齊，或手動跑 `backfill_tiers.py --tier 3`。
+
+廷豐走 sync 殼（`scripts/sync_new_reports.sh`），不分層、行為不變。
+
+### 查進度、中止與續跑
+
+- **進度**：`make backfill-status`（唯讀、零 LLM）印各層的份數與各項待補數，以及今天的背景用量。背景每輪的紀錄在 scheduler 的日誌（`docker compose logs scheduler`）。
+- **每日帳**：`data/backfill/state.json`（台北日、已用 token、已處理份數）。每批跑完以 `data/llm_usage.jsonl` 裡這批研報的實測 token 入帳（重試的每一次都算）；讀不到用量檔時以估計值入帳（寧可多算），`make backfill-status` 會標出來。帳壞掉或被刪掉時視為當天還沒用。
+- **中止**：Ctrl-C、`kill`、停 scheduler 都可以。已完成的派生已落庫，重跑同一個指令就從還沒補的接著補（各批次再判斷一次已完成，不重付）。
+- **退出碼**：0 跑完或碰到上限而停；75 鎖被佔用（另一個分層回填正在跑——編排鎖 `data/backfill/.lock`——或子批次撞上 LLM 批次鎖，本輪停下、下次再續）；2 子批次帳號／環境型中止（例如額度用完、金鑰錯）：本批 hashes 保留成 `data/backfill/retained_*.txt` 並印出各批次的 `--hashes-file` 補跑指令，排除原因後照印的指令補跑，或直接重跑 `backfill_tiers.py`（會重新挑出這批）。其他非零退出碼 best-effort：記一行、照常往下，沒補成的下次再挑。
+- 編排入口本身不呼叫 LLM、不持有 LLM 批次鎖（子批次取的是同一把，持有它會讓每個子批次撞鎖），但照 LLM 入口的規矩在取鎖前預檢金鑰（`--dry-run` 不檢）。
 
 ## 研報上傳：收檔、worker 與審核（`UPLOAD_ENABLED` 預設關閉）
 

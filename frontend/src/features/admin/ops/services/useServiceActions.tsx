@@ -5,10 +5,11 @@ import { ApiError } from '../../../../lib/api'
 import { adminApi, type OpsServiceStatus } from '../../../../lib/generated/adminApi'
 import { useHasScope } from '../../../../lib/useMe'
 import { OPS_KEY } from '../useOps'
+import { t } from '@/i18n'
 
 export type WriteAction = 'restart' | 'run'
 
-export const WRITE_ACTION_LABELS: Record<WriteAction, string> = { restart: '重新啟動', run: '立即執行' }
+export const WRITE_ACTION_LABELS: Record<WriteAction, string> = { get restart() { return t('admin.ops.services.useServiceActions.restart') }, get run() { return t('admin.ops.services.useServiceActions.runNow') } }
 
 /** catalog 對這個服務開放的寫入類操作（白名單在主機上的 Service Catalog；這裡只是照著顯示）。 */
 export function writeActionsOf(service: Pick<OpsServiceStatus, 'actions'>): WriteAction[] {
@@ -18,10 +19,10 @@ export function writeActionsOf(service: Pick<OpsServiceStatus, 'actions'>): Writ
 /** 後端錯誤代碼 → 給人看的一句話；其餘沿用後端 detail（requestJSON 已放進 message）。 */
 function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'already_running') return '同一組工作正在執行中，請等它結束後再試（不排隊）。'
-    if (err.code === 'action_not_allowed') return '這個服務不允許這項操作。'
-    if (err.code === 'ops_agent_unavailable') return '維運代理目前無法使用，操作沒有送出。'
-    if (err.code === 'missing_scope') return '需要「ops.operate」權限。'
+    if (err.code === 'already_running') return t('admin.ops.services.useServiceActions.theSameJobIsAlready')
+    if (err.code === 'action_not_allowed') return t('admin.ops.services.useServiceActions.thisServiceDoesnTAllow')
+    if (err.code === 'ops_agent_unavailable') return t('admin.ops.services.useServiceActions.theOpsAgentIsCurrently')
+    if (err.code === 'missing_scope') return t('admin.ops.services.useServiceActions.requiresTheOpsOperatePermission')
   }
   return err instanceof Error ? err.message : String(err)
 }
@@ -54,8 +55,8 @@ export function useServiceActions(): {
       const res = await elevated(`${WRITE_ACTION_LABELS[action]} ${name}`, () => (action === 'restart'
         ? adminApi.restartOpsService(name)
         : adminApi.runOpsService(name)))
-      const wait = res.execute_after_ms > 0 ? `，約 ${res.execute_after_ms / 1000} 秒後執行` : ''
-      toast(action === 'restart' ? `已排程重新啟動 ${name}${wait}` : `已送出 ${name}，等同 timer 觸發一次`)
+      const wait = res.execute_after_ms > 0 ? t('admin.ops.services.useServiceActions.runningInAboutS', { v: res.execute_after_ms / 1000 }) : ''
+      toast(action === 'restart' ? t('admin.ops.services.useServiceActions.restartOfScheduled', { name, wait }) : t('admin.ops.services.useServiceActions.sentSameAsOneTimer', { name }))
       // 代理先回 202 再執行；等一下再重抓，才看得到新的 ActiveState／InvocationID。
       window.setTimeout(() => { void client.invalidateQueries({ queryKey: [...OPS_KEY] }) }, 3000)
     } catch (err) {
@@ -73,9 +74,9 @@ export function useServiceActions(): {
         tone={pending?.action === 'run' ? 'safe' : 'danger'}
         title={pending ? `${WRITE_ACTION_LABELS[pending.action]} ${pending.name}` : ''}
         body={pending?.action === 'restart'
-          ? `確定要重新啟動「${pending.name}」？重啟期間服務會短暫中斷，這個頁面也會短暫連不上。`
-          : `確定要立即執行「${pending?.name ?? ''}」一次？`}
-        confirmLabel={pending ? WRITE_ACTION_LABELS[pending.action] : '確定'}
+          ? t('admin.ops.services.useServiceActions.restartTheServiceIsBriefly', { name: pending.name })
+          : t('admin.ops.services.useServiceActions.runOnceNow', { v: pending?.name ?? '' })}
+        confirmLabel={pending ? WRITE_ACTION_LABELS[pending.action] : t('admin.ops.services.useServiceActions.confirm')}
         onConfirm={() => { if (pending) void execute(pending) }}
         onCancel={() => setPending(null)}
       />

@@ -4,6 +4,7 @@ import type { AdminUpload } from '../../../lib/generated/adminApi'
 import { graceRemaining, reviewErrorMessage, stateLabel } from '../uploadLabels'
 import { useUploadAction, type UploadAction } from '../useAdminUploads'
 import { RejectDialog } from './RejectDialog'
+import { t } from '@/i18n'
 
 type ConfirmKind = Exclude<UploadAction, 'reject'>
 
@@ -12,30 +13,30 @@ function confirmText(kind: ConfirmKind, upload: AdminUpload, now: number): { tit
   switch (kind) {
     case 'publish':
       return {
-        title: `發布「${name}」？`,
-        body: '發布後所有人都能在檢索、問答與閱讀頁看到這份研報；之後要下架只能到「研報管理」隱藏，不能再退回。',
-        label: '發布',
+        title: t('admin.uploads.useUploadReview.publish', { name }),
+        body: t('admin.uploads.useUploadReview.oncePublishedEveryoneCanSee'),
+        label: t('admin.uploads.useUploadReview.publish2'),
       }
     case 'unreject': {
       const grace = graceRemaining(upload.purge_after, now)
       return {
-        title: `撤銷退回「${name}」？`,
-        body: `撤銷後這份上傳回到退回前的狀態（由系統依處理進度判斷）${grace ? `；寬限期還剩 ${grace}` : ''}。`,
-        label: '撤銷退回',
+        title: t('admin.uploads.useUploadReview.undoRejectionOf', { name }),
+        body: t('admin.uploads.useUploadReview.afterUndoingThisUploadReturns', { v: grace ? t('admin.uploads.useUploadReview.leftInTheGracePeriod', { grace }) : '' }),
+        label: t('admin.uploads.useUploadReview.undoRejection'),
       }
     }
     case 'retry':
-      return { title: `重試「${name}」？`, body: '系統會在下一輪重新抽字、標註與入庫；處理完成後成為草稿。', label: '重試' }
+      return { title: t('admin.uploads.useUploadReview.retry', { name }), body: t('admin.uploads.useUploadReview.theSystemWillReExtract'), label: t('admin.uploads.useUploadReview.retry2') }
   }
 }
 
 function doneMessage(kind: UploadAction, name: string, result: AdminUpload): string {
   switch (kind) {
-    case 'publish': return `已發布「${name}」`
-    case 'reject': return `已退回「${name}」`
+    case 'publish': return t('admin.uploads.useUploadReview.published', { name })
+    case 'reject': return t('admin.uploads.useUploadReview.rejected', { name })
     // 撤銷後回到哪個狀態由後端依處理進度決定，照回應說。
-    case 'unreject': return `「${name}」回到${stateLabel(result.state)}`
-    case 'retry': return '已排入重試，等 worker 下一輪處理'
+    case 'unreject': return t('admin.uploads.useUploadReview.returnedTo', { name, state: stateLabel(result.state) })
+    case 'retry': return t('admin.uploads.useUploadReview.queuedForRetryWaitingFor')
   }
 }
 

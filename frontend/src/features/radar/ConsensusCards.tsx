@@ -5,6 +5,7 @@ import { primaryTargetGroup, ratingParts } from './consensusData'
 import { RatingDistBar } from './RatingDistBar'
 import shared from './shared.module.css'
 import styles from './ConsensusCards.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   rating?: RatingConsensus | null
@@ -29,15 +30,15 @@ function RatingCard({ rating }: { rating?: RatingConsensus | null }) {
   const median = rating?.median_rating
   return (
     <section className={`${shared.tile} ${styles.card}`} aria-labelledby={id}>
-      <h2 id={id} className={styles.cardTitle}>共識評等</h2>
+      <h2 id={id} className={styles.cardTitle}>{t('radar.consensusCards.consensusRating')}</h2>
       <div className={styles.bigRow}>
         <span className={styles.big}>{median && parts.length ? RATING_DISPLAY[median] : '—'}</span>
-        <span className={styles.unit}>{parts.length ? '中位數' : '尚無評等'}</span>
+        <span className={styles.unit}>{parts.length ? t('radar.consensusCards.median') : t('radar.consensusCards.noRatingYet')}</span>
       </div>
       {parts.length ? (
         <>
           <div className={styles.distBar}><RatingDistBar parts={parts} height={8} /></div>
-          <ul className={styles.legend} aria-label="評等分布">
+          <ul className={styles.legend} aria-label={t('radar.consensusCards.ratingDistribution')}>
             {parts.map(p => (
               <li key={p.rating}>
                 <i className={styles[p.rating]} aria-hidden="true" />
@@ -51,8 +52,8 @@ function RatingCard({ rating }: { rating?: RatingConsensus | null }) {
       {rating ? (
         <div className={styles.footWrap}>
           <div className={`${styles.foot} ${styles.footWide}`}>
-            <span className={`${shared.up} ${styles.strong} ${shared.num}`}>調升 {rating.upgrades}</span>
-            <span className={`${shared.down} ${styles.strong} ${shared.num}`}>調降 {rating.downgrades}</span>
+            <span className={`${shared.up} ${styles.strong} ${shared.num}`}>{t('radar.consensusCards.up', { upgrades: rating.upgrades })}</span>
+            <span className={`${shared.down} ${styles.strong} ${shared.num}`}>{t('radar.consensusCards.down', { downgrades: rating.downgrades })}</span>
           </div>
         </div>
       ) : null}
@@ -65,10 +66,10 @@ function TargetCard({ target }: { target?: TargetConsensus | null }) {
   const group = primaryTargetGroup(target)
   return (
     <section className={`${shared.tile} ${styles.card}`} aria-labelledby={id}>
-      <h2 id={id} className={styles.cardTitle}>目標價中位數</h2>
+      <h2 id={id} className={styles.cardTitle}>{t('radar.consensusCards.medianTargetPrice')}</h2>
       <div className={styles.bigRow}>
         <span className={`${styles.big} ${styles.bigNum} ${shared.num}`}>{group ? fmtValue(group.median) : '—'}</span>
-        <span className={styles.unit}>{group ? group.currency : '尚無目標價'}</span>
+        <span className={styles.unit}>{group ? group.currency : t('radar.consensusCards.noTargetPriceYet')}</span>
       </div>
       {group ? (
         <>
@@ -92,7 +93,7 @@ function TargetRange({ group }: { group: TargetGroup }) {
       <div
         className={styles.range}
         role="img"
-        aria-label={`目標價區間 ${fmtValue(group.low)} 至 ${fmtValue(group.high)}，中位數 ${fmtValue(group.median)}，${group.count} 家券商`}
+        aria-label={t('radar.consensusCards.targetPriceRangeToMedian', { low: fmtValue(group.low), high: fmtValue(group.high), median: fmtValue(group.median), count: group.count })}
       >
         <span className={styles.track} />
         <span className={styles.iqr} style={{ left: `${q1}%`, width: `${Math.max(0, q3 - q1)}%` }} />
@@ -112,16 +113,16 @@ function EpsCard({ eps }: { eps?: EpsGroup | null }) {
   return (
     <section className={`${shared.tile} ${styles.card}`} aria-labelledby={id}>
       <h2 id={id} className={styles.cardTitle}>
-        EPS 中位數
+        {t('radar.consensusCards.medianEps')}
         {basis ? <>{' '}<span className={`${styles.basis} ${shared.num}`}>{basis}</span></> : null}
       </h2>
       <div className={styles.bigRow}>
         <span className={`${styles.big} ${styles.bigNum} ${shared.num}`}>{eps ? fmtValue(eps.median) : '—'}</span>
-        <span className={styles.unit}>{eps ? (eps.currency ?? '') : '尚無 EPS 預估'}</span>
+        <span className={styles.unit}>{eps ? (eps.currency ?? '') : t('radar.consensusCards.noEpsEstimatesYet')}</span>
       </div>
       {eps ? (
         <>
-          <p className={styles.provided}><b className={shared.num}>{eps.count}</b> 家券商提供</p>
+          <p className={styles.provided}><b className={shared.num}>{eps.count}</b>{' '}{t('radar.consensusCards.brokers')}</p>
           <Revision direction={eps.revision_direction} pct={eps.revision_pct} />
         </>
       ) : null}
@@ -129,7 +130,7 @@ function EpsCard({ eps }: { eps?: EpsGroup | null }) {
   )
 }
 
-const DIRECTION_TEXT: Partial<Record<Direction, string>> = { up: '上升', down: '下降', flat: '持平' }
+const DIRECTION_TEXT: Partial<Record<Direction, string>> = { get up() { return t('radar.consensusCards.up2') }, get down() { return t('radar.consensusCards.down2') }, get flat() { return t('radar.consensusCards.flat') } }
 
 /**
  * 卡片底列的修正幅度。後端算的是「每家券商與自己前一份報告相比」的變動中位數，
@@ -140,7 +141,7 @@ function Revision({ direction, pct }: { direction: Direction; pct?: number | nul
   return (
     <div className={styles.footWrap}>
       <div className={styles.foot}>
-        較前次
+        {t('radar.consensusCards.vsPrevious')}
         {moved ? (
           <>
             <svg className={`${styles.tri} ${shared[direction]}`} width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
@@ -150,7 +151,7 @@ function Revision({ direction, pct }: { direction: Direction; pct?: number | nul
             <span className={`${shared[direction]} ${styles.strong} ${shared.num}`}>{fmtSignedPct(pct)}</span>
           </>
         ) : (
-          <span>{direction === 'flat' ? '持平' : '—'}</span>
+          <span>{direction === 'flat' ? t('radar.consensusCards.flat') : '—'}</span>
         )}
       </div>
     </div>

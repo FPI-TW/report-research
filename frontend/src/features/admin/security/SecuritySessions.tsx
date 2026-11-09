@@ -10,18 +10,19 @@ import { fmtDateTime } from '../auditLabels'
 import s from './Security.module.css'
 import { shortUa } from './securityLabels'
 import { useRevokeSession, useSecuritySessions } from './useSecurity'
+import { t } from '@/i18n'
 
 function messageOf(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'super_required') return 'super admin 的 session 只有 super admin 能撤銷。'
-    if (err.code === 'not_found') return '找不到這個 session（可能已被清除），請重新整理。'
-    if (err.code === 'account_deleted') return '帳號已刪除。'
-    if (err.code === 'missing_scope') return '需要「accounts.manage」權限。'
+    if (err.code === 'super_required') return t('admin.security.securitySessions.onlyASuperAdminCan')
+    if (err.code === 'not_found') return t('admin.security.securitySessions.sessionNotFoundItMay')
+    if (err.code === 'account_deleted') return t('admin.security.securitySessions.accountDeleted')
+    if (err.code === 'missing_scope') return t('admin.security.securitySessions.requiresTheAccountsManagePermission')
   }
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.security.securitySessions.actionFailedTryAgain')
 }
 
-const SCOPE_OPTIONS = [{ value: 'active', label: '只看有效' }, { value: 'all', label: '全部' }] as const
+const SCOPE_OPTIONS = [{ value: 'active', get label() { return t('admin.security.securitySessions.activeOnly') } }, { value: 'all', get label() { return t('admin.security.securitySessions.all') } }] as const
 
 /** 這個 session 還在權限提升的 10 分鐘視窗內嗎（只是顯示：誰剛重新驗證過）。 */
 function isElevated(item: SecuritySessionItem): boolean {
@@ -48,8 +49,8 @@ export function SessionsCard() {
   const doRevoke = async (target: SecuritySessionItem) => {
     setBusy(true)
     try {
-      await elevated('撤銷 session', () => revoke.mutateAsync(target.id))
-      toast(target.current ? '已撤銷你目前的 session，下一個請求就會回到登入頁' : `已撤銷 ${target.username} 的 session`)
+      await elevated(t('admin.security.securitySessions.revokeSession'), () => revoke.mutateAsync(target.id))
+      toast(target.current ? t('admin.security.securitySessions.revokedTheCurrentSessionThe') : t('admin.security.securitySessions.revokedSSession', { username: target.username }))
     } catch (err) {
       if (!isElevationCancelled(err)) toast(messageOf(err), { tone: 'bad' })
     } finally {
@@ -60,19 +61,19 @@ export function SessionsCard() {
 
   return (
     <Card title="Session" labelledBy="sec-sessions-title"
-      right={<Segmented label="Session 範圍" options={SCOPE_OPTIONS} value={activeOnly ? 'active' : 'all'}
+      right={<Segmented label={t('admin.security.securitySessions.sessionScope')} options={SCOPE_OPTIONS} value={activeOnly ? 'active' : 'all'}
         onChange={v => setActiveOnly(v === 'active')} />}>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.security.securitySessions.loading')}</p>
       ) : q.isError ? (
-        <div className={c.cardBody}><p className={c.error} role="alert">session 載入失敗：{messageOf(q.error)}</p></div>
+        <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.security.securitySessions.couldnTLoadSessions', { error: messageOf(q.error) })}</p></div>
       ) : q.data.items.length === 0 ? (
-        <p className={c.empty}>沒有 session</p>
+        <p className={c.empty}>{t('admin.security.securitySessions.noSessions')}</p>
       ) : (
         <div className={c.tableWrap}>
           <table className={c.table}>
             <thead>
-              <tr><th>帳號</th><th>登入時間</th><th>最後活動</th><th>IP</th><th>裝置</th><th>狀態</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th></tr>
+              <tr><th>{t('admin.security.securitySessions.account')}</th><th>{t('admin.security.securitySessions.signedIn')}</th><th>{t('admin.security.securitySessions.lastActive')}</th><th>IP</th><th>{t('admin.security.securitySessions.device')}</th><th>{t('admin.security.securitySessions.status')}</th><th className={`${c.tdRight} ${c.stickyRight}`}>{t('admin.security.securitySessions.actions')}</th></tr>
             </thead>
             <tbody>
               {q.data.items.map(item => (
@@ -80,8 +81,8 @@ export function SessionsCard() {
                   <td>
                     <span className={s.name}>
                       {item.username}
-                      {item.current && <Chip tone="gold">目前這個</Chip>}
-                      {isElevated(item) && <Chip tone="warn" title={`已重新驗證，到 ${fmtDateTime(item.elevated_until)}`}>已提升</Chip>}
+                      {item.current && <Chip tone="gold">{t('admin.security.securitySessions.thisOne')}</Chip>}
+                      {isElevated(item) && <Chip tone="warn" title={t('admin.security.securitySessions.reVerifiedUntil', { elevated_until: fmtDateTime(item.elevated_until) })}>{t('admin.security.securitySessions.elevated')}</Chip>}
                     </span>
                   </td>
                   <td className={c.num}>{fmtDateTime(item.created_at)}</td>
@@ -91,12 +92,12 @@ export function SessionsCard() {
                   <td><div className={s.ua} title={item.user_agent ?? undefined}>{shortUa(item.user_agent, 36)}</div></td>
                   <td>
                     {item.active
-                      ? <Status tone="ok">有效</Status>
-                      : <Status tone="idle">{item.revoked_at ? '已撤銷' : '已過期'}</Status>}
+                      ? <Status tone="ok">{t('admin.security.securitySessions.active')}</Status>
+                      : <Status tone="idle">{item.revoked_at ? t('admin.security.securitySessions.revoked') : t('admin.security.securitySessions.expired')}</Status>}
                   </td>
                   <td className={`${c.tdActions} ${c.stickyRight}`}>
                     {item.active && (
-                      <RowActions primary={{ label: '撤銷', onClick: () => setConfirming(item) }} />
+                      <RowActions primary={{ label: t('admin.security.securitySessions.revoke'), onClick: () => setConfirming(item) }} />
                     )}
                   </td>
                 </tr>
@@ -105,12 +106,12 @@ export function SessionsCard() {
           </table>
         </div>
       )}
-      <p className={s.foot}>撤銷需要近 10 分鐘內重新驗證過密碼；撤銷會寫入操作紀錄。</p>
-      <ConfirmDialog open={confirming != null} tone="danger" busy={busy} confirmLabel="撤銷"
-        title={confirming ? `撤銷 ${confirming.username} 的這個 session？` : ''}
+      <p className={s.foot}>{t('admin.security.securitySessions.revokingRequiresAPasswordRe')}</p>
+      <ConfirmDialog open={confirming != null} tone="danger" busy={busy} confirmLabel={t('admin.security.securitySessions.revoke')}
+        title={confirming ? t('admin.security.securitySessions.revokeThisSessionOf', { username: confirming.username }) : ''}
         body={confirming?.current
-          ? '這是你目前的 session：撤銷後下一個請求就會回到登入頁。'
-          : '只登出這一個裝置，其他裝置不受影響。'}
+          ? t('admin.security.securitySessions.thisIsTheCurrentSession')
+          : t('admin.security.securitySessions.signsOutOnlyThisDevice')}
         onConfirm={() => { if (confirming) void doRevoke(confirming) }}
         onCancel={() => setConfirming(null)} />
       {dialog}

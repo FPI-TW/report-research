@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link, useRouteError } from 'react-router'
 import styles from './RouteError.module.css'
+import { t } from '@/i18n'
 
 /**
  * 動態 import 失敗的訊息（各瀏覽器措辭不同）。
@@ -41,17 +42,17 @@ export function RouteError({ standalone = false }: Props) {
   return (
     <div className={standalone ? `${styles.page} ${styles.standalone}` : styles.page}>
       <div className={styles.box} role="alert">
-        <h2 className={styles.title}>{stale ? '站台已更新' : '這一頁發生問題'}</h2>
+        <h2 className={styles.title}>{stale ? t('shell.routeError.siteUpdated') : t('shell.routeError.somethingWentWrongOnThis')}</h2>
         <p className={styles.text}>
           {stale
-            ? '站台剛部署了新版本，這個分頁還停在舊版。重新載入即可繼續。'
-            : '頁面無法顯示。重新載入通常可以恢復；若持續發生，請把下方訊息回報給管理者。'}
+            ? t('shell.routeError.aNewVersionWasJust')
+            : t('shell.routeError.thisPageCanTBe')}
         </p>
         <div className={styles.actions}>
           <button type="button" className={styles.btn} onClick={() => window.location.reload()}>
-            重新載入
+            {t('shell.routeError.reload')}
           </button>
-          {!stale && <Link className={styles.link} to="/library">回到研報庫</Link>}
+          {!stale && <Link className={styles.link} to="/library">{t('shell.routeError.backToLibrary')}</Link>}
         </div>
         {!stale && message && <code className={styles.detail}>{message}</code>}
       </div>

@@ -5,6 +5,7 @@ import { useFocusTrap } from '../../lib/useFocusTrap'
 import c from './Console.module.css'
 import o from './Overlay.module.css'
 import { useRestoreFocus } from './useRestoreFocus'
+import { t } from '@/i18n'
 
 interface Props {
   open: boolean
@@ -54,7 +55,7 @@ export function Drawer({ open, onClose, title, monoTitle, status, subtitle, widt
           <div className={o.drawerTitleRow}>
             <h2 id={titleId} className={`${o.drawerTitle} ${monoTitle ? o.drawerTitleMono : ''}`}>{title}</h2>
             {status}
-            <button type="button" className={c.iconBtn} onClick={onClose} title="關閉" aria-label="關閉"><Icon name="x" size={16} /></button>
+            <button type="button" className={c.iconBtn} onClick={onClose} title={t('admin.console.drawer.close')} aria-label={t('admin.console.drawer.close')}><Icon name="x" size={16} /></button>
           </div>
           {subtitle && <div className={o.drawerSub}>{subtitle}</div>}
         </div>

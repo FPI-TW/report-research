@@ -5,6 +5,7 @@ import { marketLabel, marketTint } from '../lib/meta'
 import { TF_DUR, TF_EASE_OUT, tfInstant } from '../lib/motionTokens'
 import type { Source } from '../lib/askSchemas'
 import styles from './CitePreview.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   n: number
@@ -91,7 +92,7 @@ export function CiteButton({ n, source, onCite }: Props) {
               {source.report_date && <span className={styles.date}>{source.report_date}</span>}
             </span>
             <span className={styles.title}>{displayTitle(source)}</span>
-            <span className={styles.foot}>點擊編號查看引用來源 ›</span>
+            <span className={styles.foot}>{t('citePreview.clickANumberToSee')}</span>
           </motion.span>
         )}
       </AnimatePresence>

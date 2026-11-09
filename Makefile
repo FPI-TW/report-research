@@ -20,6 +20,7 @@ TOL ?= 0.03
 DURATION ?= 3600
 SINCE ?=
 BENCH_ARGS ?= --dry-run
+ESTIMATE_ARGS ?= --source db
 # make clamav-smoke 的「正常 PDF」；空＝用程式內產生的最小 PDF。
 SMOKE_PDF ?=
 # migration 的目標確認（host:port/dbname，逐字）。刻意沒有預設：對已有資料的庫做變更必須由
@@ -40,6 +41,7 @@ COMPOSE := $(DOCKER) compose
         ingest ingest-lowio restore-durability align boilerplate \
         serve serve-dev serve-preview search build-web build-info \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
+        estimate backfill-status \
         eval-compare \
         up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
         sync-once db-backup freshness db-audit llm-blocked \
@@ -141,6 +143,13 @@ takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 
 
 brief:  ## 每日簡報（一天一列；當日已有或未到 --after-hour 即 no-op）→ research.report_brief
 	uv run python scripts/generate_brief.py
+
+# 首次導入的分層回填（docs/WORKFLOW.md「首次導入」）：先估價、客戶簽字，再跑 backfill_tiers.py --tier 2。
+estimate:  ## 首次導入的事前估價（零 LLM；用法：make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"）
+	uv run python scripts/estimate_backfill.py $(ESTIMATE_ARGS)
+
+backfill-status:  ## 分層回填的進度：各層待補數與今天的背景用量（唯讀、零 LLM）
+	uv run python scripts/backfill_tiers.py --status
 
 # ───── 檢索 ─────
 # 刻意**不**讓 serve 相依 build-web：serve 是生產 systemd 的 ExecStart，讓它跑

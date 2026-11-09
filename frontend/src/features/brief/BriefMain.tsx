@@ -7,6 +7,7 @@ import { OTHER_COLOR, briefMix, parseBriefMarkdown, type BriefFocusBlock, type B
 import { dayTitle, yearWeekday } from './briefDates'
 import { InlineText } from './InlineText'
 import styles from './BriefPage.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   brief: BriefPayload
@@ -33,7 +34,7 @@ export function BriefMain({ brief, older, newer, onGo }: Props) {
         </section>
       ))}
       {content.fallback && (
-        <section className={`${styles.tile} ${styles.mdTile}`} aria-label="簡報內容">
+        <section className={`${styles.tile} ${styles.mdTile}`} aria-label={t('brief.briefMain.briefContent')}>
           <div className={styles.md}>{renderAnswer(content.fallback, 0, () => {})}</div>
         </section>
       )}
@@ -43,26 +44,26 @@ export function BriefMain({ brief, older, newer, onGo }: Props) {
 
 function Overview({ brief, mix, older, newer, onGo }: { brief: BriefPayload; mix: BriefMixItem[] } & Omit<Props, 'brief'>) {
   const marketCount = mix.filter(m => m.market !== null).length
-  const mixLabel = `新進研報市場分布：${mix.map(m => `${m.label} ${m.count} 篇`).join('，')}`
+  const mixLabel = t('brief.briefMain.newReportsByMarket', { map: mix.map(m => t('brief.briefMain.text', { label: m.label, count: m.count })).join(t('brief.briefMain.text2')) })
   return (
-    <section className={`${styles.tile} ${styles.overview}`} aria-label="簡報概況">
+    <section className={`${styles.tile} ${styles.overview}`} aria-label={t('brief.briefMain.briefSummary')}>
       <div className={styles.ovHead}>
         <div className={styles.ovDate}>
           <h2 className={styles.ovTitle}>{dayTitle(brief.brief_date)}</h2>
           <span className={styles.ovSub}>{yearWeekday(brief.brief_date)}</span>
         </div>
-        <button type="button" className={styles.arr} aria-label="前一份簡報" disabled={!older} onClick={() => older && onGo(older)}>
+        <button type="button" className={styles.arr} aria-label={t('brief.briefMain.previousBrief')} disabled={!older} onClick={() => older && onGo(older)}>
           <ChevronLeft size={16} strokeWidth={2} aria-hidden="true" />
         </button>
-        <button type="button" className={styles.arr} aria-label="後一份簡報" disabled={!newer} onClick={() => newer && onGo(newer)}>
+        <button type="button" className={styles.arr} aria-label={t('brief.briefMain.nextBrief')} disabled={!newer} onClick={() => newer && onGo(newer)}>
           <ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
       <dl className={styles.stats}>
-        <div className={styles.stat}><dt>篇新進研報</dt><dd>{brief.report_count}</dd></div>
+        <div className={styles.stat}><dt>{t('brief.briefMain.newReports')}</dt><dd>{brief.report_count}</dd></div>
         {/* 市場數與券商數是後端讀取時現算的派生資料，缺值（查詢降級）就只顯示篇數。 */}
-        {brief.markets && <div className={styles.stat}><dt>個市場</dt><dd>{marketCount}</dd></div>}
-        {brief.broker_count != null && <div className={styles.stat}><dt>家券商</dt><dd>{brief.broker_count}</dd></div>}
+        {brief.markets && <div className={styles.stat}><dt>{t('brief.briefMain.markets')}</dt><dd>{marketCount}</dd></div>}
+        {brief.broker_count != null && <div className={styles.stat}><dt>{t('brief.briefMain.brokers')}</dt><dd>{brief.broker_count}</dd></div>}
       </dl>
       {mix.length > 0 && (
         <>
@@ -93,7 +94,7 @@ function number(i: number): string {
 function Highlights({ items }: { items: BriefHighlight[] }) {
   return (
     <section className={`${styles.tile} ${styles.highlights}`} aria-labelledby="brief-hl">
-      <h2 id="brief-hl" className={styles.cardTitle}>今日重點</h2>
+      <h2 id="brief-hl" className={styles.cardTitle}>{t('brief.briefMain.todaySHighlights')}</h2>
       {/* list-style 拿掉後 Safari 會丟掉清單語意，role 補回來。編號由 <ol> 提供，畫面上的編號只是裝飾。 */}
       <ol className={styles.hlList} role="list">
         {items.map((h, i) => (
@@ -101,7 +102,7 @@ function Highlights({ items }: { items: BriefHighlight[] }) {
             <span className={styles.hlNo} aria-hidden="true">{number(i)}</span>
             <span className={styles.hlBody}>
               <p className={styles.hlText}><InlineText text={h.text} /></p>
-              {h.brokers.length > 0 && <span className={styles.hlBroker}>{h.brokers.join('、')}</span>}
+              {h.brokers.length > 0 && <span className={styles.hlBroker}>{h.brokers.join(t('brief.briefMain.text3'))}</span>}
             </span>
           </li>
         ))}
@@ -115,7 +116,7 @@ function Focus({ blocks, mix }: { blocks: BriefFocusBlock[]; mix: BriefMixItem[]
   const max = Math.max(1, ...mix.map(m => m.count))
   return (
     <section className={`${styles.tile} ${styles.focus}`} aria-labelledby="brief-focus">
-      <h2 id="brief-focus" className={styles.cardTitle}>市場焦點</h2>
+      <h2 id="brief-focus" className={styles.cardTitle}>{t('brief.briefMain.marketFocus')}</h2>
       <div className={styles.focusGrid}>
         {blocks.map((b, i) => {
           const count = b.market ? counts.get(b.market) : undefined
@@ -126,7 +127,7 @@ function Focus({ blocks, mix }: { blocks: BriefFocusBlock[]; mix: BriefMixItem[]
                 <div className={styles.focusHead}>
                   <span className={styles.focusDot} style={{ background: color }} aria-hidden="true" />
                   <h3 className={styles.focusName}>{b.label}</h3>
-                  {count != null && <span className={styles.focusCount}>{count} 篇</span>}
+                  {count != null && <span className={styles.focusCount}>{t('brief.briefMain.reports', { count })}</span>}
                 </div>
               )}
               {count != null && (

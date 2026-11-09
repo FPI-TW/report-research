@@ -2,6 +2,7 @@ import { Outlet } from 'react-router'
 import { ConsolePage } from '../../../components/console'
 import { RequireAdmin } from '../../../components/shell/RequireAdmin'
 import { RequireScope } from '../RequireScope'
+import { t } from '@/i18n'
 
 // 管線讀 /api/progress（web 行程直接讀 DB 與 log，不經代理）；排程工作、事件與主機讀 DB 投影（/api/admin/jobs、incidents、observations）；服務、依賴圖與日誌經維運代理；
 // 來源主機讀 /api/admin/ops/remote-hosts（另一台主機發布到 R2 的信標，不經代理）；
@@ -16,7 +17,7 @@ import { RequireScope } from '../RequireScope'
 export default function OperationsLayout() {
   return (
     <RequireAdmin>
-      <RequireScope scope="ops.read" title="維運">
+      <RequireScope scope="ops.read" title={t('admin.ops.operationsLayout.operations')}>
         <ConsolePage><Outlet /></ConsolePage>
       </RequireScope>
     </RequireAdmin>

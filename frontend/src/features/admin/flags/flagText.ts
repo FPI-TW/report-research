@@ -1,48 +1,49 @@
 import type {
   FlagExportOverride, FlagImportChange, FlagItem, FlagOverrideView, FlagUpdateRequest,
 } from '../../../lib/generated/adminApi'
+import { t } from '@/i18n'
 
 /** 功能開關頁的文字（純函式，測試直接驗）。後端語意在 app/services/feature_flags.py。 */
 
-export const ROLE_LABELS: Record<'admin' | 'user', string> = { admin: '管理員', user: '一般使用者' }
+export const ROLE_LABELS: Record<'admin' | 'user', string> = { get admin() { return t('admin.flags.flagText.admins') }, get user() { return t('admin.flags.flagText.regularUsers') } }
 
 export const EFFECTIVE_LABELS: Record<FlagItem['effective'], string> = {
-  on: '對所有人開啟',
-  off: '對所有人關閉',
-  scoped: '只對部分使用者開啟',
+  get on() { return t('admin.flags.flagText.onForEveryone') },
+  get off() { return t('admin.flags.flagText.offForEveryone') },
+  get scoped() { return t('admin.flags.flagText.onForSomeUsersOnly') },
 }
 
 /** 覆寫的一句話摘要；null＝沒有覆寫（用 registry 預設）。 */
 export function overrideSummary(o: FlagOverrideView | null | undefined, defaultOn: boolean): string {
-  if (!o) return `沒有覆寫（預設${defaultOn ? '開啟' : '關閉'}）`
-  if (!o.enabled) return '全站關閉'
+  if (!o) return t('admin.flags.flagText.noOverrideDefault', { v: defaultOn ? t('admin.flags.flagText.on') : t('admin.flags.flagText.off') })
+  if (!o.enabled) return t('admin.flags.flagText.offForEveryone2')
   const roles = o.allow_roles ?? null
   const users = o.allow_users ?? null
-  if (roles == null && users == null) return '全站開啟'
+  if (roles == null && users == null) return t('admin.flags.flagText.onForEveryone2')
   const parts: string[] = []
-  if (roles != null) parts.push(roles.map((r) => ROLE_LABELS[r]).join('、'))
-  if (users != null) parts.push(users.map((u) => u.username ?? `（已刪除的帳號 ${u.id.slice(0, 8)}）`).join('、'))
-  return `限定開啟：${parts.join('；')}`
+  if (roles != null) parts.push(roles.map((r) => ROLE_LABELS[r]).join(t('admin.flags.flagText.text')))
+  if (users != null) parts.push(users.map((u) => u.username ?? t('admin.flags.flagText.deletedAccount', { slice: u.id.slice(0, 8) })).join(t('admin.flags.flagText.text')))
+  return t('admin.flags.flagText.onForSelected', { parts: parts.join(t('admin.flags.flagText.text2')) })
 }
 
 /** 匯入預覽裡的前後值（使用者是帳號名稱）。 */
 export function exportOverrideSummary(o: FlagExportOverride | null | undefined): string {
-  if (!o) return '沒有覆寫'
-  if (!o.enabled) return '全站關閉'
+  if (!o) return t('admin.flags.flagText.noOverride')
+  if (!o.enabled) return t('admin.flags.flagText.offForEveryone2')
   const roles = o.allow_roles ?? null
   const users = o.allow_users ?? null
-  if (roles == null && users == null) return '全站開啟'
+  if (roles == null && users == null) return t('admin.flags.flagText.onForEveryone2')
   const parts: string[] = []
-  if (roles != null) parts.push(`角色 ${roles.join('、')}`)
-  if (users != null) parts.push(`使用者 ${users.join('、')}`)
-  return `限定開啟：${parts.join('；')}`
+  if (roles != null) parts.push(t('admin.flags.flagText.roles', { roles: roles.join(t('admin.flags.flagText.text')) }))
+  if (users != null) parts.push(t('admin.flags.flagText.users', { users: users.join(t('admin.flags.flagText.text')) }))
+  return t('admin.flags.flagText.onForSelected', { parts: parts.join(t('admin.flags.flagText.text2')) })
 }
 
 export const IMPORT_ACTION_LABELS: Record<FlagImportChange['action'], string> = {
-  create: '新增覆寫',
-  update: '更新覆寫',
-  delete: '刪除覆寫（回到預設）',
-  unchanged: '不變',
+  get create() { return t('admin.flags.flagText.addOverride') },
+  get update() { return t('admin.flags.flagText.updateOverride') },
+  get delete() { return t('admin.flags.flagText.deleteOverrideBackToDefault') },
+  get unchanged() { return t('admin.flags.flagText.unchanged') },
 }
 
 /** 匯出檔名：report-mark-flags-<環境>-<YYYYMMDD>.json（台北時間的日期）。 */

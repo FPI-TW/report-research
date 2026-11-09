@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import { ensureNamespace } from '../i18n'
 
 export type RouteKey =
   | 'search' | 'ask' | 'radar' | 'brief' | 'help' | 'report'
@@ -12,6 +13,13 @@ export type RouteKey =
   | 'adminAnalytics' | 'adminSecurity' | 'adminQuota' | 'adminFlags' | 'adminOpsDatabase'
   | 'adminApiClients'
 
+type Loader = () => Promise<{ default: ComponentType }>
+
+/** 管理頁的 chunk 與管理後台的字典（`admin` namespace）一起載入：一般使用者不下載管理後台的字串。 */
+export function withAdminMessages(load: Loader): Loader {
+  return () => Promise.all([load(), ensureNamespace('admin')]).then(([m]) => m)
+}
+
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
   search: () => import('../features/search/SearchPage'),
@@ -22,32 +30,32 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   report: () => import('../features/report/ReportPage'),
   // 管理頁：只有管理員會進來，刻意不放進 App 的閒置預載清單。
   // 外殼也 lazy：一般使用者的瀏覽器連管理後台的版面程式碼都不會下載。
-  adminShell: () => import('../components/shell/AdminShell').then(m => ({ default: m.AdminShell })),
-  adminOverview: () => import('../features/admin/AdminOverviewPage'),
-  adminUsers: () => import('../features/admin/AdminUsersPage'),
-  adminReviews: () => import('../features/admin/AdminReviewsPage'),
-  adminAudit: () => import('../features/admin/AdminAuditPage'),
-  adminReports: () => import('../features/admin/AdminReportsPage'),
-  adminUploads: () => import('../features/admin/AdminUploadsPage'),
-  adminOps: () => import('../features/admin/ops/OperationsLayout'),
-  adminOpsPipeline: () => import('../features/admin/ops/pipeline/OpsPipelinePage'),
-  adminOpsServices: () => import('../features/admin/ops/OpsServicesPage'),
-  adminOpsLogs: () => import('../features/admin/ops/OpsLogsPage'),
-  adminOpsJobs: () => import('../features/admin/ops/OpsJobsPage'),
-  adminOpsIncidents: () => import('../features/admin/ops/OpsIncidentsPage'),
-  adminOpsHost: () => import('../features/admin/ops/OpsHostPage'),
-  adminOpsDataHealth: () => import('../features/admin/ops/OpsDataHealthPage'),
-  adminOpsLlmUsage: () => import('../features/admin/ops/OpsLlmUsagePage'),
-  adminOpsDependencies: () => import('../features/admin/ops/OpsDependenciesPage'),
-  adminOpsRemoteHosts: () => import('../features/admin/ops/OpsRemoteHostsPage'),
-  adminOpsDiagnostics: () => import('../features/admin/ops/OpsDiagnosticsPage'),
+  adminShell: withAdminMessages(() => import('../components/shell/AdminShell').then(m => ({ default: m.AdminShell }))),
+  adminOverview: withAdminMessages(() => import('../features/admin/AdminOverviewPage')),
+  adminUsers: withAdminMessages(() => import('../features/admin/AdminUsersPage')),
+  adminReviews: withAdminMessages(() => import('../features/admin/AdminReviewsPage')),
+  adminAudit: withAdminMessages(() => import('../features/admin/AdminAuditPage')),
+  adminReports: withAdminMessages(() => import('../features/admin/AdminReportsPage')),
+  adminUploads: withAdminMessages(() => import('../features/admin/AdminUploadsPage')),
+  adminOps: withAdminMessages(() => import('../features/admin/ops/OperationsLayout')),
+  adminOpsPipeline: withAdminMessages(() => import('../features/admin/ops/pipeline/OpsPipelinePage')),
+  adminOpsServices: withAdminMessages(() => import('../features/admin/ops/OpsServicesPage')),
+  adminOpsLogs: withAdminMessages(() => import('../features/admin/ops/OpsLogsPage')),
+  adminOpsJobs: withAdminMessages(() => import('../features/admin/ops/OpsJobsPage')),
+  adminOpsIncidents: withAdminMessages(() => import('../features/admin/ops/OpsIncidentsPage')),
+  adminOpsHost: withAdminMessages(() => import('../features/admin/ops/OpsHostPage')),
+  adminOpsDataHealth: withAdminMessages(() => import('../features/admin/ops/OpsDataHealthPage')),
+  adminOpsLlmUsage: withAdminMessages(() => import('../features/admin/ops/OpsLlmUsagePage')),
+  adminOpsDependencies: withAdminMessages(() => import('../features/admin/ops/OpsDependenciesPage')),
+  adminOpsRemoteHosts: withAdminMessages(() => import('../features/admin/ops/OpsRemoteHostsPage')),
+  adminOpsDiagnostics: withAdminMessages(() => import('../features/admin/ops/OpsDiagnosticsPage')),
   // Admin v2（Wave 0 佔位頁；各 lane 只改自己的頁面檔）
-  adminAnalytics: () => import('../features/admin/analytics/AdminAnalyticsPage'),
-  adminSecurity: () => import('../features/admin/security/AdminSecurityPage'),
-  adminQuota: () => import('../features/admin/quota/AdminQuotaPage'),
-  adminFlags: () => import('../features/admin/flags/AdminFlagsPage'),
-  adminOpsDatabase: () => import('../features/admin/ops/OpsDatabasePage'),
-  adminApiClients: () => import('../features/admin/AdminApiClientsPage'),
+  adminAnalytics: withAdminMessages(() => import('../features/admin/analytics/AdminAnalyticsPage')),
+  adminSecurity: withAdminMessages(() => import('../features/admin/security/AdminSecurityPage')),
+  adminQuota: withAdminMessages(() => import('../features/admin/quota/AdminQuotaPage')),
+  adminFlags: withAdminMessages(() => import('../features/admin/flags/AdminFlagsPage')),
+  adminOpsDatabase: withAdminMessages(() => import('../features/admin/ops/OpsDatabasePage')),
+  adminApiClients: withAdminMessages(() => import('../features/admin/AdminApiClientsPage')),
 }
 
 const started = new Set<RouteKey>()

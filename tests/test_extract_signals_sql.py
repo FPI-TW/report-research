@@ -278,7 +278,8 @@ class WorklistTextLoadingTests(unittest.IsolatedAsyncioTestCase):
 
     def _args(self, **kw):
         base = dict(min_brokers=3, min_reports=5, top_n=50, workers=1, limit=None, excerpt=16000,
-                    model="gpt-6-luna", dry_run=False, reextract=False, retry_blocked=False)
+                    model="gpt-6-luna", dry_run=False, reextract=False, retry_blocked=False, hashes_file=None,
+                    min_report_date=None)
         base.update(kw)
         return mock.Mock(**base)
 
@@ -328,6 +329,56 @@ class WorklistTextLoadingTests(unittest.IsolatedAsyncioTestCase):
             _, worklist = await es.build_worklist(3, 5, 50, False)
         self.assertEqual([(w.report_id, w.full_text, w.requested_codes, w.file_hash) for w in worklist],
                          [("r1", None, ["2330"], "hA")])
+
+
+class HashesFileTests(unittest.IsolatedAsyncioTestCase):
+    """`--hashes-file`（scripts/backfill_tiers.py 用）：只看這批 file_hash，子集照舊依全語料決定。"""
+
+    def test_sql_only_changes_with_the_flag(self):
+        self.assertNotIn(":hashes", es.build_reports_sql())
+        sql = es.build_reports_sql(by_hashes=True)
+        self.assertIn("AND r.file_hash = ANY(:hashes) ", sql)
+        self.assertEqual(sql.replace("  AND r.file_hash = ANY(:hashes) ", ""), es.build_reports_sql())
+
+    async def _worklist(self, hashes):
+        reports = [("r1", "券商", None, "TW", "a.pdf", ["2330"], "hA")]
+        fetch = mock.AsyncMock(return_value=reports)
+
+        class _Ctx:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with mock.patch.object(es, "SessionFactory", _Ctx), \
+             mock.patch.object(es, "_fetch_subset", new=mock.AsyncMock(return_value=[("2330", "TW", 5, 9)])), \
+             mock.patch.object(es, "_fetch_reports", new=fetch), \
+             mock.patch.object(es, "_fetch_done_map", new=mock.AsyncMock(return_value={})):
+            _, worklist = await es.build_worklist(3, 5, 50, False, hashes=hashes)
+        return fetch, worklist
+
+    def test_min_report_date_sql(self):
+        sql = es.build_reports_sql(min_date=True)
+        self.assertIn("AND r.report_date >= CAST(:min_report_date AS date) ", sql)
+        self.assertEqual(sql.replace("  AND r.report_date >= CAST(:min_report_date AS date) ", ""),
+                         es.build_reports_sql())
+
+    async def test_hashes_reach_the_query(self):
+        fetch, worklist = await self._worklist(["hA"])
+        self.assertEqual(fetch.await_args.args[3], ["hA"])
+        self.assertEqual([w.file_hash for w in worklist], ["hA"])
+
+    async def test_empty_list_means_no_work(self):
+        fetch, worklist = await self._worklist([])
+        fetch.assert_not_awaited()
+        self.assertEqual(worklist, [])
+
+    def test_read_hashes_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "h.txt"
+            path.write_text(" a \n\nb\n", encoding="utf-8")
+            self.assertEqual(es.read_hashes_file(str(path)), ["a", "b"])
 
 
 class RawPayloadModelFlowTests(unittest.IsolatedAsyncioTestCase):

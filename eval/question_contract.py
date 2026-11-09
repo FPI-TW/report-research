@@ -76,10 +76,21 @@ def load_dataset(path: str | Path) -> tuple[list[dict], str]:
 
 def _main() -> None:
     parser = argparse.ArgumentParser(description="離線驗證 corpus QA 題集契約")
-    parser.add_argument("dataset", nargs="?", default="eval/ragas_questions.json")
+    parser.add_argument("dataset", nargs="?", default=None, help="題集路徑（預設 eval/ragas_questions.json）")
+    parser.add_argument("--profile", default=None, help="改驗該 profile 的凍結題集（含凍結指紋核對）")
     args = parser.parse_args()
     try:
-        questions, digest = load_dataset(args.dataset)
+        if args.profile is None:
+            path = args.dataset or "eval/ragas_questions.json"
+        else:
+            import sys
+
+            # 以 `python3 eval/question_contract.py` 執行時 repo 根不在 sys.path
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from eval.profile_eval import dataset_arg  # 延後 import：profile_eval 本身 import 本模組
+
+            path = dataset_arg(args.profile, args.dataset)
+        questions, digest = load_dataset(path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.exit(2, f"題集契約失敗：{exc}\n")
     print(f"題集契約通過：{len(questions)} 題，sha256={digest}")

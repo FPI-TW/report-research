@@ -25,7 +25,8 @@ from app.config import get_settings
 from app.services.doc_types import doc_type_enabled_sql
 from app.services.extraction import EXTRACTION_VERSION
 from app.services.filename import source_display
-from app.services.judge_schema import CURRENT_JUDGE_SQL
+from app.services.judge_schema import CURRENT_JUDGE_SQL, judge_identity
+from app.services.llm_models import judge_lineage
 from web import deps
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,8 @@ _FAITHFULNESS_MIN = get_settings().faithfulness_min
 # 現行生產 judge。分數類統計只計它量的列（app/services/judge_schema.py），與待複核佇列、
 # scripts/eval_faithfulness.py 同一條規則。
 _JUDGE_MODEL = get_settings().faithfulness_model
+# 綁給 CURRENT_JUDGE_SQL 的現行 judge 識別（內建模型就是模型名；宣告模型是 declared:<模型>）。
+_JUDGE_IDENTITY = judge_identity(_JUDGE_MODEL, judge_lineage(_JUDGE_MODEL))
 
 # M8 查核統計的欄位：(回應鍵, SQL 聚合)。抽成常數讓測試逐欄核對過濾條件——只斷言
 # 「整條 SQL 有 :judge_model」的話，漏掉任何一欄的條件都照樣綠。
@@ -206,7 +209,7 @@ async def _fetch_db_stats_snapshot() -> dict:
                     f"SELECT 'qa' kind, {_eval_cols} FROM research.qa_log "
                     "WHERE created_at > now() - interval '30 days'"
                 ),
-                {"fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL},
+                {"fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_IDENTITY},
             )
         ).all()
 

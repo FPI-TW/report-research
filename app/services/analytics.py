@@ -54,7 +54,8 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import text
 
-from app.services.judge_schema import CURRENT_JUDGE_SQL
+from app.services.judge_schema import CURRENT_JUDGE_SQL, judge_identity
+from app.services.llm_models import judge_lineage
 from app.services.tagging import MARKET_DISPLAY, MARKETS
 
 TZ = timezone(timedelta(hours=8))
@@ -417,7 +418,8 @@ _HOT_METRIC = {"report": M_HOT_REPORT, "market": M_HOT_MARKET, "target": M_HOT_T
 
 def _bind(start: date, end: date, params: Params) -> dict:
     return {"start_ts": day_start(start), "end_ts": day_start(end + timedelta(days=1)), "start_day": start,
-            "end_day": end, "judge_model": params.judge_model, "fmin": params.faithfulness_min}
+            "end_day": end, "judge_model": judge_identity(params.judge_model, judge_lineage(params.judge_model)),
+            "fmin": params.faithfulness_min}
 
 
 def _qa_rows(r, judge: str) -> list[MetricRow]:

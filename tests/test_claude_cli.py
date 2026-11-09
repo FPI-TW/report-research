@@ -310,6 +310,8 @@ class BatchCallSiteMaxTokensTests(unittest.TestCase):
         # sync 的行內標註；呼叫點在 sync 與上傳 worker 共用的入庫核心（值與 tag_all_cli 相同）
         ("scripts/_ingest_core.py", "TASK_TAG"): 1024,
         ("scripts/generate_brief.py", "TASK_BRIEF"): 8192,
+        # 導入驗收的題集草擬：一題 JSON（題目＋3–5 條參考答案要點）
+        ("scripts/draft_eval_questions.py", "TASK_EVAL_DRAFT"): 2048,
     }
 
     def test_values_and_meta(self):

@@ -352,10 +352,12 @@ cd frontend && npm run lint            # eslint
 python3 eval/question_contract.py eval/ragas_questions.json  # 零 LLM：驗題集契約並印 sha256
 uv run python eval/run_ragas.py --concurrency 1   # 探索性問答評測，預設寫 eval/candidate-ragas.json；會呼叫付費 API
 make eval-compare BASE=<基準線.json> CAND=eval/candidate-ragas.json
+make eval-gate PROFILE=<profile> RESULT=<結果.json>   # 上線驗收（零 LLM）：0 通過／1 有未豁免的指標沒過／2 不完整或不可比
 ```
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc + vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。測試的規則（不連網、不載模型、假物件、DB 契約測試、不可寫 repo 根的環境檔）、改動對照表與契約類測試的處理原則都在 `AGENTS.md`。
 - 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策。
+- 其他券商導入時建自己的凍結題集（`scripts/draft_eval_questions.py`：LLM 草擬 → 研究員審 → 凍結，放在 `profiles/<名稱>/eval/`），評測入口帶 `--profile` 讀它、以 `make eval-gate` 做上線驗收；不帶 `--profile` 時一切照舊。流程見 `docs/WORKFLOW.md`「導入驗收」。
 - 問答基準線：`eval/baselines/baseline-2026-11-10-jluna-gluna-rerank.json`（量尺系譜 `gpt-6-luna-2026-11`，開 rerank，18 題每題 3 次，F=0.941、CP=0.798、AR=0.687；**CP 未達 0.8 門檻**），語料是開發資料庫的固定快照（`devdb-2026-10-28:md5:3030a8008c760885c1b6630ddc83ecc7`，即 `research_report.file_hash` 依序以逗號串接後的 md5）。同系譜、同語料的前一份 `eval/baselines/baseline-2026-11-02-jluna-gluna-rerank.json`（F=0.917、CP=0.780、AR=0.674）可直接比。開發資料庫停在 revision 0008，現行程式的檢索要用 0012 的 `doc_type`：評測時以它為 template 建一個拋棄式資料庫、`upgrade head` 後只連那份（語料雜湊不變，用完 DROP）。`eval/baselines/` 裡其他的舊基準線是歷史紀錄，與現行 judge 不可比（`eval-compare` 回 2）。`eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（舊系譜 `deepseek-2026-09`，18 題每題 3 次，F=0.967、CP=0.873、AR=0.691）用的語料是 2026-09-29 從辦公室主機凍結的快照：15,255 份研報／616,769 個 chunk，快照 ID `sha256:969ba5277b99fb57d05262d19ceeb9fffe813c2f2ac7e0cc9ab6c87a7768373d`。評測設定是 `rerank_top_m=0`、`agentic=false`，只量固定脈絡下的答案品質；線上含重排與補查的整體延遲另用 `scripts/bench_load.py` 走 HTTP 量。快照原檔和含研報片段的檢查點留在未版控的資料目錄，版控只保留摘要分數與設定。`eval/ragas_questions.json` 是凍結題集，改題集就失去與基準線的可比性。
 
   ```bash

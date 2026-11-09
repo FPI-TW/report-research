@@ -644,7 +644,9 @@ def check_baseline_config(baseline: dict, current: dict) -> None:
         changed.append("judge")
     else:
         changed += [
-            f"judge.{key}" for key in ("provider", "model", "timeout", "retries", "prompt_sha",
+            # 不含 retries：claude CLI backend 移除時 build_config 已不再記錄它（HTTP judge 的重試
+            # 不是結果檔的設定），留在這裡會讓每一份真實的基準線都核對失敗。
+            f"judge.{key}" for key in ("provider", "model", "timeout", "prompt_sha",
                                        "schema_version", "lineage", "max_tokens")
             if key not in base_judge or base_judge[key] != current_judge[key]
         ]

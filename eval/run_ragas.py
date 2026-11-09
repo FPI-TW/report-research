@@ -12,12 +12,16 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
 - 結果檔的 `config` 記錄生成端（`gen_model`）、每個會觸發 LLM 的任務實際用的 model
   （`models`）、judge 描述、git commit、題集 sha256、rerank／agentic 設定與起訖時間。
   config 只供 `eval_compare` 印差異，不參與判定。
-- summary 帶三個 META 鍵：`judge_model`、`judge_prompt_sha`（`ragas_metrics.JUDGE_PROMPT_TEMPLATES`
-  的雜湊）、`judge_schema_version`。兩份結果只要量尺不同、或只有一邊有記錄，`eval_compare`
-  一律回 2。**所以在新基準線產出之前，拿新結果比 `eval/baselines/baseline-2026-09-02.json`
-  （沒有這三個鍵）一律回 2**——那是預期，不是壞掉；要比就兩邊都用本版重跑。
-- **量尺系譜**：judge 預設是 `gpt-6-luna`（`gpt-6-luna-2026-11` 系譜），`config.judge`
-  記 `lineage`、結果檔頂層 `notes` 寫明跟誰不可比（`judge_lineage`）。新系譜的第一份結果就是它的起點。
+- summary 帶四個 META 鍵：`judge_model`、`judge_prompt_sha`（`ragas_metrics.JUDGE_PROMPT_TEMPLATES`
+  的雜湊）、`judge_schema_version`、`judge_lineage`（量尺系譜，見下）。兩份結果只要量尺不同、或只有一邊有記錄，
+  `eval_compare` 一律回 2（`judge_lineage` 例外：較舊的結果沒有這個鍵時，由 eval_compare 依 config 推得，見該檔）。
+  **所以在新基準線產出之前，拿新結果比 `eval/baselines/baseline-2026-09-02.json`
+  （沒有這些鍵）一律回 2**——那是預期，不是壞掉；要比就兩邊都用本版重跑。
+- **量尺系譜**：judge 預設是 `gpt-6-luna`（`gpt-6-luna-2026-11` 系譜），設定宣告的模型（Azure deployment、
+  Anthropic、自架端點）自成一系 `declared:<模型>`（`llm_models.judge_lineage`）。系譜記進 summary 的 META 鍵
+  `judge_lineage`、`config.judge.lineage`，結果檔頂層 `notes` 寫明跟誰不可比。新系譜的第一份結果就是它的起點。
+- `--profile <名稱>`：改讀該 profile 的凍結題集（`eval/profile_eval.py`，先核對凍結指紋），config 另記 `profile`。
+  不帶時讀 `--dataset`（預設 `eval/ragas_questions.json`），結果檔與加入 `--profile` 之前逐字相同。
 - **judge 出錯只讓該指標記為 None**，不讓整題記為 error：錯誤訊息記在 case 的
   `judge_errors`，summary 的 `n_judge_errors` 計總數（只列出、不判方向：那是量尺故障，不是
   生成端劣化）。檢索或生成失敗才是整題 error。這樣一題 CP 的 judge 逾時不會連帶拿掉同一題的
@@ -77,6 +81,7 @@ from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, s
 from app.services.llm_http import ACCOUNT_KINDS  # noqa: E402
 from app.services.llm_models import (  # noqa: E402
     JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
+    JUDGE_LINEAGE_DECLARED_PREFIX,
     JUDGE_LINEAGE_LUNA,
     is_http_model,
     judge_lineage,
@@ -93,6 +98,7 @@ from eval.judge import (  # noqa: E402
     JudgeError,
     judge_json,
 )
+from eval.profile_eval import dataset_arg, resolve_profile_arg  # noqa: E402
 from eval.question_contract import load_dataset  # noqa: E402
 from eval.ragas_metrics import (  # noqa: E402
     CTX_RELEVANCE_SYS,
@@ -544,14 +550,20 @@ def judge_provider(model: str) -> str:
 
 
 # 量尺系譜（`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
-# scripts/eval_faithfulness.py 共用，這裡以原名匯入）。記進 config.judge.lineage 與結果檔頂層 notes
-# （eval_compare 會印出 notes）；**刻意不放進 summary**：summary 的每個鍵都要在 METRIC_SPECS 分類，而跨系譜
-# 的比較早已由 META 鍵 judge_model 擋下（回 2），再加一個 META 鍵只是重複。
+# scripts/eval_faithfulness.py 共用，這裡以原名匯入）。記進 summary 的 META 鍵 judge_lineage、config.judge.lineage
+# 與結果檔頂層 notes（eval_compare 會印出 notes）。summary 那一份是宣告模型（`declared:<模型>`）上線後才加的：
+# 系譜由模型名與部署的宣告共同決定，只比 judge_model 說不出「同名但一邊是宣告模型」這件事，上線驗收
+# （scripts/eval_gate.py）也要讀它。
 
 
 def lineage_notes(model: str) -> list[str]:
     """結果檔頂層 notes：說出這份結果屬於哪個系譜、跟誰不可比。"""
     lineage = judge_lineage(model)
+    if lineage.startswith(JUDGE_LINEAGE_DECLARED_PREFIX):
+        return [
+            f"judge 系譜 {lineage}（judge={model}，部署設定宣告的模型）：自成一系，與內建 judge 及其他宣告模型的"
+            "結果不可比，eval_compare 回 2 是預期；門檻數值不變。"
+        ]
     if lineage == JUDGE_LINEAGE_LUNA:
         return [
             f"judge 系譜 {lineage}（judge={model}，自 2026-11 起的新量尺）：與舊系譜的結果"
@@ -576,6 +588,7 @@ def build_config(
     finished_at: str | None = None,
     judge_observed: dict | None = None,
     corpus_id: str | None = None,
+    profile: str | None = None,
 ) -> dict:
     """結果檔的 config 快照：只供 eval_compare 印差異，不參與判定（不放進 summary，
     否則每個新鍵都會觸發退出碼 3）。
@@ -598,7 +611,7 @@ def build_config(
     if agentic:
         models["agentic_plan"] = settings.qa_planner_model
         models["agentic_evaluate"] = settings.qa_planner_model
-    return {
+    config = {
         "gen_model": generator_model,
         "gen_timeout": GEN_TIMEOUT,
         "models": models,
@@ -627,6 +640,10 @@ def build_config(
         "started_at": started_at,
         "finished_at": finished_at,
     }
+    if profile is not None:
+        # 只在帶 --profile 時記：不帶時的 config 與加入 --profile 之前逐字相同。
+        config["profile"] = profile
+    return config
 
 
 def check_baseline_config(baseline: dict, current: dict) -> None:
@@ -799,6 +816,7 @@ async def run(
     match_baseline=None,
     complete_only: bool = False,
     checkpoint_dir=None,
+    profile: str | None = None,
 ) -> dict:
     """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, config, cases}）。
 
@@ -836,6 +854,7 @@ async def run(
             dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
             concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
             limit=limit, agentic=agentic, commit=commit, started_at=started_at, corpus_id=corpus_id,
+            profile=profile,
         )
         check_baseline_config(baseline, current)
 
@@ -848,6 +867,7 @@ async def run(
             dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
             concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
             limit=limit, agentic=agentic, commit=commit, started_at="", corpus_id=corpus_id,
+            profile=profile,
         )
         identity = {"version": 1, "config": identity, "out_path": str(Path(out_path).resolve()) if out_path else None,
                     "question_ids": [q["id"] for q in questions]}
@@ -913,6 +933,7 @@ async def run(
     summary["judge_model"] = judge_model
     summary["judge_prompt_sha"] = judge_prompt_sha()
     summary["judge_schema_version"] = JUDGE_SCHEMA_VERSION
+    summary["judge_lineage"] = judge_lineage(judge_model)
     config = build_config(
         dataset_path=dataset_path,
         generator_model=generator_model,
@@ -928,6 +949,7 @@ async def run(
         finished_at=datetime.now(timezone.utc).isoformat(),
         judge_observed=observer.snapshot(),
         corpus_id=corpus_id,
+        profile=profile,
     )
     report = {"summary": summary, "config": config, "notes": lineage_notes(judge_model), "cases": cases}
     if complete_only or match_baseline is not None:
@@ -977,7 +999,10 @@ def _print_summary(report: dict) -> None:
 
 def _main() -> None:
     parser = argparse.ArgumentParser(description="跑 M1 RAGAS reference-free 評測")
-    parser.add_argument("--dataset", default="eval/ragas_questions.json")
+    parser.add_argument("--dataset", default=None,
+                        help="題集路徑（預設 eval/ragas_questions.json）；與 --profile 擇一")
+    parser.add_argument("--profile", default=None,
+                        help="改讀該 profile 的凍結題集（profiles/<名稱>/eval/，先核對凍結指紋）")
     # 預設刻意不在 eval/baselines/ 底下：舊預設 baseline-m0.json 會讓「忘了帶 --out」
     # 直接覆寫一份歷史基準線。要升格成基準線時由人複製並命名。
     parser.add_argument("--out", default="eval/candidate-ragas.json")
@@ -1008,6 +1033,12 @@ def _main() -> None:
     parser.add_argument("--match-baseline", default=None, metavar="JSON",
                         help="付費執行前核對基準線設定，執行後核對 judge 實際模型與指紋")
     args = parser.parse_args()
+    try:
+        dataset = dataset_arg(args.profile, args.dataset)
+    except (OSError, ValueError) as exc:
+        print(f"題集前檢失敗（未呼叫 LLM）：{exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    profile = resolve_profile_arg(args.profile).name if args.profile is not None else None
     # 本次會用到的模型：生成端、judge；agentic 另有查詢規劃與證據評估（QA_PLANNER_MODEL）。
     require_llm_key(
         [args.generator_model, args.judge_model] + ([get_settings().qa_planner_model] if args.agentic else []),
@@ -1016,7 +1047,7 @@ def _main() -> None:
     try:
         report = asyncio.run(
             run(
-                args.dataset,
+                dataset,
                 out_path=args.out,
                 judge_model=args.judge_model,
                 limit=args.limit,
@@ -1031,6 +1062,7 @@ def _main() -> None:
                 corpus_id=args.corpus_id,
                 match_baseline=args.match_baseline,
                 complete_only=args.complete_only,
+                profile=profile,
             )
         )
     except _ACCOUNT_ERRORS as exc:

@@ -27,6 +27,10 @@
 沒有覆寫（2026-09-23 核對鍵名）。**這個常數永遠不跟著生產預設改**：生產 judge 換掉之後，
 舊列仍是 haiku 量的。
 
+**宣告模型的系譜**：設定宣告的模型（`llm_models.judge_lineage` 回 `declared:<模型>`）當生產 judge 時，evaluation 另記
+`judge_lineage`，讀分數比的是 judge 識別（`JUDGE_IDENTITY_SQL`／`judge_identity_of`），不只是名稱——宣告的名稱可能
+撞到上面那個歷史名稱。內建模型不記這個鍵，識別就是模型名，廷豐既有的判定逐列不變。
+
 **刻意是葉模組**（不 import 任何 app.*）：`app/services/faithfulness.py`、`eval/`、
 `web/routers/` 與 `scripts/` 都要用它，放在任何一邊都會把另一邊的相依拖進來。
 """
@@ -49,8 +53,29 @@ LEGACY_JUDGE_MODEL = "claude-haiku-4-5"
 # 空字串比照缺鍵（NULLIF），與 judge_model_of 逐條等價。
 JUDGE_MODEL_SQL = f"COALESCE(NULLIF(evaluation->>'judge_model', ''), '{LEGACY_JUDGE_MODEL}')"
 
-# SQL 條件：只計現行 judge。呼叫端綁定參數 :judge_model（＝ settings.faithfulness_model）。
-CURRENT_JUDGE_SQL = f"({JUDGE_MODEL_SQL}) = :judge_model"
+# 宣告模型（Azure deployment、Anthropic、自架端點）當 judge 時的量尺系譜前綴，與
+# `app/services/llm_models.py` 的 `JUDGE_LINEAGE_DECLARED_PREFIX` 同值（tests/test_judge_schema.py 釘住；
+# 本模組是葉模組、不 import 它）。生產忠實度只在系譜帶這個前綴時把它記進 evaluation 的 `judge_lineage`
+# （`faithfulness.to_evaluation`），所以內建模型與歷史列的 evaluation 形狀不變。
+DECLARED_LINEAGE_PREFIX = "declared:"
+
+# SQL：一列 qa_log 的 evaluation 的 **judge 識別**——宣告模型量的列是它的系譜（`declared:<模型>`），其餘是
+# JUDGE_MODEL_SQL。理由：宣告的名稱可能撞到歷史名稱（例如以 Anthropic 宣告 `claude-haiku-4-5`，而缺 judge_model 的
+# 舊列也視為 `claude-haiku-4-5`），只比名稱會把 CLI 時代的舊尺與新的宣告模型混成同一把。內建模型與舊列的識別就是
+# 模型名，所以廷豐的結果與加入識別之前逐列相同。與 judge_identity_of 逐條等價。
+JUDGE_IDENTITY_SQL = (
+    f"CASE WHEN starts_with(evaluation->>'judge_lineage', '{DECLARED_LINEAGE_PREFIX}') "
+    f"THEN evaluation->>'judge_lineage' ELSE {JUDGE_MODEL_SQL} END"
+)
+
+# SQL 條件：只計現行 judge。呼叫端綁定參數 :judge_model＝現行 judge 的識別
+# （`judge_identity(settings.faithfulness_model, llm_models.judge_lineage(...))`；內建模型就是模型名）。
+CURRENT_JUDGE_SQL = f"({JUDGE_IDENTITY_SQL}) = :judge_model"
+
+
+def judge_identity(model: str, lineage: str | None) -> str:
+    """現行 judge 的識別（綁給 CURRENT_JUDGE_SQL 的值）：宣告模型是它的系譜，其餘是模型名。"""
+    return lineage if isinstance(lineage, str) and lineage.startswith(DECLARED_LINEAGE_PREFIX) else model
 
 
 def judge_model_of(evaluation) -> str | None:
@@ -64,9 +89,19 @@ def judge_model_of(evaluation) -> str | None:
     return value if isinstance(value, str) else json.dumps(value)
 
 
+def judge_identity_of(evaluation) -> str | None:
+    """evaluation dict 的 judge 識別（JUDGE_IDENTITY_SQL 的 Python 版）。不是 dict（未查核）回 None。"""
+    if not isinstance(evaluation, dict):
+        return None
+    lineage = evaluation.get("judge_lineage")
+    if isinstance(lineage, str) and lineage.startswith(DECLARED_LINEAGE_PREFIX):
+        return lineage
+    return judge_model_of(evaluation)
+
+
 def is_current_judge(evaluation, current: str) -> bool:
-    """與 CURRENT_JUDGE_SQL 同一條規則的 Python 版（離線彙總用）。"""
-    return judge_model_of(evaluation) == current
+    """與 CURRENT_JUDGE_SQL 同一條規則的 Python 版（離線彙總用）。`current` 是現行 judge 的識別（`judge_identity`）。"""
+    return judge_identity_of(evaluation) == current
 
 
 # ── schema v2：嚴格驗證（生產與離線共用）─────────────────────────────────────

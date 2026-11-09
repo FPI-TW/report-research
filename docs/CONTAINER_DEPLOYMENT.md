@@ -141,7 +141,7 @@ docker compose up -d
 | `report-mark-audit.timer` | scheduler | `db-audit`（預設開）：08:45 |
 | `report-mark-db-snapshot.timer` | scheduler | `db-snapshot`（預設開）：每小時 :40 |
 | `report-mark-delete-accounts.timer` | scheduler | `delete-accounts`（預設開）：每小時整點，tombstone 寫在備份掛載 |
-| `report-mark-retrieval-regression.timer` | scheduler | `retrieval-regression`（預設關）：07:40；要先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），會載入嵌入模型 |
+| `report-mark-retrieval-regression.timer` | scheduler | `retrieval-regression`（預設關）：07:40；profile 自帶凍結題集（`profiles/<名稱>/eval/questions.json`，見 `docs/WORKFLOW.md`「導入驗收」）時自動開、比的是那一份，`SCHEDULER_DISABLE` 照樣關得掉；要先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），會載入嵌入模型 |
 | `report-mark-r2-reconcile.timer` | scheduler | `r2-reconcile`（預設關）：週一 07:00；只在物件儲存開著時有意義 |
 | `report-mark-upload.timer` | worker | 常駐的 `worker` 服務，每 `UPLOAD_WORKER_INTERVAL_SECONDS` 秒一輪 |
 | `report-mark-sync.timer` | 廷豐主機層 | 來源同步（NAS 掛載／R2 inbox）；框架的對應是下方框架專屬排程的 `connectors` |

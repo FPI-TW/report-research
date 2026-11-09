@@ -46,7 +46,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
-from app.services.judge_schema import is_current_judge, judge_model_of  # noqa: E402
+from app.services.judge_schema import is_current_judge, judge_identity, judge_model_of  # noqa: E402
 from app.services.llm_models import JUDGE_LINEAGE_LUNA, judge_lineage  # noqa: E402
 
 # (表, 識別欄位)。以 dict 保留是為了 summarize／_fetch 對來源一視同仁；
@@ -76,7 +76,8 @@ def summarize(rows: list[dict], min_score: float, *, judge_model: str | None = N
     judge = _current_judge(judge_model)
     total = len(rows)
     all_checked = [r for r in rows if isinstance(r.get("evaluation"), dict)]
-    checked = [r for r in all_checked if is_current_judge(r["evaluation"], judge)]
+    identity = judge_identity(judge, judge_lineage(judge))
+    checked = [r for r in all_checked if is_current_judge(r["evaluation"], identity)]
     by_judge: dict[str, int] = {}
     for r in all_checked:
         name = judge_model_of(r["evaluation"])
@@ -123,11 +124,12 @@ def worst(rows: list[dict], limit: int, *, judge_model: str | None = None) -> li
     """分數最低的前 N 筆。degraded 排除——它沒有分數，不是「最差」而是「沒量」。
     只看 judge_model（未給＝現行 judge）量的列，理由同 summarize。"""
     judge = _current_judge(judge_model)
+    identity = judge_identity(judge, judge_lineage(judge))
     scored = [
         (s, r)
         for r in rows
         if isinstance(r.get("evaluation"), dict)
-        and is_current_judge(r["evaluation"], judge)
+        and is_current_judge(r["evaluation"], identity)
         and (s := _num(r["evaluation"].get("faithfulness_score"))) is not None
     ]
     scored.sort(key=lambda t: t[0])

@@ -298,6 +298,21 @@ class SchedulerSelectionTests(unittest.TestCase):
         self.assertNotIn("backfill", names)
         self.assertNotIn("db-audit", names)
 
+    def test_retrieval_regression_follows_the_profile_question_set(self):
+        """profile 自帶凍結題集（eval/questions.json）時自動排入；廷豐的題集在 repo 的 eval/，照舊不排。"""
+        with tempfile.TemporaryDirectory() as td:
+            env = {"PROFILE_DIR": td}
+            self.assertNotIn("retrieval-regression", [j.name for j in sch.selected_jobs(env)])
+            (Path(td) / "eval").mkdir()
+            (Path(td) / "eval" / "questions.json").write_text("{}", encoding="utf-8")
+            self.assertIn("retrieval-regression", [j.name for j in sch.selected_jobs(env)])
+            disabled = sch.selected_jobs({**env, sch.DISABLE_ENV: "retrieval-regression"})
+            self.assertNotIn("retrieval-regression", [j.name for j in disabled])
+        tingfong = sch.selected_jobs({"PROFILE_DIR": "profiles/tingfong"})
+        self.assertNotIn("retrieval-regression", [j.name for j in tingfong])
+        flagged = [j.name for j in sch.JOBS if j.enabled_by_profile_questions]
+        self.assertEqual(flagged, ["retrieval-regression"])
+
     def test_unknown_name_is_refused(self):
         with self.assertRaises(sch.SchedulerConfigError):
             sch.selected_jobs({sch.DISABLE_ENV: "bakup"})

@@ -42,7 +42,7 @@ COMPOSE := $(DOCKER) compose
         serve serve-dev serve-preview search build-web build-info \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
         estimate backfill-status \
-        eval-compare \
+        eval-compare eval-gate \
         up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
         sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
@@ -202,6 +202,14 @@ eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣�
 	  echo "  例：make eval-compare BASE=eval/before.json CAND=eval/after.json"; \
 	  exit 2; }
 	uv run python scripts/eval_compare.py --baseline "$(BASE)" --candidate "$(CAND)" --tolerance $(TOL)
+
+# 上線驗收（docs/WORKFLOW.md「導入驗收」）：RAGAS 結果對 profile 的凍結題集與政策門檻逐項判定，零 LLM。
+eval-gate:  ## 上線驗收（PROFILE=… RESULT=…；0 通過／1 有未豁免的指標沒過／2 結果不完整或不可比）
+	@test -n "$(PROFILE)" && test -n "$(RESULT)" || { \
+	  echo "用法：make eval-gate PROFILE=<profile 名稱> RESULT=<eval/run_ragas.py 的結果檔>"; \
+	  echo "  例：make eval-gate PROFILE=tingfong RESULT=eval/candidate-ragas.json"; \
+	  exit 2; }
+	uv run python scripts/eval_gate.py --profile "$(PROFILE)" --result "$(RESULT)"
 
 # ───── 對外存取（Cloudflare Tunnel + nginx）─────
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）

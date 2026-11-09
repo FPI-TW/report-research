@@ -278,6 +278,70 @@ class TestJudgeScale(unittest.TestCase):
             self.assertEqual(specs[key].direction, ec.META)
 
 
+class TestJudgeLineage(unittest.TestCase):
+    """量尺系譜（META `judge_lineage`）：不同系譜回 2；沒記這個鍵的舊結果由 `with_lineage` 推得。"""
+
+    LUNA = "gpt-6-luna-2026-11"
+
+    def _doc(self, *, lineage=None, config_lineage=None, model="gpt-6-luna") -> dict:
+        doc = deepcopy(load(RAGAS_CLEAN))
+        doc["summary"].update({**_SCALE, **_NEW_METRICS, "judge_model": model, "judge_schema_version": 2})
+        if lineage is not None:
+            doc["summary"]["judge_lineage"] = lineage
+        doc["config"] = {"judge": {"lineage": config_lineage}} if config_lineage else {}
+        return doc
+
+    def test_prefix_mirrors_llm_models(self):
+        from app.services.llm_models import JUDGE_LINEAGE_DECLARED_PREFIX
+
+        self.assertEqual(ec.DECLARED_LINEAGE_PREFIX, JUDGE_LINEAGE_DECLARED_PREFIX)
+        self.assertEqual(ec.METRIC_SPECS["judge_lineage"].direction, ec.META)
+
+    def test_same_lineage_is_comparable(self):
+        cmp_ = compare(self._doc(lineage=self.LUNA), self._doc(lineage=self.LUNA))
+        self.assertEqual(cmp_.exit_code, 0, cmp_.incomparable)
+
+    def test_different_lineage_with_the_same_model_name_is_incomparable(self):
+        """同名但一邊是部署宣告的模型：只比 judge_model 說不出來，系譜擋下。"""
+        base = self._doc(lineage=self.LUNA)
+        cand = self._doc(lineage="declared:gpt-6-luna")
+        cmp_ = compare(base, cand)
+        self.assertEqual(cmp_.exit_code, 2)
+        self.assertTrue(any("judge_lineage" in r for r in cmp_.incomparable), cmp_.incomparable)
+        self.assertFalse(any("judge_model" in r for r in cmp_.incomparable))
+
+    def test_two_declared_lineages_are_incomparable(self):
+        a = self._doc(lineage="declared:Qwen/Qwen3-72B", model="Qwen/Qwen3-72B")
+        b = self._doc(lineage="declared:Qwen/Qwen3-72B", model="Qwen/Qwen3-72B")
+        self.assertEqual(compare(a, b).exit_code, 0)
+        c = self._doc(lineage="declared:llama-4", model="Qwen/Qwen3-72B")
+        self.assertEqual(compare(a, c).exit_code, 2)
+
+    def test_current_baseline_shape_stays_comparable_with_new_results(self):
+        """現行基準線只在 config.judge.lineage 記系譜（summary 沒有這個鍵）：新結果照樣可比。"""
+        old = self._doc(config_lineage=self.LUNA)
+        new = self._doc(lineage=self.LUNA)
+        for base, cand in ((old, new), (new, old)):
+            cmp_ = compare(base, cand)
+            self.assertEqual(cmp_.exit_code, 0, cmp_.incomparable)
+        self.assertNotIn("judge_lineage", old["summary"], "with_lineage 不改輸入")
+
+    def test_lineage_missing_everywhere_is_inferred_unless_the_other_side_is_declared(self):
+        legacy = self._doc()
+        self.assertEqual(compare(legacy, self._doc(lineage=self.LUNA)).exit_code, 0)
+        cmp_ = compare(legacy, self._doc(lineage="declared:gpt-6-luna"))
+        self.assertEqual(cmp_.exit_code, 2)
+        self.assertTrue(any("量尺只有" in r and "judge_lineage" in r for r in cmp_.incomparable))
+
+    def test_config_lineage_disagreeing_is_incomparable(self):
+        cmp_ = compare(self._doc(config_lineage="claude-haiku"), self._doc(lineage=self.LUNA))
+        self.assertEqual(cmp_.exit_code, 2)
+
+    def test_retrieval_results_are_untouched(self):
+        cmp_ = compare(load(RETRIEVAL_BEFORE), load(RETRIEVAL_BEFORE))
+        self.assertNotIn("judge_lineage", [r.key for r in cmp_.rows])
+
+
 def _judged_doc(base: dict, *, judge_errors: dict[str, list[str]] | None = None, **cp_override) -> dict:
     """以真實 RAGAS 結果檔為底，模擬 run_ragas 的輸出：指定題目的指定指標 judge 出錯（None＋
     judge_errors），再照 run_ragas.aggregate 的規則重寫三個均值、n_effective_* 與 judged_ids_sha。

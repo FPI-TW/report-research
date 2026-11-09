@@ -17,7 +17,7 @@ import type { Message } from '.'
 // 整個 src/ 的原始碼（vite 的 glob，鍵是相對本檔的路徑）；檔名一律改成相對 src/。
 const RAW = import.meta.glob<string>(['../**/*.ts', '../**/*.tsx'], { query: '?raw', import: 'default', eager: true })
 const FILES: Record<string, string> = Object.fromEntries(Object.entries(RAW).map(([k, v]) => [k.startsWith('./') ? 'i18n/' + k.slice(2) : k.replace(/^\.\.\//, ''), v]))
-const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/
+const CJK = /[\u3400-\u9fff\uf900-\ufaff\u3000-\u303f\u30fb\uff00-\uffef]/
 
 // 第三方匯入（shadcn registry 拉入，eslint.config.js 的忽略清單）與測試輔助：不受這條規則管。
 const THIRD_PARTY = [
@@ -190,6 +190,146 @@ describe('介面字串一律經過字典', () => {
       visit(sf, false)
     }
     expect(found).toEqual([])
+  })
+})
+
+/**
+ * 模組頂層的標籤表寫成 getter（render 時才查字典）；但若模組頂層又讀了 getter（`.map(o => o.label)`、
+ * `Object.entries()`、`X.label`、展開），它在 import 期就被求值，切換語系後留著舊字。這裡追蹤「帶 getter 的值」：
+ * 模組級變數的初始值裡有 getter（記下 getter 的屬性名），或由另一個帶 getter 的值經 filter／slice／函式呼叫等
+ * 傳下來；然後在模組頂層（函式與 getter 本體以外）找讀到那些屬性名的寫法。只讀別的屬性（`key`、`to`）不算。
+ * 跨檔以 import 解析（相對路徑與 `@/`）。
+ */
+const ARRAY_PASS = new Set(['filter', 'slice', 'concat', 'sort', 'reverse', 'flat', 'toSorted', 'toReversed'])
+const ARRAY_READ = new Set(['map', 'flatMap', 'forEach', 'reduce', 'find', 'findLast', 'some', 'every', 'findIndex'])
+const OBJECT_READ = new Set(['Object.entries', 'Object.values', 'Object.assign', 'Object.fromEntries', 'JSON.stringify'])
+
+function moduleLevelGetterReads(): string[] {
+  const carriers = new Map<string, Map<string, Set<string>>>() // file → 變數名 → getter 屬性名
+  const imports = new Map<string, Map<string, { file: string; name: string }>>()
+  const parsed = new Map<string, ts.SourceFile>()
+  const resolveFile = (from: string, spec: string): string | null => {
+    const base = resolveImport(from, spec)
+    if (!base) return null
+    for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) if (cand in FILES) return cand
+    return null
+  }
+  for (const file of SOURCE_FILES) {
+    const sf = parse(file)
+    parsed.set(file, sf)
+    const map = new Map<string, { file: string; name: string }>()
+    for (const st of sf.statements) {
+      if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings || !ts.isNamedImports(st.importClause.namedBindings)) continue
+      const target = resolveFile(file, (st.moduleSpecifier as ts.StringLiteral).text)
+      if (!target) continue
+      for (const el of st.importClause.namedBindings.elements) map.set(el.name.text, { file: target, name: (el.propertyName ?? el.name).text })
+    }
+    imports.set(file, map)
+  }
+  const carried = (file: string, name: string): Set<string> | undefined => {
+    const own = carriers.get(file)?.get(name)
+    if (own) return own
+    const imp = imports.get(file)?.get(name)
+    return imp ? carriers.get(imp.file)?.get(imp.name) : undefined
+  }
+  const unwrap = (e: ts.Expression): ts.Expression =>
+    ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isNonNullExpression(e) ? unwrap(e.expression) : e
+
+  /** 這個運算式的值帶著哪些 getter 屬性名（沒有回空集合）。 */
+  const carries = (file: string, e: ts.Expression): Set<string> => {
+    e = unwrap(e)
+    const out = new Set<string>()
+    if (ts.isIdentifier(e)) return carried(file, e.text) ?? out
+    if (ts.isObjectLiteralExpression(e) || ts.isArrayLiteralExpression(e)) {
+      const walk = (n: ts.Node) => {
+        if (ts.isGetAccessor(n) && ts.isIdentifier(n.name)) { out.add(n.name.text); return }
+        if (isFunctionLike(n)) return
+        if (ts.isIdentifier(n) && !(ts.isPropertyAssignment(n.parent) && n.parent.name === n)) carries(file, n).forEach(x => out.add(x))
+        ts.forEachChild(n, walk)
+      }
+      ts.forEachChild(e, walk)
+      return out
+    }
+    if (ts.isCallExpression(e)) {
+      const callee = unwrap(e.expression)
+      if (ts.isPropertyAccessExpression(callee) && ARRAY_PASS.has(callee.name.text)) return carries(file, callee.expression)
+      if (ts.isPropertyAccessExpression(callee) && ARRAY_READ.has(callee.name.text)) return out
+      for (const arg of e.arguments) carries(file, arg).forEach(x => out.add(x))
+      return out
+    }
+    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return carries(file, e.expression)
+    return out
+  }
+
+  /** 在模組頂層求值的程式碼裡，讀到 getter 的位置。 */
+  const reads = (file: string, sf: ts.SourceFile, root: ts.Node, found: string[]) => {
+    const flag = (n: ts.Node, what: string) => found.push(`${file}:${lineOf(sf, n)} ${what}`)
+    const readsNames = (body: ts.Node, names: Set<string>): boolean => {
+      let hit = false
+      const walk = (n: ts.Node) => {
+        if (hit) return
+        if (ts.isPropertyAccessExpression(n) && names.has(n.name.text)) hit = true
+        else if (ts.isBindingElement(n) && names.has(((n.propertyName ?? n.name) as ts.Identifier).getText(sf))) hit = true
+        ts.forEachChild(n, walk)
+      }
+      walk(body)
+      return hit
+    }
+    const visit = (n: ts.Node) => {
+      if (isFunctionLike(n)) return
+      if (ts.isPropertyAccessExpression(n)) {
+        const g = carries(file, n.expression)
+        if (g.has(n.name.text)) flag(n, n.getText(sf))
+      }
+      if (ts.isSpreadElement(n) || ts.isSpreadAssignment(n)) {
+        if (carries(file, n.expression).size) flag(n, n.getText(sf))
+      }
+      if (ts.isCallExpression(n)) {
+        const callee = unwrap(n.expression)
+        if (OBJECT_READ.has(callee.getText(sf)) && n.arguments.some(a => carries(file, a).size)) flag(n, callee.getText(sf))
+        if (ts.isPropertyAccessExpression(callee) && (ARRAY_READ.has(callee.name.text) || ARRAY_PASS.has(callee.name.text))) {
+          const g = carries(file, callee.expression)
+          if (g.size && n.arguments.some(a => readsNames(a, g))) flag(n, `${callee.expression.getText(sf)}.${callee.name.text}()`)
+        }
+      }
+      ts.forEachChild(n, visit)
+    }
+    visit(root)
+  }
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [file, sf] of parsed) {
+      for (const st of sf.statements) {
+        if (!ts.isVariableStatement(st)) continue
+        for (const decl of st.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name) || !decl.initializer) continue
+          const g = carries(file, decl.initializer)
+          const prev = carriers.get(file)?.get(decl.name.text)
+          if (g.size && (!prev || [...g].some(x => !prev.has(x)))) {
+            if (!carriers.has(file)) carriers.set(file, new Map())
+            carriers.get(file)!.set(decl.name.text, new Set([...(prev ?? []), ...g]))
+            changed = true
+          }
+        }
+      }
+    }
+  }
+  const found: string[] = []
+  for (const [file, sf] of parsed) {
+    for (const st of sf.statements) {
+      if (ts.isImportDeclaration(st) || ts.isFunctionDeclaration(st) || ts.isInterfaceDeclaration(st)
+        || ts.isTypeAliasDeclaration(st) || ts.isExportDeclaration(st)) continue
+      reads(file, sf, st, found)
+    }
+  }
+  return found
+}
+
+describe('模組頂層不讀取標籤表的 getter', () => {
+  it('沒有在 import 期就把 getter 求值的寫法', () => {
+    expect(moduleLevelGetterReads()).toEqual([])
   })
 })
 

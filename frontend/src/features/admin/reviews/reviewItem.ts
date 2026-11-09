@@ -17,9 +17,9 @@ export const VERIFY_LABEL: Record<ReviewVerification, string> = { get untested()
 export const STATUS_TONE: Record<ReviewStatus, LampTone> = { open: 'warn', resolved: 'ok', dismissed: 'idle' }
 
 export const STATUS_FILTERS: readonly { value: StatusFilter; label: string }[] = [
-  { value: 'open', label: STATUS_LABEL.open },
-  { value: 'resolved', label: STATUS_LABEL.resolved },
-  { value: 'dismissed', label: STATUS_LABEL.dismissed },
+  { value: 'open', get label() { return STATUS_LABEL.open } },
+  { value: 'resolved', get label() { return STATUS_LABEL.resolved } },
+  { value: 'dismissed', get label() { return STATUS_LABEL.dismissed } },
   { value: 'all', get label() { return t('admin.reviews.reviewItem.all') } },
 ]
 
@@ -51,7 +51,7 @@ export function askerText(item: ReviewItem): string {
 export function metaLine(kind: ReviewKind, item: ReviewItem): string {
   if (kind !== 'extraction') return t('admin.reviews.reviewItem.asker', { item: askerText(item), created_at: fmtDay(item.created_at) })
   const reasons = (item.review_reasons ?? []).map(r => reasonText(item, r))
-  return [item.source, reasons.length > 0 ? reasons.join(t('admin.reviews.reviewItem.text')) : clearedText()].filter(Boolean).join('・')
+  return [item.source, reasons.length > 0 ? reasons.join(t('admin.reviews.reviewItem.text')) : clearedText()].filter(Boolean).join(t('common.separator'))
 }
 
 /** 門檻至少印兩位小數（0.9 → 0.90）；設得更細的（0.875）原樣印，不四捨五入成另一個門檻。 */

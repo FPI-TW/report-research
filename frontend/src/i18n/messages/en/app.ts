@@ -1017,6 +1017,9 @@ const messages: Messages<typeof zh> = {
   // lib/useWebSearch.ts
   'lib.useWebSearch.forRealTimeFiguresTurn': 'For real-time figures, turn on “Web search” with the “+” in the input box and ask again; those answers come from external web pages, not research reports.',
 
+  // 共用：句中並列的分隔符（中文「・」、英文分號）。
+  'common.separator': '; ',
+
   // 後端錯誤代碼（web/errors.py 的 code）→ 訊息。英文介面依 code 顯示這裡的字；中文介面照舊顯示後端的 detail，
   // 這裡的中文只在 detail 是空的時候用。未登記的 code 一律顯示原 detail（lib/api.ts 的 errorDetail）。
   'lib.apiErrors.already_running': 'The same job is already running; try again after it finishes.',

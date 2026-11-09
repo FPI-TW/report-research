@@ -32,7 +32,7 @@ export interface DependencyLookup {
 /** systemd 屬性或容器 State 全列出來（原本詳情頁的欄位）。 */
 function attributeRows(s: OpsServiceStatus, checkedAt?: string): [string, ReactNode][] {
   const rows: [string, ReactNode][] = [
-    [t('admin.ops.services.serviceDrawer.tier'), `${TIER_LABELS[s.tier]}・${TIER_HINTS[s.tier]}`],
+    [t('admin.ops.services.serviceDrawer.tier'), `${TIER_LABELS[s.tier]}${t('common.separator')}${TIER_HINTS[s.tier]}`],
     [s.kind === 'systemd' ? 'unit' : t('admin.ops.services.serviceDrawer.container'), s.target],
     ['ActiveState', stateText(s)],
     ['Result', resultText(s)],

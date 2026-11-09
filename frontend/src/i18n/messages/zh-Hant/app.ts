@@ -1014,6 +1014,9 @@ const messages = {
   // lib/useWebSearch.ts
   'lib.useWebSearch.forRealTimeFiguresTurn': '若需要即時數字，可在輸入框的「＋」開啟「網路搜尋」後再問一次；那類回答來自外部網頁，不是研報內容。',
 
+  // 共用：句中並列的分隔符（中文「・」、英文分號）。
+  'common.separator': '・',
+
   // 後端錯誤代碼（web/errors.py 的 code）→ 訊息。英文介面依 code 顯示這裡的字；中文介面照舊顯示後端的 detail，
   // 這裡的中文只在 detail 是空的時候用。未登記的 code 一律顯示原 detail（lib/api.ts 的 errorDetail）。
   'lib.apiErrors.already_running': '同一組工作正在執行中',

@@ -189,7 +189,7 @@ export default function OpsServicesPage() {
                       <div className={styles.tierBody}>
                         <div className={styles.tierLabel}>
                           {TIER_LABELS[tier]}
-                          <span className={styles.tierState}>・{bad ? t('admin.ops.opsServicesPage.needAttention', { bad }) : t('admin.ops.opsServicesPage.allOk')}</span>
+                          <span className={styles.tierState}>{t('common.separator')}{bad ? t('admin.ops.opsServicesPage.needAttention', { bad }) : t('admin.ops.opsServicesPage.allOk')}</span>
                         </div>
                         <div className={styles.tierHint}>{TIER_HINTS[tier]}</div>
                       </div>
@@ -222,7 +222,7 @@ export default function OpsServicesPage() {
             </>
           )}
           <p className={styles.meta}>
-            <span>{q.data.environment}・{q.data.host}</span>
+            <span>{q.data.environment}{t('common.separator')}{q.data.host}</span>
             <span>{t('admin.ops.opsServicesPage.checkedAt')}{' '}<b>{fmtDateTime(q.data.checked_at)}</b>{t('admin.ops.opsServicesPage.refreshesEvery30S')}</span>
           </p>
         </>

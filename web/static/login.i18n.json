@@ -71,7 +71,7 @@
     },
     "slogan_1": {
       "zh-Hant": "從大量研報中，",
-      "en": "From a sea of research reports, "
+      "en": "From a sea of reports, "
     },
     "slogan_2": {
       "zh-Hant": "直達關鍵段落。",
@@ -87,7 +87,7 @@
     },
     "demo_question": {
       "zh-Hant": "台積電先進製程的最新展望如何？",
-      "en": "What is the latest outlook for TSMC’s advanced process nodes?"
+      "en": "TSMC advanced-node outlook?"
     },
     "demo_ask": {
       "zh-Hant": "提問 ↵",
@@ -195,7 +195,7 @@
     },
     "tile_search_desc": {
       "zh-Hant": "語意＋關鍵字混合檢索，用字不必與原文相同；可依市場、商品類型與報告類型篩選。",
-      "en": "Hybrid semantic and keyword search, so wording needn’t match the source; filter by market, asset class and report type."
+      "en": "Hybrid semantic and keyword search, so wording needn't match the source; filter by market, asset class and report type."
     },
     "demo_query_1": {
       "zh-Hant": "AI 伺服器散熱",
@@ -219,7 +219,7 @@
     },
     "tile_radar_desc": {
       "zh-Hant": "彙整同一標的各家券商的評等、目標價與 EPS，追蹤觀點變化。",
-      "en": "Compiles every broker’s rating, target price and EPS for an instrument and tracks how views change."
+      "en": "Compiles every broker's rating, target price and EPS for an instrument and tracks how views change."
     },
     "radar_note": {
       "zh-Hant": "一點＝一家券商",
@@ -231,7 +231,7 @@
     },
     "tile_brief_desc": {
       "zh-Hant": "每日彙整各家券商研報的重點，整理成一份簡報。",
-      "en": "Compiles the key points of each broker’s reports into one brief every day."
+      "en": "Compiles the key points of each broker's reports into one brief every day."
     },
     "broker_a": {
       "zh-Hant": "券商 A",
@@ -247,7 +247,7 @@
     },
     "today_brief": {
       "zh-Hant": "今日簡報",
-      "en": "Today’s brief"
+      "en": "Today's brief"
     },
     "err_totp": {
       "zh-Hant": "驗證碼不正確或已使用過，請輸入驗證器目前顯示的碼。",
@@ -275,7 +275,7 @@
     },
     "err_sso": {
       "zh-Hant": "公司帳號登入沒有完成，請重新登入。",
-      "en": "The company account sign-in didn’t complete. Sign in again."
+      "en": "The company account sign-in didn't complete. Sign in again."
     },
     "err_sso_unavailable": {
       "zh-Hant": "公司帳號登入服務暫時無法使用，請稍後再試。",
@@ -283,7 +283,7 @@
     },
     "err_sso_account": {
       "zh-Hant": "這個公司帳號無法登入本系統，請聯絡管理者。",
-      "en": "This company account can’t sign in to this system. Contact an administrator."
+      "en": "This company account can't sign in to this system. Contact an administrator."
     },
     "err_sso_only": {
       "zh-Hant": "請改以公司帳號登入。",

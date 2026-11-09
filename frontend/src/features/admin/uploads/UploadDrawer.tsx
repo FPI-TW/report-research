@@ -304,7 +304,7 @@ function Detail({ uploadId, onClose, review, now }: Props & { uploadId: string }
     </div>
   ) : undefined
 
-  const sub = [title, isInFlight(state) ? t('admin.uploads.uploadDrawer.processingTheViewRefreshesEvery') : null].filter(Boolean).join('・')
+  const sub = [title, isInFlight(state) ? t('admin.uploads.uploadDrawer.processingTheViewRefreshesEvery') : null].filter(Boolean).join(t('common.separator'))
   return (
     <Drawer open onClose={onClose} title={upload.original_name} monoTitle width={WIDTH}
       status={<Status tone={stateTone(state)}>{stateLabel(state)}</Status>} subtitle={sub || undefined} footer={footer}>

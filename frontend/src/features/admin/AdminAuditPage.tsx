@@ -61,7 +61,7 @@ function EntryDrawer({ entryId, entry, missing, onClose }: {
   const hasDetail = Object.keys(entry.detail).length > 0
   return (
     <Drawer open onClose={onClose} width={520} title={actionLabel(entry.action)}
-      subtitle={`${fmtDateTime(entry.created_at)}・${actorLabel(entry)}`}
+      subtitle={`${fmtDateTime(entry.created_at)}${t('common.separator')}${actorLabel(entry)}`}
       footer={<DrawerFootNote>{t('admin.adminAuditPage.entriesCanOnlyBeAppended')}</DrawerFootNote>}>
       <DrawerSection title={t('admin.adminAuditPage.thisAction')}>
         <dl className={c.kv}>

@@ -19,9 +19,9 @@ type StatusFilter = IncidentStatus | 'all'
 
 const STATUS_OPTIONS: SegOption<StatusFilter>[] = [
   { value: 'all', get label() { return t('admin.ops.opsIncidentsPage.all') } },
-  { value: 'firing', label: INCIDENT_STATUS_LABELS.firing },
-  { value: 'resolved', label: INCIDENT_STATUS_LABELS.resolved },
-  { value: 'lost', label: INCIDENT_STATUS_LABELS.lost },
+  { value: 'firing', get label() { return INCIDENT_STATUS_LABELS.firing } },
+  { value: 'resolved', get label() { return INCIDENT_STATUS_LABELS.resolved } },
+  { value: 'lost', get label() { return INCIDENT_STATUS_LABELS.lost } },
 ]
 
 const help = () => t('admin.ops.opsIncidentsPage.everyOpenReminderEscalationAnd')

@@ -44,7 +44,7 @@ export function ServiceMatrix({ services, pending, servicesTo, deps }: {
                     <Link key={s.name} to={serviceHref(s.name)} className={styles.svc}
                       data-bad={needsAttention(s) || undefined}
                       aria-label={t('admin.overview.serviceMatrix.text2', { name: s.name, SUMMARY_LABELS: SUMMARY_LABELS[s.summary] })}
-                      title={`${s.name}・${SUMMARY_LABELS[s.summary]}${s.description ? `・${s.description}` : ''}`}>
+                      title={`${s.name}${t('common.separator')}${SUMMARY_LABELS[s.summary]}${s.description ? `${t('common.separator')}${s.description}` : ''}`}>
                       <Lamp tone={serviceTone(s)} label="" size={5} />{s.name}
                     </Link>
                   ))}
@@ -61,7 +61,7 @@ export function ServiceMatrix({ services, pending, servicesTo, deps }: {
                 <div className={styles.chips}>
                   {externals.map(n => (
                     <span key={n.name} className={styles.ext} data-health={n.health}
-                      title={[n.description, n.health_reason].filter(Boolean).join('・')}>
+                      title={[n.description, n.health_reason].filter(Boolean).join(t('common.separator'))}>
                       <Lamp tone={nodeTone(n)} label={healthLabel(n)} size={5} />{n.name}
                     </span>
                   ))}

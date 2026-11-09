@@ -82,7 +82,7 @@ export function IncidentDrawer({ incidentId, onClose }: { incidentId: string | n
     <Drawer open onClose={onClose} width={520}
       title={i ? t('admin.ops.incidents.incidentDrawer.incident', { component: componentLabel(i.component) }) : t('admin.ops.incidents.incidentDrawer.incidentDetails')}
       status={i ? <StatusBadge status={i.status} /> : undefined}
-      subtitle={i ? (i.summary ? `${i.reason}・${i.summary}` : i.reason) : undefined}>
+      subtitle={i ? (i.summary ? `${i.reason}${t('common.separator')}${i.summary}` : i.reason) : undefined}>
       {q.isPending ? (
         <DrawerSection><p className={styles.note}>{t('admin.ops.incidents.incidentDrawer.loading')}</p></DrawerSection>
       ) : q.isError ? (

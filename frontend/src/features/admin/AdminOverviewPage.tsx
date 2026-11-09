@@ -68,7 +68,7 @@ function Overview() {
     t('admin.adminOverviewPage.errorsWarnings', { nBad, nWarn }),
     reviews && t('admin.adminOverviewPage.pendingReviews', { v: reviews.count ?? 0 }),
     drafts && t('admin.adminOverviewPage.draftsAwaitingReview', { v: drafts.count ?? 0 }),
-  ].filter(Boolean).join('・')
+  ].filter(Boolean).join(t('common.separator'))
 
   const onRefresh = async () => {
     setRefreshing(true)

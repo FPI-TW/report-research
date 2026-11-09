@@ -29,7 +29,7 @@ function resultDetail(job: JobItem): string {
   const parts = [job.result ?? '—']
   if (job.exit_status != null && job.exit_status !== 0) parts.push(`exit ${job.exit_status}`)
   if (job.exec_main_code && job.exec_main_code !== 'exited') parts.push(job.exec_main_code)
-  return parts.join('・')
+  return parts.join(t('common.separator'))
 }
 
 /**

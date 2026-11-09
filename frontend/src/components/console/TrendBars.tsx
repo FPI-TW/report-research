@@ -30,7 +30,7 @@ export function TrendBars({ bars, label, format = String, highlightLast, thresho
         aria-label={t('admin.console.trendBars.dataPoints', { label, length: bars.filter(b => b.value != null).length })}>
         {threshold != null && <div className={c.threshold} style={{ bottom: pct(threshold) }} title={t('admin.console.trendBars.threshold', { threshold: format(threshold) })} />}
         {bars.map((b, i) => (
-          <div key={i} className={c.slot} title={b.value == null ? t('admin.console.trendBars.noData', { label: b.label }) : `${b.label}・${format(b.value)}`}>
+          <div key={i} className={c.slot} title={b.value == null ? t('admin.console.trendBars.noData', { label: b.label }) : `${b.label}${t('common.separator')}${format(b.value)}`}>
             {b.value != null && (
               <div className={c.bar} style={{ height: pct(b.value) }}
                 data-tone={threshold != null && b.value > threshold ? 'warn' : highlightLast && i === bars.length - 1 ? 'gold' : undefined} />

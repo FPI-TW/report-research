@@ -14,8 +14,8 @@ export const PIPELINE_ROWS: { key: keyof Pipelines; name: string }[] = [
   { key: 'tag', get name() { return t('admin.ops.pipeline.pipelineMeta.semanticTagging') } },
   { key: 'summaries', get name() { return t('admin.ops.pipeline.pipelineMeta.summaryGeneration') } },
   { key: 'titles', get name() { return t('admin.ops.pipeline.pipelineMeta.displayTitles') } },
-  { key: 'takeaways', name: DERIVED_LABEL.takeaways },
-  { key: 'signals', name: DERIVED_LABEL.signals },
+  { key: 'takeaways', get name() { return DERIVED_LABEL.takeaways } },
+  { key: 'signals', get name() { return DERIVED_LABEL.signals } },
   // E1d 深夜回填：每晚 01:00 起最多 4 小時，零 LLM。不寫 log 檔，這列是唯一表徵。
   { key: 'backfill', get name() { return t('admin.ops.pipeline.pipelineMeta.extractionBackfill') } },
 ]

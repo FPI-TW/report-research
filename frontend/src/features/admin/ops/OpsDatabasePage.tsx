@@ -102,7 +102,7 @@ function Snapshot({ ov }: { ov: DbOverviewResponse }) {
   const connTotal = conn.error ? '—' : fmtInt(conn.total)
   // 沒有值（「—」）的磚不帶單位；降級的那一段不給補充說明。
   const tiles: { name: string; value: string; unit?: string; hint?: string }[] = [
-    { name: t('admin.ops.opsDatabasePage.databaseSize'), ...bytesStat(db.size_bytes), hint: db.name ? `${db.name}・PostgreSQL ${db.server_version ?? ''}` : undefined },
+    { name: t('admin.ops.opsDatabasePage.databaseSize'), ...bytesStat(db.size_bytes), hint: db.name ? `${db.name}${t('common.separator')}PostgreSQL ${db.server_version ?? ''}` : undefined },
     { name: t('admin.ops.opsDatabasePage.connections'), value: connTotal, unit: connTotal === '—' ? undefined : `/ ${fmtInt(conn.usable_connections)}`,
       hint: conn.error ? undefined : t('admin.ops.opsDatabasePage.maxReservedUsage', { max_connections: fmtInt(conn.max_connections), reserved_connections: fmtInt(conn.reserved_connections), usage_ratio: fmtPct(conn.usage_ratio) }) },
     { name: t('admin.ops.opsDatabasePage.cacheHitRatio'), ...pctStat(a.cache_hit_ratio, 2),

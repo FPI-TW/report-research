@@ -180,7 +180,7 @@ export function auditSummary(entry: AuditEntry): string {
   if (via === 'web_bulk') {
     if (!isBulk) parts.push(t('admin.auditLabels.batchAction'))
   } else if (via && via !== 'web') parts.push(via.startsWith('cli') ? t('admin.auditLabels.viaCli') : t('admin.auditLabels.via', { via }))
-  return parts.join('・') || '—'
+  return parts.join(t('common.separator')) || '—'
 }
 
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])

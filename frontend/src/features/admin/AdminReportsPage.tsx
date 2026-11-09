@@ -178,7 +178,7 @@ function AdminReports() {
                             <div className={`${c.truncate} ${s.reason}`} title={r.hidden_reason}>{r.hidden_reason}</div>
                           )}
                           {r.visibility_updated_at && (
-                            <div className={c.sub}>{r.visibility_updated_by ?? '—'}・{fmtDateTime(r.visibility_updated_at)}</div>
+                            <div className={c.sub}>{r.visibility_updated_by ?? '—'}{t('common.separator')}{fmtDateTime(r.visibility_updated_at)}</div>
                           )}
                         </td>
                         <td className={`${c.tdActions} ${c.stickyRight}`}>

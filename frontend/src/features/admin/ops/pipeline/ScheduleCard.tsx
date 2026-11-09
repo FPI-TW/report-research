@@ -58,7 +58,7 @@ function ProgressLine({ name, pct, stat, rate }: { name: string; pct: number; st
     <div className={styles.prog}>
       <span className={styles.progName}>{name}</span>
       <Bar pct={pct} label={t('admin.ops.pipeline.scheduleCard.progress', { name })} gold />
-      <span className={c.num}>{`${pct.toFixed(1)}%・${stat}`}</span>
+      <span className={c.num}>{`${pct.toFixed(1)}%${t('common.separator')}${stat}`}</span>
       {rate && <span className={styles.progRate}>{rate}</span>}
     </div>
   )

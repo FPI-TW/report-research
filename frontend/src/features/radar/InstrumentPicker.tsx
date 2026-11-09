@@ -14,7 +14,7 @@ import { t } from '@/i18n'
 
 
 /** 「全部」在分段控制裡用 `all` 表示，進出時與網址的 null（不篩選）互換。 */
-const STANCE_SEGMENTS: ReadonlyArray<SegmentedOption<StanceFilter | 'all'>> = STANCE_OPTIONS.map(
+const stanceSegments = (): ReadonlyArray<SegmentedOption<StanceFilter | 'all'>> => STANCE_OPTIONS.map(
   o => ({ value: o.value || 'all', label: o.label }),
 )
 
@@ -137,7 +137,7 @@ export function InstrumentPicker({
 
         <Segmented<StanceFilter | 'all'>
           label={t('radar.instrumentPicker.stance')}
-          options={STANCE_SEGMENTS}
+          options={stanceSegments()}
           value={stance ?? 'all'}
           onChange={v => onStanceChange(v === 'all' ? null : v)}
           itemWidth={60}

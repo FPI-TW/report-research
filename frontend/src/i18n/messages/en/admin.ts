@@ -218,7 +218,7 @@ const messages: Messages<typeof zh> = {
   'admin.adminOverviewPage.viewDataHealth': 'View data health',
   'admin.adminOverviewPage.viewSecurity': 'View security',
   'admin.adminOverviewPage.text': '{getFullYear}-{pad}-{pad2} ({v})',
-  'admin.adminOverviewPage.errorsWarnings': '{nBad} errors, {nWarn} warnings',
+  'admin.adminOverviewPage.errorsWarnings': 'Errors {nBad}, warnings {nWarn}',
   'admin.adminOverviewPage.pendingReviews': '{v} pending reviews',
   'admin.adminOverviewPage.draftsAwaitingReview': '{v} drafts awaiting review',
   'admin.adminOverviewPage.updated': 'Updated',

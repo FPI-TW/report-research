@@ -17,9 +17,12 @@ export const SORT_OPTIONS: ReadonlyArray<{ value: CatalogSort; label: string }> 
   { value: 'code', get label() { return t('radar.catalogState.ticker') } },
 ]
 
-export const SORT_LABEL: Record<CatalogSort, string> = Object.fromEntries(
-  SORT_OPTIONS.map(o => [o.value, o.label]),
-) as Record<CatalogSort, string>
+export const SORT_LABEL: Record<CatalogSort, string> = {
+  get latest() { return t('radar.catalogState.latestReport') },
+  get reports() { return t('radar.catalogState.reportCount') },
+  get brokers() { return t('radar.catalogState.brokerCount') },
+  get code() { return t('radar.catalogState.ticker') },
+}
 
 /** 立場篩選的顯示字。鏡像後端 `radar/scale.py` 的 `BUCKET_DISPLAY`，不另造詞。 */
 export const STANCE_DISPLAY: Record<StanceFilter, string> = {
@@ -31,9 +34,9 @@ export const STANCE_DISPLAY: Record<StanceFilter, string> = {
 /** 立場選項；`''` 代表不篩選（「全部」）。清單頁的分段控制把它換成 `all`，進網址時是刪掉 `stance`。 */
 export const STANCE_OPTIONS: ReadonlyArray<{ value: StanceFilter | ''; label: string }> = [
   { value: '', get label() { return t('radar.catalogState.all') } },
-  { value: 'bullish', label: STANCE_DISPLAY.bullish },
-  { value: 'neutral', label: STANCE_DISPLAY.neutral },
-  { value: 'bearish', label: STANCE_DISPLAY.bearish },
+  { value: 'bullish', get label() { return STANCE_DISPLAY.bullish } },
+  { value: 'neutral', get label() { return STANCE_DISPLAY.neutral } },
+  { value: 'bearish', get label() { return STANCE_DISPLAY.bearish } },
 ]
 
 export interface CatalogState {

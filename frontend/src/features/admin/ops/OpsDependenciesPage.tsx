@@ -172,7 +172,7 @@ function NodeList({ data }: { data: OpsDependencyGraph }) {
             <NodeLink node={n} className={styles.itemName}>{n.name}</NodeLink>
             <Status tone={nodeTone(n)}>{healthLabel(n)}</Status>
             {n.affected && <Chip tone="warn">{t('admin.ops.opsDependenciesPage.affected')}</Chip>}
-            <span className={styles.itemKind}>{NODE_KIND_LABELS[n.kind]}・{TIER_LABELS[n.tier]}</span>
+            <span className={styles.itemKind}>{NODE_KIND_LABELS[n.kind]}{t('common.separator')}{TIER_LABELS[n.tier]}</span>
           </div>
           {n.description && <div className={styles.itemText}>{n.description}</div>}
           <div className={styles.itemText}>
@@ -233,7 +233,7 @@ export default function OpsDependenciesPage() {
             <NodeList data={q.data} />
           </section>
           <p className={styles.meta}>
-            <span>{q.data.environment}・{q.data.host}</span>
+            <span>{q.data.environment}{t('common.separator')}{q.data.host}</span>
             <span>{t('admin.ops.opsDependenciesPage.checkedAt')}{' '}<b>{fmtDateTime(q.data.checked_at)}</b>{t('admin.ops.opsDependenciesPage.refreshesEvery30S')}</span>
           </p>
         </>

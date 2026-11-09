@@ -16,10 +16,10 @@
 | `auth_failed` | 503 | 探測回 401 或其他 403；或沒有目前 provider 的金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx）；單次不算 |
 | `indeterminate` | 503 | 判斷不出來：端點設定錯（404 等）、其他未預期的回應 |
-| `misconfigured` | 503 | 問答主答（`ASK_ANSWER` 任務）解析到白名單外的名稱：每題都回「設定有誤」（見下） |
+| `misconfigured` | 503 | 主答（`ASK_ANSWER` 任務）解析到白名單外的名稱，或端點設定有誤：每題都回「設定有誤」（見下） |
 
-- **沒有餘額可查，所以沒有「快用完」的預警**：OpenAI 與 OpenCode Go 都沒有查餘額的 API，額度用完只有真實請求碰到才
-  知道。OpenAI 的預算告警請在 OpenAI 後台設定（`docs/production_resilience.md`）。
+- **沒有餘額可查，所以沒有「快用完」的預警**：OpenAI、OpenCode Go、Azure、Anthropic 都沒有查餘額的 API，額度用完只有
+  真實請求碰到才知道。預算告警請在各供應商的後台設定（`docs/production_resilience.md`）。
 - **額度閂鎖**：本行程任何一次真實請求碰到額度用完（`llm_http.last_quota_at`），就立刻回 `exhausted`，直到之後有一次
   **真實請求成功**（`llm_http.last_ok_at`）才解除——`/models` 回 200 說明不了額度回來了沒。401 的結論優先於閂鎖
   （金鑰壞了是更直接的原因）。閂鎖期間快取以失敗 TTL 計。
@@ -29,6 +29,8 @@
   用」。**只看主答**：其他線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）全部 fail-open，它們解析到
   什麼都不影響這支端點；網搜沒有後端（`llm.py` 對 `allow_web=True` 直接拋 config），同樣不算。要讓線上 LLM 刻意停下來時
   把 `ASK_ANSWER_MODEL` 設成白名單外名稱，這個 503 是預期的（見 `docs/production_resilience.md`）。
+  端點設定有誤（`llm_models.config_problems`：缺 Azure 的端點或 api-version、自架端點沒填網址、宣告格式錯）同樣歸
+  `misconfigured`、不探端點：`llm_http` 對每個請求都會在送出前以 config 失敗，帳號狀態一樣回答不了。
 
 ## 已知限制
 
@@ -182,9 +184,13 @@ async def report() -> tuple[str, int]:
     """(回應的 state, HTTP 狀態碼)。狀態改變時記一行 WARNING（含原因；回應本身不含）。"""
     global _last_reported
     bad = misconfigured_tasks()
+    problems = llm_models.config_problems()
     if bad:
         state = MISCONFIGURED
         detail = "、".join(f"{t}={m!r}" for t, m in bad.items()) + " 不在模型白名單，每題都會回設定有誤"
+    elif problems:
+        state = MISCONFIGURED
+        detail = f"LLM_PROVIDER={llm_models.provider()} 的端點設定有誤：" + "；".join(problems)
     else:
         state, detail = await _account_state()
     if state != _last_reported:

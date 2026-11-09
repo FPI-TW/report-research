@@ -37,6 +37,20 @@ os.environ["OPENAI_BASE_URL"] = "http://127.0.0.1:9"
 # OpenCode Go（`LLM_PROVIDER=opencode_go`）同一套兩道防線：切到 Go 的測試自己 patch 假金鑰與 transport。
 os.environ["OPENCODE_GO_API_KEY"] = ""
 os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
+# 其他三個 provider（app/services/llm_models.py 的 PROVIDER_KEY_ENV／ENDPOINT_ENV）同一套：金鑰空、端點不可達。
+# 宣告模型、api-version 與能力旋鈕清成空字串（＝未設），部署目錄 `.env` 的值不滲進測試。
+os.environ["AZURE_OPENAI_API_KEY"] = ""
+os.environ["AZURE_OPENAI_ENDPOINT"] = "http://127.0.0.1:9"
+os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:9"
+os.environ["OPENAI_COMPATIBLE_API_KEY"] = ""
+os.environ["OPENAI_COMPATIBLE_BASE_URL"] = "http://127.0.0.1:9"
+os.environ["AZURE_OPENAI_API_VERSION"] = ""
+os.environ["AZURE_OPENAI_DEPLOYMENTS"] = ""
+os.environ["ANTHROPIC_MODELS"] = ""
+os.environ["OPENAI_COMPATIBLE_MODELS"] = ""
+os.environ["AZURE_OPENAI_SUPPORTS_REASONING_EFFORT"] = ""
+os.environ["OPENAI_COMPATIBLE_SUPPORTS_REASONING_EFFORT"] = ""
 
 # 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
 # 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
@@ -52,6 +66,8 @@ os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
 # 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
 os.environ["LLM_PROVIDER"] = "openai"
 os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
+# 預設表的模型名覆寫（`LLM_DEFAULT_MODEL`）：與任務旋鈕同理強制成空字串，測試永遠拿到預設表的值。
+os.environ["LLM_DEFAULT_MODEL"] = ""
 for _knob in (
     "ASK_ANSWER_MODEL", "ASK_WEB_MODEL", "ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL",
     "QA_PLANNER_MODEL", "ASK_FOLLOWUP_MODEL", "FAITHFULNESS_MODEL", "EVAL_JUDGE_MODEL",

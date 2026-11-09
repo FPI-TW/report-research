@@ -114,8 +114,9 @@ async def _warmup_models() -> None:
 def _check_llm_models() -> None:
     """啟動自檢：線上任務解析到的模型各自需要什麼，缺了就說出來（不擋啟動）。
 
-    `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含舊的 `claude-*`）、網搜總閘開著
-    卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而健康檢查照樣 ok。判準在
+    `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含舊的 `claude-*`）、端點設定有誤
+    （`llm_models.config_problems`）、網搜總閘開著卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而
+    健康檢查照樣 ok。判準在
     `llm_models.diagnose`（純函式）；金鑰只看有沒有值，不記任何內容。
     """
     resolved = llm_models.resolve_all(llm_models.ONLINE_TASKS)
@@ -129,6 +130,8 @@ def _check_llm_models() -> None:
         has_key=bool((os.environ.get(llm_models.key_env()) or "").strip()),
         web_enabled=get_settings().ask_enable_web,
         prov=llm_models.provider(),
+        allowed=llm_models.allowed_models(),
+        problems=llm_models.config_problems(),
     )
     for level, message in findings:
         logger.log(level, "%s", message)

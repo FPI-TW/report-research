@@ -64,7 +64,8 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.accounts import User, record_audit
 from app.services.filename import source_display
-from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
+from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL, judge_identity
+from app.services.llm_models import judge_lineage
 from app.services.store import review_reasons
 from web import auth, authz, deps, stats_snapshot
 from web.errors import AppError
@@ -81,6 +82,8 @@ Verification = Literal["untested", "passed", "failed"]
 _SETTINGS = get_settings()
 _FAITHFULNESS_MIN = _SETTINGS.faithfulness_min
 _JUDGE_MODEL = _SETTINGS.faithfulness_model
+# 綁給 CURRENT_JUDGE_SQL 的現行 judge 識別（內建模型就是模型名；宣告模型是 declared:<模型>）。
+_JUDGE_IDENTITY = judge_identity(_JUDGE_MODEL, judge_lineage(_JUDGE_MODEL))
 
 # jsonb 一律先以 jsonb_typeof 過濾再 cast：一列畸形的 evaluation 不該讓整支端點 500
 # （與 web/stats_snapshot.py 的同一段理由相同）。
@@ -256,7 +259,7 @@ def _qa_from(kind: str, days: int) -> tuple[str, str, dict]:
     if kind == "faithfulness":
         where = f"{_QA_VALID} AND {_FAITHFULNESS_COND}"
         order = f"({_SCORE}) ASC, created_at DESC, id"
-        params = {"days": days, "fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL}
+        params = {"days": days, "fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_IDENTITY}
     else:  # feedback
         where = f"{_QA_VALID} AND {_FEEDBACK_COND}"
         order = "created_at DESC, id"
@@ -321,7 +324,7 @@ _QA_ACCESS_SQL = (
 async def _qa_content_in_queue(session, qa_id: UUID):
     """回 (question, answer, created_at, kinds)；不在佇列（含不存在）回 None。"""
     row = (await session.execute(text(_QA_ACCESS_SQL), {
-        "id": qa_id, "days": _DEFAULT_DAYS, "fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL,
+        "id": qa_id, "days": _DEFAULT_DAYS, "fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_IDENTITY,
     })).first()
     if row is None:
         return None

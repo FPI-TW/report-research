@@ -63,6 +63,34 @@ class ReviewQueueDbTests(unittest.TestCase):
                 _skip_or_raise(exc, "既有庫尚未套用 schema")
             _skip_or_raise(exc, f"DB 不可用（{type(exc).__name__}）")
 
+    def test_judge_identity_sql_matches_python(self):
+        """`JUDGE_IDENTITY_SQL` 與 `judge_identity_of` 逐條等價（宣告模型的 judge_lineage、歷史列、畸形值）。"""
+        from app.services import judge_schema as js
+
+        cases = [
+            {}, {"judge_model": "gpt-6-luna"}, {"judge_model": ""}, {"judge_model": 1}, {"judge_model": True},
+            {"judge_model": "gpt-6-luna", "judge_lineage": "gpt-6-luna-2026-11"},
+            {"judge_model": "claude-haiku-4-5", "judge_lineage": "declared:claude-haiku-4-5"},
+            {"judge_lineage": "declared:Qwen/Qwen3-72B"}, {"judge_model": "x", "judge_lineage": 3},
+            {"judge_model": "x", "judge_lineage": ""},
+        ]
+
+        async def body(session):
+            for ev in cases:
+                got = (await session.execute(
+                    text(f"SELECT {js.JUDGE_IDENTITY_SQL} FROM (SELECT CAST(:e AS jsonb) AS evaluation) t"),
+                    {"e": json.dumps(ev)},
+                )).scalar_one()
+                self.assertEqual(got, js.judge_identity_of(ev), ev)
+                current = js.judge_identity_of(ev)
+                hit = (await session.execute(
+                    text(f"SELECT {js.CURRENT_JUDGE_SQL} FROM (SELECT CAST(:e AS jsonb) AS evaluation) t"),
+                    {"e": json.dumps(ev), "judge_model": current},
+                )).scalar_one()
+                self.assertIs(hit, js.is_current_judge(ev, current))
+
+        self._run(body)
+
     def test_qa_kinds_filter_correctly_and_survive_malformed_evaluation(self):
         ids = {name: uuid.uuid4() for name in (
             "low", "ok", "malformed", "no_eval", "inactive", "stopped", "old", "disliked", "liked",

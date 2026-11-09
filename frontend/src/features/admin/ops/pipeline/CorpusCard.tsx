@@ -7,7 +7,7 @@ import { fmtInt } from './rate'
 import styles from './Pipeline.module.css'
 import { t } from '@/i18n'
 
-const UNIDENTIFIED = '未辨識'
+const unidentifiedLabel = () => t('admin.ops.pipeline.corpusCard.unidentified')
 const BROKER_PREVIEW = 8
 
 function Markets({ markets, reports }: { markets: MarketCount[]; reports: number }) {
@@ -65,7 +65,7 @@ function Brokers({ sources }: { sources: SourceCount[] | undefined }) {
               <tr key={r.source ?? '__none__'}>
                 {/* title 給原始代碼：中文名對不上時要查得到自己在看哪一個 source */}
                 <td title={r.source ?? undefined}>
-                  {r.source === null ? <span className={c.muted}>{UNIDENTIFIED}</span> : (r.display || r.source)}
+                  {r.source === null ? <span className={c.muted}>{unidentifiedLabel()}</span> : (r.display || r.source)}
                 </td>
                 <td className={`${c.num} ${c.tdRight}`}>{fmtInt(r.count)}</td>
                 <td className={`${c.num} ${c.tdRight} ${c.muted}`}>

@@ -1,5 +1,5 @@
 import type { RatingNorm } from '../../lib/radarSchemas'
-import { t } from '@/i18n'
+import { formatCalendar, getLocale, t } from '@/i18n'
 
 /** 五級評等的中文（與券商共識頁、閱讀頁同一組字）。unknown 不顯示徽章。 */
 export const RATING_LABEL: Record<RatingNorm, string> = {
@@ -38,7 +38,10 @@ export function isSameLocalDay(iso: string | null | undefined, now: Date = new D
 /** 「更多最新入庫」標題旁的月份（2026 年 10 月）。 */
 export function monthOf(iso: string | null | undefined): string {
   const d = ymd(iso)
-  return d ? t('search.libraryFormat.text', { d: d[0], Number: Number(d[1]) }) : ''
+  if (!d) return ''
+  return getLocale() === 'en'
+    ? formatCalendar(Number(d[0]), Number(d[1]), 1, { year: 'numeric', month: 'long' })
+    : t('search.libraryFormat.text', { d: d[0], Number: Number(d[1]) })
 }
 
 // 簡報條目結尾的券商代碼（「…領漲（yuanta）。」）：首頁小卡只放重點，代碼對讀者沒有意義。

@@ -251,6 +251,11 @@ function interpolate(text: string, vars: Vars | undefined): string {
   return text.replace(/\{(\w+)\}/g, (m, name: string) => (name in vars ? String(vars[name]) : m))
 }
 
+/** 字典裡有沒有這個鍵（鍵由執行期資料組出來時用，例如後端錯誤代碼）。 */
+export function hasKey(key: string): key is MessageKey {
+  return lookup(key) !== undefined
+}
+
 /** 查字典。找不到的鍵回鍵本身（tsc 擋得住寫錯的鍵；這是執行期的最後一道）。 */
 export function t(key: MessageKey, vars?: Vars): string {
   const msg = lookup(key)
@@ -284,6 +289,11 @@ export function tx(key: MessageKey, parts: ((chunk: string) => ReactNode)[], var
   return createElement(Fragment, null, ...out)
 }
 
+/** 把幾句話接成一段：中文直接相連，英文以空格分隔（說明文字由多個鍵組成時用）。 */
+export function sentences(...parts: string[]): string {
+  return parts.join(current === 'en' ? ' ' : '')
+}
+
 // ── Intl 格式化（時區語意固定台北，與改動前相同；只有語系跟著介面） ─────────────
 
 export const TIME_ZONE = 'Asia/Taipei'
@@ -301,6 +311,14 @@ export function formatDate(value: Date | string | number, opts: Intl.DateTimeFor
   const d = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(d.getTime())) return ''
   return new Intl.DateTimeFormat(intlLocale(), { timeZone: TIME_ZONE, ...opts }).format(d)
+}
+
+/**
+ * 日曆日（年月日數字，無時區）的英文寫法：`formatCalendar(2026, 10, 28, { month: 'short', day: 'numeric' })` → `Oct 28`。
+ * 只給英文介面用：中文沿用字典裡的「2026 年 10 月」格式（Intl 的 zh-TW 寫法不帶空格，與改動前不同）。
+ */
+export function formatCalendar(y: number, m: number, d: number, opts: Intl.DateTimeFormatOptions): string {
+  return new Intl.DateTimeFormat(intlLocale(), { timeZone: 'UTC', ...opts }).format(new Date(Date.UTC(y, m - 1, d)))
 }
 
 /** 依語系排序字串（表格排序、清單）。 */

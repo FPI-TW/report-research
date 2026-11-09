@@ -4,17 +4,12 @@ import { useWebSearch, useWebSearchPaused } from '../../lib/useWebSearch'
 import { ComposerTools } from './ComposerTools'
 import styles from './Composer.module.css'
 import { t } from '@/i18n'
+import { aiNote, aiNoteWeb } from './aiNote'
 
 // 輸入框長高的上限（超過就內部捲動）。CSS 的 max-height 必須與它一致，否則會出現
 // 「捲軸關掉了但內容其實已被 max-height 切掉」——那是完全看不見的截斷。
 const MAX_INPUT_HEIGHT = 160
 
-// AI 生成揭露：要向終端使用者揭露並標示 AI 生成，所以兩個變體都顯示——空狀態（中央）是第一題送出前
-// 唯一看得到的輸入框。供應商寫在使用說明「AI 生成內容」，這裡只標示是 AI。
-export const AI_NOTE =
-  '回答由 AI 依券商研報內容生成，可能有誤，投資決策請以原始研報與公開資訊為準。'
-export const AI_NOTE_WEB =
-  '回答由 AI 依券商研報與網路公開資訊生成，可能有誤；網路資訊非受信任行情來源，投資決策請以原始研報與官方揭露為準。'
 
 /** 單行文字的高度（px）。
  *
@@ -138,7 +133,7 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
           {send}
         </div>
       )}
-      <div className={styles.note}>{web ? AI_NOTE_WEB : AI_NOTE}</div>
+      <div className={styles.note}>{web ? aiNoteWeb() : aiNote()}</div>
     </div>
   )
 }

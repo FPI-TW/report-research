@@ -10,7 +10,7 @@ import {
 import { reasonText } from '../reviewReasons'
 import styles from '../ReviewQueue.module.css'
 import {
-  CLEARED_HINT, CLEARED_TEXT, STATUS_LABEL, STATUS_TONE, VERIFY_LABEL, askerText, fmtDay, itemId, subjectOf,
+  clearedHint, clearedText, STATUS_LABEL, STATUS_TONE, VERIFY_LABEL, askerText, fmtDay, itemId, subjectOf,
 } from './reviewItem'
 import { t } from '@/i18n'
 
@@ -79,7 +79,7 @@ function ExtractionReasons({ item }: { item: ReviewItem }) {
       <span className={styles.reasonLabel}>{t('admin.reviews.reviewDetail.flagReason')}</span>
       {reasons.length > 0
         ? reasons.map(r => <span key={r} className={styles.reason}>{reasonText(item, r)}</span>)
-        : <span className={styles.reason} data-cleared title={CLEARED_HINT}>{CLEARED_TEXT}</span>}
+        : <span className={styles.reason} data-cleared title={clearedHint()}>{clearedText()}</span>}
       {item.file_hash && (
         <Link className={`${c.btn} ${c.btnSm} ${styles.openReport}`} to={`/report/${item.file_hash}`}
           target="_blank" rel="noopener">

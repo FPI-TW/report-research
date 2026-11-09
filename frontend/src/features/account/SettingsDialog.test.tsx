@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { SettingsTab } from '../../components/shell/shellContext'
 import { setLocale } from '../../lib/useLocale'
 import { SettingsDialog } from './SettingsDialog'
+import { LocaleBoundary } from '../../i18n'
 
 beforeEach(() => { localStorage.clear(); setLocale('zh-Hant') })
 afterEach(() => { vi.unstubAllGlobals(); setLocale('zh-Hant') })
@@ -15,15 +16,18 @@ function Harness({ initial = 'account' as SettingsTab, onClose = () => {} }) {
   return <SettingsDialog open tab={tab} onTab={setTab} onClose={onClose} />
 }
 
-function wrap(initial: SettingsTab = 'account', status = { status: 'ok', message: '系統運作正常' }) {
+function wrap(initial: SettingsTab = 'account', status = { status: 'ok', message: '系統運作正常' }, me: object = {}, boundary = false) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'user', totp_enabled: false }), { status: 200 })
+    if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'user', totp_enabled: false, ...me }), { status: 200 })
     if (url === '/api/status') return new Response(JSON.stringify(status), { status: 200 })
     if (url === '/api/me/totp') return new Response(JSON.stringify({ enabled: false }), { status: 200 })
     return new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 })
   }))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={qc}><MemoryRouter><Harness initial={initial} /></MemoryRouter></QueryClientProvider>)
+  const tree = <MemoryRouter><Harness initial={initial} /></MemoryRouter>
+  // boundary：比照 main.tsx 以語系重掛畫面樹（切換語系的測試用）；設定分頁靠 reopenSettingsAfterRemount 回到原位，
+  // 這裡的 Harness 沒有外殼，改以 initial 模擬重掛後的同一個分頁。
+  render(<QueryClientProvider client={qc}>{boundary ? <LocaleBoundary>{tree}</LocaleBoundary> : tree}</QueryClientProvider>)
 }
 
 test('四個分頁：帳號、安全、偏好、關於；預設帳號', async () => {
@@ -41,6 +45,14 @@ test('↑↓ 切換分頁（垂直 tablist）', () => {
   expect(screen.getByRole('tab', { name: '安全' })).toHaveAttribute('aria-selected', 'true')
   fireEvent.keyDown(account, { key: 'End' })
   expect(screen.getByRole('tab', { name: '關於' })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('偏好：切到 English，整個彈窗換成英文（介面語系與回答語言是同一個偏好）', async () => {
+  wrap('prefs', undefined, {}, true)
+  fireEvent.click(screen.getByRole('radio', { name: 'English' }))
+  expect(await screen.findByRole('tab', { name: 'Preferences' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Account', 'Security', 'Preferences', 'About'])
+  expect(screen.getByText('Language')).toBeInTheDocument()
 })
 
 test('安全分頁就是兩步驟驗證設定', async () => {

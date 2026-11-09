@@ -18,7 +18,7 @@ import { UsersTable } from './users/UsersTable'
 import { BULK_ACTIONS, BULK_TEXT, CONFIRM_TEXT, messageOf, type ConfirmKind } from './users/userText'
 import c from '../../components/console/Console.module.css'
 import styles from './users/Users.module.css'
-import { t } from '@/i18n'
+import { sentences, t } from '@/i18n'
 
 /** 每 30 秒更新一次的「現在」：刪除倒數只需要分鐘精度。 */
 function useNow(intervalMs = 30_000): number {
@@ -41,10 +41,12 @@ const FILTERS: Record<UserFilter, { label: string; match: (u: AdminUser) => bool
 const FILTER_KEYS = Object.keys(FILTERS) as UserFilter[]
 const isFilter = (v: string | null): v is UserFilter => v != null && v in FILTERS
 
-const HELP = '建立帳號、切換角色、停用、重設密碼、強制登出、調整權限與刪除帳號；每一筆操作都會留在「操作紀錄」。'
-  + '勾選多個帳號可一次停用、啟用或強制登出（需要重新驗證身分；被規則擋下的帳號會逐筆列出原因）。'
-  + '刪除帳號會先停用並等待 24 小時（期間可取消），之後永久刪除該帳號的問答紀錄；操作紀錄保留。'
-  + '刪除、調整權限、重設兩步驟驗證需要重新驗證身分。'
+const help = () => sentences(
+  t('admin.adminUsersPage.createAccountsSwitchRolesDisable'),
+  t('admin.adminUsersPage.selectSeveralAccountsToDisable'),
+  t('admin.adminUsersPage.deletingAnAccountFirstDisables'),
+  t('admin.adminUsersPage.deletingAdjustingPermissionsAndResetting'),
+)
 
 function AdminUsers() {
   const users = useAdminUsers()
@@ -150,7 +152,7 @@ function AdminUsers() {
 
   return (
     <ConsolePage>
-      <PageHeader summary={t('admin.adminUsersPage.createAccountsAdjustRolesAnd')} help={HELP} actions={
+      <PageHeader summary={t('admin.adminUsersPage.createAccountsAdjustRolesAnd')} help={help()} actions={
         <>
           <ExportCsvButton href={adminCsvUrls.exportUsers()} what={t('admin.adminUsersPage.accountList')} />
           <Button variant="primary" onClick={() => setCreating(true)}><Icon name="plus" size={14} />{t('admin.adminUsersPage.createAccount')}</Button>

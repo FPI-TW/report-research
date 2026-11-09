@@ -15,6 +15,7 @@ import { UsageCard } from './overview/UsageCard'
 import { useAdminSignals } from './useAdminSignals'
 import styles from './Overview.module.css'
 import { t } from '@/i18n'
+import { weekdayHeaders } from '../brief/briefDates'
 
 const PAGE_TO = Object.fromEntries(flattenPages(ADMIN_IA).map(e => [e.page.key, e.page.to])) as Record<AdminPageKey, string>
 
@@ -25,7 +26,7 @@ const ACTION_LABEL: Partial<Record<AdminPageKey, string>> = {
 const pad = (n: number) => String(n).padStart(2, '0')
 /** 頁首的日期 kicker：2026-10-08（四）。 */
 function dateKicker(now: Date): string {
-  return t('admin.adminOverviewPage.text', { getFullYear: now.getFullYear(), pad: pad(now.getMonth() + 1), pad2: pad(now.getDate()), v: '日一二三四五六'[now.getDay()] })
+  return t('admin.adminOverviewPage.text', { getFullYear: now.getFullYear(), pad: pad(now.getMonth() + 1), pad2: pad(now.getDate()), v: weekdayHeaders()[now.getDay()] })
 }
 function clock(ms: number): string {
   const d = new Date(ms)

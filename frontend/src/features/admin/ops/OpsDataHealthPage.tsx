@@ -24,10 +24,12 @@ const FRESHNESS_TONE: Record<FreshnessState, LampTone> = {
   fresh: 'ok', stale: 'bad', suppressed: 'idle', disabled: 'idle', upstream_stale: 'bad',
 }
 // 與 app/services/data_health.py 的 RECONCILE_FAIL_KEYS／RECONCILE_WARN_KEYS 對應（順序即顯示順序）。
-const STAT_LABELS: [keyof ReconcileStats, string][] = [
-  ['checked', '已檢查'], ['errors', '錯誤／連不上'], ['unkeyed', 'DB 缺 key'], ['key_mismatch', 'key 與正典不符'],
-  ['missing', 'R2 缺檔'], ['size_mismatch', '大小不符'], ['sha_mismatch', 'SHA 不符'],
-  ['sha_metadata_missing', '舊檔無 SHA metadata'], ['orphans', 'orphan（R2 有、DB 沒有）'],
+const STAT_LABELS = (): [keyof ReconcileStats, string][] => [
+  ['checked', t('admin.ops.opsDataHealthPage.checked')], ['errors', t('admin.ops.opsDataHealthPage.errorUnreachable')],
+  ['unkeyed', t('admin.ops.opsDataHealthPage.missingKeyInDb')], ['key_mismatch', t('admin.ops.opsDataHealthPage.keyDoesnTMatchCanonical')],
+  ['missing', t('admin.ops.opsDataHealthPage.missingInR2')], ['size_mismatch', t('admin.ops.opsDataHealthPage.sizeMismatch')],
+  ['sha_mismatch', t('admin.ops.opsDataHealthPage.shaMismatch')],
+  ['sha_metadata_missing', t('admin.ops.opsDataHealthPage.oldFileWithoutShaMetadata')], ['orphans', t('admin.ops.opsDataHealthPage.orphanInR2NotIn')],
 ]
 const ISSUE_LABELS: Record<string, string> = {
   get error() { return t('admin.ops.opsDataHealthPage.errors') }, get unkeyed() { return t('admin.ops.opsDataHealthPage.missingKeyInDb') }, get key_mismatch() { return t('admin.ops.opsDataHealthPage.keyMismatch') }, get missing() { return t('admin.ops.opsDataHealthPage.missing') }, get size_mismatch() { return t('admin.ops.opsDataHealthPage.sizeMismatch') },
@@ -154,7 +156,7 @@ function ReconcileCard({ s }: { s: R2ReconcileSection }) {
         )}
         {s.stats && (
           <dl className={`${c.kv} ${styles.kvWide}`} aria-label={t('admin.ops.opsDataHealthPage.reconciliationCounts')}>
-            {STAT_LABELS.map(([key, label]) => (
+            {STAT_LABELS().map(([key, label]) => (
               <Fragment key={key}>
                 <dt>{label}</dt>
                 <dd>{s.stats![key]}</dd>

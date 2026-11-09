@@ -22,7 +22,7 @@ const REASON_LABELS: Record<Reason, string> = {
   get dataset_invalid() { return t('admin.ops.opsRetrievalRegressionCard.questionSetUnreadable') }, get embed_failed() { return t('admin.ops.opsRetrievalRegressionCard.embeddingModelFailed') }, get query_failed() { return t('admin.ops.opsRetrievalRegressionCard.dbQueryFailed') }, get unexpected() { return t('admin.ops.opsRetrievalRegressionCard.unexpectedError') },
 }
 const VERDICT_LABELS: Record<Verdict, string> = { get ok() { return t('admin.ops.opsRetrievalRegressionCard.noRegression') }, get degraded() { return t('admin.ops.opsRetrievalRegressionCard.regressed') }, get incomparable() { return t('admin.ops.opsRetrievalRegressionCard.notComparableBaselineTooOld') } }
-const SCHEDULE = '每日 07:40 由 report-mark-retrieval-regression 執行（零 LLM；web 不跑檢索）'
+const schedule = () => t('admin.ops.opsRetrievalRegressionCard.runDailyAt0740')
 
 function pct(v: number | null | undefined): string {
   return v == null ? '—' : `${Math.round(v * 100)}%`
@@ -180,7 +180,7 @@ function Body({ d }: { d: RetrievalRegressionResponse }) {
   if (!d.available) {
     return (
       <p className={styles.idle}>
-        {d.unavailable_reason === 'missing' ? t('admin.ops.opsRetrievalRegressionCard.noResultFileYet') : t('admin.ops.opsRetrievalRegressionCard.resultFileUnreadable', { v: d.unavailable_reason ?? '' })}{t('admin.ops.opsRetrievalRegressionCard.captureABaselineOnThe', { SCHEDULE })}<code className={c.mono}>scripts/retrieval_regression.py capture</code>{t('admin.ops.opsRetrievalRegressionCard.text4')}
+        {d.unavailable_reason === 'missing' ? t('admin.ops.opsRetrievalRegressionCard.noResultFileYet') : t('admin.ops.opsRetrievalRegressionCard.resultFileUnreadable', { v: d.unavailable_reason ?? '' })}{t('admin.ops.opsRetrievalRegressionCard.captureABaselineOnThe', { SCHEDULE: schedule() })}<code className={c.mono}>scripts/retrieval_regression.py capture</code>{t('admin.ops.opsRetrievalRegressionCard.text4')}
       </p>
     )
   }
@@ -191,7 +191,7 @@ function Body({ d }: { d: RetrievalRegressionResponse }) {
       <p className={c.meta}>
         <span>{t('admin.ops.opsRetrievalRegressionCard.lastRun')}{' '}<b>{fmtDateTime(d.finished_at)}</b></span>
         {d.exit_code != null && <span>{t('admin.ops.opsRetrievalRegressionCard.exitCode')}{' '}<b>{d.exit_code}</b></span>}
-        <span>{SCHEDULE}</span>
+        <span>{schedule()}</span>
       </p>
       {d.outcome === 'skipped' && (
         <p className={styles.note}>{t('admin.ops.opsRetrievalRegressionCard.lastSkipped')}{reason ?? t('admin.ops.opsRetrievalRegressionCard.unknownReason')}{t('admin.ops.opsRetrievalRegressionCard.noAlertBelowIsThe')}</p>

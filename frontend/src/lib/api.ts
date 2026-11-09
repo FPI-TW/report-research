@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod'
-import { t } from '@/i18n'
+import { getLocale, hasKey, t } from '@/i18n'
 
 export class ApiError extends Error {
   status: number
@@ -38,10 +38,17 @@ export async function getJSON<T>(path: string, schema: ZodType<T>, init?: Reques
 /**
  * FastAPI 錯誤回應的 `detail` → 給人看的一句話。
  * 400／409 是字串（後端已寫成中文，原樣顯示）；422 是陣列（取每項的 msg）；403 沒有 detail 時補一句。
+ *
+ * 英文介面：後端的 `detail` 是中文，改依穩定的 `code` 顯示字典裡的英文（`lib.apiErrors.<code>`）；字典沒登記的
+ * code 照舊顯示原 `detail`。中文介面一律照舊顯示 `detail`（意義不變，也保留後端帶的細節，例如被擋的原因）。
  */
 export function errorDetail(body: unknown, status: number): string {
   const detail = (body && typeof body === 'object') ? (body as { detail?: unknown }).detail : undefined
+  const code = errorCode(body)
+  const key = code ? `lib.apiErrors.${code}` : null
+  if (key && getLocale() === 'en' && !Array.isArray(detail) && hasKey(key)) return t(key)
   if (typeof detail === 'string' && detail.trim()) return detail
+  if (key && hasKey(key)) return t(key)
   if (Array.isArray(detail)) {
     const msgs = detail
       .map(d => (d && typeof d === 'object' && typeof (d as { msg?: unknown }).msg === 'string') ? (d as { msg: string }).msg : '')

@@ -12,13 +12,15 @@ import { useOpsDependencies } from './useOps'
 import styles from './services/Services.module.css'
 import { t } from '@/i18n'
 
-const HELP = (
-  <>
-    依賴關係由主機上的 Service Catalog 宣告（<code>deploy/ops/services.*.toml</code> 的 <code>depends_on</code> 與{' '}
-    <code>[[externals]]</code>），健康判讀與「上游壞掉 → 受影響的下游」由後端算。
-    外部依賴的狀態看指定探針最後一次的結果；沒有探針的是「未監控」，只有「故障」會往下游傳播。
-  </>
-)
+function Help() {
+  return (
+    <>
+      {t('admin.ops.opsDependenciesPage.dependenciesAreDeclaredByThe')}<code>deploy/ops/services.*.toml</code>
+      {t('admin.ops.opsDependenciesPage.for')}<code>depends_on</code>{t('admin.ops.opsDependenciesPage.and', { v: ' ' })}
+      <code>[[externals]]</code>{t('admin.ops.opsDependenciesPage.healthAndUpstreamDownAffected')}
+    </>
+  )
+}
 
 /** 受上游影響、但自己沒壞：圖上與清單都另外標出來（自己就壞了的節點只標故障）。 */
 const isAffected = (n: OpsDependencyNode) => n.affected && n.health !== 'down'
@@ -208,7 +210,7 @@ export default function OpsDependenciesPage() {
   const data = q.data
   return (
     <>
-      <PageHeader summary={data ? summaryOf(data) : t('admin.ops.opsDependenciesPage.dependenciesBetweenServicesAndThe')} help={HELP} />
+      <PageHeader summary={data ? summaryOf(data) : t('admin.ops.opsDependenciesPage.dependenciesBetweenServicesAndThe')} help={<Help />} />
       {q.isPending ? (
         <p className={c.empty}>{t('admin.ops.opsDependenciesPage.loading')}</p>
       ) : q.isError ? (

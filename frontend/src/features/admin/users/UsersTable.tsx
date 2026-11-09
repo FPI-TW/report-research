@@ -31,7 +31,7 @@ interface Props extends UserRowHandlers {
   onToggleAll: (ids: readonly string[], on: boolean) => void
 }
 
-const BUSY_HINT = '上一個操作還在進行'
+const busyHint = () => t('admin.users.usersTable.thePreviousActionIsStill')
 
 /**
  * 帳號表格。每列最多一顆主要按鈕＋「更多」：
@@ -44,7 +44,7 @@ export function UsersTable({
   const selectable = users.filter(u => u.id !== myId).map(u => u.id)
   /** 停用的項目一定帶原因：自己的規則優先，其次是「還在忙」。 */
   const gate = (blocked: string | false | undefined): Pick<RowAction, 'disabled' | 'hint'> => {
-    const hint = blocked || (busy ? BUSY_HINT : undefined)
+    const hint = blocked || (busy ? busyHint() : undefined)
     return hint ? { disabled: true, hint } : {}
   }
 

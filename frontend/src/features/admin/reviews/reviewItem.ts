@@ -24,8 +24,8 @@ export const STATUS_FILTERS: readonly { value: StatusFilter; label: string }[] =
 ]
 
 /** 以現行門檻已不需複核的研報：說出來，不留一格空白。 */
-export const CLEARED_TEXT = '現行門檻下已達標'
-export const CLEARED_HINT = '以現行門檻已不需複核；重跑該篇回填即會解除標記'
+export const clearedText = () => t('admin.reviews.reviewItem.meetsTheCurrentThreshold')
+export const clearedHint = () => t('admin.reviews.reviewItem.noLongerNeedsReviewUnder')
 
 export function fmtDay(iso: string | null | undefined): string {
   return iso ? iso.slice(0, 10) : '—'
@@ -51,7 +51,7 @@ export function askerText(item: ReviewItem): string {
 export function metaLine(kind: ReviewKind, item: ReviewItem): string {
   if (kind !== 'extraction') return t('admin.reviews.reviewItem.asker', { item: askerText(item), created_at: fmtDay(item.created_at) })
   const reasons = (item.review_reasons ?? []).map(r => reasonText(item, r))
-  return [item.source, reasons.length > 0 ? reasons.join(t('admin.reviews.reviewItem.text')) : CLEARED_TEXT].filter(Boolean).join('・')
+  return [item.source, reasons.length > 0 ? reasons.join(t('admin.reviews.reviewItem.text')) : clearedText()].filter(Boolean).join('・')
 }
 
 /** 門檻至少印兩位小數（0.9 → 0.90）；設得更細的（0.875）原樣印，不四捨五入成另一個門檻。 */

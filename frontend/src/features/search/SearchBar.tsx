@@ -13,7 +13,7 @@ interface Props {
  * 研報庫搜尋框（56px、圓角 16）。按 Enter 才送出（交接包：Enter 後先顯示骨架），
  * 打字中不發請求——語意檢索每次都要做一次查詢嵌入，逐字送出只是在燒後端。
  *
- * `aria-label="搜尋研報"` 是外殼「按 / 聚焦搜尋框」找這個輸入框的依據（lib/useGlobalShortcuts.ts），不要改。
+ * `data-report-search` 是外殼「按 / 聚焦搜尋框」找這個輸入框的依據（lib/useGlobalShortcuts.ts）；不靠 aria-label，因為它隨介面語系改變。
  */
 export function SearchBar({ initial, onSubmit }: Props) {
   const [draft, setDraft] = useState(initial)
@@ -49,6 +49,7 @@ export function SearchBar({ initial, onSubmit }: Props) {
         value={draft}
         placeholder={t('search.searchBar.searchSectorsCompaniesEvents')}
         aria-label={t('search.searchBar.searchReports')}
+        data-report-search
         enterKeyHint="search"
         onChange={e => setDraft(e.target.value)}
         onKeyDown={onKeyDown}

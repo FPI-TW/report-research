@@ -39,8 +39,8 @@ export interface ReviewOptions {
 }
 
 /** 停用按鈕的 `title`：句尾不加句號（全站一致）；抽屜底部的說明（`note`）是整句，另外補上。 */
-export const BUSY_HINT = '系統正在掃描或處理這份檔案，完成後才能退回'
-export const EXPIRED_HINT = '寬限期已過，等待系統清除，無法撤銷'
+export const busyHint = () => t('admin.uploads.reviewRules.theSystemIsScanningOr')
+export const expiredHint = () => t('admin.uploads.reviewRules.theGracePeriodHasPassed')
 
 type Target = Pick<AdminUpload, 'state' | 'failure_kind' | 'purge_after' | 'purged_at'>
 
@@ -55,7 +55,7 @@ export function reviewOptions(upload: Target, now: number): ReviewOptions {
     opts.reject = 'ok'
   } else if (state === 'scanning' || state === 'processing') {
     opts.reject = 'busy'
-    opts.note = t('admin.uploads.reviewRules.text', { BUSY_HINT })
+    opts.note = t('admin.uploads.reviewRules.text', { BUSY_HINT: busyHint() })
   }
   if (state === 'failed') {
     opts.retry = isRetryableFailure(upload.failure_kind) ? 'ok' : 'not_retryable'
@@ -68,7 +68,7 @@ export function reviewOptions(upload: Target, now: number): ReviewOptions {
     } else {
       opts.grace = graceRemaining(upload.purge_after, now)
       opts.unreject = opts.grace ? 'ok' : 'expired'
-      opts.note = opts.grace ? t('admin.uploads.reviewRules.leftInTheGracePeriod', { grace: opts.grace }) : t('admin.uploads.reviewRules.text3', { EXPIRED_HINT })
+      opts.note = opts.grace ? t('admin.uploads.reviewRules.leftInTheGracePeriod', { grace: opts.grace }) : t('admin.uploads.reviewRules.text3', { EXPIRED_HINT: expiredHint() })
     }
   }
   if (state === 'published') opts.note = t('admin.uploads.reviewRules.publishedReportsCanTBe')

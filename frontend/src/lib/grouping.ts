@@ -1,5 +1,5 @@
 import type { ReportRow } from './schemas'
-import { t } from '@/i18n'
+import { formatCalendar, getLocale, t } from '@/i18n'
 
 export interface MonthGroup {
   key: string
@@ -29,7 +29,9 @@ export function monthGroups(rows: ReportRow[]): MonthGroup[] {
     const items = map.get(k)!
     return {
       key: k,
-      title: k === UNDATED ? t('lib.grouping.undated') : t('lib.grouping.text', { slice: k.slice(0, 4), Number: Number(k.slice(5, 7)) }),
+      title: k === UNDATED ? t('lib.grouping.undated') : (getLocale() === 'en'
+        ? formatCalendar(Number(k.slice(0, 4)), Number(k.slice(5, 7)), 1, { year: 'numeric', month: 'long' })
+        : t('lib.grouping.text', { slice: k.slice(0, 4), Number: Number(k.slice(5, 7)) })),
       count: items.length,
       items,
     }

@@ -4,14 +4,14 @@ import { Button, Drawer, DrawerFootNote, DrawerSection, Status } from '../../../
 import c from '../../../../components/console/Console.module.css'
 import { fmtDuration } from '../opsLabels'
 import { OpsQueryError } from '../OpsShared'
-import { LOST_HINT, jobFailed, logWindowFor } from './jobs'
+import { lostHint, jobFailed, logWindowFor } from './jobs'
 import styles from './Exec.module.css'
 import { t } from '@/i18n'
 
 /** 狀態：執行中、成功、失敗（Result 不是 success）、結果不明（沒觀測到結束）。 */
 export function JobStatus({ job }: { job: JobItem }) {
   if (job.state === 'running') return <Status tone="info">{t('admin.ops.exec.jobDrawer.running')}</Status>
-  if (job.state === 'lost') return <span title={LOST_HINT}><Status tone="idle">{t('admin.ops.exec.jobDrawer.resultUnknown')}</Status></span>
+  if (job.state === 'lost') return <span title={lostHint()}><Status tone="idle">{t('admin.ops.exec.jobDrawer.resultUnknown')}</Status></span>
   return jobFailed(job) ? <Status tone="bad">{t('admin.ops.exec.jobDrawer.failed')}</Status> : <Status tone="ok">{t('admin.ops.exec.jobDrawer.succeeded')}</Status>
 }
 
@@ -85,7 +85,7 @@ export function JobDrawer({ job, lookup, now, onClose }: Props) {
     <Drawer open onClose={onClose} title={job.service ?? job.unit} monoTitle status={<JobStatus job={job} />}
       subtitle={<span className={c.mono}>{job.unit}</span>} width={520} footer={footer}>
       <DrawerSection title={t('admin.ops.exec.jobDrawer.run')}>
-        {job.state === 'lost' && <p className={styles.note}>{t('admin.ops.exec.jobDrawer.text', { LOST_HINT })}</p>}
+        {job.state === 'lost' && <p className={styles.note}>{t('admin.ops.exec.jobDrawer.text', { LOST_HINT: lostHint() })}</p>}
         <dl className={`${c.kv} ${styles.kvWide}`} aria-label={t('admin.ops.exec.jobDrawer.run')}>
           <dt>{t('admin.ops.exec.jobDrawer.started')}</dt><dd>{fmtDateTimeSec(job.started_at)}</dd>
           <dt>{t('admin.ops.exec.jobDrawer.ended')}</dt><dd>{fmtDateTimeSec(job.finished_at)}</dd>

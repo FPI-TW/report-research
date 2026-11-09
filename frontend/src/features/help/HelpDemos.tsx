@@ -287,8 +287,11 @@ const CAT_ROWS: { name: string; code: string; rating: 'buy' | 'neutral'; label: 
 
 const DOTS: [number, number, number][] = [[22, 55, 0], [41, 55, 0.15], [50, 41, 0.3], [58, 55, 0.45], [73, 55, 0.6]]
 
-const THESIS: [string, string, string][] = [
-  ['展望', '轉強', 'tUp'], ['催化劑', '轉強', 'tUp'], ['風險', '無顯著變化', 'tFlat'], ['估值', '分歧擴大', 'tDiv'],
+const thesis = (): [string, string, string][] => [
+  [t('help.helpDemos.outlook'), t('help.helpDemos.stronger'), 'tUp'],
+  [t('help.helpDemos.catalysts'), t('help.helpDemos.stronger'), 'tUp'],
+  [t('help.helpDemos.risks'), t('help.helpDemos.noSignificantChange'), 'tFlat'],
+  [t('help.helpDemos.valuation'), t('help.helpDemos.widerDivergence'), 'tDiv'],
 ]
 
 /** 券商共識：在清單點一檔標的 → 詳情的三張摘要卡、各券商目標價點圖與四向觀點依序出現。 */
@@ -317,7 +320,7 @@ export function ConsensusDemo() {
           <span className={styles.grow} />
           <span className={styles.cSeg}>
             {[t('help.helpDemos.30Days'), t('help.helpDemos.90Days'), t('help.helpDemos.180Days'), t('help.helpDemos.all')].map(p => (
-              <span key={p} className={p === '90 天' ? `${styles.cSegItem} ${styles.cSegOn}` : styles.cSegItem}>{p}</span>
+              <span key={p} className={p === t('help.helpDemos.90Days') ? `${styles.cSegItem} ${styles.cSegOn}` : styles.cSegItem}>{p}</span>
             ))}
           </span>
         </div>
@@ -345,7 +348,7 @@ export function ConsensusDemo() {
           ))}
         </div>
         <div className={styles.cThesis}>
-          {THESIS.map(([dim, label, cls], i) => (
+          {thesis().map(([dim, label, cls], i) => (
             <span key={dim} className={`${styles.card} ${styles.cTh}`} style={{ animationDelay: `${i * 0.12}s` }}>
               <span className={styles.cThDim}>{dim}</span>
               <span className={`${styles.cThBadge} ${styles[cls]}`}>{label}</span>

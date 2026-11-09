@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import {
-  WEEKDAY_HEADERS,
+  weekdayHeaders,
   addMonths,
   monthCells,
   monthIndex,
@@ -10,7 +10,7 @@ import {
   type MonthRef,
 } from './briefDates'
 import styles from './BriefCalendar.module.css'
-import { t } from '@/i18n'
+import { formatCalendar, getLocale, t } from '@/i18n'
 
 interface Props {
   /** 有簡報的日期（新→舊）。 */
@@ -41,7 +41,9 @@ export function BriefCalendar({ dates, selected, today, onPick, className }: Pro
   const go = (delta: number) => setView({ anchor, month: addMonths(month, delta) })
 
   const { blanks, days } = monthCells(month)
-  const label = t('brief.briefCalendar.text', { y: month.y, m: month.m })
+  const label = getLocale() === 'en'
+    ? formatCalendar(month.y, month.m, 1, { year: 'numeric', month: 'long' })
+    : t('brief.briefCalendar.text', { y: month.y, m: month.m })
 
   return (
     <section className={[className, styles.calendar].filter(Boolean).join(' ')} aria-labelledby="brief-cal">
@@ -55,7 +57,7 @@ export function BriefCalendar({ dates, selected, today, onPick, className }: Pro
         </button>
       </div>
       <div className={`${styles.grid} ${styles.weekdays}`} aria-hidden="true">
-        {WEEKDAY_HEADERS.map(w => <span key={w} className={styles.weekday}>{w}</span>)}
+        {weekdayHeaders().map((w, i) => <span key={i} className={styles.weekday}>{w}</span>)}
       </div>
       <div className={styles.grid} role="group" aria-label={t('brief.briefCalendar.briefDates')}>
         {Array.from({ length: blanks }, (_, i) => <span key={`b${i}`} aria-hidden="true" />)}

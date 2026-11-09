@@ -1,4 +1,4 @@
-import { t } from '@/i18n'
+import { getLocale, t } from '@/i18n'
 
 interface MarketMeta { label: string; color: string }
 
@@ -34,9 +34,13 @@ export function setMarketLabelOverrides(next: Readonly<Record<string, string>>):
   labelOverrides = next
 }
 
-/** 市場顯示名稱：profile 覆寫 → 標準名稱 → 代碼本身。 */
+/**
+ * 市場顯示名稱：profile 覆寫 → 標準名稱 → 代碼本身。profile 的 `[markets].display_names` 是中文顯示名稱，
+ * 英文介面不套用（一律用字典的標準英文名，src/i18n/GLOSSARY.md）。
+ */
 export function marketLabel(code: string): string {
-  return labelOverrides[code] ?? MARKETS[code]?.label ?? code
+  const override = getLocale() === 'en' ? undefined : labelOverrides[code]
+  return override ?? MARKETS[code]?.label ?? code
 }
 /** 市場 chip 統一「淡底深字」：底色為市場色 10% 混白。 */
 export function marketTint(code: string): { background: string; color: string } {

@@ -3,7 +3,6 @@ import type { AdminPageKey } from '../../../components/shell/adminNav'
 import type { OpsDependencyGraph, OpsDependencyNode, OpsServiceListResponse } from '../../../lib/generated/adminApi'
 import type { AdminSignals, PageSignal } from '../adminSignals'
 import { needsAttention } from '../ops/opsLabels'
-import { healthLabel } from '../ops/services/health'
 import type { SourceState } from '../useAdminSignals'
 import { t } from '@/i18n'
 
@@ -86,7 +85,7 @@ export function externalTile(q: { data: OpsDependencyGraph | undefined; isError:
   const down = ext.filter(n => n.health === 'down')
   const degraded = ext.filter(n => n.health === 'degraded')
   const unknown = ext.filter(n => n.health === 'unknown')
-  const unmonitored = unknown.filter(n => healthLabel(n) === '未監控')
+  const unmonitored = unknown.filter(n => n.kind === 'external' && !n.probe)
   const sub = ext.length === 0 ? t('admin.overview.tiles.noExternalDependenciesRegistered')
     : down.length ? t('admin.overview.tiles.down', { down: names(down) })
       : degraded.length ? t('admin.overview.tiles.degraded', { degraded: names(degraded) })

@@ -10,7 +10,7 @@ import {
 import { useReviewParams } from './reviews/useReviewParams'
 import { useReviewItem, useReviewOpenCounts, useReviewQueue } from './useReviewQueue'
 import styles from './ReviewQueue.module.css'
-import { t } from '@/i18n'
+import { sentences, t } from '@/i18n'
 
 /**
  * 待複核頁的內容：頁首（右側是狀態篩選）、三個分頁籤（數字是待處理數）、左清單右詳情。
@@ -33,8 +33,7 @@ import { t } from '@/i18n'
  * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
  * 會被讀成「低分變少了」。佇列本身仍自己取數、不跟 5 秒輪詢（理由見 useReviewQueue）。
  */
-const HELP = '系統偵測到需要人看的問答與研報；處理狀態、註記與處理人另存，原始品質訊號不變。'
-  + '問答刻意不顯示原文，只列中繼資料與提問者代號；有 qa_content.read 的人可逐筆「查看內容」，每次查看都寫稽核。'
+const help = () => sentences(t('admin.reviewQueuePanel.qAAndReportsThe'), t('admin.reviewQueuePanel.qAContentIsIntentionally'))
 
 function messageOf(err: unknown): string {
   return err instanceof Error && err.message ? err.message : t('admin.reviewQueuePanel.tryAgain')
@@ -74,7 +73,7 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
     <>
       <PageHeader
         summary={t('admin.reviewQueuePanel.itemsNeedingHumanConfirmationLow')}
-        help={HELP}
+        help={help()}
         actions={<Segmented label={t('admin.reviewQueuePanel.reviewStatus')} options={STATUS_FILTERS} value={status} onChange={setStatus} />}
       />
       <Tabs label={t('admin.reviewQueuePanel.reviewKind')} value={kind} onChange={setKind}

@@ -14,11 +14,13 @@ import { t } from '@/i18n'
  * 收到的人會把不同幣別、不同年度的數字放在同一欄比較。EPS 那欄只說「這一格的值與共識同口徑」，
  * 不說這家券商有沒有被算進 EPS 共識——同一份研報可能另外報了共識那個年度，這裡只拿到一筆。
  */
-const HEADERS = [
-  '券商', '評等', '目標價', '目標價幣別', '納入目標價共識',
-  'EPS', 'EPS 幣別', 'EPS 年度', 'EPS 期間', 'EPS 單位', '與 EPS 共識同口徑',
-  '報告日期', '期間內',
-] as const
+const headers = (): string[] => [
+  t('radar.consensusExport.broker'), t('radar.consensusExport.rating'), t('radar.consensusExport.targetPrice'),
+  t('radar.consensusExport.targetPriceCurrency'), t('radar.consensusExport.inTargetPriceConsensus'),
+  'EPS', t('radar.consensusExport.epsCurrency'), t('radar.consensusExport.epsYear'), t('radar.consensusExport.epsPeriod'),
+  t('radar.consensusExport.epsUnit'), t('radar.consensusExport.sameBasisAsEpsConsensus'),
+  t('radar.consensusExport.reportDate'), t('radar.consensusExport.inPeriod'),
+]
 
 /** 儲存格內的 tab／換行會讓整列錯位。 */
 function cell(v: string | number | null | undefined): string {
@@ -57,5 +59,5 @@ export function brokerTableTsv(
       b.stale ? t('radar.consensusExport.no') : t('radar.consensusExport.yes'),
     ].map(cell).join('\t')
   })
-  return [HEADERS.join('\t'), ...rows].join('\n')
+  return [headers().join('\t'), ...rows].join('\n')
 }

@@ -25,14 +25,9 @@ const FILTER_KEYS = Object.keys(FILTERS) as Filter[]
 
 const MAX_DEP_CHIPS = 2
 
-const HELP = (
-  <>
-    服務狀態、依賴關係與最近日誌（唯讀）經主機上的維運代理取得，代理不可用時研報平台的其他功能不受影響。
-    核心＝{TIER_HINTS.critical}；重要＝{TIER_HINTS.important}；輔助＝{TIER_HINTS.supporting}。
-    排程類服務在兩次執行之間會顯示閒置，算正常；核心服務沒在跑才算需要注意。
-    重新啟動 web 與立即執行白名單批次需要「ops.operate」權限並重新驗證。
-  </>
-)
+const help = () => t('admin.ops.opsServicesPage.serviceStatusDependenciesAndRecent', {
+  critical: TIER_HINTS.critical, important: TIER_HINTS.important, supporting: TIER_HINTS.supporting,
+})
 
 function TimerCell({ s }: { s: OpsServiceStatus }) {
   if (!s.timer) return <span className={`${c.muted} ${c.nowrap}`}>{t('admin.ops.opsServicesPage.longRunning')}</span>
@@ -167,7 +162,7 @@ export default function OpsServicesPage() {
     <>
       <PageHeader
         summary={q.data ? t('admin.ops.opsServicesPage.servicesOk', { length: items.length, ok }) : t('admin.ops.opsServicesPage.statusScheduleAndDependenciesOf')}
-        help={HELP}
+        help={help()}
         actions={q.data && items.length > 0
           ? <Segmented label={t('admin.ops.opsServicesPage.filterServices')} options={options} value={filter} onChange={setFilter} />
           : undefined}

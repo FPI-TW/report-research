@@ -18,7 +18,7 @@ import { t } from '@/i18n'
 
 const STATS_RANGES = ['7', '14', '30'] as const
 type StatsRange = (typeof STATS_RANGES)[number]
-const SUPER_ONLY_HINT = '只有 super admin 能調整 super admin 的配額'
+const superOnlyHint = () => t('admin.quota.adminQuotaPage.onlyASuperAdminCan')
 
 /**
  * 單格：今天用了幾次／上限。超出上限的次數另外標出：影子模式下那些請求照常放行（本來會擋），
@@ -173,7 +173,7 @@ function UsersCard({ data }: { data: QuotaOverview }) {
                     <td className={`${c.tdActions} ${c.stickyRight}`}>
                       <RowActions primary={{
                         label: t('admin.quota.adminQuotaPage.adjustLimit'), onClick: () => setEditingId(u.user_id),
-                        disabled: locked, hint: locked ? SUPER_ONLY_HINT : undefined,
+                        disabled: locked, hint: locked ? superOnlyHint() : undefined,
                       }} />
                     </td>
                   </tr>

@@ -24,13 +24,7 @@ const STATUS_OPTIONS: SegOption<StatusFilter>[] = [
   { value: 'lost', label: INCIDENT_STATUS_LABELS.lost },
 ]
 
-const HELP = (
-  <>
-    主機上的事件偵測每次開事件、提醒、升級、恢復的紀錄（新→舊）。資料是 DB 投影（偵測端寫本機 spool、匯入器每 5 分鐘
-    匯入），不是告警的真相來源——即時告警看 Slack；DB 掛掉期間的事件恢復後補進來。
-    「結束不明」＝沒收到「已恢復」，但同一個元件之後又開了新事件：它必定已經結束，只是不知道何時。
-  </>
-)
+const help = () => t('admin.ops.opsIncidentsPage.everyOpenReminderEscalationAnd')
 
 /**
  * 事件：主機上的事件偵測（P5）每次開事件、提醒、升級、恢復的紀錄（新→舊）。資料是 DB 投影（P5 寫本機 spool、
@@ -51,7 +45,7 @@ export default function OpsIncidentsPage() {
         summary={q.data
           ? t('admin.ops.opsIncidentsPage.incidentsImportedEvery5Minutes', { total: q.data.total })
           : t('admin.ops.opsIncidentsPage.hostIncidentDetectionRecordsSlack')}
-        help={HELP}
+        help={help()}
         actions={(
           <>
             <Segmented label={t('admin.ops.opsIncidentsPage.status')} options={STATUS_OPTIONS} value={filter}

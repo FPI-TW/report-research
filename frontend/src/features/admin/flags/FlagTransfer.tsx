@@ -11,7 +11,7 @@ import { t } from '@/i18n'
 
 type Elevated = <T>(what: string, action: () => Promise<T>) => Promise<T>
 
-const WHAT = '匯入功能旗標'
+const what = () => t('admin.flags.flagTransfer.importFeatureFlags')
 
 function messageOf(err: unknown): string {
   return err instanceof Error && err.message ? err.message : t('admin.flags.flagTransfer.actionFailedTryAgain')
@@ -86,7 +86,7 @@ export function FlagTransfer({ canOperate, elevated, onApplied }: {
     }
     setBusy(true)
     try {
-      const res = await elevated(WHAT, () => adminApi.importFlags({ dry_run: true, document: parsed }))
+      const res = await elevated(what(), () => adminApi.importFlags({ dry_run: true, document: parsed }))
       setDoc(parsed)
       setPreview(res)
     } catch (err) {
@@ -102,7 +102,7 @@ export function FlagTransfer({ canOperate, elevated, onApplied }: {
     setError(null)
     setBusy(true)
     try {
-      const res = await elevated(WHAT, () => adminApi.importFlags({ dry_run: false, document: doc }))
+      const res = await elevated(what(), () => adminApi.importFlags({ dry_run: false, document: doc }))
       const n = res.changes.filter((ch) => ch.action !== 'unchanged').length
       reset()
       onApplied(t('admin.flags.flagTransfer.importAppliedFlagsChangedEach', { n }))

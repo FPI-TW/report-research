@@ -22,7 +22,7 @@ export function useGlobalShortcuts({ toggleSearch, newChat, pathname }: {
       if (mod && !e.shiftKey && !e.altKey && k === 'k') { e.preventDefault(); toggleSearch(); return }
       if (mod && e.shiftKey && !e.altKey && k === 'o') { e.preventDefault(); newChat(); return }
       if (!mod && !e.altKey && e.key === '/' && pathname === '/library' && !isTyping(e.target)) {
-        const input = document.querySelector<HTMLInputElement>('input[aria-label="搜尋研報"]')
+        const input = document.querySelector<HTMLInputElement>('input[data-report-search]')
         if (input) { e.preventDefault(); input.focus() }
       }
     }

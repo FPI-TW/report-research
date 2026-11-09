@@ -18,7 +18,7 @@ import { FLAGS_KEY, useFlags } from './useFlags'
 import s from './Flags.module.css'
 import { t } from '@/i18n'
 
-const WHAT = '變更功能旗標'
+const what = () => t('admin.flags.adminFlagsPage.changeFeatureFlag')
 
 /** 關閉是設定出來的狀態，不是異常：不亮紅燈（燈號只留給異常）。 */
 const EFFECTIVE_TONE: Record<FlagItem['effective'], LampTone> = { on: 'ok', scoped: 'warn', off: 'idle' }
@@ -95,7 +95,7 @@ function AdminFlags() {
 
   const save = async (flag: FlagItem, body: FlagUpdateRequest) => {
     // 錯誤（含取消驗證）往上拋給表單處理；成功才關閉對話框。
-    await elevated(WHAT, () => adminApi.setFlag(flag.key, body))
+    await elevated(what(), () => adminApi.setFlag(flag.key, body))
     setEditing(null)
     toast(t('admin.flags.adminFlagsPage.updatedRecordedInTheAudit', { key: flag.key }))
     refresh()
@@ -104,7 +104,7 @@ function AdminFlags() {
   const reset = async (flag: FlagItem) => {
     setResetBusy(true)
     try {
-      await elevated(WHAT, () => adminApi.clearFlag(flag.key))
+      await elevated(what(), () => adminApi.clearFlag(flag.key))
       toast(t('admin.flags.adminFlagsPage.restoredToDefault', { key: flag.key }))
       refresh()
     } catch (err) {

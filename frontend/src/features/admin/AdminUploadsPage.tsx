@@ -13,7 +13,7 @@ import {
 } from './uploadLabels'
 import { UploadDrawer } from './uploads/UploadDrawer'
 import { UploadIntake } from './uploads/UploadIntake'
-import { EXPIRED_HINT, notRetryableHint, reviewOptions, stateTone } from './uploads/reviewRules'
+import { expiredHint, notRetryableHint, reviewOptions, stateTone } from './uploads/reviewRules'
 import { useNow } from './uploads/useNow'
 import { useUploadReview, type UploadReview } from './uploads/useUploadReview'
 import { TAB_LIMIT, UPLOADS_KEY, useUploadTab, useUploadTabCounts } from './useAdminUploads'
@@ -105,7 +105,7 @@ function UploadRowActions({ item, now, review, onOpen }: {
       <RowActions label={label}
         primary={{
           label: t('admin.adminUploadsPage.undoRejection'), onClick: () => review.request('unreject', item), disabled: review.busy || opts.unreject !== 'ok',
-          hint: opts.unreject === 'ok' ? t('admin.adminUploadsPage.leftInGracePeriod', { grace: String(opts.grace) }) : opts.unreject === 'purged' ? t('admin.adminUploadsPage.fileAlreadyPurgedCanT') : EXPIRED_HINT,
+          hint: opts.unreject === 'ok' ? t('admin.adminUploadsPage.leftInGracePeriod', { grace: String(opts.grace) }) : opts.unreject === 'purged' ? t('admin.adminUploadsPage.fileAlreadyPurgedCanT') : expiredHint(),
         }} />
     )
   }

@@ -6,14 +6,14 @@ import { FluidHoverHighlight } from '@/components/fluid-hover-highlight'
 import { useStableRect } from '@/lib/useStableRect'
 import { Modal } from '../../components/primitives/Modal'
 import { SystemStatusRow } from '../../components/shell/SystemStatus'
-import type { SettingsTab } from '../../components/shell/shellContext'
+import { reopenSettingsAfterRemount, type SettingsTab } from '../../components/shell/shellContext'
 import { setLocale, useLocale, type Locale } from '../../lib/useLocale'
 import { useMe } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
 import { useSystemStatus } from '../../lib/useSystemStatus'
 import { SecurityPanel } from './SecurityDialog'
 import styles from './SettingsDialog.module.css'
-import { t } from '@/i18n'
+import { availableLocales, t } from '@/i18n'
 
 const TABS: { key: SettingsTab; label: string; icon: LucideIcon }[] = [
   { key: 'account', get label() { return t('account.settingsDialog.account') }, icon: User },
@@ -148,19 +148,30 @@ function AccountTab() {
 /** 分段控制：選取的白底小卡是一塊滑動的底色（與側欄、設定分頁的選取同一套），切換時滑到另一格。 */
 function PrefsTab() {
   const locale = useLocale()
+  const options = LOCALES.filter(o => availableLocales().includes(o.value))
   const segRef = useRef<HTMLDivElement>(null)
   const seg = useFluidHover(segRef, { axis: 'x' })
-  const onRect = useStableRect(seg, LOCALES.findIndex(o => o.value === locale))
+  const onRect = useStableRect(seg, options.findIndex(o => o.value === locale))
+  // 介面語系與回答語言是同一個偏好。換語言會重掛畫面樹：先記下回到這個分頁，彈窗才不會跟著關掉。
+  const pick = (next: Locale) => {
+    if (next === locale) return
+    reopenSettingsAfterRemount('prefs')
+    setLocale(next)
+  }
   return (
     <div className={styles.tabIn}>
       <div className={styles.row}>
         <span className={styles.rowLabel}>{t('account.settingsDialog.language')}</span>
-        <div ref={segRef} className={styles.seg} role="radiogroup" aria-label={t('account.settingsDialog.language')}>
-          <FluidHoverHighlight rect={onRect} session={0} fadeIn={false} transition={GLIDE} className={styles.segThumb} />
-          {LOCALES.map((o, i) => (
-            <SegButton key={o.value} register={seg.registerItem} index={i} label={o.label} on={locale === o.value} onPick={() => setLocale(o.value)} />
-          ))}
-        </div>
+        {options.length > 1 ? (
+          <div ref={segRef} className={styles.seg} role="radiogroup" aria-label={t('account.settingsDialog.language')}>
+            <FluidHoverHighlight rect={onRect} session={0} fadeIn={false} transition={GLIDE} className={styles.segThumb} />
+            {options.map((o, i) => (
+              <SegButton key={o.value} register={seg.registerItem} index={i} label={o.label} on={locale === o.value} onPick={() => pick(o.value)} />
+            ))}
+          </div>
+        ) : (
+          <span className={styles.muted}>{options[0]?.label ?? locale}</span>
+        )}
       </div>
     </div>
   )

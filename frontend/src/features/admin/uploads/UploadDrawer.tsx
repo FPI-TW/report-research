@@ -9,7 +9,7 @@ import { fmtDateTime } from '../auditLabels'
 import { failureLabel, fmtBytes, isInFlight, isRetryableFailure, reviewErrorMessage, stateLabel } from '../uploadLabels'
 import { useUpload, useUploadFile, useUploadPreview } from '../useAdminUploads'
 import u from '../Uploads.module.css'
-import { BUSY_HINT, EXPIRED_HINT, notRetryableHint, reviewOptions, stateTone } from './reviewRules'
+import { busyHint, expiredHint, notRetryableHint, reviewOptions, stateTone } from './reviewRules'
 import type { UploadReview } from './useUploadReview'
 import { t } from '@/i18n'
 
@@ -110,7 +110,9 @@ function Decision({ upload }: { upload: AdminUploadDetail }) {
   )
 }
 
-const PENDING = <span className={u.pending}>產生中</span>
+function Pending() {
+  return <span className={u.pending}>{t('admin.uploads.uploadDrawer.generating')}</span>
+}
 
 function Tags({ tags }: { tags: AdminUploadPreview['tags'] }) {
   const targets = [...tags.stock_targets, ...tags.futures_targets]
@@ -151,13 +153,13 @@ function ContentPreview({ uploadId }: { uploadId: string }) {
     <>
       <DrawerSection title={t('admin.uploads.uploadDrawer.tags')}><Tags tags={p.tags} /></DrawerSection>
       <DrawerSection title={t('admin.uploads.uploadDrawer.content')}>
-        <p className={u.contentTitle}>{p.title_state === 'pending' ? PENDING : dash(p.title)}</p>
+        <p className={u.contentTitle}>{p.title_state === 'pending' ? <Pending /> : dash(p.title)}</p>
         {p.title_original && p.title_original !== p.title && <p className={u.contentSub}>{t('admin.uploads.uploadDrawer.originalTitle', { title_original: p.title_original })}</p>}
-        <p className={u.summaryText}>{p.summary_state === 'pending' ? PENDING : dash(p.summary)}</p>
+        <p className={u.summaryText}>{p.summary_state === 'pending' ? <Pending /> : dash(p.summary)}</p>
       </DrawerSection>
       <DrawerSection title={t('admin.uploads.uploadDrawer.takeaways')}>
         {p.takeaways_state === 'pending' ? (
-          <p className={u.note}>{PENDING}</p>
+          <p className={u.note}><Pending /></p>
         ) : p.takeaways.length === 0 ? (
           <p className={u.note}>{t('admin.uploads.uploadDrawer.noTakeawaysToShow')}</p>
         ) : (
@@ -272,7 +274,7 @@ function Detail({ uploadId, onClose, review, now }: Props & { uploadId: string }
   if (opts.reject) {
     buttons.push(
       <Button key="reject" variant="dangerText" disabled={busy || opts.reject === 'busy'}
-        title={opts.reject === 'busy' ? BUSY_HINT : undefined} onClick={() => review.request('reject', upload)}>{t('admin.uploads.uploadDrawer.reject')}</Button>,
+        title={opts.reject === 'busy' ? busyHint() : undefined} onClick={() => review.request('reject', upload)}>{t('admin.uploads.uploadDrawer.reject')}</Button>,
     )
   }
   if (opts.retry) {
@@ -285,7 +287,7 @@ function Detail({ uploadId, onClose, review, now }: Props & { uploadId: string }
   if (opts.unreject && opts.unreject !== 'purged') {
     buttons.push(
       <Button key="unreject" disabled={busy || opts.unreject !== 'ok'}
-        title={opts.unreject !== 'ok' ? EXPIRED_HINT : undefined}
+        title={opts.unreject !== 'ok' ? expiredHint() : undefined}
         onClick={() => review.request('unreject', upload)}>{t('admin.uploads.uploadDrawer.undoRejection')}</Button>,
     )
   }

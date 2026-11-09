@@ -484,8 +484,12 @@ else
   # `|| RC=$?` 不可省：本檔開頭是 set -e，裸呼叫失敗會就地中止，下面那行 `RC=$?`
   # 永遠讀到 0 而且根本執行不到——2026-07-28 起連續 10 輪匯入失敗，日誌就只停在
   # 「增量匯入 delta…」，事後完全看不出敗在哪一步（見下方同型修正）。
+  #    --exclude：LINE bot 的 `/health` 每 2 分鐘在這個資料夾寫入再刪掉 `.linebot_health_probe`
+  #    （docs/LINEBOT_ALWAYS_ON.md）。它不是研報；2026-11-09 實測它在目錄列表裡列得出、stat 卻回
+  #    ENOENT，rsync 每輪都判成「傳輸途中消失」（rc=24）而整輪中止。
   RC=0
-  rsync -rt --size-only --no-motd --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG" || RC=$?
+  rsync -rt --size-only --no-motd --exclude=/.linebot_health_probe --out-format='%n' "$SRC" "$DST" \
+    >"$DELTA" 2>>"$LOG" || RC=$?
   NEW=$(grep -cvE '/$' "$DELTA" 2>/dev/null || echo 0)
   log "rsync rc=$RC，本次新傳檔列≈${NEW}"
   if [ "$RC" -ne 0 ]; then write_feed_state rsync_failed "$NEW" none; log "rsync 失敗 → 結束"; exit 1; fi

@@ -25,7 +25,7 @@
 - **下載同步做完才回 200**：改成背景佇列會變成「回了 200 卻還沒落地」，此時崩潰 LINE 認為已送達。nginx 那條路徑的讀取逾時因此放寬到 120 秒。
 - **扁平存放、檔名 `{messageId}_{原檔名}`**：下游 rsync 與語料庫的檔名慣例都建立在這個版型上，不要改成依日期分目錄。
 - **`failures.jsonl`** 每列一筆失敗（含 `stage` 與 `message_id`），是唯一能回答「這段期間漏了哪幾篇」的東西。
-- **`/health` 真的探 `SAVE_DIR` 可不可寫**：回 200 且 `save_writable: true` 才算好；寫不進去回 503（`save_error` 說明原因）。它會回報內部狀態，只給本機探針看、不對公網開。
+- **`/health` 真的探 `SAVE_DIR` 可不可寫**（在那裡寫入再刪掉 `.linebot_health_probe`，所以 sync 的 rsync 排除這個檔名）：回 200 且 `save_writable: true` 才算好；寫不進去回 503（`save_error` 說明原因）。它會回報內部狀態，只給本機探針看、不對公網開。
 - 認證由 bot 自己做（LINE 的 `X-Line-Signature` HMAC-SHA256）。
 
 ## 看門狗

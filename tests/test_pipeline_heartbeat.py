@@ -314,6 +314,8 @@ class FeedStateTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         argv = args.read_text(encoding="utf-8").splitlines()
         self.assertEqual(argv[-2:], [f"{mount}/", "研報自動匯入/"])
+        # LINE bot 的寫入探測檔：列得出、stat 卻 ENOENT 時 rsync 回 24、整輪中止（2026-11-09）
+        self.assertIn("--exclude=/.linebot_health_probe", argv)
 
     def test_whole_share_mount_is_refused(self):
         """掛到整個 share（舊版腳本或手動繞法）時不 rsync：否則整棵目錄樹會被當成新檔整批匯入。"""

@@ -1,5 +1,8 @@
 """`scripts/connector_sync.py`：框架的導入排程照抄 sync 鏈第 4 段起的步驟，`extract_signals` 永遠帶 `--limit`。
 
+與殼刻意不同的只有分層回填（`cs.FRAMEWORK_ONLY_DIFFERENCES`，白名單式對帳）：本輪新研報只把第二層交給摘要、
+標題、摘錄，訊號與標題積壓帶 `--min-report-date`。
+
 不跑任何子行程：`run_round` 的 `run` 換成記錄器。步驟與 `scripts/sync_new_reports.sh` 的對帳以文字比對殼裡的呼叫。
 """
 from __future__ import annotations
@@ -8,7 +11,7 @@ import re
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +71,42 @@ class DownstreamStepTests(unittest.TestCase):
         self.assertIn("TITLE_BACKLOG_LIMIT=${SYNC_TITLE_BACKLOG_LIMIT:-60}", text)
 
 
+class FrameworkOnlyDifferenceTests(unittest.TestCase):
+    """與 sync 殼的差異只准是白名單列的那幾項（分層回填），其他參數逐字照殼。"""
+
+    H = Path("/tmp/h.txt")
+    ALL = Path("/tmp/all.txt")
+    CUT = date(2025, 11, 10)
+
+    def test_only_whitelisted_flags_are_added(self):
+        plain = {s.name: s.argv for s in cs.downstream_steps(self.H, True, {})}
+        tiered = {s.name: s.argv for s in cs.downstream_steps(self.H, True, {}, min_report_date=self.CUT,
+                                                              exclude=self.ALL)}
+        self.assertEqual(list(plain), list(tiered))
+        added = {}
+        for name in plain:
+            extra = [a for a in tiered[name] if a not in plain[name]]
+            if extra:
+                added[name] = extra
+        self.assertEqual(added, {"extract_signals": ["--min-report-date", "2025-11-10"],
+                                 "generate_titles_backlog": [str(self.ALL), "--min-report-date", "2025-11-10"]})
+        # 標題積壓排掉的是本輪全部新研報（不只第二層），參數位置同殼。
+        backlog = tiered["generate_titles_backlog"]
+        self.assertEqual(backlog[backlog.index("--exclude-hashes-file") + 1], str(self.ALL))
+        whitelisted = {k.split(" ")[0] for k in cs.FRAMEWORK_ONLY_DIFFERENCES if " --min-report-date" in k}
+        self.assertEqual(whitelisted, {"extract_signals", "generate_titles_backlog"})
+        self.assertIn("hash 步驟的清單只含第二層", cs.FRAMEWORK_ONLY_DIFFERENCES)
+
+    def test_the_shell_does_not_tier(self):
+        """廷豐的 sync 殼不分層（廷豐已全量跑完派生）：白名單的旗標只出現在框架這一邊。"""
+        self.assertNotIn("--min-report-date", SYNC_SH.read_text(encoding="utf-8"))
+
+    def test_signals_still_always_limited_when_tiered(self):
+        steps = {s.name: s.argv for s in cs.downstream_steps(self.H, False, {}, min_report_date=self.CUT)}
+        self.assertIn("--limit", steps["extract_signals"])
+        self.assertIn("--limit", steps["generate_titles_backlog"])
+
+
 class RunRoundTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -125,6 +164,48 @@ class RunRoundTests(unittest.TestCase):
         self.assertEqual(len(retained), 1)
         self.assertEqual(retained[0].read_text(encoding="utf-8"), "a" * 64)
         self.assertTrue(any("--hashes-file" in line for line in self.logs))
+
+    def test_tiered_round_hands_only_recent_reports_to_the_hash_steps(self):
+        recent, old, nodate = "r" * 64, "o" * 64, "n" * 64
+        self.new_hashes = [old, recent, nodate]
+        fed = {}
+
+        def run_cmd(cmd):
+            rc = self.run_cmd(cmd)
+            if "--hashes-file" in cmd:
+                fed[Path(cmd[1]).stem] = Path(cmd[cmd.index("--hashes-file") + 1]).read_text().split()
+            return rc
+
+        self.assertEqual(self.round(run=run_cmd, recent_filter=lambda hs: [h for h in hs if h == recent],
+                                    min_report_date=date(2025, 11, 10)), 0)
+        self.assertEqual(fed, {"generate_summaries": [recent], "generate_titles": [recent],
+                               "extract_takeaways": [recent]})
+        signal = next(c for c in self.cmds if c[1].endswith("extract_signals.py"))
+        self.assertEqual(signal[signal.index("--min-report-date") + 1], "2025-11-10")
+        self.assertTrue(any("第二層 1 份" in line and "其餘 2 份" in line for line in self.logs))
+        self.assertEqual(list(self.data.iterdir()), [], "本輪 hashes 與第二層清單用完就刪")
+
+    def test_no_recent_reports_skips_the_hash_steps_but_excludes_the_round(self):
+        self.new_hashes = ["o" * 64]
+        self.round(recent_filter=lambda hs: [])
+        self.assertEqual(self.scripts(), ["ingest_connectors", "extract_signals", "generate_brief", "generate_titles"])
+        self.assertIn("--exclude-hashes-file", self.cmds[-1])
+
+    def test_unknown_dates_fall_back_to_the_shell_behaviour(self):
+        def broken(hashes):
+            raise RuntimeError("db down")
+
+        self.round(recent_filter=broken)
+        self.assertEqual(self.scripts()[1:4], ["generate_summaries", "generate_titles", "extract_takeaways"])
+        self.assertTrue(any("本輪不分層" in line for line in self.logs))
+
+    def test_env_abort_retains_the_tiered_list(self):
+        recent = "r" * 64
+        self.new_hashes = ["o" * 64, recent]
+        self.rcs["generate_summaries"] = cs.ENV_ABORT_RC
+        self.round(recent_filter=lambda hs: [recent])
+        retained = list(self.data.glob("hashes_retained_*.txt"))
+        self.assertEqual([p.read_text(encoding="utf-8").split() for p in retained], [[recent]])
 
     def test_force_is_passed_to_ingest(self):
         self.round(force=True, any_due=False)

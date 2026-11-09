@@ -185,6 +185,14 @@ def build_candidates_sql(tier: int, *, skip_blocked: bool, limit: bool, exclude:
     return sql
 
 
+def build_recent_hashes_sql() -> str:
+    """一批 file_hash 裡屬於第二層的（`scripts/connector_sync.py` 只把它們交給本輪的摘要、標題、摘錄）。"""
+    return (
+        "SELECT r.file_hash FROM research.research_report r "
+        f"WHERE r.file_hash = ANY(CAST(:hashes AS text[])) AND {tier_condition_sql(TIER_RECENT)}"
+    )
+
+
 def build_status_sql(*, skip_blocked: bool) -> str:
     """查進度：依層別彙總總份數與各項待補數（零 LLM、唯讀）。"""
     sums = ", ".join(

@@ -278,7 +278,8 @@ class WorklistTextLoadingTests(unittest.IsolatedAsyncioTestCase):
 
     def _args(self, **kw):
         base = dict(min_brokers=3, min_reports=5, top_n=50, workers=1, limit=None, excerpt=16000,
-                    model="gpt-6-luna", dry_run=False, reextract=False, retry_blocked=False, hashes_file=None)
+                    model="gpt-6-luna", dry_run=False, reextract=False, retry_blocked=False, hashes_file=None,
+                    min_report_date=None)
         base.update(kw)
         return mock.Mock(**base)
 
@@ -357,9 +358,15 @@ class HashesFileTests(unittest.IsolatedAsyncioTestCase):
             _, worklist = await es.build_worklist(3, 5, 50, False, hashes=hashes)
         return fetch, worklist
 
+    def test_min_report_date_sql(self):
+        sql = es.build_reports_sql(min_date=True)
+        self.assertIn("AND r.report_date >= CAST(:min_report_date AS date) ", sql)
+        self.assertEqual(sql.replace("  AND r.report_date >= CAST(:min_report_date AS date) ", ""),
+                         es.build_reports_sql())
+
     async def test_hashes_reach_the_query(self):
         fetch, worklist = await self._worklist(["hA"])
-        self.assertEqual(fetch.await_args.args[-1], ["hA"])
+        self.assertEqual(fetch.await_args.args[3], ["hA"])
         self.assertEqual([w.file_hash for w in worklist], ["hA"])
 
     async def test_empty_list_means_no_work(self):

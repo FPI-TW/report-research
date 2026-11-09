@@ -6,6 +6,7 @@
 - 待補：摘要／標題非 NULL、有 valid 摘錄列、有 valid 訊號列的不算待補；`rejected` 的摘錄列不算完成；
   跳過名單（`research.llm_task_failure`）判定要跳過的不算待補，換了 model 就又算。
 - 挑候選只看摘要、標題、摘錄：只剩訊號待補的研報不排入。`exclude` 排掉本次處理過的。
+- 連接器排程挑第二層的那句（`build_recent_hashes_sql`）只回窗期內的。
 - 查進度與估價的兩句也執行得動（估價只 EXPLAIN：它會撈內文前綴，在真實語料上很重）。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB 就 skip。**一律 rollback、絕不 commit**——本機預設連到的是
@@ -135,6 +136,8 @@ class BackfillTiersDbTests(unittest.TestCase):
             rows = (await session.execute(text(_wrap(sql)), {**params, "limit": 100000,
                                                                "exclude": [h["boundary"]]})).all()
             out["excluded"] = {r.file_hash for r in rows}
+            rows = (await session.execute(text(bt.build_recent_hashes_sql()), {"hashes": mine, "cutoff": CUTOFF})).all()
+            out["recent_hashes"] = {next(n for n, v in h.items() if v == r[0]) for r in rows}
             status = (await session.execute(text(bt.build_status_sql(skip_blocked=True)), params)).all()
             out["status_tiers"] = {r.tier for r in status}
             await session.execute(text("EXPLAIN " + bt.build_estimate_sql(skip_blocked=True)),
@@ -160,6 +163,8 @@ class BackfillTiersDbTests(unittest.TestCase):
         self.assertNotIn("signal_only", out[2])  # 只剩訊號：不排入
         self.assertEqual(len(out["excluded"]), 2)
         self.assertEqual(out["status_tiers"] & {2, 3}, {2, 3})
+        # 連接器排程只把第二層交給本輪的摘要、標題、摘錄（scripts/connector_sync.py）。
+        self.assertEqual(out["recent_hashes"], {"boundary", "recent_done", "signal_only", "rejected_tk", "blocked"})
 
 
 if __name__ == "__main__":

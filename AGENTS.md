@@ -124,6 +124,7 @@ uv run python scripts/ingest_all.py
 | `/metrics` 的指標或標籤（`web/metrics.py`） | 指標寫進 `docs/CONTAINER_DEPLOYMENT.md`「監控對接」的表（`tests/test_metrics.py` 對帳兩邊）；標籤只能是封閉詞彙或路由模板（認不得歸 `other`），不放原始路徑、查詢字串、使用者識別、IP 或研報 id。計數器是 web 行程內狀態，靠單 worker 守門成立 |
 | 使用分析新增維度或匯出 | 先讀 `app/services/analytics.py` 的隱私契約（只出彙總、k 門檻、互補抑制與被抑制格子的處理）；不讀問答原文 |
 | 管理後台新增或搬動頁面 | `frontend/src/components/shell/adminNav.ts` 的 `ADMIN_IA` 是導覽、麵包屑、⌘K 搜尋與總覽捷徑的唯一來源，路由另外在 `frontend/src/App.tsx`；頁面的 `scope` 只是顯示層（擋人的是後端）。資料要靠主機上另外安裝的元件才有的頁面標 `requires`，判斷寫在 `frontend/src/features/admin/adminCapabilities.ts`（依維運代理的服務清單；不知道時照常列出）——正式環境沒裝監控匯入器，主機、排程工作、事件三頁因此不列。共用元件在 `frontend/src/components/console/`，深淺色的色票在 `frontend/src/styles/tokens.css` |
+| 新增或修改介面字串（`frontend/src/` 底下、`web/static/login.html`） | 不寫字面值：`frontend/src/i18n/messages/zh-Hant/` 與 `en/` 加同一個鍵（`admin.` 開頭進 `admin` 字典），元件寫 `t('鍵')`，不在模組頂層呼叫 `t()`（標籤表寫成 getter 或函式）；英文照 `frontend/src/i18n/GLOSSARY.md`。登入頁的字串在 `web/static/login.i18n.json`（`{{t:鍵}}`）。`frontend/src/i18n/i18n.test.ts` 抓未經字典的中文與兩邊鍵不一致；資料比對用的中文列進它的例外清單並寫理由。規則見 `docs/ARCHITECTURE.md` §2.5 |
 | 前端在別頁讀功能旗標 | `useFeature()` 只讀 store，目前只有問答頁呼叫 `useFeatures()` 去抓 `/api/features`；新頁面要在頁面層呼叫一次 `useFeatures()`，否則旗標永遠是 false（`frontend/src/lib/useFeatures.ts`） |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
 | 要做審批流程、RLS、分區或管理面 SSE | 目前刻意不提供，門檻未達不做；啟用門檻、掛點與前置見 `docs/ARCHITECTURE.md` §11 |

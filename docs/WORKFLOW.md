@@ -239,17 +239,17 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 ### 健康端點 `GET /healthz/llm`（只回答本機直連）
 
-回 `{"llm": state}`；只給本機探針 `scripts/check_web_health.sh` 用（503 一律退出碼 8），經邊緣一律 404。打目前 `LLM_PROVIDER` 端點的 `GET /models`（不計費）：兩條路徑都沒有餘額 API，所以只判斷端點與金鑰，沒有「快用完」的預警（OpenAI 的預算告警在 OpenAI 後台設定）。
+回 `{"llm": state}`；只給本機探針 `scripts/check_web_health.sh` 用（503 一律退出碼 8），經邊緣一律 404。打目前 `LLM_PROVIDER` 的模型清單端點（不計費；OpenAI 族 `GET /models`、Azure `GET /openai/models?api-version=…`、Anthropic `GET /v1/models`）：各家都沒有餘額 API，所以只判斷端點與金鑰，沒有「快用完」的預警（預算告警在各供應商後台設定）。
 
 | state | HTTP | 條件 |
 |---|---|---|
 | `unknown` | 200 | 還沒有完成過任何一次探測（或第一次連不上） |
-| `ok` | 200 | `GET /models` 回 200，或 403 但只缺 Models 讀取權限（`api.model.read`） |
+| `ok` | 200 | 模型清單端點回 200，或 403 但只缺 Models 讀取權限（`api.model.read`） |
 | `exhausted` | 503 | 探測回額度用完，或本行程的真實請求碰過額度用完且之後還沒有成功的真實請求 |
 | `auth_failed` | 503 | 探測回 401 或其他 403，或沒有目前 provider 的金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
 | `indeterminate` | 503 | 端點設定錯（404 等）、其他未預期的回應 |
-| `misconfigured` | 503 | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱 |
+| `misconfigured` | 503 | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱，或目前 `LLM_PROVIDER` 的端點設定有誤（`llm_models.config_problems`） |
 
 `misconfigured` 時不探端點（每題都回設定有誤；只看主答，其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
 

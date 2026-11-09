@@ -1,0 +1,126 @@
+# 廷豐 profile 的發行機構（研報 source）名單：由 profile.toml 的 [sources].catalog 引用。
+# 比對規則（檔名 token 的詞邊界、內文指紋的視窗與「最早出現者勝」）在 app/services/filename.py，這裡只放名單。
+# 內容與框架化之前寫死在 filename.py 的名單逐字相同（tests/fixtures/tingfong_sources_golden.json 釘住，
+# tests/test_sources_catalog.py 對帳）；改名單會改變新入庫研報的 source 判定，既有資料不會自動重算
+# （要校正既有資料跑 scripts/backfill_report_sources.py）。
+#
+# 格式與驗證（fail-closed）：未知鍵、型別錯、引用沒宣告顯示名稱的 source、大寫的內文指紋一律拒絕啟動。
+
+# 檔名 token → source，依序比對、第一個命中者勝（順序有意義）。另外 `-<TOKEN><8 碼日期>` 形式（-MS20240314）
+# 以這份對照直接查。拉丁 token 一律大寫：3 字母以上不分大小寫、詞邊界比對；2 字母只認全大寫詞邊界或
+# 分隔符包夾（_ms_）；CJK token 子字串比對。
+# 不放進來的：康和、華南、福邦的裸名是上市公司（康和證券 6016、華南金 2880），放進檔名 token 會把標的公司
+# 誤判成發行機構，它們只用內文的「X投顧」自稱。
+filename_tokens = [
+  { token = "MS", source = "morgan_stanley" },
+  { token = "GS", source = "goldman_sachs" },
+  { token = "JPM", source = "jpmorgan" },
+  { token = "UBS", source = "ubs" },
+  { token = "NMR", source = "nomura" },
+  { token = "MQ", source = "macquarie" },
+  { token = "DW", source = "daiwa" },
+  { token = "DAIWA", source = "daiwa" },  # 2026-07 NAS 批次與 Daiwa_ 前綴檔名帶全字
+  { token = "大和", source = "daiwa" },  # 大和台灣業務端中文筆記（大和 AMD 3QFY24法說摘要.pdf）
+  { token = "FUBON", source = "fubon" },  # 拉丁形式（memo_Fubon 20250730.pdf）；富邦 CJK 另有一列
+  { token = "CLSA", source = "clsa" },
+  { token = "CLST", source = "clsa" },  # CL Securities Taiwan（CLSA 台灣）個股報告檔名帶 -CLST<日期>
+  { token = "CITI", source = "citi" },
+  { token = "BOFA", source = "bofa" },
+  { token = "BAML", source = "bofa" },
+  { token = "HSBC", source = "hsbc" },
+  { token = "HTI", source = "haitong" },
+  { token = "JEF", source = "jefferies" },
+  { token = "ALETHEIA", source = "aletheia" },
+  { token = "中信", source = "citic" },
+  { token = "CTBC", source = "citic" },  # 中信證券（CTBC）個股報告檔名帶 -CTBC<日期>（拉丁，詞邊界比對）
+  { token = "群益", source = "capital" },
+  { token = "國泰", source = "cathay" },
+  { token = "凱基", source = "kgi" },
+  { token = "元大", source = "yuanta" },
+  { token = "元富", source = "masterlink" },
+  { token = "宏遠", source = "hongyuan" },
+  { token = "富邦", source = "fubon" },
+  { token = "永豐", source = "sinopac" },
+  { token = "兆豐", source = "mega" },
+  { token = "統一", source = "president" },
+  { token = "日盛", source = "jihsun" },
+  { token = "第一金", source = "first" },
+  { token = "國票", source = "ibf" },
+]
+
+# 內文指紋（先於檔名）：只用發行者自我指稱——自有研究網站 URL、著作權與免責聲明、圖表「資料來源：…投顧」、
+# 機構簡稱「X投顧」、期貨與金控子公司的自稱（「本簡報由凱基期貨股份有限公司編製」）。**不可**用裸公司名
+# 「X證券」：彙整型研報常提及對手主辦的法說會（曾使 161 篇凱基研報被誤標為對手）。前 4000 字子字串比對，
+# 最早出現者勝；一律小寫。
+text_signatures = [
+  { source = "kgi", markers = ["凱基投顧", "kgisia", "kgi凱基", "凱基期貨", "凱基金融控股", "凱基金控"] },
+  { source = "masterlink", markers = ["元富投顧", "masterlink", "元富期貨", "元富整理"] },
+  { source = "sinopac", markers = ["永豐晨訊", "永豐證券投資顧問", "永豐金證券投資顧問", "永豐投顧", "永豐期貨"] },
+  { source = "capital", markers = ["群益投顧", "群益證券投資顧問", "群益期貨"] },
+  { source = "cathay", markers = ["國泰證券投資顧問", "國泰綜合證券股份", "國泰期貨"] },
+  { source = "fubon", markers = ["富邦投顧", "富邦期貨"] },
+  { source = "mega", markers = ["兆豐證券投資顧問", "兆豐投顧", "兆豐期貨", "兆豐國際證券投資顧問"] },
+  { source = "president", markers = ["統一投顧", "統一綜合證券股份", "統一期貨", "統一投信"] },
+  { source = "jihsun", markers = ["日盛投顧", "日盛證券投資顧問", "日盛期貨"] },
+  { source = "first", markers = ["第一金投顧", "第一金證券投資顧問", "第一金期貨"] },
+  { source = "ibf", markers = ["國票證券投資顧問", "國票投顧", "國票期貨"] },
+  { source = "citic", markers = ["中信投顧", "中國信託綜合證券股份", "中信期貨"] },
+  { source = "yuanta", markers = ["元大投顧", "元大期貨", "元大投信"] },
+  { source = "hongyuan", markers = ["宏遠投顧"] },
+  { source = "haitong", markers = ["海通國際"] },
+  { source = "concord", markers = ["康和投顧"] },
+  { source = "huanan", markers = ["華南投顧"] },
+  { source = "fubon_sec", markers = ["福邦投顧"] },
+]
+
+# 外資內文指紋（檔名之後才採，且只在沒有本土指紋時）：同樣只用法律實體名、研究部門名、圖表自我標註
+# （「Source: X forecasts」），不可用裸品牌名——本土週報轉述「投行Jefferies警告…」、英文週報提及
+# 「HSBC and Hang Seng use their own HIBOR」都會誤標。前 4000 字、詞邊界比對；一律小寫。
+fallback_signatures = [
+  { source = "morgan_stanley", markers = ["morgan stanley & co", "morgan stanley asia", "morgan stanley taiwan", "morgan stanley research"] },
+  { source = "goldman_sachs", markers = ["goldman sachs & co", "goldman sachs japan", "goldman sachs asia", "goldman sachs international", "goldman sachs research"] },
+  { source = "jpmorgan", markers = ["j.p. morgan securities", "j.p. morgan research", "jpmorgan chase", "j.p. morgan asset management"] },
+  { source = "ubs", markers = ["ubs ag", "ubs securities", "ubs limited"] },
+  { source = "nomura", markers = ["nomura securities", "nomura international", "nomura global markets", "source: lseg, nomura"] },
+  { source = "macquarie", markers = ["macquarie capital", "macquarie securities", "macquarie research"] },
+  { source = "daiwa", markers = ["daiwa securities", "daiwa capital markets", "source: daiwa", "daiwa forecasts"] },
+  { source = "clsa", markers = ["clsa limited", "clsa securities", "clsa research", "cl securities taiwan", "source: clst"] },
+  { source = "citi", markers = ["citigroup", "citi research", "citivelocity"] },
+  { source = "bofa", markers = ["bofa securities", "merrill lynch", "bofaml"] },
+  { source = "hsbc", markers = ["hsbc global research", "hsbc securities", "the hongkong and shanghai banking"] },
+  { source = "jefferies", markers = ["jefferies llc", "jefferies group", "jefferies research", "jefferies hong kong"] },
+]
+
+# source → 介面顯示名稱。檔名 token 與內文指紋引用的 source 都必須在這裡宣告。
+[display]
+morgan_stanley = "摩根士丹利"
+goldman_sachs = "高盛"
+jpmorgan = "摩根大通"
+ubs = "瑞銀"
+nomura = "野村"
+macquarie = "麥格理"
+daiwa = "大和"
+clsa = "里昂"
+citi = "花旗"
+bofa = "美銀"
+hsbc = "滙豐"
+haitong = "海通"
+jefferies = "傑富瑞"
+aletheia = "Aletheia"
+citic = "中信"
+capital = "群益"
+cathay = "國泰"
+kgi = "凱基"
+yuanta = "元大"
+masterlink = "元富"
+fubon = "富邦"
+sinopac = "永豐"
+mega = "兆豐"
+president = "統一"
+jihsun = "日盛"
+first = "第一金"
+ibf = "國票"
+hongyuan = "宏遠"
+concord = "康和"
+huanan = "華南"
+fubon_sec = "福邦"

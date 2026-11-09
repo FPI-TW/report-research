@@ -337,6 +337,137 @@ class LocaleTests(_TmpCase):
         self.assertEqual(set(prof.locale.available), {"zh-Hant", "en"})
 
 
+class InstrumentsSectionTests(_TmpCase):
+    """[instruments]：個股代號格式（標註結果 stock_targets 的驗證規則）。"""
+
+    def test_default_when_absent_is_four_digits(self):
+        rule = self.load(MINIMAL).instruments
+        self.assertEqual(rule.code_formats, (P.CodeFormat(market="TW", kind="digits", min_length=4, max_length=4),))
+        self.assertEqual([rule.normalize_code(v) for v in ("2330", "23300", "NVDA")], ["2330", None, None])
+
+    def test_tingfong_declares_the_pre_framework_rule(self):
+        prof = P.load_profile(REPO / "profiles" / "tingfong")
+        self.assertEqual(prof.instruments, P.Instruments())
+        self.assertEqual(prof.instruments.digit_lengths(), (4, 4))
+
+    def test_parses_formats(self):
+        rule = self.load(MINIMAL + """
+            [instruments.code_formats.TW]
+            kind = "digits"
+            min_length = 4
+            max_length = 6
+            [instruments.code_formats.US]
+            kind = "letters"
+            max_length = 5
+            share_class = true
+        """).instruments
+        self.assertEqual([f.market for f in rule.code_formats], ["TW", "US"])
+        self.assertEqual(rule.code_formats[1].min_length, 1)
+        self.assertEqual([rule.normalize_code(v) for v in ("00878", "nvda", "BRK.B", "NVIDIA", "1234567")],
+                         ["00878", "NVDA", "BRK.B", None, None])
+        self.assertEqual(rule.digit_lengths(), (4, 6))
+
+    def test_letters_only_has_no_digit_lengths(self):
+        rule = self.load(MINIMAL + '[instruments.code_formats.US]\nkind = "letters"\nmax_length = 5\n').instruments
+        self.assertIsNone(rule.digit_lengths())
+        self.assertIsNone(rule.normalize_code("2330"))
+
+    def test_rejections(self):
+        base = MINIMAL + "[instruments.code_formats.{m}]\n{body}\n"
+
+        def reject(body, *needles, m="TW"):
+            self.assertRejected(base.format(m=m, body=body), *needles)
+
+        reject('kind = "digits"\nmax_length = 4', "code_formats.JP", "標準市場", m="JP")
+        reject('kind = "regex"\nmax_length = 4', "code_formats.TW.kind", "不支援")
+        reject('kind = "digits"', "code_formats.TW.max_length", "必填")
+        reject('kind = "digits"\nmin_length = 5\nmax_length = 4', "code_formats.TW.max_length", "不可小於")
+        reject('kind = "digits"\nmax_length = 13', "code_formats.TW.max_length", "介於")
+        reject('kind = "digits"\nmax_length = 4\nshare_class = true', "code_formats.TW.share_class", "未知的鍵")
+        reject('kind = "letters"\nmax_length = 4\nshare_class = 1', "code_formats.TW.share_class", "布林")
+        reject('kind = "digits"\nmax_length = 4\npattern = "x"', "code_formats.TW.pattern", "未知的鍵")
+        self.assertRejected(MINIMAL + "[instruments]\ncode_formats = {}\n", "[instruments].code_formats", "至少")
+        self.assertRejected(MINIMAL + "[instruments]\nformats = {}\n", "[instruments].formats", "未知的鍵")
+
+
+class SourcesSectionTests(_TmpCase):
+    """[sources]：發行機構名單檔（檔名 token、內文指紋、顯示名稱）。"""
+
+    CATALOG = """
+        filename_tokens = [{ token = "AST", source = "aster" }, { token = "北辰", source = "birch" }]
+        text_signatures = [{ source = "aster", markers = ["aster research"] }]
+        fallback_signatures = [{ source = "birch", markers = ["birch securities ltd"] }]
+        [display]
+        aster = "星辰證券"
+        birch = "北辰投顧"
+    """
+
+    def load_catalog(self, catalog: str) -> P.Profile:
+        make_profile(self.root, MINIMAL + '[sources]\ncatalog = "sources.toml"\n')
+        (self.root / "sources.toml").write_text(textwrap.dedent(catalog), encoding="utf-8")
+        return P.load_profile(self.root)
+
+    def assertCatalogRejected(self, catalog: str, *needles: str) -> None:
+        with self.assertRaises(P.ProfileError) as cm:
+            self.load_catalog(catalog)
+        msg = str(cm.exception)
+        self.assertIn(str(self.root.resolve() / "sources.toml"), msg)  # 指向名單檔本身
+        for needle in needles:
+            self.assertIn(needle, msg)
+
+    def test_absent_means_empty(self):
+        self.assertEqual(self.load(MINIMAL).sources, P.Sources())
+
+    def test_parses_catalog_in_order(self):
+        src = self.load_catalog(self.CATALOG).sources
+        self.assertEqual(src.filename_tokens, (("AST", "aster"), ("北辰", "birch")))
+        self.assertEqual(src.text_signatures, (("aster", ("aster research",)),))
+        self.assertEqual(src.fallback_signatures, (("birch", ("birch securities ltd",)),))
+        self.assertEqual(dict(src.display), {"aster": "星辰證券", "birch": "北辰投顧"})
+
+    def test_catalog_reference_rejections(self):
+        self.assertRejected(MINIMAL + '[sources]\ncatalog = "missing.toml"\n', "[sources].catalog", "不存在")
+        self.assertRejected(MINIMAL + '[sources]\ncatalog = "../x.toml"\n', "[sources].catalog", "檔名")
+        self.assertRejected(MINIMAL + '[sources]\ncatalog = "sources.json"\n', "[sources].catalog", ".toml")
+        self.assertRejected(MINIMAL + '[sources]\nfile = "sources.toml"\n', "[sources].file", "未知的鍵")
+
+    def test_catalog_content_rejections(self):
+        self.assertCatalogRejected("[display]\nAster = \"x\"\n", "display.Aster", "小寫")
+        self.assertCatalogRejected('filename_tokens = [{ token = "AST", source = "nobody" }]\n[display]\n',
+                                   "filename_tokens[0].source", "[display]")
+        self.assertCatalogRejected('filename_tokens = [{ token = "ast", source = "a" }]\n[display]\na = "A"\n',
+                                   "filename_tokens[0].token", "大寫")
+        self.assertCatalogRejected('filename_tokens = [{ token = "A", source = "a" }]\n[display]\na = "A"\n',
+                                   "filename_tokens[0].token", "2 個以上")
+        self.assertCatalogRejected('filename_tokens = [{ token = "AB", source = "a" }, { token = "AB", source = "a" }]'
+                                   '\n[display]\na = "A"\n', "filename_tokens[1].token", "重複")
+        self.assertCatalogRejected('text_signatures = [{ source = "a", markers = ["Aster Research"] }]\n'
+                                   '[display]\na = "A"\n', "text_signatures[0].markers[0]", "小寫")
+        self.assertCatalogRejected('text_signatures = [{ source = "a", markers = [] }]\n[display]\na = "A"\n',
+                                   "text_signatures[0].markers", "非空")
+        self.assertCatalogRejected('fallback_signatures = [{ source = "a", marker = ["x"] }]\n[display]\na = "A"\n',
+                                   "fallback_signatures[0].marker", "未知的鍵")
+        self.assertCatalogRejected('aliases = []\n', "aliases", "未知的鍵")
+        self.assertCatalogRejected('filename_tokens = [\n', "TOML 語法錯誤")
+
+
+class BriefSectionTests(_TmpCase):
+    """[brief]：每日簡報的作息（scripts/generate_brief.py）。"""
+
+    def test_defaults_and_tingfong(self):
+        self.assertEqual(self.load(MINIMAL).brief,
+                         P.Brief(after_hour=9, default_lookback_hours=24, max_lookback_days=7))
+        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").brief, P.Brief())
+
+    def test_values_and_rejections(self):
+        brief = self.load(MINIMAL + "[brief]\nafter_hour = 0\ndefault_lookback_hours = 12\nmax_lookback_days = 3\n")
+        self.assertEqual(brief.brief, P.Brief(after_hour=0, default_lookback_hours=12, max_lookback_days=3))
+        self.assertRejected(MINIMAL + "[brief]\nafter_hour = 24\n", "[brief].after_hour", "介於")
+        self.assertRejected(MINIMAL + "[brief]\nafter_hour = \"9\"\n", "[brief].after_hour", "整數")
+        self.assertRejected(MINIMAL + "[brief]\nmax_lookback_days = 0\n", "[brief].max_lookback_days", "介於")
+        self.assertRejected(MINIMAL + "[brief]\ntimezone = \"UTC\"\n", "[brief].timezone", "未知的鍵")
+
+
 class ContractTests(unittest.TestCase):
     def test_locales_match_output_language_and_frontend(self):
         """profile 的語系詞彙＝問答輸出語言（app/services/locale.py）＝前端字典的語系（frontend/src/i18n）。"""

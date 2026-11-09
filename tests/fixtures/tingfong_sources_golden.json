@@ -1,0 +1,424 @@
+{
+ "_comment": "改動前 app/services/filename.py 的廷豐發行機構名單（BROKER_MAP 依序、SOURCE_DISPLAY、內文指紋）。profiles/tingfong/sources.toml 必須逐字等價（tests/test_sources_catalog.py）。",
+ "filename_tokens": [
+  [
+   "MS",
+   "morgan_stanley"
+  ],
+  [
+   "GS",
+   "goldman_sachs"
+  ],
+  [
+   "JPM",
+   "jpmorgan"
+  ],
+  [
+   "UBS",
+   "ubs"
+  ],
+  [
+   "NMR",
+   "nomura"
+  ],
+  [
+   "MQ",
+   "macquarie"
+  ],
+  [
+   "DW",
+   "daiwa"
+  ],
+  [
+   "DAIWA",
+   "daiwa"
+  ],
+  [
+   "大和",
+   "daiwa"
+  ],
+  [
+   "FUBON",
+   "fubon"
+  ],
+  [
+   "CLSA",
+   "clsa"
+  ],
+  [
+   "CLST",
+   "clsa"
+  ],
+  [
+   "CITI",
+   "citi"
+  ],
+  [
+   "BOFA",
+   "bofa"
+  ],
+  [
+   "BAML",
+   "bofa"
+  ],
+  [
+   "HSBC",
+   "hsbc"
+  ],
+  [
+   "HTI",
+   "haitong"
+  ],
+  [
+   "JEF",
+   "jefferies"
+  ],
+  [
+   "ALETHEIA",
+   "aletheia"
+  ],
+  [
+   "中信",
+   "citic"
+  ],
+  [
+   "CTBC",
+   "citic"
+  ],
+  [
+   "群益",
+   "capital"
+  ],
+  [
+   "國泰",
+   "cathay"
+  ],
+  [
+   "凱基",
+   "kgi"
+  ],
+  [
+   "元大",
+   "yuanta"
+  ],
+  [
+   "元富",
+   "masterlink"
+  ],
+  [
+   "宏遠",
+   "hongyuan"
+  ],
+  [
+   "富邦",
+   "fubon"
+  ],
+  [
+   "永豐",
+   "sinopac"
+  ],
+  [
+   "兆豐",
+   "mega"
+  ],
+  [
+   "統一",
+   "president"
+  ],
+  [
+   "日盛",
+   "jihsun"
+  ],
+  [
+   "第一金",
+   "first"
+  ],
+  [
+   "國票",
+   "ibf"
+  ]
+ ],
+ "display": {
+  "morgan_stanley": "摩根士丹利",
+  "goldman_sachs": "高盛",
+  "jpmorgan": "摩根大通",
+  "ubs": "瑞銀",
+  "nomura": "野村",
+  "macquarie": "麥格理",
+  "daiwa": "大和",
+  "clsa": "里昂",
+  "citi": "花旗",
+  "bofa": "美銀",
+  "hsbc": "滙豐",
+  "haitong": "海通",
+  "jefferies": "傑富瑞",
+  "aletheia": "Aletheia",
+  "citic": "中信",
+  "capital": "群益",
+  "cathay": "國泰",
+  "kgi": "凱基",
+  "yuanta": "元大",
+  "masterlink": "元富",
+  "fubon": "富邦",
+  "sinopac": "永豐",
+  "mega": "兆豐",
+  "president": "統一",
+  "jihsun": "日盛",
+  "first": "第一金",
+  "ibf": "國票",
+  "hongyuan": "宏遠",
+  "concord": "康和",
+  "huanan": "華南",
+  "fubon_sec": "福邦"
+ },
+ "text_signatures": [
+  [
+   "kgi",
+   [
+    "凱基投顧",
+    "kgisia",
+    "kgi凱基",
+    "凱基期貨",
+    "凱基金融控股",
+    "凱基金控"
+   ]
+  ],
+  [
+   "masterlink",
+   [
+    "元富投顧",
+    "masterlink",
+    "元富期貨",
+    "元富整理"
+   ]
+  ],
+  [
+   "sinopac",
+   [
+    "永豐晨訊",
+    "永豐證券投資顧問",
+    "永豐金證券投資顧問",
+    "永豐投顧",
+    "永豐期貨"
+   ]
+  ],
+  [
+   "capital",
+   [
+    "群益投顧",
+    "群益證券投資顧問",
+    "群益期貨"
+   ]
+  ],
+  [
+   "cathay",
+   [
+    "國泰證券投資顧問",
+    "國泰綜合證券股份",
+    "國泰期貨"
+   ]
+  ],
+  [
+   "fubon",
+   [
+    "富邦投顧",
+    "富邦期貨"
+   ]
+  ],
+  [
+   "mega",
+   [
+    "兆豐證券投資顧問",
+    "兆豐投顧",
+    "兆豐期貨",
+    "兆豐國際證券投資顧問"
+   ]
+  ],
+  [
+   "president",
+   [
+    "統一投顧",
+    "統一綜合證券股份",
+    "統一期貨",
+    "統一投信"
+   ]
+  ],
+  [
+   "jihsun",
+   [
+    "日盛投顧",
+    "日盛證券投資顧問",
+    "日盛期貨"
+   ]
+  ],
+  [
+   "first",
+   [
+    "第一金投顧",
+    "第一金證券投資顧問",
+    "第一金期貨"
+   ]
+  ],
+  [
+   "ibf",
+   [
+    "國票證券投資顧問",
+    "國票投顧",
+    "國票期貨"
+   ]
+  ],
+  [
+   "citic",
+   [
+    "中信投顧",
+    "中國信託綜合證券股份",
+    "中信期貨"
+   ]
+  ],
+  [
+   "yuanta",
+   [
+    "元大投顧",
+    "元大期貨",
+    "元大投信"
+   ]
+  ],
+  [
+   "hongyuan",
+   [
+    "宏遠投顧"
+   ]
+  ],
+  [
+   "haitong",
+   [
+    "海通國際"
+   ]
+  ],
+  [
+   "concord",
+   [
+    "康和投顧"
+   ]
+  ],
+  [
+   "huanan",
+   [
+    "華南投顧"
+   ]
+  ],
+  [
+   "fubon_sec",
+   [
+    "福邦投顧"
+   ]
+  ]
+ ],
+ "fallback_signatures": [
+  [
+   "morgan_stanley",
+   [
+    "morgan stanley & co",
+    "morgan stanley asia",
+    "morgan stanley taiwan",
+    "morgan stanley research"
+   ]
+  ],
+  [
+   "goldman_sachs",
+   [
+    "goldman sachs & co",
+    "goldman sachs japan",
+    "goldman sachs asia",
+    "goldman sachs international",
+    "goldman sachs research"
+   ]
+  ],
+  [
+   "jpmorgan",
+   [
+    "j.p. morgan securities",
+    "j.p. morgan research",
+    "jpmorgan chase",
+    "j.p. morgan asset management"
+   ]
+  ],
+  [
+   "ubs",
+   [
+    "ubs ag",
+    "ubs securities",
+    "ubs limited"
+   ]
+  ],
+  [
+   "nomura",
+   [
+    "nomura securities",
+    "nomura international",
+    "nomura global markets",
+    "source: lseg, nomura"
+   ]
+  ],
+  [
+   "macquarie",
+   [
+    "macquarie capital",
+    "macquarie securities",
+    "macquarie research"
+   ]
+  ],
+  [
+   "daiwa",
+   [
+    "daiwa securities",
+    "daiwa capital markets",
+    "source: daiwa",
+    "daiwa forecasts"
+   ]
+  ],
+  [
+   "clsa",
+   [
+    "clsa limited",
+    "clsa securities",
+    "clsa research",
+    "cl securities taiwan",
+    "source: clst"
+   ]
+  ],
+  [
+   "citi",
+   [
+    "citigroup",
+    "citi research",
+    "citivelocity"
+   ]
+  ],
+  [
+   "bofa",
+   [
+    "bofa securities",
+    "merrill lynch",
+    "bofaml"
+   ]
+  ],
+  [
+   "hsbc",
+   [
+    "hsbc global research",
+    "hsbc securities",
+    "the hongkong and shanghai banking"
+   ]
+  ],
+  [
+   "jefferies",
+   [
+    "jefferies llc",
+    "jefferies group",
+    "jefferies research",
+    "jefferies hong kong"
+   ]
+  ]
+ ]
+}

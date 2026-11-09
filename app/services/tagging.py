@@ -12,7 +12,7 @@ profile 的跨 repo 契約，不是框架的；`LEGACY_TO_FINDB` 等名稱沿用
 from __future__ import annotations
 
 import json
-import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -110,7 +110,7 @@ class MarketTag:
     instrument_types: Optional[list[str]] = None  # 商品類型（詞表見上）
     relates_stock: Optional[bool] = None  # 是否與個股相關
     relates_futures: Optional[bool] = None  # 是否與期貨/指數部位相關
-    stock_targets: Optional[list[str]] = None  # 個股標的 4 碼代碼清單
+    stock_targets: Optional[list[str]] = None  # 個股標的代號清單（格式見 normalize_stock_targets）
     futures_targets: Optional[list[str]] = None  # 期貨商品（FUTURES_TARGETS 詞表）
 
     @property
@@ -188,20 +188,26 @@ def normalize_instruments(value) -> list[str]:
     return out
 
 
-_RE_STOCK_CODE = re.compile(r"^\d{4}$")
+# 個股代號的驗證規則：一個標註輸出的代號 → 正規化後的代號，不合格回 None。由呼叫端傳入 profile 的
+# `get_profile().instruments.normalize_code`（`app/profile.py` 的 `Instruments`）：本模組是 profile 的依賴、
+# 刻意不 import `app.*`（`tests/test_profile.py` 守），所以規則不在這裡讀。參數一律必填：漏傳就 TypeError，
+# 不會靜默退回某一套規則。
+CodeRule = Callable[[object], Optional[str]]
 
 
-def normalize_stock_targets(value) -> list[str]:
-    """正規化個股標的：只留「正好 4 碼數字」、去重保序、截斷到上限；非 list 回傳 []。
+def normalize_stock_targets(value, *, normalize_code: CodeRule) -> list[str]:
+    """正規化個股標的：只留通過 `normalize_code` 的值、去重保序、截斷到上限；非 list 回傳 []。
 
-    防呆：擋掉把日期/頁碼（如 0209、Page 6）誤當代碼的情形。
+    格式由 profile 的 `[instruments]` 宣告（廷豐只收「正好 4 碼數字」，section 缺席時也是這條）。
+    防呆：擋掉把日期/頁碼（如 0209、Page 6）誤當代碼的情形。只改解析後的驗證，標註 prompt
+    （`TAG_INSTRUCTION`，只要求 4 碼代碼）不變。
     """
     if not isinstance(value, list):
         return []
     out: list[str] = []
     for item in value:
-        v = str(item).strip()
-        if _RE_STOCK_CODE.match(v) and v not in out:
+        v = normalize_code(item)
+        if v is not None and v not in out:
             out.append(v)
     return out[:STOCK_TARGETS_MAX]
 
@@ -228,8 +234,8 @@ def build_tagging_prompt(file_path: str, file_name: str) -> str:
     )
 
 
-def parse_tags(raw: str) -> Optional[MarketTag]:
-    """容錯解析 Claude 回應；market 一律正規化為標準市場代碼。"""
+def parse_tags(raw: str, *, normalize_code: CodeRule) -> Optional[MarketTag]:
+    """容錯解析 Claude 回應；market 一律正規化為標準市場代碼，stock_targets 經 `normalize_code` 過濾。"""
     if not raw:
         return None
     text = raw.strip()
@@ -255,7 +261,7 @@ def parse_tags(raw: str) -> Optional[MarketTag]:
     rf = obj.get("relates_futures")
     relates_stock = bool(rs) if rs is not None else None
     relates_futures = bool(rf) if rf is not None else None
-    stock_targets = normalize_stock_targets(obj.get("stock_targets"))
+    stock_targets = normalize_stock_targets(obj.get("stock_targets"), normalize_code=normalize_code)
     futures_targets = normalize_futures_targets(obj.get("futures_targets"))
     return MarketTag(
         market=market,
@@ -269,8 +275,8 @@ def parse_tags(raw: str) -> Optional[MarketTag]:
     )
 
 
-def load_tag(tags_dir: Path, file_hash: str) -> Optional[MarketTag]:
+def load_tag(tags_dir: Path, file_hash: str, *, normalize_code: CodeRule) -> Optional[MarketTag]:
     p = tags_dir / f"{file_hash}.json"
     if not p.exists():
         return None
-    return parse_tags(p.read_text(encoding="utf-8"))
+    return parse_tags(p.read_text(encoding="utf-8"), normalize_code=normalize_code)

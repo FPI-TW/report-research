@@ -22,6 +22,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.profile import load_profile  # noqa: E402
 from app.services import judge_schema  # noqa: E402
 from app.services.brief import parse_brief  # noqa: E402
 from app.services.citation_filter import INVALID_CITATION, CitationStreamFilter  # noqa: E402
@@ -87,7 +88,8 @@ class ParserContractTests(unittest.TestCase):
         self.assertTrue(tag.is_research)
 
     def test_tag_without_market_word_is_not_research(self):
-        tag = parse_tags(_ask("demo-tag", "報告內文（前 10 字摘錄）：\n一段看不出市場的文字。\n\n請依上述規則"))
+        tag = parse_tags(_ask("demo-tag", "報告內文（前 10 字摘錄）：\n一段看不出市場的文字。\n\n請依上述規則"),
+                         normalize_code=load_profile(REPO_ROOT / "profiles" / "demo").instruments.normalize_code)
         self.assertIsNone(tag.market)
         self.assertFalse(tag.is_research)
 

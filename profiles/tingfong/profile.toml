@@ -70,3 +70,21 @@ background_enabled = false
 # 預設中文＝改動前的行為；使用者在「設定 → 偏好 → 語言」或登入頁切換，偏好存在瀏覽器（tf.locale／tf_locale）。
 default = "zh-Hant"
 available = ["zh-Hant", "en"]
+
+[instruments]
+# 個股代號格式：標註結果的 stock_targets 只留符合其一的代號（各市場格式的聯集，不看研報的市場）。
+# 廷豐只收 4 碼數字（框架化之前的規則，也是標註 prompt 要求的格式）；放寬會讓既有研報與新研報的標的口徑不一。
+[instruments.code_formats.TW]
+kind = "digits"
+min_length = 4
+max_length = 4
+
+[sources]
+# 發行機構名單（檔名 token、內文指紋、顯示名稱）；格式見該檔檔頭。
+catalog = "sources.toml"
+
+[brief]
+# 每日簡報的作息：本地時間 9 時後才產生當日簡報（券商早報多在上午進來）；沒有上一份時回看 24 小時、最多回看 7 天。
+after_hour = 9
+default_lookback_hours = 24
+max_lookback_days = 7

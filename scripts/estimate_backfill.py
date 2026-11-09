@@ -334,7 +334,7 @@ def items_from_cache(cache_dir: Path, tags_dir: Path) -> Iterable[Item]:
         if not file_hash:
             continue
         meta = _sidecar(rec.get("file_path"))
-        tag = load_tag(tags_dir, file_hash)
+        tag = load_tag(tags_dir, file_hash, normalize_code=get_profile().instruments.normalize_code)
         tasks: set[str] = set()
         if tag is None and not (meta is not None and meta.skips_tagging()):
             tasks.add(bt.TASK_TAG)

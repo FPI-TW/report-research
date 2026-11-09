@@ -54,6 +54,19 @@
 SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設定產生過濾片段。section 缺席時是框架預設：
 `research` 全開、`non_research` 全關（等同改動前的 `is_research` true／false）。標註器會產生的類型
 （`tagging.TAGGER_DOC_TYPES`）必須全部宣告：漏宣告的類型所有功能都關，那類文件會靜默消失。
+
+## 個股代號、發行機構、簡報作息
+
+這三項原本寫死在程式裡、對所有 profile 生效，其實是廷豐的假設；改由 profile 宣告後，廷豐 profile 宣告原值（零回歸）。
+
+- `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
+  長度）。標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`；`tagging` 不 import
+  本模組，規則由呼叫端傳入 `get_profile().instruments.normalize_code`）；總覽題從問句抓代號也依純數字格式的長度。
+  標註 prompt 不變（它只要求 4 碼代碼），section 缺席＝只收 4 碼數字。
+- `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（廷豐 `sources.toml`），內容是檔名 token、內文指紋與顯示名稱；
+  比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構（只靠側檔的 `source`），
+  顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
+- `[brief]`：每日簡報幾點後才產生、回看窗與回看上限（`scripts/generate_brief.py`；命令列參數仍可覆寫）。
 """
 
 from __future__ import annotations
@@ -64,6 +77,7 @@ import re
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
+from functools import cached_property
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -243,6 +257,84 @@ class Backfill:
     max_reports_per_round: int = 100  # 背景補齊每輪最多處理幾份研報
 
 
+# 個股代號格式的種類（框架固定的詞彙）：digits＝純數字（台股、港股、陸股），letters＝大寫英文字母（美股 ticker，
+# `share_class` 另收「.A」這種一個字母的股別後綴，例如 BRK.B）。只給種類與長度、不收任意 regex：同一份規則要能
+# 安全地在每份研報的標註結果上執行，也要講得清楚它收什麼。
+CODE_FORMAT_KINDS = ("digits", "letters")
+_CODE_LENGTH_MAX = {"digits": 12, "letters": 10}
+
+
+@dataclass(frozen=True)
+class CodeFormat:
+    market: str  # 這個格式屬於哪個標準市場（說明與對帳用；驗證是所有格式的聯集，見 Instruments）
+    kind: str  # CODE_FORMAT_KINDS 之一
+    min_length: int
+    max_length: int
+    share_class: bool = False  # letters：另收一個字母的股別後綴（BRK.B）
+
+    def regex(self) -> str:
+        span = f"{{{self.min_length},{self.max_length}}}"
+        if self.kind == "digits":
+            return rf"\d{span}"
+        return rf"[A-Z]{span}" + (r"(?:\.[A-Z])?" if self.share_class else "")
+
+
+@dataclass(frozen=True)
+class Instruments:
+    """個股代號的格式（`[instruments.code_formats.<市場>]`）：標註結果的 `stock_targets` 只留符合其一的代號。
+
+    驗證是所有格式的**聯集**、不看研報的市場：台股的報告常重點討論美股標的（反之亦然），按市場切會把它們丟掉。
+    section 缺席＝只收 4 碼數字（框架化之前的規則；標註 prompt 也只要求 4 碼代碼）。
+    """
+
+    code_formats: tuple[CodeFormat, ...] = (CodeFormat(market="TW", kind="digits", min_length=4, max_length=4),)
+
+    @cached_property
+    def _pattern(self) -> re.Pattern[str]:
+        return re.compile("|".join(f"(?:{f.regex()})" for f in self.code_formats))
+
+    def normalize_code(self, value: object) -> str | None:
+        """一個標註輸出的代號 → 正規化後的代號；不符合任何格式回 None。字母代號一律轉大寫（nvda → NVDA）。"""
+        v = str(value).strip()
+        if self._pattern.fullmatch(v):
+            return v
+        upper = v.upper()
+        if upper != v and self._pattern.fullmatch(upper):
+            return upper
+        return None
+
+    def digit_lengths(self) -> tuple[int, int] | None:
+        """純數字代號的長度範圍（總覽題從問句抓代號用）；沒有純數字格式回 None。"""
+        spans = [(f.min_length, f.max_length) for f in self.code_formats if f.kind == "digits"]
+        if not spans:
+            return None
+        return min(lo for lo, _ in spans), max(hi for _, hi in spans)
+
+
+@dataclass(frozen=True)
+class Sources:
+    """發行機構（研報的 `source`）名單：檔名推斷、內文指紋與顯示名稱（`[sources].catalog` 引用的檔）。
+
+    比對規則在 `app/services/filename.py`（`parse_filename`、`resolve_source`），這裡只放名單。順序都有意義：
+    檔名 token 依序比對、第一個命中者勝；內文指紋取最早出現者，同位置時依宣告順序。
+    section 缺席＝空名單：不從檔名或內文推斷發行機構（只靠側檔的 `source`），顯示名稱就是代碼本身。
+    """
+
+    filename_tokens: tuple[tuple[str, str], ...] = ()  # (檔名 token, source)
+    text_signatures: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (source, 指紋)：先於檔名，子字串比對
+    fallback_signatures: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (source, 指紋)：檔名之後，詞邊界比對
+    display: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))  # source → 顯示名稱
+
+
+@dataclass(frozen=True)
+class Brief:
+    """每日簡報的作息（`scripts/generate_brief.py`）。預設值＝框架化之前寫死在腳本裡的值。"""
+
+    after_hour: int = 9  # 本地時間到這個鐘點之後才產生當日簡報（早報多在上午進來；--after-hour 可覆寫）
+    default_lookback_hours: int = 24  # 沒有上一份簡報時的回看窗
+    max_lookback_days: int = 7  # 任何情況下的回看上限（--max-lookback-days 可覆寫）
+
+
 @dataclass(frozen=True)
 class Profile:
     root: Path
@@ -256,6 +348,9 @@ class Profile:
     connectors: Connectors = field(default_factory=Connectors)
     backfill: Backfill = field(default_factory=Backfill)
     locale: Locale = field(default_factory=Locale)
+    instruments: Instruments = field(default_factory=Instruments)
+    sources: Sources = field(default_factory=Sources)
+    brief: Brief = field(default_factory=Brief)
 
 
 # ── 驗證輔助 ─────────────────────────────────────────────────────────────
@@ -609,6 +704,143 @@ def _parse_locale(table: dict, ctx: _Ctx) -> Locale:
     if default not in available:
         raise ctx.error("default", f"預設語系 {default!r} 不在 available 裡（{'、'.join(available)}）")
     return Locale(default=default, available=tuple(available))
+
+
+@_section("instruments")
+def _parse_instruments(table: dict, ctx: _Ctx) -> Instruments:
+    ctx.reject_unknown(table, {"code_formats"})
+    if "code_formats" not in table:
+        return Instruments()
+    formats_table = ctx.table(table, "code_formats")
+    if not formats_table:
+        raise ctx.error("code_formats", "至少要宣告一個市場的代號格式（要用框架預設就整個 section 不寫）")
+    formats: list[CodeFormat] = []
+    for market in formats_table:
+        base = f"code_formats.{market}"
+        if market not in MARKETS:
+            raise ctx.error(base, f"不是標準市場代碼（可用：{' '.join(MARKETS)}）")
+        spec = ctx.table(formats_table, market, key_label=base)
+        kind = ctx.string(spec, "kind", max_len=20, key_label=f"{base}.kind")
+        if kind not in CODE_FORMAT_KINDS:
+            raise ctx.error(f"{base}.kind", f"不支援的代號格式 {kind!r}（可用：{'、'.join(CODE_FORMAT_KINDS)}）")
+        allowed = {"kind", "min_length", "max_length"} | ({"share_class"} if kind == "letters" else set())
+        ctx.reject_unknown(spec, allowed, prefix=f"{base}.")
+        cap = _CODE_LENGTH_MAX[kind]
+        lo = _int_in(ctx, spec, "min_length", 1, 1, cap, f"{base}.min_length")
+        if "max_length" not in spec:
+            raise ctx.error(f"{base}.max_length", "必填")
+        hi = _int_in(ctx, spec, "max_length", lo, 1, cap, f"{base}.max_length")
+        if hi < lo:
+            raise ctx.error(f"{base}.max_length", f"不可小於 min_length（{lo}）")
+        share_class = spec.get("share_class", False)
+        if not isinstance(share_class, bool):
+            raise ctx.error(f"{base}.share_class", f"必須是布林（true／false），目前是 {_type_name(share_class)}")
+        formats.append(CodeFormat(market=market, kind=kind, min_length=lo, max_length=hi, share_class=share_class))
+    return Instruments(code_formats=tuple(formats))
+
+
+_SOURCE_CODE = re.compile(r"[a-z][a-z0-9_]{0,31}")  # research_report.source 的值（例如 morgan_stanley）
+_CATALOG_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.toml")
+
+
+def _parse_signature_list(data: Mapping[str, Any], ctx: _Ctx, key: str, declared: Mapping[str, str]
+                          ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    raw = data.get(key, [])
+    if not isinstance(raw, list):
+        raise ctx.error(key, f"必須是表格陣列（[{{ source = \"…\", markers = [\"…\"] }}, …]），"
+                             f"目前是 {_type_name(raw)}")
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for i, item in enumerate(raw):
+        label = f"{key}[{i}]"
+        if not isinstance(item, dict):
+            raise ctx.error(label, f"必須是表格（{{ source = \"…\", markers = [\"…\"] }}），目前是 {_type_name(item)}")
+        ctx.reject_unknown(item, {"source", "markers"}, prefix=f"{label}.")
+        source = ctx.string(item, "source", max_len=32, key_label=f"{label}.source")
+        if source not in declared:
+            raise ctx.error(f"{label}.source", f"{source!r} 沒有在 [display] 宣告顯示名稱")
+        markers = item.get("markers")
+        if not isinstance(markers, list) or not markers:
+            raise ctx.error(f"{label}.markers", "必須是非空的字串陣列")
+        for j, marker in enumerate(markers):
+            mlabel = f"{label}.markers[{j}]"
+            if not isinstance(marker, str):
+                raise ctx.error(mlabel, f"必須是字串，目前是 {_type_name(marker)}")
+            # 比對前整段內文轉小寫，指紋存成小寫才比得到；大寫的指紋會靜默永遠不中。
+            if (not marker or marker != marker.strip() or marker != marker.lower() or len(marker) > 80
+                    or any(ord(c) < 0x20 or ord(c) == 0x7F for c in marker)):
+                raise ctx.error(mlabel, f"指紋必須是 80 字以內的小寫字串、前後不留空白、不含控制字元：{marker!r}")
+        out.append((source, tuple(markers)))
+    return tuple(out)
+
+
+def _parse_sources_catalog(data: Mapping[str, Any], ctx: _Ctx) -> Sources:
+    ctx.reject_unknown(data, {"display", "filename_tokens", "text_signatures", "fallback_signatures"})
+    display_table = ctx.table(data, "display")
+    display: dict[str, str] = {}
+    for code in display_table:
+        if not _SOURCE_CODE.fullmatch(code):
+            raise ctx.error(f"display.{code}", "source 代碼只能是小寫英文開頭的小寫英數與底線（最多 32 字）")
+        display[code] = ctx.string(display_table, code, max_len=40, key_label=f"display.{code}")
+    raw_tokens = data.get("filename_tokens", [])
+    if not isinstance(raw_tokens, list):
+        raise ctx.error("filename_tokens", f"必須是表格陣列（[{{ token = \"…\", source = \"…\" }}, …]），目前是 "
+                                           f"{_type_name(raw_tokens)}")
+    tokens: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for i, item in enumerate(raw_tokens):
+        label = f"filename_tokens[{i}]"
+        if not isinstance(item, dict):
+            raise ctx.error(label, f"必須是表格（{{ token = \"…\", source = \"…\" }}），目前是 {_type_name(item)}")
+        ctx.reject_unknown(item, {"token", "source"}, prefix=f"{label}.")
+        token = ctx.string(item, "token", max_len=20, key_label=f"{label}.token")
+        if token.isascii() and (len(token) < 2 or not token.isalpha() or token != token.upper()):
+            raise ctx.error(f"{label}.token", f"拉丁 token 必須是 2 個以上的大寫英文字母：{token!r}")
+        if token.upper() in seen:
+            raise ctx.error(f"{label}.token", f"重複的 token：{token!r}")
+        seen.add(token.upper())
+        source = ctx.string(item, "source", max_len=32, key_label=f"{label}.source")
+        if source not in display:
+            raise ctx.error(f"{label}.source", f"{source!r} 沒有在 [display] 宣告顯示名稱")
+        tokens.append((token, source))
+    return Sources(
+        filename_tokens=tuple(tokens),
+        text_signatures=_parse_signature_list(data, ctx, "text_signatures", display),
+        fallback_signatures=_parse_signature_list(data, ctx, "fallback_signatures", display),
+        display=MappingProxyType(display),
+    )
+
+
+@_section("sources")
+def _parse_sources(table: dict, ctx: _Ctx) -> Sources:
+    ctx.reject_unknown(table, {"catalog"})
+    if "catalog" not in table:
+        return Sources()
+    name = ctx.string(table, "catalog", max_len=100)
+    if not _CATALOG_NAME.fullmatch(name):
+        raise ctx.error("catalog", f"必須是 profile 目錄底下的 .toml 檔名（不含路徑）：{name!r}")
+    path = (ctx.root / name).resolve()
+    if not path.is_relative_to(ctx.root) or not path.is_file():
+        raise ctx.error("catalog", f"引用的名單檔不存在：{ctx.root / name}")
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProfileError(f"profile 設定錯誤：{path}：TOML 語法錯誤：{exc}") from exc
+    # 名單檔的錯誤訊息指向名單檔本身（鍵名不帶 section 前綴）。
+    return _parse_sources_catalog(data, _Ctx(file=path, root=ctx.root))
+
+
+@_section("brief")
+def _parse_brief(table: dict, ctx: _Ctx) -> Brief:
+    ctx.reject_unknown(table, {"after_hour", "default_lookback_hours", "max_lookback_days"})
+    defaults = Brief()
+    return Brief(
+        after_hour=_int_in(ctx, table, "after_hour", defaults.after_hour, 0, 23, "after_hour"),
+        default_lookback_hours=_int_in(ctx, table, "default_lookback_hours", defaults.default_lookback_hours,
+                                       1, 24 * 7, "default_lookback_hours"),
+        max_lookback_days=_int_in(ctx, table, "max_lookback_days", defaults.max_lookback_days, 1, 60,
+                                  "max_lookback_days"),
+    )
 
 
 # ── 載入與快取 ───────────────────────────────────────────────────────────

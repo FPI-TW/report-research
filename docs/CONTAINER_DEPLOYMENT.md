@@ -15,6 +15,9 @@
 | `deploy/container/fetch_models.py` | build 階段下載權重，並以離線模式真的載入一次 |
 | `deploy/compose/docker-compose.yml` | postgres、web、worker、scheduler、migrate（one-shot）、clamav（選配） |
 | `deploy/compose/.env.example` | 設定範本（假值；標【必填】的沒填就拒絕啟動） |
+| `deploy/demo/docker-compose.demo.yml` | 示範環境的 override：假 LLM、S3 測試伺服器（moto），並把 LLM 與連接器指過去（見「示範環境」） |
+| `deploy/demo/docker-compose.real-llm.yml` | 疊在示範 override 之後，把 LLM 改回 `.env` 裡的真實設定 |
+| `deploy/demo/fake_llm.py` | 示範與端到端測試用的假 LLM（OpenAI 相容、只用標準函式庫、回應決定性） |
 
 Dockerfile 放在 `deploy/container/` 而不是 repo 根：repo 根的 `deploy/docker-compose.yml` 是廷豐測試環境的對外邊緣（nginx＋cloudflared），兩者無關；部署相關的真相來源都在 `deploy/` 底下。`.dockerignore` 必須在 build context 的根，所以在 repo 根。
 
@@ -40,6 +43,7 @@ docker build -f deploy/container/Dockerfile -t report-mark:<版本> \
 - build 需要網路（npm、PyPI、download.pytorch.org、Hugging Face、supercronic 與 uv 的發布檔）；**執行期不需要**。離線環境可在有網路的機器 build、`docker save`／`docker load` 搬進去，或推到內部 registry。
 - 權重：嵌入用 `app/services/embed.py` 的 `MODEL_NAME`（BGE-M3），rerank 用 build arg `RERANK_MODEL`（預設與 `app/config.py` 相同）。改 rerank 模型要重 build，執行期的 `RERANK_MODEL` 也設同一個值。
 - build 的最後一步以非 root 身分、`HF_HUB_OFFLINE=1` 真的載入兩個模型；少了任何權重檔，build 就在那裡失敗。
+- 映像預設 `EXTRACTOR=pdfplumber`（版面層抽取，與 systemd 主機的 sync 相同）。程式本身的預設是舊路徑 `pypdf`，容器裡的連接器、上傳 worker 與回填都在這份映像裡跑，要改回舊路徑才在 `.env` 設 `EXTRACTOR=pypdf`。
 
 ## 角色
 
@@ -323,6 +327,52 @@ groups:
 | `upload_backlog` | 最舊一筆處理中的上傳超過 `ALERT_UPLOAD_BACKLOG_MINUTES`（預設 120；0＝不檢查），web 每 `ALERT_CHECK_INTERVAL_SECONDS`（預設 300）秒檢查一次 |
 
 `POST` JSON：`source`、`event`、`severity`、`summary`、`text`、`details`、`host`、`at`。`text` 是一行可讀的摘要，Slack、Teams、Mattermost、Google Chat 的 incoming webhook 都直接認得；`details` 只有計數、工作名、退出碼與時間，不帶日誌內容或使用者資料。同一個事件（同一個工作）在 `ALERT_WEBHOOK_COOLDOWN_MINUTES`（預設 60）內只送一次；只送「出事」，恢復與趨勢看 `/metrics`。送不出去不影響批次與 web。
+
+## 示範環境
+
+在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小。
+
+| 元件 | 示範環境 | 換成真的 |
+|---|---|---|
+| 語料 | `scripts/demo_corpus.py` 以固定種子產生約 30 份虛構 PDF（頁首頁尾、雙欄、表格）與側檔，其中幾份側檔故意寫錯；內容、機構、分析師與數字都是虛構的，頁首頁尾與文末都有標示 | 券商自己的 bucket（profile 的 `[connectors]`） |
+| LLM | 假 LLM：一個任務一個模型名（`fake_llm.MODELS`），回應格式正確、內容標「示範產出」；問答的回答刻意夾一個不存在的來源編號，畫面上會看到「（無效引用）」 | 再疊 `deploy/demo/docker-compose.real-llm.yml`，LLM 設定寫在 `.env` |
+| S3 | moto，資料只在記憶體（容器重建就清空） | 真的 S3 相容端點（`CONNECTOR_DEMO_*`） |
+
+```bash
+uv sync                                        # 主機上產生語料要 weasyprint（dev 相依）與 fonts-noto-cjk
+uv run python scripts/demo_corpus.py --out /srv/demo-corpus     # 30 份約 3 分鐘
+cd deploy/compose
+cp .env.example .env && chmod 600 .env         # 填 POSTGRES_PASSWORD、REPORT_MARK_SESSION_SECRET；PROFILE_HOST_DIR=../../profiles/demo
+                                               # LLM 那段留空即可（demo override 會指到假 LLM）
+alias dc='docker compose -f docker-compose.yml -f ../demo/docker-compose.demo.yml'
+dc up -d postgres s3 fake-llm
+dc run --rm migrate
+dc run --rm web create-admin --username demo
+AWS_ACCESS_KEY_ID=moto AWS_SECRET_ACCESS_KEY=moto aws --endpoint-url http://127.0.0.1:5000 s3 mb s3://demo-research
+AWS_ACCESS_KEY_ID=moto AWS_SECRET_ACCESS_KEY=moto aws --endpoint-url http://127.0.0.1:5000 s3 sync /srv/demo-corpus/corpus s3://demo-research/research/
+dc run --rm scheduler python scripts/connector_sync.py --force   # 不等排程（每 15 分鐘）
+dc up -d                                       # web、worker、scheduler；瀏覽 http://127.0.0.1:8097
+```
+
+- 沒有 aws cli 時，`uv run python scripts/e2e_compose.py --keep` 會把同樣的流程（含上傳）跑完並留著 project，印出拆除指令；它的 web 埠是隨機的，看 log 第一行。
+- 要給客戶看真實的問答品質：`.env` 寫好真的 LLM 設定（`LLM_PROVIDER`＋該 provider 的金鑰、端點與模型宣告，見 repo 根 `.env.example`），`dc` 再加 `-f ../demo/docker-compose.real-llm.yml`。標註、摘要等批次照樣會打真的 LLM、照樣計費。
+- 背景補齊（`backfill-tiers`）每小時 :50 會補第三層（13～18 個月前的那幾份）的摘要、標題與摘錄；示範 profile 的上限是每輪 10 份、每日 30 萬 token。
+- 收掉：`dc down -v`（連 DB 與 `data` volume 一起刪）。
+
+### 端到端測試（`scripts/e2e_compose.py`）
+
+上面整套流程的自動化版本，CI 由獨立的 `.github/workflows/e2e.yml` 跑（**不是**必要檢查；只在會改變映像或端到端行為的檔案變動時觸發，也可以手動觸發）。每次用獨立的 compose project（`-p e2e-<亂數>`）、隨機埠、暫存目錄當 project directory 與備份落點，不碰其他 compose project；跑完一律 `down -v`。
+
+```bash
+uv run python scripts/e2e_compose.py --build      # build 映像（重用 BuildKit 快取）再跑；約 15 分鐘（不含 build）
+uv run python scripts/e2e_compose.py --image report-mark:e2e --corpus /srv/demo-corpus   # 映像與語料都已備好
+```
+
+驗證項目：空庫 `migrate`、`create-admin --password-stdin`、`connector_sync.py --force` 的入庫份數、側檔欄位（`title`／`source`／`market`）生效、`research.report_metadata`、錯誤側檔進失敗清單與 `last_stats` 的 `sidecar_invalid`、第二層的摘要／錨定的摘錄／訊號、`backfill_tiers.py --tier 3` 補上第三層、`/readyz`、`/api/branding` 是示範品牌、登入、`/api/markets` 只有子集、`/api/search` 有結果、未啟用的市場回 422、`/api/ask` 的 SSE 走完且引用只落在來源編號內（無效編號在串流中被替換）、閱讀頁 `/text`、容器內 loopback 的 `/metrics`。退出碼 0 全過、1 有失敗、2 環境不符。
+
+- web 預設關 rerank（`ASK_RERANK_ENABLED=0`，省約 2 GB 記憶體；`--rerank` 打開）。峰值約 4 GB（入庫時一份嵌入模型、web 一份，不同時）。
+- 真實 LLM 版本：`--real-llm`，設定取自 `E2E_LLM_PROVIDER`（預設 `openai`）、`E2E_LLM_API_KEY`、`E2E_LLM_MODEL`、`E2E_LLM_BASE_URL`（選填），只寫進暫存目錄的 `.env`（0600）。workflow 的 `workflow_dispatch` 勾 `real_llm` 才跑，repo 沒設 `E2E_LLM_API_KEY`／`E2E_LLM_MODEL` secret 就跳過。真實模型的回答不是決定性的，所以不檢查無效引用標記。
+- CI 的映像層快取在 GitHub Actions cache（`mode=min`）；未命中時 build 要下載約 4.5 GB 權重。repo 的快取額度（10 GB）被擠掉時只是變慢，不會失敗。
 
 ## 從主機部署遷入
 

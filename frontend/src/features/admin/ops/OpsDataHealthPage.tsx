@@ -13,11 +13,12 @@ import OpsRetrievalRegressionCard from './OpsRetrievalRegressionCard'
 import { useServiceActions } from './services/useServiceActions'
 import { useDataHealth } from './useOps'
 import styles from './data/Data.module.css'
+import { t } from '@/i18n'
 
 type FreshnessState = FreshnessSection['findings'][number]['state']
 
 const FRESHNESS_LABELS: Record<FreshnessState, string> = {
-  fresh: '新鮮', stale: '停更', suppressed: '略過（無新研報）', disabled: '只列出', upstream_stale: '管線未跑完',
+  get fresh() { return t('admin.ops.opsDataHealthPage.fresh') }, get stale() { return t('admin.ops.opsDataHealthPage.stale') }, get suppressed() { return t('admin.ops.opsDataHealthPage.skippedNoNewReports') }, get disabled() { return t('admin.ops.opsDataHealthPage.onlyListed') }, get upstream_stale() { return t('admin.ops.opsDataHealthPage.pipelineDidnTFinish') },
 }
 const FRESHNESS_TONE: Record<FreshnessState, LampTone> = {
   fresh: 'ok', stale: 'bad', suppressed: 'idle', disabled: 'idle', upstream_stale: 'bad',
@@ -29,10 +30,10 @@ const STAT_LABELS: [keyof ReconcileStats, string][] = [
   ['sha_metadata_missing', '舊檔無 SHA metadata'], ['orphans', 'orphan（R2 有、DB 沒有）'],
 ]
 const ISSUE_LABELS: Record<string, string> = {
-  error: '錯誤', unkeyed: 'DB 缺 key', key_mismatch: 'key 不符', missing: '缺檔', size_mismatch: '大小不符',
-  sha_mismatch: 'SHA 不符', sha_metadata_missing: '無 SHA metadata', orphan: 'orphan',
+  get error() { return t('admin.ops.opsDataHealthPage.errors') }, get unkeyed() { return t('admin.ops.opsDataHealthPage.missingKeyInDb') }, get key_mismatch() { return t('admin.ops.opsDataHealthPage.keyMismatch') }, get missing() { return t('admin.ops.opsDataHealthPage.missing') }, get size_mismatch() { return t('admin.ops.opsDataHealthPage.sizeMismatch') },
+  get sha_mismatch() { return t('admin.ops.opsDataHealthPage.shaMismatch') }, get sha_metadata_missing() { return t('admin.ops.opsDataHealthPage.noShaMetadata') }, orphan: 'orphan',
 }
-const UNAVAILABLE: Record<string, string> = { missing: '還沒有結果檔', too_large: '結果檔過大，未讀取' }
+const UNAVAILABLE: Record<string, string> = { get missing() { return t('admin.ops.opsDataHealthPage.noResultFileYet') }, get too_large() { return t('admin.ops.opsDataHealthPage.resultFileTooLargeNot') } }
 
 /**
  * 頁首的「立即執行」：這三段各自對應的排程服務（Service Catalog 的名稱）。只有這台主機的 catalog 開放 run、
@@ -42,14 +43,14 @@ const RUN_SERVICES = ['freshness', 'audit', 'r2-reconcile'] as const
 
 function fmtAge(days: number | null | undefined): string {
   if (days == null) return '—'
-  if (days < 1) return `${(days * 24).toFixed(1)} 小時前`
-  return `${days.toFixed(1)} 天前`
+  if (days < 1) return t('admin.ops.opsDataHealthPage.hAgo', { v: (days * 24).toFixed(1) })
+  return t('admin.ops.opsDataHealthPage.daysAgo', { days: days.toFixed(1) })
 }
 
 /** 結果檔類的段落在數字磚上的補充：最後一次的時間，或為什麼沒有。 */
 function resultHint(section: DbAuditSection | R2ReconcileSection): string {
-  if (!section.available) return UNAVAILABLE[section.unavailable_reason ?? ''] ?? '結果檔無法讀取'
-  return `最後一次 ${fmtDateTime(section.finished_at)}${section.stale ? '・已過期' : ''}`
+  if (!section.available) return UNAVAILABLE[section.unavailable_reason ?? ''] ?? t('admin.ops.opsDataHealthPage.resultFileUnreadable')
+  return t('admin.ops.opsDataHealthPage.lastRun', { finished_at: fmtDateTime(section.finished_at), v: section.stale ? t('admin.ops.opsDataHealthPage.expired') : '' })
 }
 
 function ResultMeta({ section, schedule }: { section: DbAuditSection | R2ReconcileSection; schedule: string }) {
@@ -57,19 +58,19 @@ function ResultMeta({ section, schedule }: { section: DbAuditSection | R2Reconci
     const why = section.unavailable_reason ?? ''
     return (
       <p className={styles.idle}>
-        {UNAVAILABLE[why] ?? `結果檔無法讀取（${why}）`}。{schedule}跑完後才會出現在這裡。
+        {UNAVAILABLE[why] ?? t('admin.ops.opsDataHealthPage.resultFileUnreadable2', { why })}{t('admin.ops.opsDataHealthPage.itAppearsHereAfterFinishes', { schedule })}
       </p>
     )
   }
   return (
     <>
       <p className={c.meta}>
-        <span>最後一次 <b>{fmtDateTime(section.finished_at)}</b></span>
-        {section.exit_code != null && <span>退出碼 <b>{section.exit_code}</b></span>}
+        <span>{t('admin.ops.opsDataHealthPage.lastRun2')}{' '}<b>{fmtDateTime(section.finished_at)}</b></span>
+        {section.exit_code != null && <span>{t('admin.ops.opsDataHealthPage.exitCode')}{' '}<b>{section.exit_code}</b></span>}
         <span>{schedule}</span>
       </p>
       {section.stale && (
-        <p className={c.banner} data-tone="warn">結果已超過排程週期沒有更新：確認 timer 有在跑、或結果檔寫得進去。</p>
+        <p className={c.banner} data-tone="warn">{t('admin.ops.opsDataHealthPage.theResultHasnTBeen')}</p>
       )}
     </>
   )
@@ -77,16 +78,16 @@ function ResultMeta({ section, schedule }: { section: DbAuditSection | R2Reconci
 
 function FreshnessCard({ s }: { s: FreshnessSection }) {
   return (
-    <Card title="批次新鮮度" labelledBy="dh-fresh-title" right={<HealthStatus status={s.status} />}>
+    <Card title={t('admin.ops.opsDataHealthPage.batchFreshness')} labelledBy="dh-fresh-title" right={<HealthStatus status={s.status} />}>
       <div className={styles.body}>
         <p className={c.meta}>
-          <span>即時判讀（與每日 08:30 的 report-mark-freshness 同一組規則）</span>
+          <span>{t('admin.ops.opsDataHealthPage.liveCheckSameRulesAs')}</span>
         </p>
-        {s.error && <p className={c.error} role="alert">{s.error}：只能判讀管線心跳。</p>}
+        {s.error && <p className={c.error} role="alert">{t('admin.ops.opsDataHealthPage.onlyThePipelineHeartbeatCan', { error: s.error })}</p>}
       </div>
       <div className={c.tableWrap}>
-        <table className={c.table} aria-label="批次新鮮度">
-          <thead><tr><th>項目</th><th>狀態</th><th>最新產出</th><th>門檻</th><th>說明</th></tr></thead>
+        <table className={c.table} aria-label={t('admin.ops.opsDataHealthPage.batchFreshness')}>
+          <thead><tr><th>{t('admin.ops.opsDataHealthPage.item')}</th><th>{t('admin.ops.opsDataHealthPage.status')}</th><th>{t('admin.ops.opsDataHealthPage.latestOutput')}</th><th>{t('admin.ops.opsDataHealthPage.threshold')}</th><th>{t('admin.ops.opsDataHealthPage.description')}</th></tr></thead>
           <tbody>
             {s.findings.map(f => (
               <tr key={f.asset}>
@@ -97,7 +98,7 @@ function FreshnessCard({ s }: { s: FreshnessSection }) {
                   {f.age_days != null && <div className={c.sub}>{fmtAge(f.age_days)}</div>}
                 </td>
                 <td className={c.num}>
-                  {f.threshold_days > 0 ? `${f.threshold_days} ${f.asset === 'pipeline' ? '小時' : '天'}` : '不告警'}
+                  {f.threshold_days > 0 ? `${f.threshold_days} ${f.asset === 'pipeline' ? t('admin.ops.opsDataHealthPage.h') : t('admin.ops.opsDataHealthPage.days')}` : t('admin.ops.opsDataHealthPage.noAlert')}
                 </td>
                 <td><div className={styles.cellText}>{f.detail}</div></td>
               </tr>
@@ -111,16 +112,16 @@ function FreshnessCard({ s }: { s: FreshnessSection }) {
 
 function AuditCard({ s }: { s: DbAuditSection }) {
   return (
-    <Card title="資料完整性稽核" labelledBy="dh-audit-title" right={<HealthStatus status={s.status} />}>
+    <Card title={t('admin.ops.opsDataHealthPage.dataIntegrityAudit')} labelledBy="dh-audit-title" right={<HealthStatus status={s.status} />}>
       <div className={styles.body}>
-        <ResultMeta section={s} schedule="每日 08:45 由 report-mark-audit 執行（只讀不修，警告也算失敗）" />
+        <ResultMeta section={s} schedule={t('admin.ops.opsDataHealthPage.runDailyAt0845')} />
         {s.error && <p className={c.error} role="alert">{s.error}</p>}
-        {s.skipped.length > 0 && <p className={styles.note}>這次跳過：{s.skipped.join('、')}</p>}
+        {s.skipped.length > 0 && <p className={styles.note}>{t('admin.ops.opsDataHealthPage.skippedThisTime')}{s.skipped.join(t('admin.ops.opsDataHealthPage.text'))}</p>}
       </div>
       {s.findings.length > 0 && (
         <div className={c.tableWrap}>
-          <table className={c.table} aria-label="稽核檢查">
-            <thead><tr><th>檢查</th><th>級別</th><th className={c.tdRight}>違反數</th><th>處置</th></tr></thead>
+          <table className={c.table} aria-label={t('admin.ops.opsDataHealthPage.auditChecks')}>
+            <thead><tr><th>{t('admin.ops.opsDataHealthPage.check')}</th><th>{t('admin.ops.opsDataHealthPage.level')}</th><th className={c.tdRight}>{t('admin.ops.opsDataHealthPage.violations')}</th><th>{t('admin.ops.opsDataHealthPage.remedy')}</th></tr></thead>
             <tbody>
               {s.findings.map(f => (
                 <tr key={f.key}>
@@ -128,10 +129,10 @@ function AuditCard({ s }: { s: DbAuditSection }) {
                     <div className={styles.cellText}>{f.label}</div>
                     <div className={`${c.sub} ${c.mono}`}>{f.key}</div>
                   </td>
-                  <td className={c.nowrap}>{f.severity === 'error' ? '錯誤' : '警告'}</td>
+                  <td className={c.nowrap}>{f.severity === 'error' ? t('admin.ops.opsDataHealthPage.errors') : t('admin.ops.opsDataHealthPage.warning')}</td>
                   <td className={c.tdRight}><Chip tone={f.count > 0 ? 'bad' : 'ok'} mono>{f.count}</Chip></td>
                   <td>
-                    {f.count > 0 ? <div className={styles.cellText}>{f.detail}</div> : <span className={c.muted}>乾淨</span>}
+                    {f.count > 0 ? <div className={styles.cellText}>{f.detail}</div> : <span className={c.muted}>{t('admin.ops.opsDataHealthPage.clean')}</span>}
                   </td>
                 </tr>
               ))}
@@ -145,28 +146,28 @@ function AuditCard({ s }: { s: DbAuditSection }) {
 
 function ReconcileCard({ s }: { s: R2ReconcileSection }) {
   return (
-    <Card title="R2 物件儲存對帳" labelledBy="dh-r2-title" right={<HealthStatus status={s.status} />}>
+    <Card title={t('admin.ops.opsDataHealthPage.r2ObjectStorageReconciliation')} labelledBy="dh-r2-title" right={<HealthStatus status={s.status} />}>
       <div className={styles.body}>
-        <ResultMeta section={s} schedule="每週一 07:00 由 report-mark-r2-reconcile 執行（唯讀，不刪任何物件）" />
+        <ResultMeta section={s} schedule={t('admin.ops.opsDataHealthPage.runEveryMondayAt07')} />
         {s.available && s.mode === 'local' && (
-          <p className={styles.note}>OBJECT_STORAGE_MODE=local：沒有 R2 可對帳。</p>
+          <p className={styles.note}>{t('admin.ops.opsDataHealthPage.objectStorageModeLocalNo')}</p>
         )}
         {s.stats && (
-          <dl className={`${c.kv} ${styles.kvWide}`} aria-label="對帳計數">
+          <dl className={`${c.kv} ${styles.kvWide}`} aria-label={t('admin.ops.opsDataHealthPage.reconciliationCounts')}>
             {STAT_LABELS.map(([key, label]) => (
               <Fragment key={key}>
                 <dt>{label}</dt>
                 <dd>{s.stats![key]}</dd>
               </Fragment>
             ))}
-            <dt>orphan 掃描</dt>
-            <dd>{s.orphan_scan === 'done' ? '已完成' : s.orphan_scan === 'error' ? '失敗' : '略過（有 --limit）'}</dd>
+            <dt>{t('admin.ops.opsDataHealthPage.orphanScan')}</dt>
+            <dd>{s.orphan_scan === 'done' ? t('admin.ops.opsDataHealthPage.completed') : s.orphan_scan === 'error' ? t('admin.ops.opsDataHealthPage.failed') : t('admin.ops.opsDataHealthPage.skippedLimitSet')}</dd>
           </dl>
         )}
         {s.issues.length > 0 && (
           <details className={styles.details}>
             <summary>
-              問題樣本 {s.issues.length} 筆{s.issues_total > s.issues.length && `（共 ${s.issues_total} 筆，完整清單看該次 journal）`}
+              {t('admin.ops.opsDataHealthPage.sampleIssues', { length: s.issues.length })}{s.issues_total > s.issues.length && t('admin.ops.opsDataHealthPage.totalSeeThatRunS', { issues_total: s.issues_total })}
             </summary>
             <ul className={styles.list}>
               {s.issues.map((i, n) => (
@@ -186,17 +187,17 @@ function ReconcileCard({ s }: { s: R2ReconcileSection }) {
 function Tiles({ d }: { d: DataHealthResponse }) {
   const stale = d.freshness.findings.filter(f => f.state === 'stale' || f.state === 'upstream_stale').length
   const tiles = [
-    { name: '整體', status: d.overall, hint: `產生於 ${fmtDateTime(d.generated_at)}・快取 60 秒` },
-    { name: '新鮮度', status: d.freshness.status,
-      hint: stale > 0 ? `${stale} 項停更・共 ${d.freshness.findings.length} 項` : `即時判讀・共 ${d.freshness.findings.length} 項` },
-    { name: '完整性稽核', status: d.db_audit.status, hint: resultHint(d.db_audit) },
-    { name: 'R2 對帳', status: d.r2_reconcile.status, hint: resultHint(d.r2_reconcile) },
+    { name: t('admin.ops.opsDataHealthPage.overall'), status: d.overall, hint: t('admin.ops.opsDataHealthPage.generatedAtCached60S', { generated_at: fmtDateTime(d.generated_at) }) },
+    { name: t('admin.ops.opsDataHealthPage.freshness'), status: d.freshness.status,
+      hint: stale > 0 ? t('admin.ops.opsDataHealthPage.staleOf', { stale, length: d.freshness.findings.length }) : t('admin.ops.opsDataHealthPage.liveCheckItems', { length: d.freshness.findings.length }) },
+    { name: t('admin.ops.opsDataHealthPage.integrityAudit'), status: d.db_audit.status, hint: resultHint(d.db_audit) },
+    { name: t('admin.ops.opsDataHealthPage.r2Reconciliation'), status: d.r2_reconcile.status, hint: resultHint(d.r2_reconcile) },
   ]
   return (
     <div className={`${c.tiles} ${styles.wideTiles}`}>
-      {tiles.map(t => (
-        <StatTile key={t.name} name={t.name} label={t.name} value={HEALTH_LABELS[t.status]} tone={healthTileTone(t.status)}
-          sub={t.hint} subTitle={t.hint} />
+      {tiles.map(item => (
+        <StatTile key={item.name} name={item.name} label={item.name} value={HEALTH_LABELS[item.status]} tone={healthTileTone(item.status)}
+          sub={item.hint} subTitle={item.hint} />
       ))}
     </div>
   )
@@ -213,21 +214,19 @@ export default function OpsDataHealthPage() {
   const runnable = useRunnableServices(ops.canOperate)
   const header = (
     <PageHeader
-      summary="批次新鮮度、資料完整性稽核與 R2 物件儲存對帳。"
+      summary={t('admin.ops.opsDataHealthPage.batchFreshnessDataIntegrityAudit')}
       help={(
         <>
-          批次新鮮度是即時判讀（與每日 08:30 的 report-mark-freshness 同一組規則）；資料完整性稽核與 R2 對帳不在 web 裡跑，
-          讀的是兩支 timer 最後一次寫的結果檔，結果檔比排程週期舊時會標示。檢索回歸同樣只讀結果檔。
-          「立即執行」等同 timer 觸發一次，需要 <code>ops.operate</code>，執行前要重新驗證；結果檔寫好後按「重新整理」。
+          {t('admin.ops.opsDataHealthPage.batchFreshnessIsCheckedLive')}{' '}<code>ops.operate</code>{t('admin.ops.opsDataHealthPage.plusReVerificationBeforeRunning')}
         </>
       )}
       actions={(
         <>
           {RUN_SERVICES.filter(name => runnable.has(name)).map(name => (
-            <Button key={name} disabled={ops.busy} onClick={() => ops.request(name, 'run')}>立即執行 {name}</Button>
+            <Button key={name} disabled={ops.busy} onClick={() => ops.request(name, 'run')}>{t('admin.ops.opsDataHealthPage.runNow', { name })}</Button>
           ))}
           <Button onClick={() => { void q.refetch() }} disabled={q.isFetching}>
-            {q.isFetching ? '重新整理中…' : '重新整理'}
+            {q.isFetching ? t('admin.ops.opsDataHealthPage.refreshing') : t('admin.ops.opsDataHealthPage.refresh')}
           </Button>
         </>
       )}
@@ -237,8 +236,8 @@ export default function OpsDataHealthPage() {
   return (
     <>
       {header}
-      {q.isPending ? <p className={c.empty}>載入中…</p> : q.isError || !d ? (
-        <OpsQueryError error={q.error} what="資料健康" />
+      {q.isPending ? <p className={c.empty}>{t('admin.ops.opsDataHealthPage.loading')}</p> : q.isError || !d ? (
+        <OpsQueryError error={q.error} what={t('admin.ops.opsDataHealthPage.dataHealth')} />
       ) : (
         <>
           <Tiles d={d} />

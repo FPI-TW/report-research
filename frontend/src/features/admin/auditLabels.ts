@@ -1,52 +1,53 @@
 import type { AuditEntry } from '../../lib/adminSchemas'
+import { t } from '@/i18n'
 
 /** 稽核 action → 中文。未知的 action（後端日後新增）原樣顯示代碼，不讓整列消失。 */
 const ACTION_LABELS: Record<string, string> = {
-  'user.create': '建立帳號',
-  'user.sso_link': '綁定公司帳號',
-  'user.set_role': '變更角色',
-  'user.enable': '啟用帳號',
-  'user.disable': '停用帳號',
-  'user.reset_password': '重設密碼',
-  'user.force_logout': '強制登出',
-  'user.set_privileges': '調整權限',
-  'user.totp_enable': '開啟兩步驟驗證',
-  'user.totp_disable': '關閉兩步驟驗證',
-  'user.totp_reset': '重設兩步驟驗證',
-  'user.delete_requested': '提出刪除帳號',
-  'user.delete_cancelled': '取消刪除帳號',
-  'user.delete_executed': '執行刪除帳號',
-  'user.delete_replayed': '重放刪除（還原後）',
-  'review.update': '處理待複核',
-  'qa_content.read': '查看問答內容',
-  'report.hide': '隱藏研報',
-  'report.restore': '恢復研報',
-  'report.bulk_visibility': '批次隱藏／恢復研報',
-  'user.bulk_action': '批次帳號操作',
-  'data.export': '匯出 CSV',
-  'session.elevate': '重新驗證（權限提升）',
-  'session.elevate_failed': '重新驗證失敗',
-  'ops.restart': '重新啟動服務',
-  'ops.run': '立即執行批次',
+  get 'user.create'() { return t('admin.auditLabels.createAccount') },
+  get 'user.sso_link'() { return t('admin.auditLabels.bindCompanyAccount') },
+  get 'user.set_role'() { return t('admin.auditLabels.changeRole') },
+  get 'user.enable'() { return t('admin.auditLabels.enableAccount') },
+  get 'user.disable'() { return t('admin.auditLabels.disableAccount') },
+  get 'user.reset_password'() { return t('admin.auditLabels.resetPassword') },
+  get 'user.force_logout'() { return t('admin.auditLabels.forceSignOut') },
+  get 'user.set_privileges'() { return t('admin.auditLabels.adjustPermissions') },
+  get 'user.totp_enable'() { return t('admin.auditLabels.turnOnTwoStepVerification') },
+  get 'user.totp_disable'() { return t('admin.auditLabels.turnOffTwoStepVerification') },
+  get 'user.totp_reset'() { return t('admin.auditLabels.resetTwoStepVerification') },
+  get 'user.delete_requested'() { return t('admin.auditLabels.requestAccountDeletion') },
+  get 'user.delete_cancelled'() { return t('admin.auditLabels.cancelAccountDeletion') },
+  get 'user.delete_executed'() { return t('admin.auditLabels.executeAccountDeletion') },
+  get 'user.delete_replayed'() { return t('admin.auditLabels.replayDeletionAfterRestore') },
+  get 'review.update'() { return t('admin.auditLabels.handleReviewItem') },
+  get 'qa_content.read'() { return t('admin.auditLabels.viewQAContent') },
+  get 'report.hide'() { return t('admin.auditLabels.hideReport') },
+  get 'report.restore'() { return t('admin.auditLabels.restoreReport') },
+  get 'report.bulk_visibility'() { return t('admin.auditLabels.batchHideRestoreReports') },
+  get 'user.bulk_action'() { return t('admin.auditLabels.batchAccountAction') },
+  get 'data.export'() { return t('admin.auditLabels.exportCsv') },
+  get 'session.elevate'() { return t('admin.auditLabels.reVerifyElevation') },
+  get 'session.elevate_failed'() { return t('admin.auditLabels.reVerificationFailed') },
+  get 'ops.restart'() { return t('admin.auditLabels.restartService') },
+  get 'ops.run'() { return t('admin.auditLabels.runBatchNow') },
   // Admin v2（Wave 0 預先放好；稽核 action 名稱是穩定介面，各 lane 照用）
-  'session.admin_revoke': '撤銷 session',
-  'flag.update': '變更功能旗標',
-  'quota.update': '調整配額',
-  'api_client.create': '建立 API 用戶端',
-  'api_client.update': '變更 API 用戶端設定',
-  'api_client.entitlements': '變更 API 用戶端授權範圍',
-  'api_client.rotate': '輪替 API 用戶端金鑰',
+  get 'session.admin_revoke'() { return t('admin.auditLabels.revokeSession') },
+  get 'flag.update'() { return t('admin.auditLabels.changeFeatureFlag') },
+  get 'quota.update'() { return t('admin.auditLabels.adjustQuota') },
+  get 'api_client.create'() { return t('admin.auditLabels.createApiClient') },
+  get 'api_client.update'() { return t('admin.auditLabels.changeApiClientSettings') },
+  get 'api_client.entitlements'() { return t('admin.auditLabels.changeApiClientAccessScope') },
+  get 'api_client.rotate'() { return t('admin.auditLabels.rotateApiClientKey') },
   // 研報上傳：前五個是管理員在上傳頁的動作（`upload_intake.py`、`upload_review.py`），後四個是上傳 worker 自己寫的
   // （`upload_worker.py`，沒有操作者）。收檔／發布／退回的說法與使用分析（`analytics/analyticsFormat.ts`）一致。
-  'upload.create': '上傳收檔',
-  'upload.publish': '上傳發布',
-  'upload.reject': '上傳退回',
-  'upload.unreject': '上傳撤銷退回',
-  'upload.retry': '上傳重試',
-  'upload.blocked': '上傳已攔截',
-  'upload.infected': '上傳偵測到惡意程式',
-  'upload.purge': '清除已退回的上傳',
-  'upload.evidence_purged': '清除已攔截上傳的留存檔',
+  get 'upload.create'() { return t('admin.auditLabels.uploadReceived') },
+  get 'upload.publish'() { return t('admin.auditLabels.uploadPublished') },
+  get 'upload.reject'() { return t('admin.auditLabels.uploadRejected') },
+  get 'upload.unreject'() { return t('admin.auditLabels.uploadRejectionUndone') },
+  get 'upload.retry'() { return t('admin.auditLabels.uploadRetried') },
+  get 'upload.blocked'() { return t('admin.auditLabels.uploadBlocked') },
+  get 'upload.infected'() { return t('admin.auditLabels.malwareDetectedInUpload') },
+  get 'upload.purge'() { return t('admin.auditLabels.purgeRejectedUpload') },
+  get 'upload.evidence_purged'() { return t('admin.auditLabels.purgeRetainedFileOfBlocked') },
 }
 
 /**
@@ -54,41 +55,41 @@ const ACTION_LABELS: Record<string, string> = {
  * `app/services/accounts.py` 的 `AUTH_EVENT_TYPES`；這裡沒有守門測試，未知的事件原樣顯示代碼。
  */
 const AUTH_EVENT_LABELS: Record<string, string> = {
-  'login.success': '登入成功',
-  'login.failure': '登入失敗',
-  'login.totp_failure': '兩步驟驗證失敗',
-  'login.locked': '登入被限流',
-  'login.insecure': '非 HTTPS 登入被拒',
-  logout: '登出',
-  'elevate.success': '重新驗證成功',
-  'elevate.failure': '重新驗證失敗',
-  'login.sso_failure': '公司帳號登入失敗',
+  get 'login.success'() { return t('admin.auditLabels.signInSucceeded') },
+  get 'login.failure'() { return t('admin.auditLabels.signInFailed') },
+  get 'login.totp_failure'() { return t('admin.auditLabels.twoStepVerificationFailed') },
+  get 'login.locked'() { return t('admin.auditLabels.signInRateLimited') },
+  get 'login.insecure'() { return t('admin.auditLabels.nonHttpsSignInRefused') },
+  get logout() { return t('admin.auditLabels.signOut') },
+  get 'elevate.success'() { return t('admin.auditLabels.reVerificationSucceeded') },
+  get 'elevate.failure'() { return t('admin.auditLabels.reVerificationFailed') },
+  get 'login.sso_failure'() { return t('admin.auditLabels.companyAccountSignInFailed') },
 }
 const AUTH_REASON_LABELS: Record<string, string> = {
-  password: '密碼', totp: '兩步驟驗證', unknown_user: '帳號不存在', bad_password: '密碼錯誤', disabled: '帳號已停用',
-  bad_code: '驗證碼錯誤', expired_challenge: '驗證逾時',
-  sso: '公司帳號', sso_only: '只允許公司帳號', state: '登入流程失效', idp_error: 'IdP 拒絕', token: 'ID token 無效',
-  claims: '缺少必要資訊', domain: '網域不允許', username_conflict: '帳號名稱已被使用', invalid_username: '帳號名稱不合規',
-  break_glass: '撞到緊急管理員帳號', sso_stale_auth: 'IdP 未重新驗證', sso_identity: '公司帳號不符',
-  sso_session: '登入狀態已失效',
+  get password() { return t('admin.auditLabels.password') }, get totp() { return t('admin.auditLabels.twoStepVerification') }, get unknown_user() { return t('admin.auditLabels.accountDoesnTExist') }, get bad_password() { return t('admin.auditLabels.wrongPassword') }, get disabled() { return t('admin.auditLabels.accountDisabled') },
+  get bad_code() { return t('admin.auditLabels.wrongVerificationCode') }, get expired_challenge() { return t('admin.auditLabels.verificationTimedOut') },
+  get sso() { return t('admin.auditLabels.companyAccount') }, get sso_only() { return t('admin.auditLabels.companyAccountOnly') }, get state() { return t('admin.auditLabels.signInFlowExpired') }, get idp_error() { return t('admin.auditLabels.rejectedByIdp') }, get token() { return t('admin.auditLabels.invalidIdToken') },
+  get claims() { return t('admin.auditLabels.missingRequiredInformation') }, get domain() { return t('admin.auditLabels.domainNotAllowed') }, get username_conflict() { return t('admin.auditLabels.usernameAlreadyTaken') }, get invalid_username() { return t('admin.auditLabels.invalidUsername') },
+  get break_glass() { return t('admin.auditLabels.conflictsWithBreakGlassAdmin') }, get sso_stale_auth() { return t('admin.auditLabels.idpDidNotReAuthenticate') }, get sso_identity() { return t('admin.auditLabels.companyAccountMismatch') },
+  get sso_session() { return t('admin.auditLabels.signInStateExpired') },
 }
 
 export function authEventLabel(event: string, reason?: string | null): string {
   const base = AUTH_EVENT_LABELS[event] ?? event
-  return reason ? `${base}（${AUTH_REASON_LABELS[reason] ?? reason}）` : base
+  return reason ? t('admin.auditLabels.text', { base, v: AUTH_REASON_LABELS[reason] ?? reason }) : base
 }
 
-const ROLE_LABELS: Record<string, string> = { admin: '管理員', user: '一般使用者' }
-const REVIEW_STATUS: Record<string, string> = { open: '待處理', resolved: '已處理', dismissed: '略過' }
-const REVIEW_KIND: Record<string, string> = { faithfulness: '忠實度低分', feedback: '倒讚', extraction: '抽取品質' }
-const VERIFICATION: Record<string, string> = { untested: '未驗證', passed: '通過', failed: '未通過' }
-const BULK_USER_VERBS: Record<string, string> = { disable: '停用', enable: '啟用', logout: '強制登出' }
+const ROLE_LABELS: Record<string, string> = { get admin() { return t('admin.auditLabels.admin') }, get user() { return t('admin.auditLabels.regularUser') } }
+const REVIEW_STATUS: Record<string, string> = { get open() { return t('admin.auditLabels.pending') }, get resolved() { return t('admin.auditLabels.handled') }, get dismissed() { return t('admin.auditLabels.skipped') } }
+const REVIEW_KIND: Record<string, string> = { get faithfulness() { return t('admin.auditLabels.lowFaithfulness') }, get feedback() { return t('admin.auditLabels.thumbsDown') }, get extraction() { return t('admin.auditLabels.extractionQuality') } }
+const VERIFICATION: Record<string, string> = { get untested() { return t('admin.auditLabels.untested') }, get passed() { return t('admin.auditLabels.passed') }, get failed() { return t('admin.auditLabels.failed') } }
+const BULK_USER_VERBS: Record<string, string> = { get disable() { return t('admin.auditLabels.disable') }, get enable() { return t('admin.auditLabels.enable') }, get logout() { return t('admin.auditLabels.forceSignOut') } }
 const EXPORT_KINDS: Record<string, string> = {
-  audit: '操作紀錄', users: '帳號清單', reports: '研報清單', incidents: '事件清單', jobs: '排程工作',
+  get audit() { return t('admin.auditLabels.auditLog') }, get users() { return t('admin.auditLabels.accountList') }, get reports() { return t('admin.auditLabels.reportList') }, get incidents() { return t('admin.auditLabels.incidentList') }, get jobs() { return t('admin.auditLabels.scheduledJobs') },
 }
 
 // API 用戶端設定欄位 → 中文（`api_client.update` 的 detail.before／after 鍵；enabled 與 note 另外處理）。
-const API_CLIENT_FIELDS: Record<string, string> = { scopes: '端點', rate_limit_per_min: '每分鐘限流', daily_quota: '每日額度' }
+const API_CLIENT_FIELDS: Record<string, string> = { get scopes() { return t('admin.auditLabels.endpoints') }, get rate_limit_per_min() { return t('admin.auditLabels.rateLimitPerMinute') }, get daily_quota() { return t('admin.auditLabels.dailyQuota') } }
 
 export function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action
@@ -105,10 +106,10 @@ export function roleLabel(role: string): string {
 export function actorLabel(entry: AuditEntry): string {
   if (entry.actor_username) return entry.actor_username
   if (entry.actor_user_id == null && (entry.detail.via === 'sso_jit' || entry.detail.via === 'sso')) {
-    return '系統（公司帳號登入）'
+    return t('admin.auditLabels.systemCompanyAccountSignIn')
   }
-  if (entry.actor_user_id == null) return '指令列（CLI）'
-  return '（已不存在的帳號）'
+  if (entry.actor_user_id == null) return t('admin.auditLabels.commandLineCli')
+  return t('admin.auditLabels.deletedAccount')
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
@@ -123,7 +124,7 @@ export function auditSummary(entry: AuditEntry): string {
   if (entry.action === 'user.set_role' && str(d.from) && str(d.to)) {
     parts.push(`${roleLabel(str(d.from)!)} → ${roleLabel(str(d.to)!)}`)
   }
-  if (typeof d.revoked_sessions === 'number' && d.revoked_sessions > 0) parts.push(`登出 ${d.revoked_sessions} 個 session`)
+  if (typeof d.revoked_sessions === 'number' && d.revoked_sessions > 0) parts.push(t('admin.auditLabels.signedOutSessions', { revoked_sessions: d.revoked_sessions }))
   if (entry.action === 'review.update') {
     if (str(d.kind)) parts.push(REVIEW_KIND[str(d.kind)!] ?? str(d.kind)!)
     if (str(d.status)) parts.push(REVIEW_STATUS[str(d.status)!] ?? str(d.status)!)
@@ -132,53 +133,53 @@ export function auditSummary(entry: AuditEntry): string {
   if (entry.action === 'user.set_privileges') {
     const flag = d.is_super && typeof d.is_super === 'object' ? d.is_super as { from?: unknown; to?: unknown } : null
     if (flag && typeof flag.from === 'boolean' && typeof flag.to === 'boolean' && flag.from !== flag.to) {
-      parts.push(flag.to ? '設為 super admin' : '取消 super admin')
+      parts.push(flag.to ? t('admin.auditLabels.madeSuperAdmin') : t('admin.auditLabels.removedSuperAdmin'))
     }
     const scopes = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
-    if (scopes(d.scopes_added).length) parts.push(`授予 ${scopes(d.scopes_added).join('、')}`)
-    if (scopes(d.scopes_removed).length) parts.push(`收回 ${scopes(d.scopes_removed).join('、')}`)
+    if (scopes(d.scopes_added).length) parts.push(t('admin.auditLabels.granted', { scopes_added: scopes(d.scopes_added).join(t('admin.auditLabels.text2')) }))
+    if (scopes(d.scopes_removed).length) parts.push(t('admin.auditLabels.revoked', { scopes_removed: scopes(d.scopes_removed).join(t('admin.auditLabels.text2')) }))
   }
   // 研報隱藏／恢復：detail 只有檔名與「有沒有寫原因」，原因全文刻意不進稽核。
   if (entry.action === 'report.hide' || entry.action === 'report.restore') {
     if (str(d.file_name)) parts.push(str(d.file_name)!)
-    else if (entry.target_id) parts.push(`研報 ${entry.target_id.slice(0, 12)}`)
-    if (entry.action === 'report.hide' && d.has_reason === true) parts.push('已填原因')
+    else if (entry.target_id) parts.push(t('admin.auditLabels.report', { slice: entry.target_id.slice(0, 12) }))
+    if (entry.action === 'report.hide' && d.has_reason === true) parts.push(t('admin.auditLabels.reasonGiven'))
   }
   if (entry.action === 'qa_content.read' && Array.isArray(d.kinds)) {
     const kinds = d.kinds.map(k => (typeof k === 'string' ? REVIEW_KIND[k] ?? k : '')).filter(Boolean)
-    if (kinds.length) parts.push(kinds.join('、'))
+    if (kinds.length) parts.push(kinds.join(t('admin.auditLabels.text2')))
   }
   // CSV 匯出：detail 只有種類、篩選條件、筆數與是否達上限（不含內容）。
   if (entry.action === 'data.export') {
     const kind = str(d.kind) ?? entry.target_id
     if (kind) parts.push(EXPORT_KINDS[kind] ?? kind)
-    if (typeof d.row_count === 'number') parts.push(`${d.row_count} 筆${d.truncated === true ? '（達上限）' : ''}`)
+    if (typeof d.row_count === 'number') parts.push(t('admin.auditLabels.rows', { row_count: d.row_count, v: d.truncated === true ? t('admin.auditLabels.limitReached') : '' }))
   }
   // 批次摘要：逐筆的變更各有自己的一列，這裡只說是哪個動作、變更幾筆、略過幾筆。
   const isBulk = entry.action === 'report.bulk_visibility' || entry.action === 'user.bulk_action'
   if (isBulk) {
     const verb = entry.action === 'report.bulk_visibility'
-      ? (d.hidden === true ? '隱藏' : '恢復')
+      ? (d.hidden === true ? t('admin.auditLabels.hide') : t('admin.auditLabels.restore'))
       : BULK_USER_VERBS[str(d.action) ?? ''] ?? str(d.action) ?? ''
     if (verb) parts.push(verb)
-    if (typeof d.changed === 'number') parts.push(`變更 ${d.changed} 筆`)
+    if (typeof d.changed === 'number') parts.push(t('admin.auditLabels.changed', { changed: d.changed }))
     const skipped = d.skipped && typeof d.skipped === 'object'
       ? Object.values(d.skipped as Record<string, unknown>).reduce<number>((n, v) => n + (typeof v === 'number' ? v : 0), 0)
       : 0
-    if (skipped) parts.push(`略過 ${skipped} 筆`)
+    if (skipped) parts.push(t('admin.auditLabels.skipped2', { skipped }))
   }
   // API 用戶端：只講名稱與改了什麼。detail 的金鑰 prefix 刻意不顯示（原始金鑰與 hash 本來就不進稽核）。
   const isApiClient = entry.action.startsWith('api_client.')
   if (isApiClient) parts.push(...apiClientSummary(entry))
   // 研報上傳：每一種 action 的 detail 都帶原始檔名；講檔名，不顯示上傳代號（UUID）。
   const isUpload = entry.action.startsWith('upload.')
-  if (isUpload) parts.push(str(d.file_name) ?? (entry.target_id ? `上傳 ${entry.target_id.slice(0, 8)}` : '上傳'))
+  if (isUpload) parts.push(str(d.file_name) ?? (entry.target_id ? t('admin.auditLabels.upload', { slice: entry.target_id.slice(0, 8) }) : t('admin.auditLabels.upload2')))
   const isReport = entry.action === 'report.hide' || entry.action === 'report.restore'
   if (!who && entry.target_id && entry.action !== 'review.update' && !isReport && !isBulk && !isApiClient && !isUpload && entry.action !== 'data.export') parts.unshift(`${entry.target_type} ${entry.target_id}`)
   const via = str(d.via)
   if (via === 'web_bulk') {
-    if (!isBulk) parts.push('批次操作')
-  } else if (via && via !== 'web') parts.push(via.startsWith('cli') ? '經指令列' : `經 ${via}`)
+    if (!isBulk) parts.push(t('admin.auditLabels.batchAction'))
+  } else if (via && via !== 'web') parts.push(via.startsWith('cli') ? t('admin.auditLabels.viaCli') : t('admin.auditLabels.via', { via }))
   return parts.join('・') || '—'
 }
 
@@ -186,36 +187,36 @@ const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
 
 function apiClientSummary(entry: AuditEntry): string[] {
   const d = entry.detail
-  const parts = [str(d.name) ?? (entry.target_id ? `API 用戶端 #${entry.target_id}` : 'API 用戶端')]
+  const parts = [str(d.name) ?? (entry.target_id ? t('admin.auditLabels.apiClient', { target_id: entry.target_id }) : t('admin.auditLabels.apiClient2'))]
   const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {})
   const markets = (e: unknown) => strList(obj(e).market)
   if (entry.action === 'api_client.create') {
     const scopes = strList(d.scopes)
-    parts.push(scopes.length ? `端點 ${scopes.join('、')}` : '無端點')
-    if (markets(d.entitlements).length) parts.push(`市場 ${markets(d.entitlements).join('、')}`)
+    parts.push(scopes.length ? t('admin.auditLabels.endpoints2', { scopes: scopes.join(t('admin.auditLabels.text2')) }) : t('admin.auditLabels.noEndpoints'))
+    if (markets(d.entitlements).length) parts.push(t('admin.auditLabels.markets', { entitlements: markets(d.entitlements).join(t('admin.auditLabels.text2')) }))
   } else if (entry.action === 'api_client.update') {
     const before = obj(d.before)
     const after = obj(d.after)
     for (const key of Object.keys(after)) {
       if (key === 'enabled') {
-        if (typeof after.enabled === 'boolean') parts.push(after.enabled ? '啟用' : '停用')
+        if (typeof after.enabled === 'boolean') parts.push(after.enabled ? t('admin.auditLabels.enable') : t('admin.auditLabels.disable'))
       } else if (key === 'note') {
-        parts.push('變更備註')
+        parts.push(t('admin.auditLabels.noteChanged'))
       } else {
-        const show = (v: unknown) => (Array.isArray(v) ? strList(v).join('、') || '（無）' : String(v ?? '—'))
+        const show = (v: unknown) => (Array.isArray(v) ? strList(v).join(t('admin.auditLabels.text2')) || t('admin.auditLabels.none') : String(v ?? '—'))
         parts.push(`${API_CLIENT_FIELDS[key] ?? key} ${show(before[key])} → ${show(after[key])}`)
       }
     }
   } else if (entry.action === 'api_client.entitlements') {
-    const was = markets(d.before).join('、')
-    const now = markets(d.after).join('、')
-    if (now && was !== now) parts.push(`市場 ${was || '（無）'} → ${now}`)
+    const was = markets(d.before).join(t('admin.auditLabels.text2'))
+    const now = markets(d.after).join(t('admin.auditLabels.text2'))
+    if (now && was !== now) parts.push(t('admin.auditLabels.markets2', { v: was || t('admin.auditLabels.none'), now }))
     const dims = ['source', 'report_type', 'instrument_type'] as const
     const changed = dims.filter(k => strList(obj(d.before)[k]).join('\n') !== strList(obj(d.after)[k]).join('\n'))
-    const labels: Record<(typeof dims)[number], string> = { source: '券商', report_type: '報告類型', instrument_type: '商品類型' }
-    if (changed.length) parts.push(`變更${changed.map(k => labels[k]).join('、')}`)
+    const labels: Record<(typeof dims)[number], string> = { source: t('admin.auditLabels.brokers'), report_type: t('admin.auditLabels.reportTypes'), instrument_type: t('admin.auditLabels.assetClasses') }
+    if (changed.length) parts.push(t('admin.auditLabels.changed2', { map: changed.map(k => labels[k]).join(t('admin.auditLabels.text2')) }))
   } else if (entry.action === 'api_client.rotate') {
-    parts.push('已換新金鑰')
+    parts.push(t('admin.auditLabels.keyReplaced'))
   }
   return parts
 }

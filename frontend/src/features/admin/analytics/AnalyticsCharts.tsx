@@ -1,5 +1,6 @@
 import { fmtInt, shortDay } from './analyticsFormat'
 import styles from './Analytics.module.css'
+import { t } from '@/i18n'
 
 /*
  * 手寫 SVG 的小圖（不引入圖表庫）：viewBox 以「每天一格」為座標、preserveAspectRatio="none" 撐滿寬度，
@@ -26,21 +27,21 @@ export function BarChart({ title, days, values, today, format = fmtInt }: {
     <figure className={styles.chart}>
       <figcaption className={styles.chartTitle}>{title}</figcaption>
       <svg className={styles.chartSvg} viewBox={`0 0 ${n} ${H}`} preserveAspectRatio="none" role="img"
-        aria-label={`${title}：${days.length} 天，合計 ${format(total)}，單日最高 ${format(max)}`}>
+        aria-label={t('admin.analytics.analyticsCharts.daysTotalDailyMax', { title, length: days.length, total: format(total), max: format(max) })}>
         {values.map((v, i) => {
           const h = v == null ? H : (v / max) * (H - 4)
           return (
             <rect key={days[i] ?? i} x={i + 0.12} width={0.76} y={H - h} height={h}
               className={v == null ? styles.barMissing : styles.bar}
               data-today={(v != null && i === values.length - 1 && days[i] === today) || undefined}>
-              <title>{`${days[i]}：${v == null ? '沒有資料' : format(v)}`}</title>
+              <title>{t('admin.analytics.analyticsCharts.text', { days: days[i], v: v == null ? t('admin.analytics.analyticsCharts.noData') : format(v) })}</title>
             </rect>
           )
         })}
       </svg>
       <div className={styles.axis}>
         <span>{days.length ? shortDay(days[0]) : ''}</span>
-        <span>最高 {format(max)}</span>
+        <span>{t('admin.analytics.analyticsCharts.max', { max: format(max) })}</span>
         <span>{days.length ? shortDay(days[days.length - 1]) : ''}</span>
       </div>
     </figure>
@@ -76,13 +77,13 @@ export function LineChart({ title, days, a, b, format }: {
     <figure className={styles.chart}>
       <figcaption className={styles.chartTitle}>{title}</figcaption>
       <svg className={styles.chartSvg} viewBox={`0 0 ${n} ${H}`} preserveAspectRatio="none" role="img"
-        aria-label={`${title}：${days.length} 天，最高 ${format(max)}`}>
+        aria-label={t('admin.analytics.analyticsCharts.daysMax', { title, length: days.length, max: format(max) })}>
         {points(b.values, max).map((p, i) => <polyline key={`b${i}`} points={p} className={styles.lineB} />)}
         {points(a.values, max).map((p, i) => <polyline key={`a${i}`} points={p} className={styles.lineA} />)}
       </svg>
       <div className={styles.axis}>
         <span>{days.length ? shortDay(days[0]) : ''}</span>
-        <span>最高 {format(max)}</span>
+        <span>{t('admin.analytics.analyticsCharts.max', { max: format(max) })}</span>
         <span>{days.length ? shortDay(days[days.length - 1]) : ''}</span>
       </div>
       <div className={styles.legend}>

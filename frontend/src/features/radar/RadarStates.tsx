@@ -3,6 +3,7 @@ import { AlertCircle, BarChart3, Clock, SearchX } from 'lucide-react'
 import { ApiError } from '../../lib/api'
 import shared from './shared.module.css'
 import styles from './RadarStates.module.css'
+import { t } from '@/i18n'
 
 const ICONS = {
   error: AlertCircle,
@@ -40,21 +41,21 @@ export function StateBox({ icon, title, text, children, role = 'status' }: State
 
 /** HTTP 錯誤不是逾時，不說成逾時；連不上（fetch 本身失敗）才是。 */
 function errorText(error: unknown): string {
-  return error instanceof ApiError ? '請稍後再試。' : '連線逾時，請稍後再試。'
+  return error instanceof ApiError ? t('radar.radarStates.tryAgainLater') : t('radar.radarStates.theConnectionTimedOutTry')
 }
 
 export function RadarLoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   return (
-    <StateBox icon="error" role="alert" title="券商共識載入失敗" text={errorText(error)}>
-      <button type="button" className={shared.btn} onClick={onRetry}>重試</button>
+    <StateBox icon="error" role="alert" title={t('radar.radarStates.couldnTLoadConsensus')} text={errorText(error)}>
+      <button type="button" className={shared.btn} onClick={onRetry}>{t('radar.radarStates.retry')}</button>
     </StateBox>
   )
 }
 
 export function RadarNotFound({ onBack }: { onBack: () => void }) {
   return (
-    <StateBox icon="notFound" title="找不到這檔標的" text="目前沒有提及這檔標的的券商研報。">
-      <button type="button" className={shared.btn} onClick={onBack}>回到券商共識</button>
+    <StateBox icon="notFound" title={t('radar.radarStates.instrumentNotFound')} text={t('radar.radarStates.noBrokerResearchReportsCurrently')}>
+      <button type="button" className={shared.btn} onClick={onBack}>{t('radar.radarStates.backToConsensus')}</button>
     </StateBox>
   )
 }
@@ -64,8 +65,8 @@ export function RadarPendingExtraction({ note }: { note?: string }) {
   return (
     <StateBox
       icon="pending"
-      title="觀點資料整理中"
-      text={note || '這檔標的已有研報，評等、目標價與觀點尚未擷取完成。'}
+      title={t('radar.radarStates.compilingViews')}
+      text={note || t('radar.radarStates.thisInstrumentHasReportsBut')}
     />
   )
 }
@@ -74,9 +75,9 @@ export function RadarWindowEmpty({
   note, onShowAll,
 }: { note?: string; onShowAll?: () => void }) {
   return (
-    <StateBox icon="empty" title="這段期間沒有可用資料" text={note || undefined}>
+    <StateBox icon="empty" title={t('radar.radarStates.noDataAvailableForThis')} text={note || undefined}>
       {onShowAll ? (
-        <button type="button" className={shared.btn} onClick={onShowAll}>看全部期間</button>
+        <button type="button" className={shared.btn} onClick={onShowAll}>{t('radar.radarStates.viewAllPeriods')}</button>
       ) : null}
     </StateBox>
   )

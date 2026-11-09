@@ -10,14 +10,15 @@ import { jobFailed, jobLocator } from './exec/jobs'
 import { OpsQueryError } from './OpsShared'
 import { fmtDuration } from './opsLabels'
 import { JOBS_PAGE_SIZE, useOpsJobLookup, useOpsJobs } from './useOps'
+import { t } from '@/i18n'
 
 type JobState = JobItem['state']
 
 const STATE_OPTIONS: readonly SegOption<JobState | ''>[] = [
-  { value: '', label: '全部' },
-  { value: 'running', label: '執行中' },
-  { value: 'finished', label: '已結束' },
-  { value: 'lost', label: '結果不明' },
+  { value: '', get label() { return t('admin.ops.opsJobsPage.all') } },
+  { value: 'running', get label() { return t('admin.ops.opsJobsPage.running') } },
+  { value: 'finished', get label() { return t('admin.ops.opsJobsPage.finished') } },
+  { value: 'lost', get label() { return t('admin.ops.opsJobsPage.resultUnknown') } },
 ]
 
 /** 抽屜用到的網址參數：開哪一筆（job），以及分享連結定位用的 unit 與開始時間（at）。 */
@@ -68,44 +69,42 @@ export default function OpsJobsPage() {
   return (
     <>
       <PageHeader
-        summary="有 timer 的 oneshot 每次執行的紀錄，新的在前；最多晚一輪匯入。"
+        summary={t('admin.ops.opsJobsPage.runsOfTimerDrivenOneshots')}
         help={(
           <>
-            資料來自 DB 投影（主機上的收集器寫 spool、匯入器每 5 分鐘匯入一次），不經維運代理，所以代理停掉時這頁照常。
-            「失敗」＝已結束但 Result 不是 success；「結果不明」＝沒觀測到結束、之後已有新一輪開始。預設列出最近 7 天。
+            {t('admin.ops.opsJobsPage.dataComesFromADb')}
           </>
         )}
-        actions={<ExportCsvButton href={adminCsvUrls.exportJobs({ state: state || undefined })} what="排程工作" />}
+        actions={<ExportCsvButton href={adminCsvUrls.exportJobs({ state: state || undefined })} what={t('admin.ops.opsJobsPage.scheduledJobs')} />}
       />
       <div className={c.toolbar}>
-        <Segmented label="狀態" options={STATE_OPTIONS} value={state} onChange={v => { setState(v); setOffset(0) }} />
+        <Segmented label={t('admin.ops.opsJobsPage.status')} options={STATE_OPTIONS} value={state} onChange={v => { setState(v); setOffset(0) }} />
       </div>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.ops.opsJobsPage.loading')}</p>
       ) : q.isError ? (
-        <OpsQueryError error={q.error} what="排程工作" />
+        <OpsQueryError error={q.error} what={t('admin.ops.opsJobsPage.scheduledJobs')} />
       ) : (
         <>
           <Card
-            title="執行紀錄"
+            title={t('admin.ops.opsJobsPage.runHistory')}
             labelledBy="ops-jobs-title"
             right={(
               <p className={c.meta}>
-                <span>範圍 <b>{fmtDateTime(q.data.since)}</b> ～ <b>{fmtDateTime(q.data.until)}</b></span>
-                <span>共 <b>{q.data.total}</b> 筆（每 5 分鐘匯入一次）</span>
+                <span>{t('admin.ops.opsJobsPage.range')}{' '}<b>{fmtDateTime(q.data.since)}</b>{' '}{t('admin.ops.opsJobsPage.text')}{' '}<b>{fmtDateTime(q.data.until)}</b></span>
+                <span>{t('admin.ops.opsJobsPage.text2')}{' '}<b>{q.data.total}</b>{' '}{t('admin.ops.opsJobsPage.runsInTotalImportedEvery')}</span>
               </p>
             )}
           >
             {q.data.items.length === 0 ? (
               <p className={c.empty}>
-                這段期間沒有執行紀錄。若一直是空的，確認主機上的收集器（report-mark-metrics）與匯入器
-                （report-mark-load-observations.timer）都在跑。
+                {t('admin.ops.opsJobsPage.noRunsInThisPeriod')}
               </p>
             ) : (
               <div className={c.tableWrap}>
-                <table className={c.table} aria-label="排程工作執行紀錄">
+                <table className={c.table} aria-label={t('admin.ops.opsJobsPage.scheduledJobRuns')}>
                   <thead>
-                    <tr><th>服務</th><th>狀態</th><th>開始</th><th>結束</th><th>耗時</th><th>Result</th></tr>
+                    <tr><th>{t('admin.ops.opsJobsPage.service')}</th><th>{t('admin.ops.opsJobsPage.status')}</th><th>{t('admin.ops.opsJobsPage.started')}</th><th>{t('admin.ops.opsJobsPage.ended')}</th><th>{t('admin.ops.opsJobsPage.duration')}</th><th>Result</th></tr>
                   </thead>
                   <tbody>
                     {q.data.items.map(job => {
@@ -120,7 +119,7 @@ export default function OpsJobsPage() {
                             <button
                               type="button"
                               className={c.rowLink}
-                              title="查看這次執行的詳情"
+                              title={t('admin.ops.opsJobsPage.viewDetailsOfThisRun')}
                               onClick={e => { e.stopPropagation(); openJob(job) }}
                             >
                               <span className={c.mono}>{name}</span>
@@ -141,13 +140,13 @@ export default function OpsJobsPage() {
             )}
             {(offset > 0 || q.data.has_more) && (
               <div className={c.pager}>
-                <span>第 {offset + 1}–{offset + q.data.items.length} 筆</span>
+                <span>{t('admin.ops.opsJobsPage.text3', { v: offset + 1, v2: offset + q.data.items.length })}</span>
                 <div className={c.pagerBtns}>
                   <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - JOBS_PAGE_SIZE))}>
-                    較新
+                    {t('admin.ops.opsJobsPage.newer')}
                   </Button>
                   <Button size="sm" disabled={!q.data.has_more} onClick={() => setOffset(q.data.next_offset ?? offset)}>
-                    較舊
+                    {t('admin.ops.opsJobsPage.older')}
                   </Button>
                 </div>
               </div>

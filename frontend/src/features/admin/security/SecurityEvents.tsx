@@ -8,9 +8,10 @@ import { KeysetPager } from './KeysetPager'
 import s from './Security.module.css'
 import { EVENT_OPTIONS, eventLabel, eventTone, shortUa } from './securityLabels'
 import { EVENTS_PAGE_SIZE, type AuthEventType, useAuthEvents, useSuspiciousIps } from './useSecurity'
+import { t } from '@/i18n'
 
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '載入失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.security.securityEvents.couldnTLoadTryAgain')
 }
 
 export interface IpFilter {
@@ -36,49 +37,49 @@ export function AuthEventsCard({ ip }: { ip: IpFilter }) {
   const q = useAuthEvents({ event, ip: ip.applied, beforeId: cursors[cursors.length - 1] })
 
   return (
-    <Card title="登入事件" labelledBy="sec-events-title">
+    <Card title={t('admin.security.securityEvents.signInEvents')} labelledBy="sec-events-title">
       <div className={s.filters}>
         <label className={s.inlineField}>
-          類型
+          {t('admin.security.securityEvents.type')}
           <select className={c.select} value={event}
             onChange={e => { setEvent(e.target.value as AuthEventType | ''); setCursors([null]) }}>
-            <option value="">全部</option>
+            <option value="">{t('admin.security.securityEvents.all')}</option>
             {EVENT_OPTIONS.map(v => <option key={v} value={v}>{eventLabel(v)}</option>)}
           </select>
         </label>
         <label className={s.inlineField}>
           IP
-          <input className={`${c.input} ${c.inputMono} ${s.ipInput}`} value={ip.draft} maxLength={64} placeholder="完整 IP"
+          <input className={`${c.input} ${c.inputMono} ${s.ipInput}`} value={ip.draft} maxLength={64} placeholder={t('admin.security.securityEvents.fullIp')}
             autoComplete="off" spellCheck={false} onChange={e => ip.setDraft(e.target.value)} />
         </label>
         {ip.applied && (
           <span className={s.filterChip}>
             IP {ip.applied}
-            <button type="button" className={s.filterChipClear} onClick={ip.clear} title="清除 IP 篩選" aria-label="清除 IP 篩選">
+            <button type="button" className={s.filterChipClear} onClick={ip.clear} title={t('admin.security.securityEvents.clearIpFilter')} aria-label={t('admin.security.securityEvents.clearIpFilter')}>
               <Icon name="x" size={12} />
             </button>
           </span>
         )}
       </div>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.security.securityEvents.loading')}</p>
       ) : q.isError ? (
-        <div className={c.cardBody}><p className={c.error} role="alert">登入事件載入失敗：{messageOf(q.error)}</p></div>
+        <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.security.securityEvents.couldnTLoadSignIn', { error: messageOf(q.error) })}</p></div>
       ) : (
         <>
           {q.data.items.length === 0 ? (
-            <p className={c.empty}>沒有符合條件的事件</p>
+            <p className={c.empty}>{t('admin.security.securityEvents.noMatchingEvents')}</p>
           ) : (
             <div className={c.tableWrap}>
               <table className={c.table}>
-                <thead><tr><th>時間</th><th>事件</th><th>帳號</th><th>IP</th><th className={c.tdRight}>次數</th><th>裝置</th></tr></thead>
+                <thead><tr><th>{t('admin.security.securityEvents.time')}</th><th>{t('admin.security.securityEvents.event')}</th><th>{t('admin.security.securityEvents.account')}</th><th>IP</th><th className={c.tdRight}>{t('admin.security.securityEvents.count')}</th><th>{t('admin.security.securityEvents.device')}</th></tr></thead>
                 <tbody>
                   {q.data.items.map(e => (
                     <tr key={e.id}>
                       <td className={c.num}>{fmtDateTime(e.occurred_at)}</td>
                       <td><span className={s.tone} data-tone={eventTone(e.event)}>{eventLabel(e.event, e.reason)}</span></td>
                       <td className={e.username ? c.t1 : c.muted}>
-                        {e.username ?? (e.user_id ? '（已刪除）' : '—')}
+                        {e.username ?? (e.user_id ? t('admin.security.securityEvents.deleted') : '—')}
                       </td>
                       <td className={c.num}>{e.ip ?? '—'}</td>
                       <td className={`${c.num} ${c.tdRight}`}>{e.count}</td>
@@ -91,20 +92,20 @@ export function AuthEventsCard({ ip }: { ip: IpFilter }) {
           )}
           {/* 翻到空的那一頁也要能翻回來：只要不在第一頁就留著頁尾。 */}
           {(q.data.items.length > 0 || cursors.length > 1) && (
-            <KeysetPager page={cursors.length} note={`（每頁 ${EVENTS_PAGE_SIZE} 筆）`}
+            <KeysetPager page={cursors.length} note={t('admin.security.securityEvents.perPage', { EVENTS_PAGE_SIZE })}
               hasOlder={q.data.next_before_id != null}
               onNewer={() => setCursors(cursors.slice(0, -1))}
               onOlder={() => { if (q.data.next_before_id != null) setCursors([...cursors, q.data.next_before_id]) }} />
           )}
         </>
       )}
-      <p className={s.foot}>「登入被限流」「非 HTTPS 登入被拒」與「驗證逾時」是彙總列：次數＝那段期間被擋下的請求數。</p>
+      <p className={s.foot}>{t('admin.security.securityEvents.signInRateLimitedNon')}</p>
     </Card>
   )
 }
 
 const HOURS = [1, 6, 24, 72, 168] as const
-const HOUR_OPTIONS = HOURS.map(h => ({ value: String(h), label: h < 24 ? `${h} 小時` : `${h / 24} 天` }))
+const HOUR_OPTIONS = HOURS.map(h => ({ value: String(h), label: h < 24 ? t('admin.security.securityEvents.h', { h }) : t('admin.security.securityEvents.days', { v: h / 24 }) }))
 
 /** 可疑 IP：只彙整，不封鎖（封鎖交給 Cloudflare WAF，操作手冊在 docs/production_resilience.md）。 */
 export function SuspiciousIpsCard({ onPick }: { onPick: (ip: string) => void }) {
@@ -112,26 +113,26 @@ export function SuspiciousIpsCard({ onPick }: { onPick: (ip: string) => void }) 
   const q = useSuspiciousIps(hours)
 
   const copy = (ip: string) => {
-    copyText(ip).then(() => toast(`已複製 ${ip}`), () => toast('複製失敗，請手動複製', { tone: 'bad' }))
+    copyText(ip).then(() => toast(t('admin.security.securityEvents.copied', { ip })), () => toast(t('admin.security.securityEvents.copyFailedCopyManually'), { tone: 'bad' }))
   }
 
   return (
-    <Card title="可疑 IP" labelledBy="sec-ips-title" hint="只彙整，不封鎖"
-      right={<Segmented label="期間" options={HOUR_OPTIONS} value={String(hours)} onChange={v => setHours(Number(v))} />}>
+    <Card title={t('admin.security.securityEvents.suspiciousIps')} labelledBy="sec-ips-title" hint={t('admin.security.securityEvents.aggregatedOnlyNeverBlocked')}
+      right={<Segmented label={t('admin.security.securityEvents.period')} options={HOUR_OPTIONS} value={String(hours)} onChange={v => setHours(Number(v))} />}>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.security.securityEvents.loading')}</p>
       ) : q.isError ? (
-        <div className={c.cardBody}><p className={c.error} role="alert">可疑 IP 載入失敗：{messageOf(q.error)}</p></div>
+        <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.security.securityEvents.couldnTLoadSuspiciousIps', { error: messageOf(q.error) })}</p></div>
       ) : q.data.items.length === 0 ? (
-        <p className={c.empty}>{`這段期間沒有失敗達 ${q.data.min_failures} 次的 IP`}</p>
+        <p className={c.empty}>{t('admin.security.securityEvents.noIpsWithAtLeast', { min_failures: q.data.min_failures })}</p>
       ) : (
         <div className={c.tableWrap}>
           <table className={c.table}>
             <thead>
               <tr>
-                <th>IP</th><th className={c.tdRight}>失敗</th><th className={c.tdRight}>被限流</th>
-                <th className={c.tdRight}>非 HTTPS</th><th className={c.tdRight}>成功</th><th className={c.tdRight}>涉及帳號</th>
-                <th>最後出現</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
+                <th>IP</th><th className={c.tdRight}>{t('admin.security.securityEvents.failed')}</th><th className={c.tdRight}>{t('admin.security.securityEvents.rateLimited')}</th>
+                <th className={c.tdRight}>{t('admin.security.securityEvents.nonHttps')}</th><th className={c.tdRight}>{t('admin.security.securityEvents.succeeded')}</th><th className={c.tdRight}>{t('admin.security.securityEvents.accountsInvolved')}</th>
+                <th>{t('admin.security.securityEvents.lastSeen')}</th><th className={`${c.tdRight} ${c.stickyRight}`}>{t('admin.security.securityEvents.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -145,9 +146,9 @@ export function SuspiciousIpsCard({ onPick }: { onPick: (ip: string) => void }) 
                   <td className={`${c.num} ${c.tdRight}`}>{r.distinct_users}</td>
                   <td className={c.num}>{fmtDateTime(r.last_seen)}</td>
                   <td className={`${c.tdActions} ${c.stickyRight}`}>
-                    <RowActions label={`${r.ip} 的更多操作`}
-                      primary={{ label: '看事件', onClick: () => onPick(r.ip) }}
-                      more={[{ label: '複製 IP', onClick: () => copy(r.ip) }]} />
+                    <RowActions label={t('admin.security.securityEvents.moreActionsFor', { ip: r.ip })}
+                      primary={{ label: t('admin.security.securityEvents.viewEvents'), onClick: () => onPick(r.ip) }}
+                      more={[{ label: t('admin.security.securityEvents.copyIp'), onClick: () => copy(r.ip) }]} />
                   </td>
                 </tr>
               ))}
@@ -156,7 +157,7 @@ export function SuspiciousIpsCard({ onPick }: { onPick: (ip: string) => void }) 
         </div>
       )}
       <p className={s.foot}>
-        本站不做帳號鎖定或 IP 封鎖；要擋某個 IP，請在 Cloudflare WAF 加自訂規則（步驟見維運文件「Cloudflare WAF 自訂規則」）。
+        {t('admin.security.securityEvents.thisSiteDoesnTLock')}
       </p>
     </Card>
   )

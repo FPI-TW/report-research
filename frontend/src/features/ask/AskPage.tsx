@@ -13,6 +13,7 @@ import { TurnRow, type TurnActions } from './TurnRow'
 import { SourcesDrawer } from './SourcesDrawer'
 import { Composer } from './Composer'
 import styles from './AskPage.module.css'
+import { t } from '@/i18n'
 
 // 離底部多近算「在最新位置」：在這個距離內才自動貼底，超過就出現「回到最新」。
 const NEAR_BOTTOM_PX = 90
@@ -56,7 +57,7 @@ export default function AskPage() {
   const { items: conversations } = useConversations('')
   const title = conversations.find(x => x.conversation_id === ctrl.conversationId)?.title
     ?? turns[0]?.question
-    ?? '新對話'
+    ?? t('ask.askPage.newConversation')
 
   // 換到別的對話（或開新對話）時收起抽屜：裡面是上一串的來源。網址的 c 由自己同步回去的那次
   // （c 追上 conversationId）不算換對話。依前值比對而不是 effect，前值要確實拿到（交接包坑 5）。
@@ -153,7 +154,7 @@ export default function AskPage() {
   // 只看最後一輪會讓「重生中間輪」時 Composer 停在送出模式（無法中斷）、其他輪的
   // 重生／編輯／追問也沒被鎖住——再點一下就開出第二條串流，把第一條擠成錯誤。
   // 問答串流同時最多一條（useAskController 的 askCtrl 單例），some() 不會多鎖。
-  const busy = turns.some(t => t.phase === 'thinking' || t.phase === 'streaming')
+  const busy = turns.some(item => item.phase === 'thinking' || item.phase === 'streaming')
 
   const { submit, editResubmit, regenerate, setFeedback, setVersion, loadVersions } = ctrl
   const handleSubmit = useCallback((question: string) => {
@@ -182,7 +183,7 @@ export default function AskPage() {
       if (!hash) throw new Error('missing file_hash')
       navigate(`/report/${hash}`)
     } catch (err) {
-      showToast(err instanceof ApiError && err.status === 404 ? '這篇研報目前無法開啟' : '無法開啟閱讀頁，請稍後再試')
+      showToast(err instanceof ApiError && err.status === 404 ? t('ask.askPage.thisReportCanTBe') : t('ask.askPage.couldnTOpenTheReading'))
     }
   }, [navigate])
 
@@ -201,7 +202,7 @@ export default function AskPage() {
       >
         {hasTurns ? (
           <div className={styles.turns}>
-            {turns.map((t, i) => <TurnRow key={t.id} turn={t} busy={busy} isLast={i === turns.length - 1} actions={actions} />)}
+            {turns.map((item, i) => <TurnRow key={item.id} turn={item} busy={busy} isLast={i === turns.length - 1} actions={actions} />)}
           </div>
         ) : (
           <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} boxRef={heroBoxRef} />
@@ -218,7 +219,7 @@ export default function AskPage() {
               tabIndex={atBottom ? -1 : 0}
             >
               <ArrowDown size={14} strokeWidth={2} aria-hidden />
-              {busy ? '有新內容' : '回到最新'}
+              {busy ? t('ask.askPage.newContent') : t('ask.askPage.jumpToLatest')}
             </button>
             <Composer value={draft} onChange={setDraft} onSubmit={handleSubmit} disabled={busy} onStop={ctrl.stop} />
           </div>

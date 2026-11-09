@@ -14,6 +14,7 @@ import { QuotaLimitDialog } from './QuotaLimitDialog'
 import type { QuotaChange } from './quotaPlan'
 import { useQuotaOverview, useQuotaStats, useSetQuotaOverride } from './useQuota'
 import styles from './Quota.module.css'
+import { t } from '@/i18n'
 
 const STATS_RANGES = ['7', '14', '30'] as const
 type StatsRange = (typeof STATS_RANGES)[number]
@@ -29,13 +30,13 @@ function UsageCell({ item, shadow }: { item: QuotaItem; shadow: boolean }) {
     <>
       <div className={styles.usage}>
         <span className={c.num} data-tone={item.over > 0 ? 'bad' : full ? 'warn' : undefined}>
-          {fmtInt(item.used)}／{limitText(item)}
+          {t('admin.quota.adminQuotaPage.text', { used: fmtInt(item.used), item: limitText(item) })}
         </span>
-        {item.mode !== 'default' && <Chip tone="gold">{item.mode === 'unlimited' ? '不限' : '覆寫'}</Chip>}
+        {item.mode !== 'default' && <Chip tone="gold">{item.mode === 'unlimited' ? t('admin.quota.adminQuotaPage.unlimited') : t('admin.quota.adminQuotaPage.override')}</Chip>}
       </div>
       {item.over > 0 && (
         <div className={styles.over}>
-          超出 {fmtInt(item.over)}（{shadow && item.kind !== 'upload' ? '影子模式照常放行' : '已擋下'}）
+          {t('admin.quota.adminQuotaPage.overBy', { over: fmtInt(item.over) })}{shadow && item.kind !== 'upload' ? t('admin.quota.adminQuotaPage.allowedAsUsualInShadow') : t('admin.quota.adminQuotaPage.blocked')}{t('admin.quota.adminQuotaPage.text2')}
         </div>
       )}
     </>
@@ -46,21 +47,21 @@ function EnforcementTiles({ data }: { data: QuotaOverview }) {
   const e = data.enforcement
   const shadow = e.mode === 'shadow'
   const over = data.over_today.ask + data.over_today.export
-  const flagSource = e.flag_source === 'fallback' ? '旗標讀取失敗，暫用預設（關）' : e.flag_source === 'db' ? '來自 DB 覆寫' : '程式預設'
-  const flagSub = `${flagSource}${e.flag_scoped ? '・只對部分角色或使用者生效' : ''}`
+  const flagSource = e.flag_source === 'fallback' ? t('admin.quota.adminQuotaPage.couldnTReadTheFlag') : e.flag_source === 'db' ? t('admin.quota.adminQuotaPage.fromDbOverride') : t('admin.quota.adminQuotaPage.codeDefault')
+  const flagSub = `${flagSource}${e.flag_scoped ? t('admin.quota.adminQuotaPage.appliesOnlyToSomeRoles') : ''}`
   return (
     <div className={c.tiles}>
-      <StatTile label="阻擋模式" value={shadow ? '影子模式' : '正式阻擋'}
-        sub={shadow ? '照常放行、只記錄' : '超額回 429'} />
-      <StatTile label="環境變數 QUOTA_ENFORCE" value={e.env_ceiling ? '開' : '關'}
-        sub="能力上限；關閉時旗標怎麼設都不會擋" subTitle="能力上限；關閉時旗標怎麼設都不會擋" />
-      <StatTile label="旗標 quota.enforce" value={e.flag_enabled ? '開' : '關'}
+      <StatTile label={t('admin.quota.adminQuotaPage.blockingMode')} value={shadow ? t('admin.quota.adminQuotaPage.shadowMode') : t('admin.quota.adminQuotaPage.enforced')}
+        sub={shadow ? t('admin.quota.adminQuotaPage.allowedAsUsualOnlyRecorded') : t('admin.quota.adminQuotaPage.overQuotaRequestsGet429')} />
+      <StatTile label={t('admin.quota.adminQuotaPage.environmentVariableQuotaEnforce')} value={e.env_ceiling ? t('admin.quota.adminQuotaPage.on') : t('admin.quota.adminQuotaPage.off')}
+        sub={t('admin.quota.adminQuotaPage.capabilityCeilingWhenOffThe')} subTitle={t('admin.quota.adminQuotaPage.capabilityCeilingWhenOffThe')} />
+      <StatTile label={t('admin.quota.adminQuotaPage.flagQuotaEnforce')} value={e.flag_enabled ? t('admin.quota.adminQuotaPage.on') : t('admin.quota.adminQuotaPage.off')}
         tone={e.flag_source === 'fallback' ? 'warn' : undefined} lamp={e.flag_source === 'fallback' ? 'warn' : undefined}
         sub={flagSub} subTitle={flagSub} />
-      <StatTile label={`今天超出上限（${shadow ? '本來會擋' : '已擋下'}）`} value={fmtInt(over)} unit="次"
-        sub={`問答 ${fmtInt(data.over_today.ask)}・匯出 ${fmtInt(data.over_today.export)}`} />
-      <StatTile label="預設每日上限" value={fmtInt(data.defaults.ask)} unit="問答"
-        sub={`匯出 ${fmtInt(data.defaults.export)}・上傳 ${fmtInt(data.defaults.upload)}`} />
+      <StatTile label={t('admin.quota.adminQuotaPage.overTheLimitToday', { v: shadow ? t('admin.quota.adminQuotaPage.wouldHaveBlocked') : t('admin.quota.adminQuotaPage.blocked') })} value={fmtInt(over)} unit={t('admin.quota.adminQuotaPage.times')}
+        sub={t('admin.quota.adminQuotaPage.qAExport', { ask: fmtInt(data.over_today.ask), export: fmtInt(data.over_today.export) })} />
+      <StatTile label={t('admin.quota.adminQuotaPage.defaultDailyLimit')} value={fmtInt(data.defaults.ask)} unit={t('admin.quota.adminQuotaPage.qA')}
+        sub={t('admin.quota.adminQuotaPage.exportUpload', { export: fmtInt(data.defaults.export), upload: fmtInt(data.defaults.upload) })} />
     </div>
   )
 }
@@ -69,21 +70,21 @@ function StatsCard() {
   const [range, setRange] = useState<StatsRange>('14')
   const q = useQuotaStats(Number(range))
   return (
-    <Card title="每人每日用量分布" labelledBy="quota-stats-title"
-      right={<Segmented label="範圍" value={range} onChange={setRange} options={STATS_RANGES.map(d => ({ value: d, label: `${d} 天` }))} />}>
+    <Card title={t('admin.quota.adminQuotaPage.perUserDailyUsageDistribution')} labelledBy="quota-stats-title"
+      right={<Segmented label={t('admin.quota.adminQuotaPage.range')} value={range} onChange={setRange} options={STATS_RANGES.map(d => ({ value: d, label: t('admin.quota.adminQuotaPage.days', { d }) }))} />}>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.quota.adminQuotaPage.loading')}</p>
       ) : q.isError ? (
-        <div className={c.cardBody}><p className={c.error} role="alert">用量分布載入失敗：{messageOf(q.error)}</p></div>
+        <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.quota.adminQuotaPage.couldnTLoadUsageDistribution', { error: messageOf(q.error) })}</p></div>
       ) : (
         <>
           <div className={c.tableWrap}>
-            <table className={c.table} aria-label="用量分布">
+            <table className={c.table} aria-label={t('admin.quota.adminQuotaPage.usageDistribution')}>
               <thead>
                 <tr>
-                  <th>類別</th><th className={c.tdRight}>預設上限</th><th className={c.tdRight}>P50</th><th className={c.tdRight}>P95</th>
-                  <th className={c.tdRight}>最大</th><th className={c.tdRight}>人日</th><th className={c.tdRight}>人數</th>
-                  <th className={c.tdRight}>超額人日</th><th className={c.tdRight}>超額次數</th>
+                  <th>{t('admin.quota.adminQuotaPage.category')}</th><th className={c.tdRight}>{t('admin.quota.adminQuotaPage.defaultLimit')}</th><th className={c.tdRight}>P50</th><th className={c.tdRight}>P95</th>
+                  <th className={c.tdRight}>{t('admin.quota.adminQuotaPage.max')}</th><th className={c.tdRight}>{t('admin.quota.adminQuotaPage.userDays')}</th><th className={c.tdRight}>{t('admin.quota.adminQuotaPage.users')}</th>
+                  <th className={c.tdRight}>{t('admin.quota.adminQuotaPage.overQuotaUserDays')}</th><th className={c.tdRight}>{t('admin.quota.adminQuotaPage.overQuotaAttempts')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -106,8 +107,8 @@ function StatsCard() {
             </table>
           </div>
           <div className={`${c.cardFoot} ${styles.foot}`}>
-            <span>{q.data.since_day} ～ {q.data.until_day}（台北時間）</span>
-            <span>需求＝計入次數＋超出上限的嘗試；只統計有使用的人日</span>
+            <span>{t('admin.quota.adminQuotaPage.taipeiTime', { since_day: q.data.since_day, until_day: q.data.until_day })}</span>
+            <span>{t('admin.quota.adminQuotaPage.demandCountedCallsAttemptsOver')}</span>
           </div>
         </>
       )}
@@ -129,24 +130,24 @@ function UsersCard({ data }: { data: QuotaOverview }) {
   const onSave = async (changes: QuotaChange[]) => {
     if (!editing) return
     const { user_id: userId, username } = editing
-    const results = await elevated('調整配額', async () => {
+    const results = await elevated(t('admin.quota.adminQuotaPage.adjustQuota'), async () => {
       const out = []
       for (const { kind, ...body } of changes) out.push(await save.mutateAsync({ userId, kind, ...body }))
       return out
     })
-    toast(results.some(r => r.changed) ? `已調整「${username}」的上限` : `「${username}」的上限沒有變動`)
+    toast(results.some(r => r.changed) ? t('admin.quota.adminQuotaPage.adjustedTheLimitFor', { username }) : t('admin.quota.adminQuotaPage.theLimitForIsUnchanged', { username }))
     setEditingId(null)
   }
 
   return (
-    <Card title="今天每人用量" labelledBy="quota-users-title" right={<span className={c.mono}>{data.day}（台北時間）</span>}>
+    <Card title={t('admin.quota.adminQuotaPage.usagePerUserToday')} labelledBy="quota-users-title" right={<span className={c.mono}>{t('admin.quota.adminQuotaPage.taipeiTime2', { day: data.day })}</span>}>
       {data.users.length === 0 ? (
-        <p className={c.empty}>還沒有任何帳號</p>
+        <p className={c.empty}>{t('admin.quota.adminQuotaPage.noAccountsYet')}</p>
       ) : (
         <div className={c.tableWrap}>
-          <table className={c.table} aria-label="每人用量">
+          <table className={c.table} aria-label={t('admin.quota.adminQuotaPage.usagePerUser')}>
             <thead>
-              <tr><th>帳號</th><th>問答</th><th>匯出</th><th>上傳</th><th>線上 LLM</th><th className={`${c.tdActions} ${c.stickyRight}`}>操作</th></tr>
+              <tr><th>{t('admin.quota.adminQuotaPage.account')}</th><th>{t('admin.quota.adminQuotaPage.qA')}</th><th>{t('admin.quota.adminQuotaPage.export')}</th><th>{t('admin.quota.adminQuotaPage.upload')}</th><th>{t('admin.quota.adminQuotaPage.onlineLlm')}</th><th className={`${c.tdActions} ${c.stickyRight}`}>{t('admin.quota.adminQuotaPage.actions')}</th></tr>
             </thead>
             <tbody>
               {data.users.map(u => {
@@ -157,7 +158,7 @@ function UsersCard({ data }: { data: QuotaOverview }) {
                       <div className={styles.account}>
                         <span className={`${c.truncate} ${styles.username}`} title={u.username}>{u.username}</span>
                         {u.is_super && <Chip tone="gold">super</Chip>}
-                        {!u.enabled && <Chip tone="idle">已停用</Chip>}
+                        {!u.enabled && <Chip tone="idle">{t('admin.quota.adminQuotaPage.disabled')}</Chip>}
                       </div>
                       <div className={c.sub}>{roleLabel(u.role)}</div>
                     </td>
@@ -166,12 +167,12 @@ function UsersCard({ data }: { data: QuotaOverview }) {
                       return <td key={k}>{item ? <UsageCell item={item} shadow={shadow} /> : <span className={c.muted}>—</span>}</td>
                     })}
                     <td>
-                      <span className={c.num}>{fmtInt(u.llm.calls)} 次</span>
+                      <span className={c.num}>{t('admin.quota.adminQuotaPage.calls', { calls: fmtInt(u.llm.calls) })}</span>
                       <div className={`${c.sub} ${c.num}`}>{fmtInt(u.llm.prompt_tokens + u.llm.completion_tokens)} token</div>
                     </td>
                     <td className={`${c.tdActions} ${c.stickyRight}`}>
                       <RowActions primary={{
-                        label: '調整上限', onClick: () => setEditingId(u.user_id),
+                        label: t('admin.quota.adminQuotaPage.adjustLimit'), onClick: () => setEditingId(u.user_id),
                         disabled: locked, hint: locked ? SUPER_ONLY_HINT : undefined,
                       }} />
                     </td>
@@ -183,8 +184,8 @@ function UsersCard({ data }: { data: QuotaOverview }) {
         </div>
       )}
       <div className={`${c.cardFoot} ${styles.foot}`}>
-        <span>只有次數、沒有主題</span>
-        <span>線上 LLM 是今天問答與抽查的呼叫（只記 metadata）</span>
+        <span>{t('admin.quota.adminQuotaPage.countsOnlyNoTopics')}</span>
+        <span>{t('admin.quota.adminQuotaPage.onlineLlmIsTodayS')}</span>
       </div>
       {editing && (
         <QuotaLimitDialog key={editing.user_id} user={editing} isSuper={isSuper}
@@ -200,24 +201,21 @@ function QuotaContent() {
   const canSeeFlags = useHasScope('ops.read')
   const mode = q.data?.enforcement.mode
   const summary = mode === 'shadow'
-    ? '每人每日問答、匯出與上傳上限；目前是影子模式，只計數、記錄本來會擋的請求。'
+    ? t('admin.quota.adminQuotaPage.perUserDailyLimitsFor')
     : mode === 'enforce'
-      ? '每人每日問答、匯出與上傳上限；目前正式阻擋，超額的請求回 429。'
-      : '每人每日問答、匯出與上傳上限，以及個人覆寫。'
+      ? t('admin.quota.adminQuotaPage.perUserDailyLimitsFor2')
+      : t('admin.quota.adminQuotaPage.perUserDailyLimitsFor3')
   return (
     <ConsolePage>
       <PageHeader summary={summary}
-        actions={canSeeFlags && <Link className={c.btn} to="/admin/flags">前往功能旗標</Link>}
+        actions={canSeeFlags && <Link className={c.btn} to="/admin/flags">{t('admin.quota.adminQuotaPage.goToFeatureFlags')}</Link>}
         help={<>
-          每日額度以台北時間日曆日計，午夜重置。環境變數 <code>QUOTA_ENFORCE</code>（能力上限）與功能旗標 <code>quota.enforce</code> 兩道都開才會正式阻擋（超額回 429）；
-          只開一邊時是影子模式：照常放行、只記錄本來會擋的請求。上傳一直是正式阻擋。旗標在「功能旗標」頁調整。
-          「超出」是超過上限的次數：影子模式下照常放行，正式阻擋時是被擋下的次數。
-          觀察兩週後依 P50／P95 決定是否正式阻擋，正式啟用前不調預設值。調整個人上限需要重新驗證身分，每一筆都會留在「操作紀錄」。
+          {t('admin.quota.adminQuotaPage.dailyQuotasFollowTaipeiCalendar')}{' '}<code>QUOTA_ENFORCE</code>{t('admin.quota.adminQuotaPage.capabilityCeilingAndTheFeature')}{' '}<code>quota.enforce</code>{' '}{t('admin.quota.adminQuotaPage.areOnIsTheQuota')}
         </>} />
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.quota.adminQuotaPage.loading')}</p>
       ) : q.isError ? (
-        <p className={c.error} role="alert">配額載入失敗：{messageOf(q.error)}</p>
+        <p className={c.error} role="alert">{t('admin.quota.adminQuotaPage.couldnTLoadQuotas', { error: messageOf(q.error) })}</p>
       ) : (
         <>
           <EnforcementTiles data={q.data} />
@@ -233,7 +231,7 @@ function QuotaContent() {
 export default function AdminQuotaPage() {
   return (
     <RequireAdmin>
-      <RequireScope scope="accounts.manage" title="配額">
+      <RequireScope scope="accounts.manage" title={t('admin.quota.adminQuotaPage.quotas')}>
         <QuotaContent />
       </RequireScope>
     </RequireAdmin>

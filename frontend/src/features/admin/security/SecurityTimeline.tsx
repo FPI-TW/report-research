@@ -7,13 +7,14 @@ import { KeysetPager } from './KeysetPager'
 import s from './Security.module.css'
 import { CATEGORY_LABELS } from './securityLabels'
 import { type HighRiskCategory, useHighRisk } from './useSecurity'
+import { t } from '@/i18n'
 
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '載入失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.security.securityTimeline.couldnTLoadTryAgain')
 }
 
 const DAYS = [7, 30, 90, 365] as const
-const DAY_OPTIONS = DAYS.map(d => ({ value: String(d), label: `${d} 天` }))
+const DAY_OPTIONS = DAYS.map(d => ({ value: String(d), label: t('admin.security.securityTimeline.days', { d }) }))
 
 /** 高風險操作時間線（稽核紀錄裡屬於 security_ops.HIGH_RISK_ACTIONS 的列）。只顯示，不送告警。 */
 export function HighRiskCard() {
@@ -23,31 +24,31 @@ export function HighRiskCard() {
   const q = useHighRisk({ days, category, beforeId: cursors[cursors.length - 1] })
 
   return (
-    <Card title="高風險操作" labelledBy="sec-risk-title"
-      right={<Segmented label="期間" options={DAY_OPTIONS} value={String(days)}
+    <Card title={t('admin.security.securityTimeline.highRiskActions')} labelledBy="sec-risk-title"
+      right={<Segmented label={t('admin.security.securityTimeline.period')} options={DAY_OPTIONS} value={String(days)}
         onChange={v => { setDays(Number(v)); setCursors([null]) }} />}>
       <div className={s.filters}>
         <label className={s.inlineField}>
-          分類
+          {t('admin.security.securityTimeline.category')}
           <select className={c.select} value={category}
             onChange={e => { setCategory(e.target.value as HighRiskCategory | ''); setCursors([null]) }}>
-            <option value="">全部</option>
+            <option value="">{t('admin.security.securityTimeline.all')}</option>
             {Object.entries(CATEGORY_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
           </select>
         </label>
       </div>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.security.securityTimeline.loading')}</p>
       ) : q.isError ? (
-        <div className={c.cardBody}><p className={c.error} role="alert">高風險操作載入失敗：{messageOf(q.error)}</p></div>
+        <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.security.securityTimeline.couldnTLoadHighRisk', { error: messageOf(q.error) })}</p></div>
       ) : (
         <>
           {q.data.items.length === 0 ? (
-            <p className={c.empty}>這段期間沒有高風險操作</p>
+            <p className={c.empty}>{t('admin.security.securityTimeline.noHighRiskActionsIn')}</p>
           ) : (
             <div className={c.tableWrap}>
               <table className={c.table}>
-                <thead><tr><th>時間</th><th>分類</th><th>操作者</th><th>動作</th><th>內容</th></tr></thead>
+                <thead><tr><th>{t('admin.security.securityTimeline.time')}</th><th>{t('admin.security.securityTimeline.category')}</th><th>{t('admin.security.securityTimeline.actor')}</th><th>{t('admin.security.securityTimeline.action')}</th><th>{t('admin.security.securityTimeline.content')}</th></tr></thead>
                 <tbody>
                   {q.data.items.map(e => {
                     // 產生的 client 把這幾個欄位標成 optional；補成稽核列的形狀才能共用標籤函式。

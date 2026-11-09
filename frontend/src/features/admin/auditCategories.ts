@@ -6,15 +6,17 @@
  * `exclude_prefix`，見 `auditCategoryQuery`），筆數與翻頁才是篩選後的。
  * 動作的中文標籤在 `auditLabels.ts`，這裡不重複。
  */
+import { t } from '@/i18n'
+
 export type AuditCategory = 'acct' | 'content' | 'ops' | 'sec'
 /** 頁面上的分類篩選：四個分類，或不篩。 */
 export type AuditFilter = AuditCategory | 'all'
 
 export const AUDIT_CATEGORY_LABELS: Record<AuditCategory, string> = {
-  acct: '帳號',
-  content: '內容',
-  ops: '維運',
-  sec: '安全與設定',
+  get acct() { return t('admin.auditCategories.accounts') },
+  get content() { return t('admin.auditCategories.content') },
+  get ops() { return t('admin.auditCategories.operations') },
+  get sec() { return t('admin.auditCategories.securityAndSettings') },
 }
 
 export const AUDIT_CATEGORIES = Object.keys(AUDIT_CATEGORY_LABELS) as AuditCategory[]

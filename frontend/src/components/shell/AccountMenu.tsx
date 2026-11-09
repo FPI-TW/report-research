@@ -11,8 +11,9 @@ import { STATUS_LABELS, useSystemStatus } from '../../lib/useSystemStatus'
 import { StatusDot } from './SystemStatus'
 import { useShell } from './shellContext'
 import styles from './AccountMenu.module.css'
+import { t } from '@/i18n'
 
-const ROLE_LABEL: Record<string, string> = { admin: '管理員', user: '使用者' }
+const ROLE_LABEL: Record<string, string> = { get admin() { return t('shell.accountMenu.admin') }, get user() { return t('shell.accountMenu.user') } }
 
 /**
  * 帳號選單（交接包「帳號選單」）：側欄底部的個人列往上開，只有設定與登出。
@@ -27,15 +28,15 @@ const ROLE_LABEL: Record<string, string> = { admin: '管理員', user: '使用�
 export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar' | 'mobile'; collapsed?: boolean }) {
   const { data: stats } = useStats()
   const me = useMe()
-  const name = me.data?.username ?? stats?.username ?? '使用者'
-  const role = ROLE_LABEL[me.data?.role ?? 'user'] ?? '使用者'
+  const name = me.data?.username ?? stats?.username ?? t('shell.accountMenu.user')
+  const role = ROLE_LABEL[me.data?.role ?? 'user'] ?? t('shell.accountMenu.user')
   const initial = name.slice(0, 1).toUpperCase()
   const [open, setOpen] = useState(false)
   const { openSettings } = useShell()
   const navigate = useNavigate()
   const logoutRef = useRef<HTMLFormElement>(null)
   const degraded = useSystemStatus().status === 'degraded'
-  const title = degraded ? `${name}（系統狀態：${STATUS_LABELS.degraded}）` : undefined
+  const title = degraded ? t('shell.accountMenu.systemStatus', { name, degraded: STATUS_LABELS.degraded }) : undefined
   const avatar = (
     <span className={styles.avatar} aria-hidden>
       {initial}
@@ -44,7 +45,7 @@ export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar'
   )
 
   const trigger = variant === 'sidebar' ? (
-    <button type="button" className={styles.row} data-open={open || undefined} title={title} aria-label={collapsed ? `帳號選單：${name}` : undefined}>
+    <button type="button" className={styles.row} data-open={open || undefined} title={title} aria-label={collapsed ? t('shell.accountMenu.accountMenu', { name }) : undefined}>
       {avatar}
       <span className={styles.text}>
         <span className={styles.name}>{name}</span>
@@ -53,7 +54,7 @@ export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar'
       <ChevronsUpDown size={14} strokeWidth={1.5} aria-hidden className={styles.chev} />
     </button>
   ) : (
-    <button type="button" className={styles.avatarBtn} title={title} aria-label={`帳號選單：${name}`}>
+    <button type="button" className={styles.avatarBtn} title={title} aria-label={t('shell.accountMenu.accountMenu', { name })}>
       {avatar}
     </button>
   )
@@ -70,12 +71,12 @@ export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar'
         )}
         <DropdownContent side="top" align="start" sideOffset={6} className={styles.menu}>
           <DropdownLabel>{me.data?.username ?? name}</DropdownLabel>
-          <MenuItem index={0} icon={Settings} label="設定" onSelect={() => openSettings('account')} />
+          <MenuItem index={0} icon={Settings} label={t('shell.accountMenu.settings')} onSelect={() => openSettings('account')} />
           {variant === 'mobile' && (
             <MenuItem
               index={1}
               icon={CircleHelp}
-              label="使用說明"
+              label={t('shell.accountMenu.help')}
               onSelect={() => navigate('/help')}
               onPointerEnter={() => preloadRoute('help')}
             />
@@ -84,7 +85,7 @@ export function AccountMenu({ variant, collapsed = false }: { variant: 'sidebar'
           <MenuItem
             index={variant === 'mobile' ? 2 : 1}
             icon={LogOut}
-            label="登出"
+            label={t('shell.accountMenu.signOut')}
             onSelect={() => logoutRef.current?.requestSubmit()}
           />
         </DropdownContent>

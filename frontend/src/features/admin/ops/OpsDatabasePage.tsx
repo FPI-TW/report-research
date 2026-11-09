@@ -7,6 +7,7 @@ import { OpsQueryError } from './OpsShared'
 import { OpsTrendChart } from './OpsTrendChart'
 import { type SlowQuerySort, type TrendMetric, useDbOverview, useDbSlowQueries, useDbTrend } from './useDbInsights'
 import styles from './data/Data.module.css'
+import { t } from '@/i18n'
 
 function fmtBytes(v: number | null | undefined): string {
   if (v == null) return '—'
@@ -26,53 +27,53 @@ function fmtInt(v: number | null | undefined): string {
 }
 
 function fmtMs(v: number): string {
-  return v >= 1000 ? `${(v / 1000).toFixed(1)} 秒` : `${v.toFixed(1)} ms`
+  return v >= 1000 ? t('admin.ops.opsDatabasePage.s', { v: (v / 1000).toFixed(1) }) : `${v.toFixed(1)} ms`
 }
 
 const STATE_LABELS: Record<string, string> = {
-  active: '執行中',
-  idle: '閒置',
-  'idle in transaction': '交易中閒置',
-  'idle in transaction (aborted)': '交易中閒置（已中止）',
+  get active() { return t('admin.ops.opsDatabasePage.active') },
+  get idle() { return t('admin.ops.opsDatabasePage.idle') },
+  get 'idle in transaction'() { return t('admin.ops.opsDatabasePage.idleInTransaction') },
+  get 'idle in transaction (aborted)'() { return t('admin.ops.opsDatabasePage.idleInTransactionAborted') },
   fastpath: 'fastpath',
-  disabled: '未追蹤',
-  unknown: '不明',
+  get disabled() { return t('admin.ops.opsDatabasePage.notTracked') },
+  get unknown() { return t('admin.ops.opsDatabasePage.unknown') },
 }
 
 const SLOW_REASON_HINTS: Record<NonNullable<SlowQueryResponse['reason']>, string> = {
-  extension_missing: '尚未建立 pg_stat_statements 擴充。',
-  not_preloaded: 'pg_stat_statements 已建立，但 PostgreSQL 沒有預載它（需要改 shared_preload_libraries 並重啟）。',
-  permission_denied: '目前的 DB 帳號沒有讀 pg_stat_statements 的權限。',
-  timeout: '查詢逾時，稍後再試。',
-  error: '查詢失敗。',
+  get extension_missing() { return t('admin.ops.opsDatabasePage.thePgStatStatementsExtension') },
+  get not_preloaded() { return t('admin.ops.opsDatabasePage.pgStatStatementsExistsBut') },
+  get permission_denied() { return t('admin.ops.opsDatabasePage.theCurrentDbAccountIsn') },
+  get timeout() { return t('admin.ops.opsDatabasePage.queryTimedOutTryAgain') },
+  get error() { return t('admin.ops.opsDatabasePage.queryFailed') },
 }
 
 type MetricDef = { value: TrendMetric; label: string; format: (v: number) => string }
 
 const METRICS: MetricDef[] = [
-  { value: 'db_size_bytes', label: '資料庫大小', format: fmtBytes },
-  { value: 'connections_total', label: '連線數（全部）', format: fmtInt },
-  { value: 'connections_active', label: '執行中連線', format: fmtInt },
-  { value: 'connections_idle_in_tx', label: '交易中閒置連線', format: fmtInt },
-  { value: 'cache_hit_ratio', label: '快取命中率', format: v => fmtPct(v, 2) },
-  { value: 'dead_tuple_ratio', label: 'dead tuple 比例（全部表）', format: v => fmtPct(v, 2) },
-  { value: 'temp_bytes', label: '暫存檔寫入量（每小時／每日）', format: fmtBytes },
-  { value: 'deadlocks', label: 'deadlock 次數（每小時／每日）', format: v => v.toFixed(v < 10 ? 1 : 0) },
-  { value: 'table_bytes', label: '單一表大小', format: fmtBytes },
+  { value: 'db_size_bytes', get label() { return t('admin.ops.opsDatabasePage.databaseSize') }, format: fmtBytes },
+  { value: 'connections_total', get label() { return t('admin.ops.opsDatabasePage.connectionsAll') }, format: fmtInt },
+  { value: 'connections_active', get label() { return t('admin.ops.opsDatabasePage.activeConnections') }, format: fmtInt },
+  { value: 'connections_idle_in_tx', get label() { return t('admin.ops.opsDatabasePage.idleInTransactionConnections') }, format: fmtInt },
+  { value: 'cache_hit_ratio', get label() { return t('admin.ops.opsDatabasePage.cacheHitRatio') }, format: v => fmtPct(v, 2) },
+  { value: 'dead_tuple_ratio', get label() { return t('admin.ops.opsDatabasePage.deadTupleRatioAllTables') }, format: v => fmtPct(v, 2) },
+  { value: 'temp_bytes', get label() { return t('admin.ops.opsDatabasePage.tempFileWritesHourlyDaily') }, format: fmtBytes },
+  { value: 'deadlocks', get label() { return t('admin.ops.opsDatabasePage.deadlocksHourlyDaily') }, format: v => v.toFixed(v < 10 ? 1 : 0) },
+  { value: 'table_bytes', get label() { return t('admin.ops.opsDatabasePage.singleTableSize') }, format: fmtBytes },
 ]
 
 const RANGES: readonly SegOption<string>[] = [
-  { value: '1', label: '1 天' },
-  { value: '7', label: '7 天' },
-  { value: '30', label: '30 天' },
-  { value: '90', label: '90 天' },
-  { value: '365', label: '1 年' },
+  { value: '1', get label() { return t('admin.ops.opsDatabasePage.1Day') } },
+  { value: '7', get label() { return t('admin.ops.opsDatabasePage.7Days') } },
+  { value: '30', get label() { return t('admin.ops.opsDatabasePage.30Days') } },
+  { value: '90', get label() { return t('admin.ops.opsDatabasePage.90Days') } },
+  { value: '365', get label() { return t('admin.ops.opsDatabasePage.1Year') } },
 ]
 
 const SORTS: readonly SegOption<SlowQuerySort>[] = [
-  { value: 'total', label: '總執行時間' },
-  { value: 'mean', label: '平均執行時間' },
-  { value: 'calls', label: '次數' },
+  { value: 'total', get label() { return t('admin.ops.opsDatabasePage.totalTime') } },
+  { value: 'mean', get label() { return t('admin.ops.opsDatabasePage.meanTime') } },
+  { value: 'calls', get label() { return t('admin.ops.opsDatabasePage.calls') } },
 ]
 
 /** 位元組的磚：數字與單位分開（「9.0」＋「GiB」）。 */
@@ -90,26 +91,26 @@ function pctStat(v: number | null | undefined, digits = 1): { value: string; uni
 /** 某一段降級（權限不足、逾時）時的說明：只影響那一段，其餘照常。 */
 function SectionNote({ error, what }: { error: SectionError | null | undefined; what: string }) {
   if (!error) return null
-  return <p className={c.banner} data-tone="warn" role="status">{what}：{error.message}</p>
+  return <p className={c.banner} data-tone="warn" role="status">{t('admin.ops.opsDatabasePage.text', { what, message: error.message })}</p>
 }
 
 function Snapshot({ ov }: { ov: DbOverviewResponse }) {
-  const { database: db, connections: conn, activity: a, tables: t } = ov
+  const { database: db, connections: conn, activity: a, tables: item } = ov
   const errors = [
-    { e: db.error, what: '資料庫大小' }, { e: conn.error, what: '連線數' }, { e: a.error, what: '快取與交易統計' },
+    { e: db.error, what: t('admin.ops.opsDatabasePage.databaseSize') }, { e: conn.error, what: t('admin.ops.opsDatabasePage.connections') }, { e: a.error, what: t('admin.ops.opsDatabasePage.cacheAndTransactionStats') },
   ].filter(x => x.e)
   const connTotal = conn.error ? '—' : fmtInt(conn.total)
   // 沒有值（「—」）的磚不帶單位；降級的那一段不給補充說明。
   const tiles: { name: string; value: string; unit?: string; hint?: string }[] = [
-    { name: '資料庫大小', ...bytesStat(db.size_bytes), hint: db.name ? `${db.name}・PostgreSQL ${db.server_version ?? ''}` : undefined },
-    { name: '連線數', value: connTotal, unit: connTotal === '—' ? undefined : `/ ${fmtInt(conn.usable_connections)}`,
-      hint: conn.error ? undefined : `上限 ${fmtInt(conn.max_connections)}（保留 ${fmtInt(conn.reserved_connections)}）・使用率 ${fmtPct(conn.usage_ratio)}` },
-    { name: '快取命中率', ...pctStat(a.cache_hit_ratio, 2),
-      hint: a.error ? undefined : `統計起點 ${a.stats_reset ? fmtDateTime(a.stats_reset) : '資料庫啟動以來'}` },
-    { name: 'dead tuple 比例', ...pctStat(t.dead_ratio, 2),
-      hint: t.error ? undefined : `${fmtInt(t.dead_tuples)} / ${fmtInt((t.live_tuples ?? 0) + (t.dead_tuples ?? 0))} 列（全部 ${fmtInt(t.table_count)} 張表）` },
-    { name: '暫存檔寫入', ...bytesStat(a.temp_bytes), hint: a.error ? undefined : `${fmtInt(a.temp_files)} 個檔（累計）` },
-    { name: 'deadlock', value: fmtInt(a.deadlocks), hint: a.error ? undefined : `rollback ${fmtInt(a.xact_rollback)}／commit ${fmtInt(a.xact_commit)}` },
+    { name: t('admin.ops.opsDatabasePage.databaseSize'), ...bytesStat(db.size_bytes), hint: db.name ? `${db.name}・PostgreSQL ${db.server_version ?? ''}` : undefined },
+    { name: t('admin.ops.opsDatabasePage.connections'), value: connTotal, unit: connTotal === '—' ? undefined : `/ ${fmtInt(conn.usable_connections)}`,
+      hint: conn.error ? undefined : t('admin.ops.opsDatabasePage.maxReservedUsage', { max_connections: fmtInt(conn.max_connections), reserved_connections: fmtInt(conn.reserved_connections), usage_ratio: fmtPct(conn.usage_ratio) }) },
+    { name: t('admin.ops.opsDatabasePage.cacheHitRatio'), ...pctStat(a.cache_hit_ratio, 2),
+      hint: a.error ? undefined : t('admin.ops.opsDatabasePage.statsSince', { v: a.stats_reset ? fmtDateTime(a.stats_reset) : t('admin.ops.opsDatabasePage.sinceDatabaseStart') }) },
+    { name: t('admin.ops.opsDatabasePage.deadTupleRatio'), ...pctStat(item.dead_ratio, 2),
+      hint: item.error ? undefined : t('admin.ops.opsDatabasePage.rowsTables', { dead_tuples: fmtInt(item.dead_tuples), fmtInt: fmtInt((item.live_tuples ?? 0) + (item.dead_tuples ?? 0)), table_count: fmtInt(item.table_count) }) },
+    { name: t('admin.ops.opsDatabasePage.tempFileWrites'), ...bytesStat(a.temp_bytes), hint: a.error ? undefined : t('admin.ops.opsDatabasePage.filesCumulative', { temp_files: fmtInt(a.temp_files) }) },
+    { name: 'deadlock', value: fmtInt(a.deadlocks), hint: a.error ? undefined : t('admin.ops.opsDatabasePage.rollbackCommit', { xact_rollback: fmtInt(a.xact_rollback), xact_commit: fmtInt(a.xact_commit) }) },
   ]
   return (
     <>
@@ -120,44 +121,43 @@ function Snapshot({ ov }: { ov: DbOverviewResponse }) {
       </div>
       {errors.map(x => <SectionNote key={x.what} error={x.e} what={x.what} />)}
       {!conn.error && (
-        <p className={c.meta} aria-label="連線狀態">
+        <p className={c.meta} aria-label={t('admin.ops.opsDatabasePage.connectionStates')}>
           {Object.entries(conn.by_state ?? {}).map(([state, n]) => (
             <span key={state}>{STATE_LABELS[state] ?? state} <b>{String(n)}</b></span>
           ))}
           {(conn.hidden ?? 0) > 0 && (
-            <span title="DB 帳號沒有 pg_read_all_stats 時，別人的連線看不到狀態">看不到狀態 <b>{conn.hidden}</b></span>
+            <span title={t('admin.ops.opsDatabasePage.withoutPgReadAllStats')}>{t('admin.ops.opsDatabasePage.stateHidden')}{' '}<b>{conn.hidden}</b></span>
           )}
-          <span>連到本庫 <b>{fmtInt(conn.this_database)}</b></span>
+          <span>{t('admin.ops.opsDatabasePage.connectedToThisDatabase')}{' '}<b>{fmtInt(conn.this_database)}</b></span>
         </p>
       )}
       <p className={styles.note}>
-        快照時間 {fmtDateTime(ov.generated_at)}・每段查詢上限 {ov.statement_timeout_ms} ms・每 60 秒更新。
-        命中率、暫存檔、deadlock 是統計起點以來的累計值；最近的變化看下方趨勢。
+        {t('admin.ops.opsDatabasePage.snapshotAtEachQueryCapped', { generated_at: fmtDateTime(ov.generated_at), statement_timeout_ms: ov.statement_timeout_ms })}
       </p>
     </>
   )
 }
 
 function TablesCard({ ov }: { ov: DbOverviewResponse }) {
-  const t = ov.tables
+  const item = ov.tables
   return (
     <Card
-      title="各表大小與膨脹估計"
+      title={t('admin.ops.opsDatabasePage.tableSizesAndBloatEstimate')}
       labelledBy="ops-db-tables-title"
-      hint={t.error ? undefined : `前 ${t.limit} 大（共 ${fmtInt(t.table_count)} 張）`}
+      hint={item.error ? undefined : t('admin.ops.opsDatabasePage.topBySizeTables', { limit: String(item.limit), table_count: fmtInt(item.table_count) })}
     >
-      {t.error ? <div className={styles.body}><SectionNote error={t.error} what="表統計" /></div> : (
+      {item.error ? <div className={styles.body}><SectionNote error={item.error} what={t('admin.ops.opsDatabasePage.tableStats')} /></div> : (
         <>
           <div className={c.tableWrap}>
-            <table className={c.table} aria-label="各表統計">
+            <table className={c.table} aria-label={t('admin.ops.opsDatabasePage.perTableStats')}>
               <thead>
                 <tr>
-                  <th>表</th><th className={c.tdRight}>大小（含索引）</th><th className={c.tdRight}>列數估計</th>
-                  <th className={c.tdRight}>dead 比例</th><th>最後 autovacuum</th><th>最後 autoanalyze</th>
+                  <th>{t('admin.ops.opsDatabasePage.table')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.sizeWithIndexes')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.estimatedRows')}</th>
+                  <th className={c.tdRight}>{t('admin.ops.opsDatabasePage.deadRatio')}</th><th>{t('admin.ops.opsDatabasePage.lastAutovacuum')}</th><th>{t('admin.ops.opsDatabasePage.lastAutoanalyze')}</th>
                 </tr>
               </thead>
               <tbody>
-                {(t.items ?? []).map(it => (
+                {(item.items ?? []).map(it => (
                   <tr key={`${it.schema_name}.${it.table}`}>
                     <td className={c.mono}>
                       <span className={`${c.truncate} ${styles.nameCol}`} title={it.table}>{it.table}</span>
@@ -165,7 +165,7 @@ function TablesCard({ ov }: { ov: DbOverviewResponse }) {
                     </td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtBytes(it.total_bytes)}</td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtInt(it.row_estimate)}</td>
-                    <td className={`${c.num} ${c.tdRight}`}>{fmtPct(it.dead_ratio)}<div className={c.sub}>{fmtInt(it.dead_tuples)} 列</div></td>
+                    <td className={`${c.num} ${c.tdRight}`}>{fmtPct(it.dead_ratio)}<div className={c.sub}>{t('admin.ops.opsDatabasePage.rows', { dead_tuples: fmtInt(it.dead_tuples) })}</div></td>
                     <td className={c.num}>{fmtDateTime(it.last_autovacuum ?? it.last_vacuum)}</td>
                     <td className={c.num}>{fmtDateTime(it.last_autoanalyze ?? it.last_analyze)}</td>
                   </tr>
@@ -174,7 +174,7 @@ function TablesCard({ ov }: { ov: DbOverviewResponse }) {
             </table>
           </div>
           <div className={`${c.cardFoot} ${styles.footNote}`}>
-            <span>膨脹只用 dead tuple 比例估計（未安裝 pgstattuple）</span>
+            <span>{t('admin.ops.opsDatabasePage.bloatIsEstimatedFromDead')}</span>
           </div>
         </>
       )}
@@ -187,31 +187,31 @@ function UnusedIndexesCard({ ov }: { ov: DbOverviewResponse }) {
   const items = u.items ?? []
   return (
     <Card
-      title="未使用的索引"
+      title={t('admin.ops.opsDatabasePage.unusedIndexes')}
       labelledBy="ops-db-indexes-title"
-      hint={u.error || items.length === 0 ? undefined : 'idx_scan = 0（自統計起點）'}
+      hint={u.error || items.length === 0 ? undefined : t('admin.ops.opsDatabasePage.idxScan0SinceStats')}
     >
-      {u.error ? <div className={styles.body}><SectionNote error={u.error} what="索引統計" /></div> : items.length === 0 ? (
-        <p className={c.empty}>統計起點以來每個索引都被用過。</p>
+      {u.error ? <div className={styles.body}><SectionNote error={u.error} what={t('admin.ops.opsDatabasePage.indexStats')} /></div> : items.length === 0 ? (
+        <p className={c.empty}>{t('admin.ops.opsDatabasePage.everyIndexHasBeenUsed')}</p>
       ) : (
         <>
           <div className={c.tableWrap}>
-            <table className={c.table} aria-label="未使用的索引">
-              <thead><tr><th>索引</th><th>表</th><th className={c.tdRight}>大小</th><th>種類</th></tr></thead>
+            <table className={c.table} aria-label={t('admin.ops.opsDatabasePage.unusedIndexes')}>
+              <thead><tr><th>{t('admin.ops.opsDatabasePage.index')}</th><th>{t('admin.ops.opsDatabasePage.table')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.size')}</th><th>{t('admin.ops.opsDatabasePage.kind')}</th></tr></thead>
               <tbody>
                 {items.map(it => (
                   <tr key={`${it.schema_name}.${it.index}`}>
                     <td className={c.mono}><span className={`${c.truncate} ${styles.nameCol}`} title={it.index}>{it.index}</span></td>
                     <td className={c.mono}>{it.schema_name}.{it.table}</td>
                     <td className={`${c.num} ${c.tdRight}`}>{fmtBytes(it.size_bytes)}</td>
-                    <td>{it.is_primary ? '主鍵' : it.is_unique ? '唯一' : '一般'}</td>
+                    <td>{it.is_primary ? t('admin.ops.opsDatabasePage.primaryKey') : it.is_unique ? t('admin.ops.opsDatabasePage.unique') : t('admin.ops.opsDatabasePage.regular')}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <div className={`${c.cardFoot} ${styles.footNote}`}>
-            <span>共 <b>{u.count}</b> 個、<b>{fmtBytes(u.total_bytes)}</b>。唯一／主鍵索引負責約束，沒被掃過也不能刪</span>
+            <span>{t('admin.ops.opsDatabasePage.total')}{' '}<b>{u.count}</b>{' '}{t('admin.ops.opsDatabasePage.indexes')}<b>{fmtBytes(u.total_bytes)}</b>{t('admin.ops.opsDatabasePage.uniqueAndPrimaryKeyIndexes')}</span>
           </div>
         </>
       )}
@@ -225,39 +225,39 @@ function SlowQueriesCard() {
   const usable = q.data?.available === true
   return (
     <Card
-      title="慢查詢（pg_stat_statements）"
+      title={t('admin.ops.opsDatabasePage.slowQueriesPgStatStatements')}
       labelledBy="ops-db-slow-title"
-      right={usable && <Segmented label="排序" options={SORTS} value={sort} onChange={setSort} />}
+      right={usable && <Segmented label={t('admin.ops.opsDatabasePage.sort')} options={SORTS} value={sort} onChange={setSort} />}
     >
-      {q.isPending ? <p className={c.empty}>載入中…</p> : q.isError ? (
-        <div className={styles.body}><OpsQueryError error={q.error} what="慢查詢" /></div>
+      {q.isPending ? <p className={c.empty}>{t('admin.ops.opsDatabasePage.loading')}</p> : q.isError ? (
+        <div className={styles.body}><OpsQueryError error={q.error} what={t('admin.ops.opsDatabasePage.slowQueries')} /></div>
       ) : !q.data.available ? (
         <div className={c.degraded} role="status">
           <p className={c.banner} data-tone="warn">
-            慢查詢無法使用：{q.data.reason ? SLOW_REASON_HINTS[q.data.reason] : ''}
+            {t('admin.ops.opsDatabasePage.slowQueriesUnavailable', { v: q.data.reason ? SLOW_REASON_HINTS[q.data.reason] : '' })}
           </p>
           {q.data.message && <p className={c.degradedDetail}>{q.data.message}</p>}
           <p>
-            啟用是獨立的維護步驟（網頁不會自動建立擴充或改設定），步驟見 <code>docs/production_resilience.md</code>
-            「DB 統計快照與慢查詢」。
+            {t('admin.ops.opsDatabasePage.enablingIsASeparateMaintenance')}{' '}<code>docs/production_resilience.md</code>
+            {t('admin.ops.opsDatabasePage.dbStatsSnapshotsAndSlow')}
           </p>
         </div>
       ) : (
         <>
           <div className={styles.body}>
             <p className={c.meta}>
-              <span>統計起點 <b>{q.data.stats_reset ? fmtDateTime(q.data.stats_reset) : '資料庫啟動或擴充建立以來'}</b></span>
-              {(q.data.hidden_count ?? 0) > 0 && <span>{q.data.hidden_count} 筆因權限不足隱藏查詢文字</span>}
-              <span>查詢文字最多 200 字</span>
+              <span>{t('admin.ops.opsDatabasePage.statsSince2')}{' '}<b>{q.data.stats_reset ? fmtDateTime(q.data.stats_reset) : t('admin.ops.opsDatabasePage.sinceDatabaseStartOrExtension')}</b></span>
+              {(q.data.hidden_count ?? 0) > 0 && <span>{q.data.hidden_count}{' '}{t('admin.ops.opsDatabasePage.queriesHiddenForInsufficientPrivileges')}</span>}
+              <span>{t('admin.ops.opsDatabasePage.queryTextUpTo200')}</span>
             </p>
           </div>
-          {(q.data.items ?? []).length === 0 ? <p className={c.empty}>還沒有統計資料。</p> : (
+          {(q.data.items ?? []).length === 0 ? <p className={c.empty}>{t('admin.ops.opsDatabasePage.noStatsYet')}</p> : (
             <div className={c.tableWrap}>
-              <table className={c.table} aria-label="慢查詢">
+              <table className={c.table} aria-label={t('admin.ops.opsDatabasePage.slowQueries')}>
                 <thead>
                   <tr>
-                    <th>查詢</th><th className={c.tdRight}>次數</th><th className={c.tdRight}>總時間</th>
-                    <th className={c.tdRight}>平均</th><th className={c.tdRight}>列數</th><th className={c.tdRight}>快取命中</th>
+                    <th>{t('admin.ops.opsDatabasePage.query')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.calls')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.totalTime2')}</th>
+                    <th className={c.tdRight}>{t('admin.ops.opsDatabasePage.mean')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.rows2')}</th><th className={c.tdRight}>{t('admin.ops.opsDatabasePage.cacheHits')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -265,7 +265,7 @@ function SlowQueriesCard() {
                     <tr key={it.queryid ?? i}>
                       <td>
                         <div className={styles.queryText}>
-                          {it.query_hidden ? <span className={c.muted}>（權限不足，已隱藏）</span> : it.query}
+                          {it.query_hidden ? <span className={c.muted}>{t('admin.ops.opsDatabasePage.hiddenInsufficientPrivileges')}</span> : it.query}
                         </div>
                       </td>
                       <td className={`${c.num} ${c.tdRight}`}>{fmtInt(it.calls)}</td>
@@ -294,43 +294,43 @@ function TrendsCard({ tableOptions }: { tableOptions: string[] }) {
   const tables = q.data?.tables.length ? q.data.tables : tableOptions
   return (
     <Card
-      title="趨勢"
+      title={t('admin.ops.opsDatabasePage.trends')}
       labelledBy="ops-db-trend-title"
-      right={<Segmented label="區間" options={RANGES} value={days} onChange={setDays} />}
+      right={<Segmented label={t('admin.ops.opsDatabasePage.range')} options={RANGES} value={days} onChange={setDays} />}
     >
       <div className={styles.body}>
         <div className={styles.controls}>
           <label className={styles.control}>
-            指標
+            {t('admin.ops.opsDatabasePage.metric')}
             <select className={c.select} value={metric} onChange={e => setMetric(e.target.value as TrendMetric)}>
               {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </label>
           {metric === 'table_bytes' && (
             <label className={styles.control}>
-              表
+              {t('admin.ops.opsDatabasePage.table')}
               <select className={`${c.select} ${c.inputMono}`} value={table} onChange={e => setTable(e.target.value)}>
-                <option value="">選擇一張表</option>
-                {tables.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="">{t('admin.ops.opsDatabasePage.chooseATable')}</option>
+                {tables.map(item => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
           )}
         </div>
         {metric === 'table_bytes' && table === '' ? (
-          <p className={styles.idle}>選一張表看它的大小變化（選項是最近一次快照記錄的前 20 大表）。</p>
-        ) : q.isPending ? <p className={styles.idle}>載入中…</p> : q.isError ? (
-          <OpsQueryError error={q.error} what="趨勢" />
+          <p className={styles.idle}>{t('admin.ops.opsDatabasePage.chooseATableToSee')}</p>
+        ) : q.isPending ? <p className={styles.idle}>{t('admin.ops.opsDatabasePage.loading')}</p> : q.isError ? (
+          <OpsQueryError error={q.error} what={t('admin.ops.opsDatabasePage.trends')} />
         ) : (
           <>
             <p className={c.meta}>
-              <span>粒度 <b>{q.data.granularity === 'hour' ? '逐時' : '每日'}</b></span>
-              {q.data.kind === 'rate' && <span>{q.data.granularity === 'hour' ? '每小時' : '每日'}增量（統計重設的那一點留空）</span>}
-              {q.data.granularity === 'day' && q.data.kind === 'gauge' && <span>每日平均，淡色帶為當日最低～最高</span>}
+              <span>{t('admin.ops.opsDatabasePage.granularity')}{' '}<b>{q.data.granularity === 'hour' ? t('admin.ops.opsDatabasePage.hourly') : t('admin.ops.opsDatabasePage.daily')}</b></span>
+              {q.data.kind === 'rate' && <span>{q.data.granularity === 'hour' ? t('admin.ops.opsDatabasePage.hourly2') : t('admin.ops.opsDatabasePage.daily')}{t('admin.ops.opsDatabasePage.deltaBlankAtStatsReset')}</span>}
+              {q.data.granularity === 'day' && q.data.kind === 'gauge' && <span>{t('admin.ops.opsDatabasePage.dailyAverageTheLightBand')}</span>}
             </p>
             <OpsTrendChart points={q.data.points} label={def.label} format={def.format} />
             {q.data.points.length === 0 && (
               <p className={styles.note}>
-                趨勢來自每小時的 DB 統計快照（report-mark-db-snapshot.timer）；若一直沒有資料，確認它已安裝並在跑。
+                {t('admin.ops.opsDatabasePage.trendsComeFromTheHourly')}
               </p>
             )}
           </>
@@ -353,20 +353,19 @@ export default function OpsDatabasePage() {
   return (
     <>
       <PageHeader
-        summary="系統目錄即時快照、慢查詢與趨勢；只讀系統目錄，不改設定。"
+        summary={t('admin.ops.opsDatabasePage.liveSystemCatalogSnapshotSlow')}
         help={(
           <>
-            即時快照只查系統目錄，後端以短逾時保護（<code>statement_timeout</code>、<code>lock_timeout</code>），每 60 秒更新。
-            各段獨立降級：權限不足或逾時只讓那一段顯示說明，其餘照常。慢查詢讀 <code>pg_stat_statements</code>
-            （程式與 migration 都不建立擴充）；趨勢讀每小時的 <code>db_stat_snapshot</code>（30 天內逐時、更早每日）。
+            {t('admin.ops.opsDatabasePage.theLiveSnapshotQueriesOnly')}<code>statement_timeout</code>{t('admin.ops.opsDatabasePage.text2')}<code>lock_timeout</code>{t('admin.ops.opsDatabasePage.refreshingEvery60SEach')}{' '}<code>pg_stat_statements</code>
+            {t('admin.ops.opsDatabasePage.neitherCodeNorMigrationsCreate')}{' '}<code>db_stat_snapshot</code>{t('admin.ops.opsDatabasePage.hourlyWithin30DaysDaily')}
           </>
         )}
       />
-      {q.isPending ? <p className={c.empty}>載入中…</p> : q.isError ? (
-        <OpsQueryError error={q.error} what="資料庫快照" />
+      {q.isPending ? <p className={c.empty}>{t('admin.ops.opsDatabasePage.loading')}</p> : q.isError ? (
+        <OpsQueryError error={q.error} what={t('admin.ops.opsDatabasePage.databaseSnapshot')} />
       ) : <Snapshot ov={q.data} />}
       {q.data && <TablesCard ov={q.data} />}
-      <TrendsCard tableOptions={q.data?.tables.error ? [] : (q.data?.tables.items ?? []).slice(0, 20).map(t => `${t.schema_name}.${t.table}`)} />
+      <TrendsCard tableOptions={q.data?.tables.error ? [] : (q.data?.tables.items ?? []).slice(0, 20).map(item => `${item.schema_name}.${item.table}`)} />
       <SlowQueriesCard />
       {q.data && <UnusedIndexesCard ov={q.data} />}
     </>

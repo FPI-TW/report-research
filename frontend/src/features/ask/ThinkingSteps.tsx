@@ -3,6 +3,7 @@ import { Check, ChevronDown } from 'lucide-react'
 import { stagesToSteps, type ThinkStep } from '../../lib/thinkingStages'
 import type { Turn } from '../../lib/askReducer'
 import styles from './ThinkingSteps.module.css'
+import { t } from '@/i18n'
 
 // 開始寫答案之後多久自動收合步驟清單（交接包原型的節奏：讓「生成回答」那一格亮一下再收）。
 const COLLAPSE_AFTER_MS = 700
@@ -20,7 +21,7 @@ function ThinkClock() {
     const id = window.setInterval(() => setNow(Date.now()), 100)
     return () => window.clearInterval(id)
   }, [])
-  return <span className={styles.clock}>{((now - start) / 1000).toFixed(1)} 秒</span>
+  return <span className={styles.clock}>{t('ask.thinkingSteps.s', { v: ((now - start) / 1000).toFixed(1) })}</span>
 }
 
 function SpinArc() {
@@ -79,7 +80,7 @@ export function ThinkingSteps({ turn, referenced }: Props) {
 
   const raw: Step[] = stagesToSteps(turn.stages, turn.webUsed).map(s => (
     s.key === 'retrieved' && s.state !== 'pending' && turn.retrievedCount != null
-      ? { ...s, meta: `找到 ${turn.retrievedCount} 篇相關研報` }
+      ? { ...s, meta: t('ask.thinkingSteps.foundRelevantReports', { retrievedCount: turn.retrievedCount }) }
       : s
   ))
   const steps: Step[] = live
@@ -97,16 +98,16 @@ export function ThinkingSteps({ turn, referenced }: Props) {
   if (queued) {
     // 後端在取得併發名額前先送 queued（web/concurrency.py）；排第一位不報名次，那只是雜訊。
     const pos = turn.queuePosition ?? 0
-    label = pos > 1 ? `排隊中（第 ${pos} 位）…` : '排隊中…'
+    label = pos > 1 ? t('ask.thinkingSteps.queuedPosition', { pos }) : t('ask.thinkingSteps.queued')
   } else if (turn.phase === 'thinking') {
-    label = active ? `${active.name}…` : '思考中…'
+    label = active ? `${active.name}…` : t('ask.thinkingSteps.thinking')
   } else if (turn.phase === 'streaming') {
-    label = '正在撰寫回答'
+    label = t('ask.thinkingSteps.writingTheAnswer')
   } else if (halted) {
-    label = '思考已中斷'
+    label = t('ask.thinkingSteps.thinkingInterrupted')
   } else {
-    label = turn.thinkingMs != null ? `已思考 ${Math.max(1, Math.round(turn.thinkingMs / 1000))} 秒` : '思考完成'
-    if (referenced > 0) sub = `參考 ${referenced} 篇研報`
+    label = turn.thinkingMs != null ? t('ask.thinkingSteps.thoughtForS', { max: Math.max(1, Math.round(turn.thinkingMs / 1000)) }) : t('ask.thinkingSteps.doneThinking')
+    if (referenced > 0) sub = t('ask.thinkingSteps.referencedReports', { referenced })
   }
   const icon = live ? <SpinArc /> : turn.phase === 'stopped' || turn.phase === 'error' ? <HaltIcon /> : null
 

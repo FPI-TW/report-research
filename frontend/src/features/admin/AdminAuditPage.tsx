@@ -15,10 +15,11 @@ import { actionLabel, actorLabel, auditSummary, fmtDateTime } from './auditLabel
 import { AUDIT_PAGE_SIZE } from './useAdmin'
 import { isServerFiltered, parseEntryId, useAuditEntry, useAuditLog } from './useAuditLog'
 import a from './Audit.module.css'
+import { t } from '@/i18n'
 
 /** 錯誤物件 → 給人看的訊息。 */
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '載入失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.adminAuditPage.couldnTLoadTryAgain')
 }
 
 /** URL 的 `?offset=` → 非負整數；亂填的值當成第一頁。 */
@@ -35,7 +36,7 @@ type Missing =
   | { kind: 'not_on_page' }
 
 const MISSING_TITLE: Record<Missing['kind'], string> = {
-  loading: '載入中…', not_found: '找不到這筆紀錄', error: '無法載入這筆紀錄', not_on_page: '找不到這筆紀錄',
+  get loading() { return t('admin.adminAuditPage.loading') }, get not_found() { return t('admin.adminAuditPage.entryNotFound') }, get error() { return t('admin.adminAuditPage.couldnTLoadThisEntry') }, get not_on_page() { return t('admin.adminAuditPage.entryNotFound') },
 }
 
 function EntryDrawer({ entryId, entry, missing, onClose }: {
@@ -47,10 +48,10 @@ function EntryDrawer({ entryId, entry, missing, onClose }: {
       <Drawer open onClose={onClose} width={520} title={MISSING_TITLE[missing.kind]}>
         {missing.kind !== 'loading' && (
           <DrawerSection>
-            {missing.kind === 'not_found' && <p className={a.note}>沒有編號 #{entryId} 的操作紀錄。</p>}
-            {missing.kind === 'error' && <p className={c.error} role="alert">#{entryId} 載入失敗：{missing.message}</p>}
+            {missing.kind === 'not_found' && <p className={a.note}>{t('admin.adminAuditPage.thereIsNoAuditEntry', { entryId })}</p>}
+            {missing.kind === 'error' && <p className={c.error} role="alert">{t('admin.adminAuditPage.couldnTLoad', { entryId, message: missing.message })}</p>}
             {missing.kind === 'not_on_page' && (
-              <p className={a.note}>#{entryId} 不在目前這一頁。新的操作會把舊紀錄往後推，請翻頁找，或匯出 CSV。</p>
+              <p className={a.note}>{t('admin.adminAuditPage.isNotOnThisPage', { entryId })}</p>
             )}
           </DrawerSection>
         )}
@@ -61,23 +62,23 @@ function EntryDrawer({ entryId, entry, missing, onClose }: {
   return (
     <Drawer open onClose={onClose} width={520} title={actionLabel(entry.action)}
       subtitle={`${fmtDateTime(entry.created_at)}・${actorLabel(entry)}`}
-      footer={<DrawerFootNote>紀錄只能新增，不含任何密碼或註記全文。</DrawerFootNote>}>
-      <DrawerSection title="這筆操作">
+      footer={<DrawerFootNote>{t('admin.adminAuditPage.entriesCanOnlyBeAppended')}</DrawerFootNote>}>
+      <DrawerSection title={t('admin.adminAuditPage.thisAction')}>
         <dl className={c.kv}>
-          <dt>編號</dt><dd>#{entry.id}</dd>
-          <dt>時間</dt><dd title={entry.created_at ?? undefined}>{fmtDateTime(entry.created_at)}</dd>
-          <dt>操作者</dt>
+          <dt>{t('admin.adminAuditPage.id')}</dt><dd>#{entry.id}</dd>
+          <dt>{t('admin.adminAuditPage.time')}</dt><dd title={entry.created_at ?? undefined}>{fmtDateTime(entry.created_at)}</dd>
+          <dt>{t('admin.adminAuditPage.actor')}</dt>
           <dd>{actorLabel(entry)}{entry.actor_user_id && <span className={a.sub}>{entry.actor_user_id}</span>}</dd>
-          <dt>動作</dt><dd>{entry.action}</dd>
-          <dt>分類</dt><dd>{AUDIT_CATEGORY_LABELS[auditCategory(entry.action)]}</dd>
-          <dt>對象</dt><dd>{entry.target_type}{entry.target_id ? ` ${entry.target_id}` : ''}</dd>
-          <dt>內容</dt><dd>{auditSummary(entry)}</dd>
+          <dt>{t('admin.adminAuditPage.action')}</dt><dd>{entry.action}</dd>
+          <dt>{t('admin.adminAuditPage.category')}</dt><dd>{AUDIT_CATEGORY_LABELS[auditCategory(entry.action)]}</dd>
+          <dt>{t('admin.adminAuditPage.target')}</dt><dd>{entry.target_type}{entry.target_id ? ` ${entry.target_id}` : ''}</dd>
+          <dt>{t('admin.adminAuditPage.content')}</dt><dd>{auditSummary(entry)}</dd>
         </dl>
       </DrawerSection>
-      <DrawerSection title="完整 detail">
+      <DrawerSection title={t('admin.adminAuditPage.fullDetail')}>
         {hasDetail
-          ? <pre className={`${c.log} ${a.detail}`} aria-label="完整 detail">{JSON.stringify(entry.detail, null, 2)}</pre>
-          : <p className={a.note}>這筆操作沒有額外的 detail。</p>}
+          ? <pre className={`${c.log} ${a.detail}`} aria-label={t('admin.adminAuditPage.fullDetail')}>{JSON.stringify(entry.detail, null, 2)}</pre>
+          : <p className={a.note}>{t('admin.adminAuditPage.thisActionHasNoAdditional')}</p>}
       </DrawerSection>
     </Drawer>
   )
@@ -96,7 +97,7 @@ function AuditLog() {
   const pageOnly = q.data != null && !isServerFiltered(q.data)
   const rows = pageOnly && filter !== 'all' ? items.filter(e => auditCategory(e.action) === filter) : items
   const options: SegOption<AuditFilter>[] = [
-    { value: 'all', label: '全部', count: pageOnly ? items.length : null },
+    { value: 'all', label: t('admin.adminAuditPage.all'), count: pageOnly ? items.length : null },
     ...AUDIT_CATEGORIES.map(k => ({
       value: k, label: AUDIT_CATEGORY_LABELS[k],
       count: pageOnly ? items.filter(e => auditCategory(e.action) === k).length : null,
@@ -129,30 +130,30 @@ function AuditLog() {
       : { kind: 'not_found' }
 
   return (
-    <Card title="最近的操作" labelledBy="admin-audit-title"
-      right={<ExportCsvButton href={adminCsvUrls.exportAudit(auditCategoryQuery(filter))} what="操作紀錄" />}>
+    <Card title={t('admin.adminAuditPage.recentActions')} labelledBy="admin-audit-title"
+      right={<ExportCsvButton href={adminCsvUrls.exportAudit(auditCategoryQuery(filter))} what={t('admin.adminAuditPage.auditLog')} />}>
       <div className={`${c.toolbar} ${a.toolbar}`}>
-        <Segmented label={pageOnly ? '分類（只篩這一頁）' : '分類'} options={options} value={filter} onChange={setFilter} />
-        {pageOnly && filter !== 'all' && <span className={c.muted}>分類只篩目前這一頁</span>}
+        <Segmented label={pageOnly ? t('admin.adminAuditPage.categoryThisPageOnly') : t('admin.adminAuditPage.category')} options={options} value={filter} onChange={setFilter} />
+        {pageOnly && filter !== 'all' && <span className={c.muted}>{t('admin.adminAuditPage.categoryFiltersOnlyTheCurrent')}</span>}
       </div>
       {q.isPending ? (
-        <p className={c.empty}>載入中…</p>
+        <p className={c.empty}>{t('admin.adminAuditPage.loading')}</p>
       ) : q.isError ? (
-        <div className={c.cardBody}><p className={c.error} role="alert">操作紀錄載入失敗：{messageOf(q.error)}</p></div>
+        <div className={c.cardBody}><p className={c.error} role="alert">{t('admin.adminAuditPage.couldnTLoadTheAudit', { error: messageOf(q.error) })}</p></div>
       ) : q.data.total === 0 && filter === 'all' ? (
-        <p className={c.empty}>還沒有任何管理操作</p>
+        <p className={c.empty}>{t('admin.adminAuditPage.noAdminActionsYet')}</p>
       ) : (
         <>
           {rows.length === 0 ? (
             <p className={c.empty}>
-              {filter === 'all' ? '這一頁沒有紀錄'
-                : pageOnly ? `這一頁沒有「${AUDIT_CATEGORY_LABELS[filter]}」的操作`
-                  : q.data.total === 0 ? `沒有「${AUDIT_CATEGORY_LABELS[filter]}」的操作` : '這一頁沒有紀錄'}
+              {filter === 'all' ? t('admin.adminAuditPage.noEntriesOnThisPage')
+                : pageOnly ? t('admin.adminAuditPage.noActionsOnThisPage', { AUDIT_CATEGORY_LABELS: AUDIT_CATEGORY_LABELS[filter] })
+                  : q.data.total === 0 ? t('admin.adminAuditPage.noActions', { AUDIT_CATEGORY_LABELS: AUDIT_CATEGORY_LABELS[filter] }) : t('admin.adminAuditPage.noEntriesOnThisPage')}
             </p>
           ) : (
             <div className={c.tableWrap}>
               <table className={c.table}>
-                <thead><tr><th>時間</th><th>操作者</th><th>動作</th><th>內容</th></tr></thead>
+                <thead><tr><th>{t('admin.adminAuditPage.time')}</th><th>{t('admin.adminAuditPage.actor')}</th><th>{t('admin.adminAuditPage.action')}</th><th>{t('admin.adminAuditPage.content')}</th></tr></thead>
                 <tbody>
                   {rows.map(e => (
                     <tr key={e.id} className={`${c.rowClickable} ${String(e.id) === entryParam ? c.rowSelected : ''}`}
@@ -161,7 +162,7 @@ function AuditLog() {
                       <td className={e.actor_username ? c.t1 : c.muted}>{actorLabel(e)}</td>
                       <td className={c.nowrap}>
                         {/* 列的鍵盤入口：整列可點，但能聚焦的是這顆按鈕。 */}
-                        <button type="button" className={c.rowLink} title="看這筆操作的完整內容"
+                        <button type="button" className={c.rowLink} title={t('admin.adminAuditPage.viewTheFullContentOf')}
                           onClick={ev => { ev.stopPropagation(); setEntryParam(String(e.id)) }}>
                           {actionLabel(e.action)}
                         </button>
@@ -176,14 +177,14 @@ function AuditLog() {
           <div className={c.pager}>
             <span>
               {q.data.items.length > 0
-                ? `第 ${offset + 1}–${offset + q.data.items.length} 筆，共 ${q.data.total} 筆`
-                : `共 ${q.data.total} 筆`}
-              {pageOnly && filter !== 'all' && `・這一頁符合 ${rows.length} 筆`}
+                ? t('admin.adminAuditPage.of', { v: offset + 1, v2: offset + q.data.items.length, total: q.data.total })
+                : t('admin.adminAuditPage.total', { total: q.data.total })}
+              {pageOnly && filter !== 'all' && t('admin.adminAuditPage.matchOnThisPage', { length: rows.length })}
             </span>
             <div className={c.pagerBtns}>
-              <Button size="sm" disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - AUDIT_PAGE_SIZE))}>上一頁</Button>
+              <Button size="sm" disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - AUDIT_PAGE_SIZE))}>{t('admin.adminAuditPage.previous')}</Button>
               <Button size="sm" disabled={q.data.next_offset == null}
-                onClick={() => { if (q.data.next_offset != null) goTo(q.data.next_offset) }}>下一頁</Button>
+                onClick={() => { if (q.data.next_offset != null) goTo(q.data.next_offset) }}>{t('admin.adminAuditPage.next')}</Button>
             </div>
           </div>
         </>
@@ -197,8 +198,8 @@ function AdminAudit() {
   return (
     <ConsolePage>
       <PageHeader
-        summary="誰在何時做了什麼；新的在前，不含任何密碼或註記全文。"
-        help="建帳、改角色、停用、重設密碼、強制登出、處理待複核與隱藏研報，誰在何時做了什麼；新的在前。不含任何密碼或註記全文。操作者為「指令列（CLI）」表示由主機上的指令列工具執行。點任一列看完整的 detail；分類與匯出 CSV 用同一組條件，匯出的就是目前篩出來的清單（最多一萬筆）。"
+        summary={t('admin.adminAuditPage.whoDidWhatAndWhen')}
+        help={t('admin.adminAuditPage.accountCreationRoleChangesDisabling')}
       />
       <AuditLog />
     </ConsolePage>

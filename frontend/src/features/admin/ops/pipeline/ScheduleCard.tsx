@@ -8,6 +8,7 @@ import { Bar, Count, Row, TonePill } from './parts'
 import { PIPELINE_ROWS } from './pipelineMeta'
 import { fmtInt, ingestRateText, rateText, type Rates } from './rate'
 import styles from './Pipeline.module.css'
+import { t } from '@/i18n'
 
 /**
  * 排程與執行：每 3 小時的 NAS 增量同步、哪些批次正在跑、進行中的進度、unit 失敗紀錄。
@@ -19,14 +20,14 @@ import styles from './Pipeline.module.css'
 const SYNC_TONE: Record<string, LampTone> = { done: 'ok', running: 'info' }
 
 function SyncRow({ sync }: { sync: LogEntry | null | undefined }) {
-  if (sync === undefined) return <Row label="排程同步"><p className={styles.idle}>此版後端未提供同步紀錄</p></Row>
-  if (sync === null) return <Row label="排程同步"><p className={styles.idle}>尚無同步紀錄</p></Row>
+  if (sync === undefined) return <Row label={t('admin.ops.pipeline.scheduleCard.scheduledSync')}><p className={styles.idle}>{t('admin.ops.pipeline.scheduleCard.thisBackendVersionDoesnT')}</p></Row>
+  if (sync === null) return <Row label={t('admin.ops.pipeline.scheduleCard.scheduledSync')}><p className={styles.idle}>{t('admin.ops.pipeline.scheduleCard.noSyncRecordsYet')}</p></Row>
   return (
-    <Row label="排程同步">
+    <Row label={t('admin.ops.pipeline.scheduleCard.scheduledSync')}>
       <div className={styles.line}>
         <Status tone={SYNC_TONE[sync.status] ?? 'idle'}>{sync.label}</Status>
         <span className={c.num}>{fmtMinute(sync.timestamp)}</span>
-        <span className={c.muted}>每 3 小時一輪</span>
+        <span className={c.muted}>{t('admin.ops.pipeline.scheduleCard.oneRoundEvery3Hours')}</span>
       </div>
       <pre className={`${c.log} ${styles.raw}`}>{sync.raw}</pre>
     </Row>
@@ -39,14 +40,14 @@ function BatchRow({ pipelines }: { pipelines: Progress['pipelines'] }) {
   const on = rows.filter(r => pipelines[r.key])
   const off = rows.filter(r => !pipelines[r.key])
   return (
-    <Row label="批次">
-      <div className={styles.chips} aria-label="執行中的批次">
+    <Row label={t('admin.ops.pipeline.scheduleCard.batches')}>
+      <div className={styles.chips} aria-label={t('admin.ops.pipeline.scheduleCard.runningBatches')}>
         {on.length > 0
-          ? on.map(r => <TonePill key={r.key} tone="run">{r.name}・執行中</TonePill>)
-          : <TonePill tone="idle">目前沒有批次在跑</TonePill>}
+          ? on.map(r => <TonePill key={r.key} tone="run">{t('admin.ops.pipeline.scheduleCard.running', { name: r.name })}</TonePill>)
+          : <TonePill tone="idle">{t('admin.ops.pipeline.scheduleCard.noBatchesRunning')}</TonePill>}
       </div>
       {off.length > 0 && (
-        <div className={`${c.muted} ${styles.small}`}>未執行：{off.map(r => r.name).join('、')}</div>
+        <div className={`${c.muted} ${styles.small}`}>{t('admin.ops.pipeline.scheduleCard.notRun')}{off.map(r => r.name).join(t('admin.ops.pipeline.scheduleCard.text'))}</div>
       )}
     </Row>
   )
@@ -56,7 +57,7 @@ function ProgressLine({ name, pct, stat, rate }: { name: string; pct: number; st
   return (
     <div className={styles.prog}>
       <span className={styles.progName}>{name}</span>
-      <Bar pct={pct} label={`${name}進度`} gold />
+      <Bar pct={pct} label={t('admin.ops.pipeline.scheduleCard.progress', { name })} gold />
       <span className={c.num}>{`${pct.toFixed(1)}%・${stat}`}</span>
       {rate && <span className={styles.progRate}>{rate}</span>}
     </div>
@@ -75,52 +76,52 @@ function ProgressRow({ p, rates }: { p: Progress; rates: Rates }) {
   const lines = []
   if (p.pipelines.ingest) {
     const text = p.orchestrator?.label
-      ?? (p.ingest ? `本輪已導入 ${fmtInt(p.ingest.ingested)} 篇・失敗 ${fmtInt(p.ingest.fail)}` : '全量導入執行中')
+      ?? (p.ingest ? t('admin.ops.pipeline.scheduleCard.ingestedThisRoundFailed', { ingested: fmtInt(p.ingest.ingested), fail: fmtInt(p.ingest.fail) }) : t('admin.ops.pipeline.scheduleCard.fullIngestRunning'))
     lines.push(
       <div key="ingest" className={styles.line}>
-        <span className={styles.progName}>全量導入</span><span>{text}</span>
+        <span className={styles.progName}>{t('admin.ops.pipeline.scheduleCard.fullIngest')}</span><span>{text}</span>
         <span className={`${c.muted} ${styles.small}`}>{ingestRateText(rates.rpm, rates.cps)}</span>
       </div>,
     )
   } else if (p.pipelines.sync_import) {
     lines.push(
       <div key="sync" className={styles.line}>
-        <span className={styles.progName}>增量匯入</span><span>執行中</span>
-        <span className={`${c.muted} ${styles.small}`}>增量匯入沒有進度數字</span>
+        <span className={styles.progName}>{t('admin.ops.pipeline.scheduleCard.incrementalImport')}</span><span>{t('admin.ops.pipeline.scheduleCard.running2')}</span>
+        <span className={`${c.muted} ${styles.small}`}>{t('admin.ops.pipeline.scheduleCard.incrementalImportHasNoProgress')}</span>
       </div>,
     )
   }
   if (p.pipelines.tag && p.tagging) {
-    const t = p.tagging
+    const item = p.tagging
     lines.push(
-      <ProgressLine key="tag" name="語意標註" pct={t.pct} stat={`${fmtInt(t.done)}/${fmtInt(t.total)}・失敗 ${fmtInt(t.fail)}`}
-        rate={rateText(Math.max(0, t.total - t.done), rates.tpm, '篇')} />,
+      <ProgressLine key="tag" name={t('admin.ops.pipeline.scheduleCard.semanticTagging')} pct={item.pct} stat={t('admin.ops.pipeline.scheduleCard.failed', { done: fmtInt(item.done), total: fmtInt(item.total), fail: fmtInt(item.fail) })}
+        rate={rateText(Math.max(0, item.total - item.done), rates.tpm, t('admin.ops.pipeline.scheduleCard.reports'))} />,
     )
   }
   if (p.pipelines.summaries) {
     const s = p.summary
     lines.push(
-      <ProgressLine key="summary" name="摘要生成" pct={s.pct} stat={`尚餘 ${fmtInt(s.remaining)}`}
-        rate={rateText(s.remaining, rates.spm, '篇')} />,
+      <ProgressLine key="summary" name={t('admin.ops.pipeline.scheduleCard.summaryGeneration')} pct={s.pct} stat={t('admin.ops.pipeline.scheduleCard.remaining', { remaining: fmtInt(s.remaining) })}
+        rate={rateText(s.remaining, rates.spm, t('admin.ops.pipeline.scheduleCard.reports'))} />,
     )
   }
   if (lines.length === 0) return null
-  return <Row label="進度">{lines}</Row>
+  return <Row label={t('admin.ops.pipeline.scheduleCard.progress2')}>{lines}</Row>
 }
 
 function FailuresRow({ failures }: { failures: UnitFailures | undefined }) {
-  if (!failures) return <Row label="排程失敗"><p className={styles.idle}>此版後端未提供失敗紀錄</p></Row>
+  if (!failures) return <Row label={t('admin.ops.pipeline.scheduleCard.scheduleFailures')}><p className={styles.idle}>{t('admin.ops.pipeline.scheduleCard.thisBackendVersionDoesnT2')}</p></Row>
   return (
-    <Row label="排程失敗">
+    <Row label={t('admin.ops.pipeline.scheduleCard.scheduleFailures')}>
       <div className={styles.line}>
-        <span>近 24 小時 <Count value={failures.count_24h} tone="bad" /> 次</span>
-        <span>近 7 日 {fmtInt(failures.count_7d)} 次</span>
-        <span className={c.muted}>最後一次 {fmtMinute(failures.latest)}</span>
+        <span>{t('admin.ops.pipeline.scheduleCard.last24Hours')}{' '}<Count value={failures.count_24h} tone="bad" />{' '}{t('admin.ops.pipeline.scheduleCard.times')}</span>
+        <span>{t('admin.ops.pipeline.scheduleCard.inTheLast7Days', { count_7d: fmtInt(failures.count_7d) })}</span>
+        <span className={c.muted}>{t('admin.ops.pipeline.scheduleCard.last', { latest: fmtMinute(failures.latest) })}</span>
       </div>
       {failures.recent.length > 0 && (
         <div className={`${c.tableWrap} ${styles.subTable}`}>
-          <table className={c.table} aria-label="最近的排程失敗">
-            <thead><tr><th>時間</th><th>服務</th><th>階段</th><th className={c.tdRight}>退出碼</th></tr></thead>
+          <table className={c.table} aria-label={t('admin.ops.pipeline.scheduleCard.recentScheduleFailures')}>
+            <thead><tr><th>{t('admin.ops.pipeline.scheduleCard.time')}</th><th>{t('admin.ops.pipeline.scheduleCard.service')}</th><th>{t('admin.ops.pipeline.scheduleCard.stage')}</th><th className={c.tdRight}>{t('admin.ops.pipeline.scheduleCard.exitCode')}</th></tr></thead>
             <tbody>
               {failures.recent.map((e, i) => (
                 <tr key={`${e.ts ?? 'na'}-${i}`}>
@@ -128,7 +129,7 @@ function FailuresRow({ failures }: { failures: UnitFailures | undefined }) {
                   <td className={c.mono}>{e.unit}</td>
                   <td>{e.stage ?? '—'}</td>
                   <td className={`${c.num} ${c.tdRight}`}>
-                    {e.rc === null ? <span className={c.muted}>不明</span> : e.rc}
+                    {e.rc === null ? <span className={c.muted}>{t('admin.ops.pipeline.scheduleCard.unknown')}</span> : e.rc}
                   </td>
                 </tr>
               ))}
@@ -146,10 +147,10 @@ export function ScheduleCard({ progress: p, rates }: { progress: Progress; rates
   return (
     <div id={SECTION_ID.schedule}>
       <Card
-        title="排程與執行"
+        title={t('admin.ops.pipeline.scheduleCard.scheduleAndRuns')}
         labelledBy="pipeline-schedule-title"
         right={noJobsPage ? undefined
-          : <Link className={`${c.btn} ${c.btnSm}`} to="../jobs" relative="path">看排程工作</Link>}
+          : <Link className={`${c.btn} ${c.btnSm}`} to="../jobs" relative="path">{t('admin.ops.pipeline.scheduleCard.viewScheduledJobs')}</Link>}
       >
         <div className={styles.body}>
           <div className={styles.rows}>
@@ -159,7 +160,7 @@ export function ScheduleCard({ progress: p, rates }: { progress: Progress; rates
             <FailuresRow failures={p.unit_failures} />
           </div>
           <p className={styles.note}>
-            摘要、標題、摘錄三段是 best-effort，失敗不會讓 unit 變紅；停更由每日的 report-mark-freshness 偵測後寫進同一份失敗紀錄。
+            {t('admin.ops.pipeline.scheduleCard.summariesTitlesAndTakeawaysAre')}
           </p>
         </div>
       </Card>

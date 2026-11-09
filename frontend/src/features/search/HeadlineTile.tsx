@@ -10,6 +10,7 @@ import { reportHref } from '../report/readingFormat'
 import { RATING_LABEL, fullDate } from './libraryFormat'
 import atoms from './atoms.module.css'
 import styles from './HeadlineTile.module.css'
+import { t } from '@/i18n'
 
 /** 頭條重點摘錄的條數（交接包：3 條）。 */
 const TAKEAWAY_ROWS = 3
@@ -32,11 +33,11 @@ function ConsensusRow({ consensus }: { consensus: RadarOverview }) {
   const brokers = consensus.coverage.brokers_in_consensus
   return (
     <span className={styles.consensus}>
-      <span>券商共識</span>
+      <span>{t('search.headlineTile.consensus')}</span>
       <span className={`${atoms.badge} ${atoms[median]}`}>{RATING_LABEL[median]}</span>
-      <span><span className={`${atoms.num} ${styles.strong}`}>{brokers}</span> 家券商</span>
-      {rating.upgrades > 0 && <span className={styles.up}>調升 <span className={atoms.num}>{rating.upgrades}</span></span>}
-      {rating.downgrades > 0 && <span className={styles.down}>調降 <span className={atoms.num}>{rating.downgrades}</span></span>}
+      <span><span className={`${atoms.num} ${styles.strong}`}>{brokers}</span>{' '}{t('search.headlineTile.brokers')}</span>
+      {rating.upgrades > 0 && <span className={styles.up}>{t('search.headlineTile.up')}{' '}<span className={atoms.num}>{rating.upgrades}</span></span>}
+      {rating.downgrades > 0 && <span className={styles.down}>{t('search.headlineTile.down')}{' '}<span className={atoms.num}>{rating.downgrades}</span></span>}
     </span>
   )
 }
@@ -60,27 +61,27 @@ export function HeadlineTile({ row, isLatest, doc, consensus, className, style }
     >
       <span className={styles.top}>
         <span className={styles.market} style={{ color: marketColor(market) }}>{marketLabel(market)}</span>
-        <span className={styles.kicker}>頭條</span>
-        {isLatest && <span className={styles.latest}>最新</span>}
+        <span className={styles.kicker}>{t('search.headlineTile.headline')}</span>
+        {isLatest && <span className={styles.latest}>{t('search.headlineTile.latest')}</span>}
       </span>
       <span className={styles.title}>{title}</span>
       {targets.length > 0 && (
         <span className={styles.targets}>
-          {targets.map(t => <span key={t} className={atoms.codeChip}>{t}</span>)}
+          {targets.map(item => <span key={item} className={atoms.codeChip}>{item}</span>)}
         </span>
       )}
       {row.summary && <span className={styles.summary}>{row.summary}</span>}
 
       {takeaways.length > 0 && (
         <span className={styles.points}>
-          <span className={styles.pointsLabel}>重點摘錄</span>
-          {takeaways.map((t, i) => (
-            <span key={t.ordinal} className={styles.point}>
+          <span className={styles.pointsLabel}>{t('search.headlineTile.keyTakeaway')}</span>
+          {takeaways.map((item, i) => (
+            <span key={item.ordinal} className={styles.point}>
               <span className={`${atoms.num} ${styles.pointN}`}>{i + 1}</span>
               <span className={styles.pointBody}>
-                <span className={styles.claim}>{t.claim}</span>
+                <span className={styles.claim}>{item.claim}</span>
                 {/* 逐字引文不轉繁簡（它是 PDF 搜尋的關鍵字），只加引號 */}
-                {t.quote && <span className={styles.quote}>「{t.quote}」</span>}
+                {item.quote && <span className={styles.quote}>{t('search.headlineTile.text', { quote: item.quote })}</span>}
               </span>
             </span>
           ))}
@@ -92,7 +93,7 @@ export function HeadlineTile({ row, isLatest, doc, consensus, className, style }
       <span className={styles.foot}>
         {row.source && <span>{row.source}</span>}
         {row.report_date && <span className={atoms.num}>{fullDate(row.report_date)}</span>}
-        <span className={styles.cta}>查看全文<ArrowRight size={14} strokeWidth={2} aria-hidden /></span>
+        <span className={styles.cta}>{t('search.headlineTile.viewFullText')}<ArrowRight size={14} strokeWidth={2} aria-hidden /></span>
       </span>
     </Link>
   )

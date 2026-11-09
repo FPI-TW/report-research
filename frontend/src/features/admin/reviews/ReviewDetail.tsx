@@ -12,6 +12,7 @@ import styles from '../ReviewQueue.module.css'
 import {
   CLEARED_HINT, CLEARED_TEXT, STATUS_LABEL, STATUS_TONE, VERIFY_LABEL, askerText, fmtDay, itemId, subjectOf,
 } from './reviewItem'
+import { t } from '@/i18n'
 
 export interface ReviewUpdate { status: ReviewStatus; note: string; verification: ReviewVerification }
 
@@ -26,9 +27,9 @@ type ContentState =
   | { status: 'error'; message: string }
 
 function contentError(err: unknown): string {
-  if (err instanceof ApiError && err.status === 404) return '這筆已不在待複核佇列（或已超過 30 天），無法查看內容'
-  if (err instanceof ApiError && err.code === 'missing_scope') return '沒有查看問答內容的權限'
-  return '讀取失敗，請重試'
+  if (err instanceof ApiError && err.status === 404) return t('admin.reviews.reviewDetail.thisItemIsNoLonger')
+  if (err instanceof ApiError && err.code === 'missing_scope') return t('admin.reviews.reviewDetail.noPermissionToViewQ')
+  return t('admin.reviews.reviewDetail.couldnTLoadTryAgain')
 }
 
 /**
@@ -48,25 +49,25 @@ function QaContentView({ qaId, canRead }: { qaId: string; canRead: boolean }) {
     return (
       <div className={styles.block}>
         <div className={styles.contentHead}>
-          <span className={styles.contentAudit}>提問與回答（這次查看已記入稽核）</span>
-          <button type="button" className={c.linkBtn} onClick={() => setState({ status: 'idle' })}>收起</button>
+          <span className={styles.contentAudit}>{t('admin.reviews.reviewDetail.questionAndAnswerThisView')}</span>
+          <button type="button" className={c.linkBtn} onClick={() => setState({ status: 'idle' })}>{t('admin.reviews.reviewDetail.collapse')}</button>
         </div>
-        <div className={styles.contentLabel}>提問</div>
+        <div className={styles.contentLabel}>{t('admin.reviews.reviewDetail.question')}</div>
         <p className={styles.contentQuestion}>{state.content.question}</p>
-        <div className={styles.contentLabel}>回答</div>
-        <p className={styles.contentAnswer}>{state.content.answer || '（沒有回答）'}</p>
+        <div className={styles.contentLabel}>{t('admin.reviews.reviewDetail.answer')}</div>
+        <p className={styles.contentAnswer}>{state.content.answer || t('admin.reviews.reviewDetail.noAnswer')}</p>
       </div>
     )
   }
   return (
     <div className={`${styles.block} ${styles.contentBar}`}>
       <Button size="sm" onClick={load} disabled={!canRead || state.status === 'loading'}
-        title={canRead ? '每次查看都會記入稽核' : '需要 qa_content.read 權限'}>
-        {state.status === 'loading' ? '讀取中…' : '查看內容'}
+        title={canRead ? t('admin.reviews.reviewDetail.everyViewIsAudited') : t('admin.reviews.reviewDetail.requiresTheQaContentRead')}>
+        {state.status === 'loading' ? t('admin.reviews.reviewDetail.loading') : t('admin.reviews.reviewDetail.viewContent')}
       </Button>
       {state.status === 'error'
         ? <span className={styles.contentError} role="alert">{state.message}</span>
-        : <span className={styles.contentNote}>{canRead ? '每次查看都會記入稽核' : '需要 qa_content.read 權限'}</span>}
+        : <span className={styles.contentNote}>{canRead ? t('admin.reviews.reviewDetail.everyViewIsAudited') : t('admin.reviews.reviewDetail.requiresTheQaContentRead')}</span>}
     </div>
   )
 }
@@ -75,14 +76,14 @@ function ExtractionReasons({ item }: { item: ReviewItem }) {
   const reasons = item.review_reasons ?? []
   return (
     <div className={`${styles.block} ${styles.reasons}`}>
-      <span className={styles.reasonLabel}>標記原因</span>
+      <span className={styles.reasonLabel}>{t('admin.reviews.reviewDetail.flagReason')}</span>
       {reasons.length > 0
         ? reasons.map(r => <span key={r} className={styles.reason}>{reasonText(item, r)}</span>)
         : <span className={styles.reason} data-cleared title={CLEARED_HINT}>{CLEARED_TEXT}</span>}
       {item.file_hash && (
         <Link className={`${c.btn} ${c.btnSm} ${styles.openReport}`} to={`/report/${item.file_hash}`}
           target="_blank" rel="noopener">
-          開啟閱讀頁
+          {t('admin.reviews.reviewDetail.openReadingPage')}
         </Link>
       )}
     </div>
@@ -93,14 +94,14 @@ function ExtractionReasons({ item }: { item: ReviewItem }) {
 function metaRows(kind: ReviewKind, item: ReviewItem): [string, string][] {
   const rows: [string, string][] = []
   if (kind === 'extraction') {
-    rows.push(['檔名', item.file_name || '—'], ['券商', item.source || '—'])
+    rows.push([t('admin.reviews.reviewDetail.fileName'), item.file_name || '—'], [t('admin.reviews.reviewDetail.broker'), item.source || '—'])
   } else {
-    if (kind === 'faithfulness' && item.faithfulness_score != null) rows.push(['忠實度', item.faithfulness_score.toFixed(3)])
-    if (kind === 'faithfulness' && item.judge_model) rows.push(['判定尺', item.judge_model])
-    rows.push(['提問者', askerText(item)], ['日期', fmtDay(item.created_at)])
+    if (kind === 'faithfulness' && item.faithfulness_score != null) rows.push([t('admin.reviews.reviewDetail.faithfulness'), item.faithfulness_score.toFixed(3)])
+    if (kind === 'faithfulness' && item.judge_model) rows.push([t('admin.reviews.reviewDetail.judge'), item.judge_model])
+    rows.push([t('admin.reviews.reviewDetail.asker'), askerText(item)], [t('admin.reviews.reviewDetail.date'), fmtDay(item.created_at)])
   }
   // 沒處理過（或共用帳號時期處理的）就不印處理人。
-  if (item.reviewer) rows.push(['處理人', `${item.reviewer}（${fmtDay(item.reviewed_at)}）`])
+  if (item.reviewer) rows.push([t('admin.reviews.reviewDetail.handler'), t('admin.reviews.reviewDetail.text', { reviewer: item.reviewer, reviewed_at: fmtDay(item.reviewed_at) })])
   return rows
 }
 
@@ -123,19 +124,19 @@ function ReviewEditor({ item, saving, onSave }: {
       <fieldset className={styles.fieldset} disabled={saving}>
         <div className={styles.segRow}>
           <div className={styles.segField}>
-            <span className={styles.segLabel}>處理狀態</span>
-            <Segmented label="處理狀態" options={STATUS_OPTIONS} value={status} onChange={setStatus} />
+            <span className={styles.segLabel}>{t('admin.reviews.reviewDetail.status')}</span>
+            <Segmented label={t('admin.reviews.reviewDetail.status')} options={STATUS_OPTIONS} value={status} onChange={setStatus} />
           </div>
           <div className={styles.segField}>
-            <span className={styles.segLabel}>人工驗證</span>
-            <Segmented label="人工驗證" options={VERIFY_OPTIONS} value={verification} onChange={setVerification} />
+            <span className={styles.segLabel}>{t('admin.reviews.reviewDetail.humanVerification')}</span>
+            <Segmented label={t('admin.reviews.reviewDetail.humanVerification')} options={VERIFY_OPTIONS} value={verification} onChange={setVerification} />
           </div>
         </div>
-        <Field label="處理註記" counter={`${note.length}／${NOTE_MAX}`}>
+        <Field label={t('admin.reviews.reviewDetail.handlingNote')} counter={t('admin.reviews.reviewDetail.text2', { length: note.length, NOTE_MAX })}>
           <textarea className={c.textarea} value={note} onChange={e => setNote(e.target.value)} maxLength={NOTE_MAX} rows={3} />
         </Field>
         <div className={styles.editorFoot}>
-          <Button type="submit" variant="primary" disabled={!dirty}>儲存</Button>
+          <Button type="submit" variant="primary" disabled={!dirty}>{t('admin.reviews.reviewDetail.save')}</Button>
         </div>
       </fieldset>
     </form>

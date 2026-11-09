@@ -10,6 +10,7 @@ import { Segmented, type SegmentedOption } from './Segmented'
 import { useRadarInstruments } from './useRadar'
 import shared from './shared.module.css'
 import styles from './InstrumentPicker.module.css'
+import { t } from '@/i18n'
 
 
 /** 「全部」在分段控制裡用 `all` 表示，進出時與網址的 null（不篩選）互換。 */
@@ -42,7 +43,7 @@ export function InstrumentPicker({
   // 市場選單＝profile 啟用的子集（顯示順序、名稱都來自 profile）；名稱在 render 時才取，覆寫抓到後跟著換。
   const enabled = useEnabledMarkets()
   const markets: ReadonlyArray<{ code: Market | ''; label: string }> = [
-    { code: '', label: '全部' },
+    { code: '', label: t('radar.instrumentPicker.all') },
     ...(enabled as readonly Market[]).map(code => ({ code, label: marketLabel(code) })),
   ]
   const composing = useRef(false)
@@ -81,16 +82,16 @@ export function InstrumentPicker({
   }
 
   const emptyText = q.trim()
-    ? `找不到「${q.trim()}」，換個名稱或代號再試一次。`
-    : '換個市場或立場再試一次。'
+    ? t('radar.instrumentPicker.noMatchForTryAnother', { trim: q.trim() })
+    : t('radar.instrumentPicker.tryAnotherMarketOrStance')
 
   return (
     <div className={styles.wrap}>
       <div className={styles.titleRow}>
-        <h1 className={styles.title}>券商共識</h1>
+        <h1 className={styles.title}>{t('radar.instrumentPicker.consensus')}</h1>
         {/* 載入中或失敗時不顯示數字：那時沒有一個說得出口的數字。 */}
         {total != null && !loadFailed ? (
-          <span className={styles.count}><span className={shared.num}>{total}</span> 檔標的</span>
+          <span className={styles.count}><span className={shared.num}>{total}</span>{' '}{t('radar.instrumentPicker.instruments')}</span>
         ) : null}
       </div>
 
@@ -101,8 +102,8 @@ export function InstrumentPicker({
             ref={inputRef}
             className={styles.input}
             type="search"
-            placeholder="標的名稱或代號"
-            aria-label="搜尋標的"
+            placeholder={t('radar.instrumentPicker.instrumentNameOrTicker')}
+            aria-label={t('radar.instrumentPicker.searchInstruments')}
             value={draft}
             maxLength={64}
             onChange={e => {
@@ -128,14 +129,14 @@ export function InstrumentPicker({
             }}
           />
           {draft ? (
-            <button type="button" className={styles.clear} aria-label="清除搜尋" onClick={clearQuery}>
+            <button type="button" className={styles.clear} aria-label={t('radar.instrumentPicker.clearSearch')} onClick={clearQuery}>
               <X size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
           ) : null}
         </div>
 
         <Segmented<StanceFilter | 'all'>
-          label="立場"
+          label={t('radar.instrumentPicker.stance')}
           options={STANCE_SEGMENTS}
           value={stance ?? 'all'}
           onChange={v => onStanceChange(v === 'all' ? null : v)}
@@ -143,13 +144,13 @@ export function InstrumentPicker({
         />
 
         <label className={styles.sort}>
-          排序
+          {t('radar.instrumentPicker.sort')}
           <span className={styles.sortPill}>
             {SORT_LABEL[sort]}
             <ChevronDown size={14} strokeWidth={1.8} className={styles.sortIcon} aria-hidden="true" />
             <select
               className={styles.sortSelect}
-              aria-label="排序"
+              aria-label={t('radar.instrumentPicker.sort')}
               value={sort}
               onChange={e => onSortChange(e.target.value as CatalogSort)}
             >
@@ -159,7 +160,7 @@ export function InstrumentPicker({
         </label>
       </div>
 
-      <div className={styles.markets} role="group" aria-label="市場">
+      <div className={styles.markets} role="group" aria-label={t('radar.instrumentPicker.market')}>
         {markets.map(m => {
           const active = (market || '') === m.code
           return (
@@ -180,8 +181,8 @@ export function InstrumentPicker({
       {/* 篩選、排序後表格整批換掉但焦點沒動，對讀屏是無聲的。 */}
       <p className={shared.srOnly} role="status">
         {total != null
-          ? `依${SORT_LABEL[sort]}排序，共 ${total} 檔`
-            + (stance ? `，僅顯示${STANCE_DISPLAY[stance]}` : '')
+          ? t('radar.instrumentPicker.sortedByInstruments', { SORT_LABEL: SORT_LABEL[sort], total })
+            + (stance ? t('radar.instrumentPicker.showingOnly', { STANCE_DISPLAY: STANCE_DISPLAY[stance] }) : '')
           : ''}
       </p>
 
@@ -195,11 +196,11 @@ export function InstrumentPicker({
             <RadarLoadError error={query.error} onRetry={() => void query.refetch()} />
           ) : !showSkeleton && !items.length ? (
             hasFilter ? (
-              <StateBox icon="empty" title="沒有符合的標的" text={emptyText}>
-                <button type="button" className={shared.btn} onClick={clearFilters}>清除篩選</button>
+              <StateBox icon="empty" title={t('radar.instrumentPicker.noMatchingInstruments')} text={emptyText}>
+                <button type="button" className={shared.btn} onClick={clearFilters}>{t('radar.instrumentPicker.clearFilters')}</button>
               </StateBox>
             ) : (
-              <StateBox icon="empty" title="還沒有可彙整的標的" />
+              <StateBox icon="empty" title={t('radar.instrumentPicker.noInstrumentsToCompileYet')} />
             )
           ) : undefined
         }
@@ -207,8 +208,8 @@ export function InstrumentPicker({
 
       {query.isFetchNextPageError ? (
         <div className={styles.more} role="alert">
-          <span className={styles.moreError}>載入更多標的失敗</span>
-          <button type="button" className={shared.btn} onClick={() => void query.loadMore()}>重試</button>
+          <span className={styles.moreError}>{t('radar.instrumentPicker.couldnTLoadMoreInstruments')}</span>
+          <button type="button" className={shared.btn} onClick={() => void query.loadMore()}>{t('radar.instrumentPicker.retry')}</button>
         </div>
       ) : query.hasMore ? (
         <div className={styles.more}>
@@ -218,7 +219,7 @@ export function InstrumentPicker({
             disabled={query.isFetchingMore}
             onClick={() => void query.loadMore()}
           >
-            {query.isFetchingMore ? '載入中…' : `載入更多（還有 ${query.remaining} 檔）`}
+            {query.isFetchingMore ? t('radar.instrumentPicker.loading') : t('radar.instrumentPicker.loadMoreRemaining', { remaining: query.remaining })}
           </button>
         </div>
       ) : null}

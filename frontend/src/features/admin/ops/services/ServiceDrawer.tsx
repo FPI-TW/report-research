@@ -13,6 +13,7 @@ import { healthLabel, logsHref, nodeTone } from './health'
 import { ServiceStatus } from './ServiceStatus'
 import { writeActionsOf } from './useServiceActions'
 import styles from './Services.module.css'
+import { t } from '@/i18n'
 
 const show = (v: unknown): ReactNode => (v == null || v === '' ? '—' : String(v))
 
@@ -31,44 +32,44 @@ export interface DependencyLookup {
 /** systemd 屬性或容器 State 全列出來（原本詳情頁的欄位）。 */
 function attributeRows(s: OpsServiceStatus, checkedAt?: string): [string, ReactNode][] {
   const rows: [string, ReactNode][] = [
-    ['層級', `${TIER_LABELS[s.tier]}・${TIER_HINTS[s.tier]}`],
-    [s.kind === 'systemd' ? 'unit' : '容器', s.target],
+    [t('admin.ops.services.serviceDrawer.tier'), `${TIER_LABELS[s.tier]}・${TIER_HINTS[s.tier]}`],
+    [s.kind === 'systemd' ? 'unit' : t('admin.ops.services.serviceDrawer.container'), s.target],
     ['ActiveState', stateText(s)],
     ['Result', resultText(s)],
-    ['最近執行', fmtDateTime(lastRunAt(s))],
+    [t('admin.ops.services.serviceDrawer.lastRun'), fmtDateTime(lastRunAt(s))],
   ]
   if (s.systemd) {
     const d = s.systemd
     rows.push(
       ['LoadState', show(d.load_state)], ['UnitFileState', show(d.unit_file_state)], ['Type', show(d.type)],
-      ['MainPID', show(d.main_pid)], ['重啟次數', show(d.n_restarts)],
-      ['結束碼', d.exec_main_code ? `${d.exec_main_code}（${show(d.exec_main_status)}）` : show(d.exec_main_status)],
-      ['結束時間', fmtDateTime(d.exec_main_exit_at)], ['狀態變更', fmtDateTime(d.state_change_at)],
+      ['MainPID', show(d.main_pid)], [t('admin.ops.services.serviceDrawer.restarts'), show(d.n_restarts)],
+      [t('admin.ops.services.serviceDrawer.exitCode'), d.exec_main_code ? t('admin.ops.services.serviceDrawer.text', { exec_main_code: d.exec_main_code, exec_main_status: String(show(d.exec_main_status)) }) : show(d.exec_main_status)],
+      [t('admin.ops.services.serviceDrawer.endedAt'), fmtDateTime(d.exec_main_exit_at)], [t('admin.ops.services.serviceDrawer.stateChanged'), fmtDateTime(d.state_change_at)],
     )
   }
   if (s.container) {
     const k = s.container
     rows.push(
-      ['映像', show(k.image)], ['健康檢查', show(k.health)], ['連續失敗', show(k.failing_streak)],
-      ['重啟次數', show(k.restart_count)], ['OOM', k.oom_killed ? '是' : '否'], ['結束碼', show(k.exit_code)],
-      ['停止時間', fmtDateTime(k.finished_at)], ['錯誤', show(k.error)],
+      [t('admin.ops.services.serviceDrawer.image'), show(k.image)], [t('admin.ops.services.serviceDrawer.healthCheck'), show(k.health)], [t('admin.ops.services.serviceDrawer.consecutiveFailures'), show(k.failing_streak)],
+      [t('admin.ops.services.serviceDrawer.restarts'), show(k.restart_count)], ['OOM', k.oom_killed ? t('admin.ops.services.serviceDrawer.yes') : t('admin.ops.services.serviceDrawer.no')], [t('admin.ops.services.serviceDrawer.exitCode'), show(k.exit_code)],
+      [t('admin.ops.services.serviceDrawer.stoppedAt'), fmtDateTime(k.finished_at)], [t('admin.ops.services.serviceDrawer.error'), show(k.error)],
     )
   }
   if (s.timer) {
     rows.push(
-      ['排程', s.timer], ['Timer 狀態', show(s.timer_state?.active_state)],
-      ['上次觸發', fmtDateTime(s.timer_state?.last_trigger_at)], ['下次觸發', fmtDateTime(s.timer_state?.next_elapse_at)],
+      [t('admin.ops.services.serviceDrawer.schedule'), s.timer], [t('admin.ops.services.serviceDrawer.timerState'), show(s.timer_state?.active_state)],
+      [t('admin.ops.services.serviceDrawer.lastTrigger'), fmtDateTime(s.timer_state?.last_trigger_at)], [t('admin.ops.services.serviceDrawer.nextTrigger'), fmtDateTime(s.timer_state?.next_elapse_at)],
     )
   } else {
-    rows.push(['排程', '常駐'])
+    rows.push([t('admin.ops.services.serviceDrawer.schedule'), t('admin.ops.services.serviceDrawer.longRunning')])
   }
-  if (checkedAt) rows.push(['檢查時間', fmtDateTime(checkedAt)])
+  if (checkedAt) rows.push([t('admin.ops.services.serviceDrawer.checkedAt'), fmtDateTime(checkedAt)])
   return rows
 }
 
 function DepChips({ names, lookup }: { names: string[]; lookup: Map<string, OpsDependencyNode> }) {
   const [params] = useSearchParams()
-  if (names.length === 0) return <span className={styles.none}>無</span>
+  if (names.length === 0) return <span className={styles.none}>{t('admin.ops.services.serviceDrawer.none')}</span>
   return (
     <div className={styles.depChips}>
       {names.map(n => {
@@ -88,19 +89,19 @@ function DepChips({ names, lookup }: { names: string[]; lookup: Map<string, OpsD
 
 function Dependencies({ name, deps }: { name: string; deps: DependencyLookup }) {
   if (!deps.nodes) {
-    if (deps.isPending) return <p className={styles.note}>載入中…</p>
-    return <OpsQueryError error={deps.error} what="依賴關係" />
+    if (deps.isPending) return <p className={styles.note}>{t('admin.ops.services.serviceDrawer.loading')}</p>
+    return <OpsQueryError error={deps.error} what={t('admin.ops.services.serviceDrawer.dependencies')} />
   }
   const node = deps.nodes.get(name)
-  if (!node) return <p className={styles.note}>依賴圖裡沒有這個服務。</p>
+  if (!node) return <p className={styles.note}>{t('admin.ops.services.serviceDrawer.thisServiceIsnTIn')}</p>
   return (
     <>
-      <div className={styles.depGroup} role="group" aria-label="依賴">
-        <div className={styles.depLabel}>依賴</div>
+      <div className={styles.depGroup} role="group" aria-label={t('admin.ops.services.serviceDrawer.dependsOn')}>
+        <div className={styles.depLabel}>{t('admin.ops.services.serviceDrawer.dependsOn')}</div>
         <DepChips names={node.depends_on} lookup={deps.nodes} />
       </div>
-      <div className={styles.depGroup} role="group" aria-label="被依賴">
-        <div className={styles.depLabel}>被依賴</div>
+      <div className={styles.depGroup} role="group" aria-label={t('admin.ops.services.serviceDrawer.dependedOnBy')}>
+        <div className={styles.depLabel}>{t('admin.ops.services.serviceDrawer.dependedOnBy')}</div>
         <DepChips names={node.dependents} lookup={deps.nodes} />
       </div>
     </>
@@ -109,11 +110,11 @@ function Dependencies({ name, deps }: { name: string; deps: DependencyLookup }) 
 
 function RecentLogs({ name }: { name: string }) {
   const q = useOpsLogs(name, LOG_SINCE, LOG_LINES)
-  if (q.isPending) return <p className={styles.note}>載入中…</p>
-  if (q.isError) return <OpsQueryError error={q.error} what="日誌" />
-  if (q.data.entries.length === 0) return <p className={styles.note}>最近 1 小時沒有日誌。</p>
+  if (q.isPending) return <p className={styles.note}>{t('admin.ops.services.serviceDrawer.loading')}</p>
+  if (q.isError) return <OpsQueryError error={q.error} what={t('admin.ops.services.serviceDrawer.logs')} />
+  if (q.data.entries.length === 0) return <p className={styles.note}>{t('admin.ops.services.serviceDrawer.noLogsInTheLast')}</p>
   return (
-    <pre className={`${c.log} ${styles.drawerLog}`} aria-label={`${name} 的最近日誌`} tabIndex={0}>
+    <pre className={`${c.log} ${styles.drawerLog}`} aria-label={t('admin.ops.services.serviceDrawer.recentLogsFor', { name })} tabIndex={0}>
       {q.data.entries.slice(-LOG_TAIL).join('\n')}
     </pre>
   )
@@ -146,24 +147,24 @@ export function ServiceDrawer({ name, listed, listReady, checkedAt, deps, onClos
     <Drawer open onClose={onClose} title={name} monoTitle width={470}
       status={s ? <ServiceStatus service={s} /> : undefined} subtitle={s?.description || undefined} footer={footer}>
       {failed ? (
-        <DrawerSection><OpsQueryError error={q.error} what={`服務「${name}」`} /></DrawerSection>
+        <DrawerSection><OpsQueryError error={q.error} what={t('admin.ops.services.serviceDrawer.service', { name })} /></DrawerSection>
       ) : !s ? (
-        <DrawerSection><p className={styles.note}>載入中…</p></DrawerSection>
+        <DrawerSection><p className={styles.note}>{t('admin.ops.services.serviceDrawer.loading')}</p></DrawerSection>
       ) : (
         <>
           {s.error && <DrawerSection><p className={c.error} role="alert">{s.error}</p></DrawerSection>}
-          <DrawerSection title="屬性">
+          <DrawerSection title={t('admin.ops.services.serviceDrawer.properties')}>
             <dl className={`${c.kv} ${styles.kv}`}>
               {attributeRows(s, listed ? checkedAt : q.data?.checked_at)
                 .map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}
             </dl>
           </DrawerSection>
-          <DrawerSection title="依賴關係"><Dependencies name={name} deps={deps} /></DrawerSection>
+          <DrawerSection title={t('admin.ops.services.serviceDrawer.dependencies')}><Dependencies name={name} deps={deps} /></DrawerSection>
           {canLog && (
             <DrawerSection>
               <div className={styles.sectionHead}>
-                <span>最近日誌</span>
-                <Link className={c.link} to={logsHref(name)}>開啟日誌頁</Link>
+                <span>{t('admin.ops.services.serviceDrawer.recentLogs')}</span>
+                <Link className={c.link} to={logsHref(name)}>{t('admin.ops.services.serviceDrawer.openLogsPage')}</Link>
               </div>
               <RecentLogs name={name} />
             </DrawerSection>

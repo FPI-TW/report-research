@@ -6,6 +6,7 @@ import { catalogPatch, instrumentHref, parseCatalogState } from './catalogState'
 import { InstrumentPicker } from './InstrumentPicker'
 import { RadarOverview } from './RadarOverview'
 import styles from './RadarPage.module.css'
+import { t } from '@/i18n'
 
 function parseWindow(raw: string | null): Window {
   const r = windowSchema.safeParse(raw ?? '90')
@@ -105,7 +106,7 @@ export default function RadarPage() {
             />
           )}
           <p className={styles.disclaimer}>
-            內容由 AI 整理自券商研報的已擷取觀點與數值，可能有誤，非投資建議。
+            {t('radar.radarPage.compiledByAiFromViews')}
           </p>
         </div>
       </div>

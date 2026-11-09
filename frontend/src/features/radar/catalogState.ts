@@ -2,6 +2,7 @@ import {
   catalogSortSchema, stanceFilterSchema,
   type CatalogSort, type Market, type RadarInstrumentItem, type StanceFilter,
 } from '../../lib/radarSchemas'
+import { t } from '@/i18n'
 
 /** 共識預覽恆以 90 天窗期計算（後端 `build_instrument_slim()` 不吃 URL 的 `window`）。 */
 export const CATALOG_WINDOW_DAYS = 90
@@ -10,10 +11,10 @@ export const DEFAULT_SORT: CatalogSort = 'latest'
 
 /** 排序選項。值與後端 `queries.CATALOG_SORTS` 的鍵逐字相同。 */
 export const SORT_OPTIONS: ReadonlyArray<{ value: CatalogSort; label: string }> = [
-  { value: 'latest', label: '最新研報' },
-  { value: 'reports', label: '研報數' },
-  { value: 'brokers', label: '券商數' },
-  { value: 'code', label: '代號' },
+  { value: 'latest', get label() { return t('radar.catalogState.latestReport') } },
+  { value: 'reports', get label() { return t('radar.catalogState.reportCount') } },
+  { value: 'brokers', get label() { return t('radar.catalogState.brokerCount') } },
+  { value: 'code', get label() { return t('radar.catalogState.ticker') } },
 ]
 
 export const SORT_LABEL: Record<CatalogSort, string> = Object.fromEntries(
@@ -22,14 +23,14 @@ export const SORT_LABEL: Record<CatalogSort, string> = Object.fromEntries(
 
 /** 立場篩選的顯示字。鏡像後端 `radar/scale.py` 的 `BUCKET_DISPLAY`，不另造詞。 */
 export const STANCE_DISPLAY: Record<StanceFilter, string> = {
-  bullish: '偏多',
-  neutral: '中立',
-  bearish: '偏空',
+  get bullish() { return t('radar.catalogState.bullish') },
+  get neutral() { return t('radar.catalogState.neutral') },
+  get bearish() { return t('radar.catalogState.bearish') },
 }
 
 /** 立場選項；`''` 代表不篩選（「全部」）。清單頁的分段控制把它換成 `all`，進網址時是刪掉 `stance`。 */
 export const STANCE_OPTIONS: ReadonlyArray<{ value: StanceFilter | ''; label: string }> = [
-  { value: '', label: '全部' },
+  { value: '', get label() { return t('radar.catalogState.all') } },
   { value: 'bullish', label: STANCE_DISPLAY.bullish },
   { value: 'neutral', label: STANCE_DISPLAY.neutral },
   { value: 'bearish', label: STANCE_DISPLAY.bearish },
@@ -100,11 +101,11 @@ export function changeParts(item: RadarInstrumentItem): ChangePart[] {
   const stance = item.consensus?.stance
   if (!stance) return []
   const parts: ChangePart[] = []
-  if (stance.upgrades > 0) parts.push({ tone: 'up', text: `調升 ${stance.upgrades}` })
-  if (stance.downgrades > 0) parts.push({ tone: 'down', text: `調降 ${stance.downgrades}` })
+  if (stance.upgrades > 0) parts.push({ tone: 'up', text: t('radar.catalogState.up', { upgrades: stance.upgrades }) })
+  if (stance.downgrades > 0) parts.push({ tone: 'down', text: t('radar.catalogState.down', { downgrades: stance.downgrades }) })
   if (parts.length) return parts
   const dir = item.consensus?.target?.revision_direction
-  if (dir === 'up') return [{ tone: 'up', text: '目標價上修' }]
-  if (dir === 'down') return [{ tone: 'down', text: '目標價下修' }]
+  if (dir === 'up') return [{ tone: 'up', text: t('radar.catalogState.targetPriceRaised') }]
+  if (dir === 'down') return [{ tone: 'down', text: t('radar.catalogState.targetPriceCut') }]
   return []
 }

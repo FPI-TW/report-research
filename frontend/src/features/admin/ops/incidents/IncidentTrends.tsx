@@ -7,12 +7,13 @@ import { OpsQueryError } from '../OpsShared'
 import { componentLabel, fmtDuration } from '../opsLabels'
 import { useIncidentTrends } from '../useDbInsights'
 import styles from './Incidents.module.css'
+import { t } from '@/i18n'
 
 const TREND_RANGES = [
-  { days: 30, label: '30 天' },
-  { days: 90, label: '90 天' },
-  { days: 180, label: '180 天' },
-  { days: 365, label: '1 年' },
+  { days: 30, get label() { return t('admin.ops.incidents.incidentTrends.30Days') } },
+  { days: 90, get label() { return t('admin.ops.incidents.incidentTrends.90Days') } },
+  { days: 180, get label() { return t('admin.ops.incidents.incidentTrends.180Days') } },
+  { days: 365, get label() { return t('admin.ops.incidents.incidentTrends.1Year') } },
 ]
 
 function fmtRate(v: number | null | undefined): string {
@@ -33,9 +34,9 @@ function WeeklyBars({ weeks }: { weeks: IncidentTrendsResponse['weeks'] }) {
   return (
     <figure className={styles.figure}>
       <div className={styles.weeks} role="img"
-        aria-label={`每週事件數：${rows.map(([w, v]) => `${w} 嚴重 ${v.critical}、警告 ${v.warning}`).join('；')}`}>
+        aria-label={t('admin.ops.incidents.incidentTrends.incidentsPerWeek', { map: rows.map(([w, v]) => t('admin.ops.incidents.incidentTrends.criticalWarning', { w, critical: v.critical, warning: v.warning })).join(t('admin.ops.incidents.incidentTrends.text')) })}>
         {rows.map(([week, v]) => (
-          <div key={week} className={styles.week} title={`${week} 起的一週：嚴重 ${v.critical}、警告 ${v.warning}`}>
+          <div key={week} className={styles.week} title={t('admin.ops.incidents.incidentTrends.weekOfCriticalWarning', { week, critical: v.critical, warning: v.warning })}>
             <div className={styles.barCritical} style={{ height: `${(v.critical / max) * 100}%` }} />
             <div className={styles.barWarning} style={{ height: `${(v.warning / max) * 100}%` }} />
           </div>
@@ -46,7 +47,7 @@ function WeeklyBars({ weeks }: { weeks: IncidentTrendsResponse['weeks'] }) {
         <ul className={styles.legend}>
           <li><span className={styles.swatchCritical} />CRITICAL</li>
           <li><span className={styles.swatchWarning} />WARNING</li>
-          <li>最高一週 {max} 件</li>
+          <li>{t('admin.ops.incidents.incidentTrends.peakWeek', { max })}</li>
         </ul>
       </figcaption>
     </figure>
@@ -56,32 +57,32 @@ function WeeklyBars({ weeks }: { weeks: IncidentTrendsResponse['weeks'] }) {
 function Trends({ data }: { data: IncidentTrendsResponse }) {
   const s = data.summary
   const tiles: { name: string; value: string; hint?: string }[] = [
-    { name: '事件數', value: String(s.total), hint: `嚴重 ${s.critical}・警告 ${s.warning}` },
-    { name: '平均恢復時間（MTTR）', value: fmtDuration(s.mttr_seconds), hint: `只算已恢復的 ${s.resolved} 件` },
-    { name: '持續時間 p50／p90', value: `${fmtDuration(s.p50_seconds)}／${fmtDuration(s.p90_seconds)}` },
-    { name: '結束不明／進行中', value: `${s.lost}／${s.firing}`, hint: '結束不明不納入 MTTR' },
+    { name: t('admin.ops.incidents.incidentTrends.incidents'), value: String(s.total), hint: t('admin.ops.incidents.incidentTrends.criticalWarning2', { critical: s.critical, warning: s.warning }) },
+    { name: t('admin.ops.incidents.incidentTrends.meanTimeToRecoveryMttr'), value: fmtDuration(s.mttr_seconds), hint: t('admin.ops.incidents.incidentTrends.onlyTheRecoveredIncidents', { resolved: s.resolved }) },
+    { name: t('admin.ops.incidents.incidentTrends.durationP50P90'), value: t('admin.ops.incidents.incidentTrends.text2', { p50_seconds: fmtDuration(s.p50_seconds), p90_seconds: fmtDuration(s.p90_seconds) }) },
+    { name: t('admin.ops.incidents.incidentTrends.endUnknownOpen'), value: t('admin.ops.incidents.incidentTrends.text3', { lost: s.lost, firing: s.firing }), hint: t('admin.ops.incidents.incidentTrends.endUnknownIncidentsAreExcluded') },
   ]
   return (
     <>
       <div className={`${c.tiles} ${styles.trendTiles}`}>
-        {tiles.map(t => (
-          <StatTile key={t.name} name={t.name} label={t.name} value={<span className={styles.tileValue}>{t.value}</span>} sub={t.hint} />
+        {tiles.map(item => (
+          <StatTile key={item.name} name={item.name} label={item.name} value={<span className={styles.tileValue}>{item.value}</span>} sub={item.hint} />
         ))}
       </div>
       {data.weeks.length === 0 ? (
-        <p className={styles.note}>區間內沒有開過事件。</p>
+        <p className={styles.note}>{t('admin.ops.incidents.incidentTrends.noIncidentsOpenedInThis')}</p>
       ) : (
         <>
           <div>
-            <h3 className={styles.subTitle}>每週事件數</h3>
+            <h3 className={styles.subTitle}>{t('admin.ops.incidents.incidentTrends.incidentsPerWeek2')}</h3>
             <WeeklyBars weeks={data.weeks} />
           </div>
           <div>
-            <h3 className={styles.subTitle}>各元件</h3>
+            <h3 className={styles.subTitle}>{t('admin.ops.incidents.incidentTrends.byComponent')}</h3>
             <div className={`${c.tableWrap} ${styles.subTable}`}>
-              <table className={c.table} aria-label="各元件事件統計">
+              <table className={c.table} aria-label={t('admin.ops.incidents.incidentTrends.incidentStatsByComponent')}>
                 <thead>
-                  <tr><th>元件</th><th>件數</th><th>已恢復</th><th>結束不明</th><th>進行中</th><th>MTTR</th><th>p50</th><th>p90</th></tr>
+                  <tr><th>{t('admin.ops.incidents.incidentTrends.component')}</th><th>{t('admin.ops.incidents.incidentTrends.count')}</th><th>{t('admin.ops.incidents.incidentTrends.recovered')}</th><th>{t('admin.ops.incidents.incidentTrends.endUnknown')}</th><th>{t('admin.ops.incidents.incidentTrends.open')}</th><th>MTTR</th><th>p50</th><th>p90</th></tr>
                 </thead>
                 <tbody>
                   {data.by_component.map(k => (
@@ -101,16 +102,16 @@ function Trends({ data }: { data: IncidentTrendsResponse }) {
             </div>
           </div>
           <div>
-            <h3 className={styles.subTitle}>最常見的原因</h3>
+            <h3 className={styles.subTitle}>{t('admin.ops.incidents.incidentTrends.mostCommonReasons')}</h3>
             <div className={`${c.tableWrap} ${styles.subTable}`}>
-              <table className={c.table} aria-label="最常見的原因">
-                <thead><tr><th>原因</th><th>件數</th><th>元件</th></tr></thead>
+              <table className={c.table} aria-label={t('admin.ops.incidents.incidentTrends.mostCommonReasons')}>
+                <thead><tr><th>{t('admin.ops.incidents.incidentTrends.reason')}</th><th>{t('admin.ops.incidents.incidentTrends.count')}</th><th>{t('admin.ops.incidents.incidentTrends.component')}</th></tr></thead>
                 <tbody>
                   {data.top_reasons.map(r => (
                     <tr key={r.reason}>
                       <td className={c.mono}>{r.reason}</td>
                       <td className={c.num}>{r.total}</td>
-                      <td>{r.components.map(componentLabel).join('、')}</td>
+                      <td>{r.components.map(componentLabel).join(t('admin.ops.incidents.incidentTrends.text4'))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -121,15 +122,15 @@ function Trends({ data }: { data: IncidentTrendsResponse }) {
       )}
       <div>
         <h3 className={styles.subTitle}>
-          排程工作失敗率
-          <span className={styles.subHint}>{fmtDateTime(data.jobs_since)} ～ {fmtDateTime(data.jobs_until)}（90 天）</span>
+          {t('admin.ops.incidents.incidentTrends.scheduledJobFailureRate')}
+          <span className={styles.subHint}>{t('admin.ops.incidents.incidentTrends.90Days2', { jobs_since: fmtDateTime(data.jobs_since), jobs_until: fmtDateTime(data.jobs_until) })}</span>
         </h3>
         {data.jobs.length === 0 ? (
-          <p className={styles.note}>沒有排程工作的執行紀錄（收集器與匯入器沒裝時是空的）。</p>
+          <p className={styles.note}>{t('admin.ops.incidents.incidentTrends.noScheduledJobRunsEmpty')}</p>
         ) : (
           <div className={`${c.tableWrap} ${styles.subTable}`}>
-            <table className={c.table} aria-label="排程工作失敗率">
-              <thead><tr><th>unit</th><th>執行</th><th>失敗</th><th>失敗率</th><th>結果不明</th><th>最近失敗</th></tr></thead>
+            <table className={c.table} aria-label={t('admin.ops.incidents.incidentTrends.scheduledJobFailureRate')}>
+              <thead><tr><th>unit</th><th>{t('admin.ops.incidents.incidentTrends.runs')}</th><th>{t('admin.ops.incidents.incidentTrends.failed')}</th><th>{t('admin.ops.incidents.incidentTrends.failureRate')}</th><th>{t('admin.ops.incidents.incidentTrends.resultUnknown')}</th><th>{t('admin.ops.incidents.incidentTrends.lastFailure')}</th></tr></thead>
               <tbody>
                 {data.jobs.map(j => (
                   <tr key={j.unit}>
@@ -151,8 +152,7 @@ function Trends({ data }: { data: IncidentTrendsResponse }) {
         )}
       </div>
       <p className={styles.note}>
-        失敗＝執行完但 systemd 的結果不是 success（unit 設定放行的退出碼本來就算 success）；失敗率的分母是執行完的次數，
-        「結果不明」（沒觀測到結束）另列。
+        {t('admin.ops.incidents.incidentTrends.failedFinishedButSystemdS')}
       </p>
     </>
   )
@@ -168,10 +168,10 @@ export function IncidentTrendsSection() {
   return (
     <section className={c.card} aria-labelledby="ops-incident-trends-title">
       <div className={c.cardHead}>
-        <h2 id="ops-incident-trends-title" className={c.cardTitle}>事件趨勢</h2>
+        <h2 id="ops-incident-trends-title" className={c.cardTitle}>{t('admin.ops.incidents.incidentTrends.incidentTrends')}</h2>
         <div className={c.cardRight}>
           <label className={styles.inlineField}>
-            區間
+            {t('admin.ops.incidents.incidentTrends.range')}
             <select className={c.select} value={days} onChange={e => setDays(Number(e.target.value))}>
               {TREND_RANGES.map(r => <option key={r.days} value={r.days}>{r.label}</option>)}
             </select>
@@ -179,8 +179,8 @@ export function IncidentTrendsSection() {
         </div>
       </div>
       <div className={styles.trendBody}>
-        {q.isPending ? <p className={styles.note}>載入中…</p> : q.isError ? (
-          <OpsQueryError error={q.error} what="事件趨勢" />
+        {q.isPending ? <p className={styles.note}>{t('admin.ops.incidents.incidentTrends.loading')}</p> : q.isError ? (
+          <OpsQueryError error={q.error} what={t('admin.ops.incidents.incidentTrends.incidentTrends')} />
         ) : (
           <Trends data={q.data} />
         )}

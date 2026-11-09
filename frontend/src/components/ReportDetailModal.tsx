@@ -3,6 +3,7 @@ import { Modal } from './primitives/Modal'
 import { getReportFull } from '../lib/searchApi'
 import { displayTitle } from '../lib/displayTitle'
 import styles from './ReportDetailModal.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   reportId: string | null
@@ -29,32 +30,32 @@ export function ReportDetailModal({ reportId, fileName, onClose }: Props) {
 
   function body() {
     if (!open) return null
-    if (query.isLoading) return <div className={styles.state}>載入中…</div>
-    if (query.isError || !query.data) return <div className={styles.state}>報告載入失敗，請稍後再試。</div>
+    if (query.isLoading) return <div className={styles.state}>{t('reportDetailModal.loading')}</div>
+    if (query.isError || !query.data) return <div className={styles.state}>{t('reportDetailModal.couldnTLoadTheReport')}</div>
     const d = query.data
     const href = fileHref(d.report_id)
     if (d.has_file && isPdfName(d.file_name)) {
       return (
         <div className={styles.pdfWrap}>
           <div className={styles.actions}>
-            <a className={styles.primary} href={href} target="_blank" rel="noopener noreferrer">在新分頁開啟</a>
-            <a className={styles.ghost} href={href} download>下載原始檔</a>
-            <span className={styles.hint}>Esc 關閉</span>
+            <a className={styles.primary} href={href} target="_blank" rel="noopener noreferrer">{t('reportDetailModal.openInNewTab')}</a>
+            <a className={styles.ghost} href={href} download>{t('reportDetailModal.downloadOriginal')}</a>
+            <span className={styles.hint}>{t('reportDetailModal.escToClose')}</span>
           </div>
           <iframe className={styles.frame} src={href} title={title} />
         </div>
       )
     }
     if (d.has_file) {
-      const ext = d.file_name.split('.').pop()?.toUpperCase() ?? '檔案'
+      const ext = d.file_name.split('.').pop()?.toUpperCase() ?? t('reportDetailModal.file')
       return (
         <div className={styles.state}>
-          <p>{ext} 文件 無法內嵌預覽，請下載查看。</p>
-          <a className={styles.download} href={href} download>下載原始檔</a>
+          <p>{t('reportDetailModal.filesCanTBePreviewed', { ext })}</p>
+          <a className={styles.download} href={href} download>{t('reportDetailModal.downloadOriginal')}</a>
         </div>
       )
     }
-    return <div className={styles.state}>找不到原始檔。</div>
+    return <div className={styles.state}>{t('reportDetailModal.originalFileNotFound')}</div>
   }
 
   return (

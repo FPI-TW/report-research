@@ -16,6 +16,7 @@ import { EFFECTIVE_LABELS, overrideSummary } from './flagText'
 import { FlagTransfer } from './FlagTransfer'
 import { FLAGS_KEY, useFlags } from './useFlags'
 import s from './Flags.module.css'
+import { t } from '@/i18n'
 
 const WHAT = '變更功能旗標'
 
@@ -23,7 +24,7 @@ const WHAT = '變更功能旗標'
 const EFFECTIVE_TONE: Record<FlagItem['effective'], LampTone> = { on: 'ok', scoped: 'warn', off: 'idle' }
 
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.flags.adminFlagsPage.actionFailedTryAgain')
 }
 
 function FlagRow({ flag, canOperate, onEdit, onReset }: {
@@ -40,19 +41,19 @@ function FlagRow({ flag, canOperate, onEdit, onReset }: {
         <div className={s.desc}>{flag.description}</div>
       </td>
       <td><Status tone={EFFECTIVE_TONE[flag.effective]}>{EFFECTIVE_LABELS[flag.effective]}</Status></td>
-      <td title="這個功能現在對你的帳號是否生效">{flag.effective_for_me ? '開' : '關'}</td>
+      <td title={t('admin.flags.adminFlagsPage.whetherThisFeatureIsCurrently')}>{flag.effective_for_me ? t('admin.flags.adminFlagsPage.on') : t('admin.flags.adminFlagsPage.off')}</td>
       <td className={s.ceilingCell}>
         {/* 不鎖成一行：環境變數名很長時可以在底線後面折行，「開／關」也可以折到下一行。 */}
         <span className={c.mono}>
           {flag.ceiling_env.split('_').map((part, i, all) => (
             <Fragment key={i}>{part}{i < all.length - 1 && <>_<wbr /></>}</Fragment>
-          ))} {flag.ceiling ? '開' : '關'}
+          ))} {flag.ceiling ? t('admin.flags.adminFlagsPage.on') : t('admin.flags.adminFlagsPage.off')}
         </span>
-        {!flag.ceiling && <div className={s.desc}>需先在環境檔開啟並重啟 web 才能調整</div>}
+        {!flag.ceiling && <div className={s.desc}>{t('admin.flags.adminFlagsPage.enableItInTheEnvironment')}</div>}
       </td>
       <td className={s.override}>
         {overrideSummary(o, flag.default)}
-        {o?.note && <div className={`${s.desc} ${c.clamp2}`} title={o.note}>註記：{o.note}</div>}
+        {o?.note && <div className={`${s.desc} ${c.clamp2}`} title={o.note}>{t('admin.flags.adminFlagsPage.note', { note: o.note })}</div>}
       </td>
       <td>
         {o ? (
@@ -64,12 +65,12 @@ function FlagRow({ flag, canOperate, onEdit, onReset }: {
       </td>
       {canOperate && (
         <td className={`${c.tdActions} ${c.stickyRight}`}>
-          <RowActions label={`${flag.key} 的更多操作`}
+          <RowActions label={t('admin.flags.adminFlagsPage.moreActionsFor', { key: flag.key })}
             primary={{
-              label: '調整', onClick: onEdit, disabled: !flag.ceiling,
-              hint: flag.ceiling ? undefined : `環境上限關閉：先在環境檔設 ${flag.ceiling_env}=1 並重啟 web`,
+              label: t('admin.flags.adminFlagsPage.adjust'), onClick: onEdit, disabled: !flag.ceiling,
+              hint: flag.ceiling ? undefined : t('admin.flags.adminFlagsPage.environmentCeilingIsOffSet', { ceiling_env: flag.ceiling_env }),
             }}
-            more={[o && { label: '恢復預設', onClick: onReset }]} />
+            more={[o && { label: t('admin.flags.adminFlagsPage.restoreDefault'), onClick: onReset }]} />
         </td>
       )}
     </tr>
@@ -96,7 +97,7 @@ function AdminFlags() {
     // 錯誤（含取消驗證）往上拋給表單處理；成功才關閉對話框。
     await elevated(WHAT, () => adminApi.setFlag(flag.key, body))
     setEditing(null)
-    toast(`已更新「${flag.key}」，已寫入操作紀錄並立即生效`)
+    toast(t('admin.flags.adminFlagsPage.updatedRecordedInTheAudit', { key: flag.key }))
     refresh()
   }
 
@@ -104,7 +105,7 @@ function AdminFlags() {
     setResetBusy(true)
     try {
       await elevated(WHAT, () => adminApi.clearFlag(flag.key))
-      toast(`「${flag.key}」已恢復預設`)
+      toast(t('admin.flags.adminFlagsPage.restoredToDefault', { key: flag.key }))
       refresh()
     } catch (err) {
       if (!isElevationCancelled(err)) toast(messageOf(err), { tone: 'bad' })
@@ -117,29 +118,26 @@ function AdminFlags() {
   return (
     <ConsolePage>
       <PageHeader
-        summary="在環境上限內開關派生功能；實際值＝環境上限且開關開啟。"
+        summary={t('admin.flags.adminFlagsPage.toggleDerivedFeaturesWithinThe')}
         help={<>
-          在環境設定允許的範圍內開關派生功能。實際值＝環境上限且開關開啟；安全相關設定不在這裡。修改需要 <code>ops.operate</code> 權限並重新驗證，
-          每一筆都會留在操作紀錄。環境上限關閉時需先在環境檔開啟並重啟 web 才能調整。
-          匯出與匯入用於把測試環境調好的設定搬到正式環境：在測試環境匯出、到正式環境匯入；匯入前先預覽每個旗標的前後差異。
-          帳號以名稱對應（兩個環境的帳號 UUID 不同），檔案裡沒列出的旗標不會被動到；環境變數上限不在匯出檔裡，兩邊各自以環境檔設定。
+          {t('admin.flags.adminFlagsPage.toggleDerivedFeaturesWithinWhat')}{' '}<code>ops.operate</code>{' '}{t('admin.flags.adminFlagsPage.permissionAndReVerificationAnd')}
         </>}
         actions={<FlagTransfer canOperate={canOperate} elevated={elevated}
           onApplied={(msg) => { toast(msg); refresh() }} />}
       />
       {!canOperate && me.data && (
-        <div className={c.banner} role="note">你可以查看與匯出；修改需要另外授予的 <code>ops.operate</code> 權限。</div>
+        <div className={c.banner} role="note">{t('admin.flags.adminFlagsPage.viewingAndExportingAreAllowed')}{' '}<code>ops.operate</code>{' '}{t('admin.flags.adminFlagsPage.permission')}</div>
       )}
-      {flags.isPending && <p className={c.empty}>載入中…</p>}
-      {flags.isError && <p className={c.error} role="alert">功能旗標載入失敗：{messageOf(flags.error)}</p>}
+      {flags.isPending && <p className={c.empty}>{t('admin.flags.adminFlagsPage.loading')}</p>}
+      {flags.isError && <p className={c.error} role="alert">{t('admin.flags.adminFlagsPage.couldnTLoadFeatureFlags', { error: messageOf(flags.error) })}</p>}
       {flags.data && (
-        <Card title="旗標" labelledBy="flags-title" hint={`${flags.data.items.length} 個`}>
+        <Card title={t('admin.flags.adminFlagsPage.flag')} labelledBy="flags-title" hint={t('admin.flags.adminFlagsPage.flags', { length: flags.data.items.length })}>
           <div className={c.tableWrap}>
             <table className={c.table}>
               <thead>
                 <tr>
-                  <th>旗標</th><th>實際值</th><th>對我</th><th>環境上限</th><th>覆寫</th><th>最後修改</th>
-                  {canOperate && <th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>}
+                  <th>{t('admin.flags.adminFlagsPage.flag')}</th><th>{t('admin.flags.adminFlagsPage.effective')}</th><th>{t('admin.flags.adminFlagsPage.forMe')}</th><th>{t('admin.flags.adminFlagsPage.envCeiling')}</th><th>{t('admin.flags.adminFlagsPage.override')}</th><th>{t('admin.flags.adminFlagsPage.lastChanged')}</th>
+                  {canOperate && <th className={`${c.tdRight} ${c.stickyRight}`}>{t('admin.flags.adminFlagsPage.actions')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -152,15 +150,15 @@ function AdminFlags() {
           </div>
           {flags.data.ignored_keys.length > 0 && (
             <p className={s.foot}>
-              資料庫裡有程式沒登記的旗標（不生效）：{flags.data.ignored_keys.map((k) => <code key={k}>{k} </code>)}
+              {t('admin.flags.adminFlagsPage.flagsInTheDatabaseThat')}{flags.data.ignored_keys.map((k) => <code key={k}>{k} </code>)}
             </p>
           )}
         </Card>
       )}
       <FlagEditDialog flag={editing} onClose={() => setEditing(null)} onSave={save} />
-      <ConfirmDialog open={resetting != null} tone="safe" busy={resetBusy} confirmLabel="恢復預設"
-        title={resetting ? `「${resetting.key}」恢復預設？` : ''}
-        body="刪除這筆覆寫，回到程式內建的預設值。"
+      <ConfirmDialog open={resetting != null} tone="safe" busy={resetBusy} confirmLabel={t('admin.flags.adminFlagsPage.restoreDefault')}
+        title={resetting ? t('admin.flags.adminFlagsPage.restoreToDefault', { key: resetting.key }) : ''}
+        body={t('admin.flags.adminFlagsPage.deletesThisOverrideAndReturns')}
         onConfirm={() => { if (resetting) void reset(resetting) }}
         onCancel={() => setResetting(null)} />
       {dialog}
@@ -172,7 +170,7 @@ function AdminFlags() {
 export default function AdminFlagsPage() {
   return (
     <RequireAdmin>
-      <RequireScope scope="ops.read" title="功能旗標">
+      <RequireScope scope="ops.read" title={t('admin.flags.adminFlagsPage.featureFlags')}>
         <AdminFlags />
       </RequireScope>
     </RequireAdmin>

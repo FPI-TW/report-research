@@ -5,6 +5,7 @@ import type { BriefEnvelope } from '../../lib/briefSchemas'
 import { briefHighlights, isSameLocalDay, shortDate } from './libraryFormat'
 import atoms from './atoms.module.css'
 import styles from './BriefTile.module.css'
+import { t } from '@/i18n'
 
 /** 小卡上的重點條數（交接包：4 條）。 */
 const HIGHLIGHT_ROWS = 4
@@ -40,17 +41,17 @@ export function BriefTile({ envelope, failed, onRetry, className, style }: Props
       aria-labelledby="library-brief"
     >
       <div className={styles.head}>
-        <h2 id="library-brief" className={atoms.h2}>{brief && !today ? '每日簡報' : '今日簡報'}</h2>
+        <h2 id="library-brief" className={atoms.h2}>{brief && !today ? t('search.briefTile.dailyBrief') : t('search.briefTile.todaySBrief')}</h2>
         {brief && <span className={`${atoms.num} ${styles.date}`}>{shortDate(brief.brief_date)}</span>}
       </div>
 
       {failed ? (
         <p className={styles.note}>
-          簡報載入失敗
-          <button type="button" className={atoms.lk} onClick={onRetry}>重試</button>
+          {t('search.briefTile.couldnTLoadTheBrief')}
+          <button type="button" className={atoms.lk} onClick={onRetry}>{t('search.briefTile.retry')}</button>
         </p>
       ) : !brief ? (
-        <p className={styles.note}>今天的簡報尚未產生</p>
+        <p className={styles.note}>{t('search.briefTile.todaySBriefHasnT')}</p>
       ) : (
         <>
           {points.length > 0 && (
@@ -67,17 +68,17 @@ export function BriefTile({ envelope, failed, onRetry, className, style }: Props
           <div className={styles.stats}>
             <span className={styles.stat}>
               <span className={`${atoms.num} ${styles.statN}`}>{brief.report_count.toLocaleString()}</span>
-              <span className={styles.statL}>篇新進研報</span>
+              <span className={styles.statL}>{t('search.briefTile.newReports')}</span>
             </span>
             {markets !== null && markets > 0 && (
               <span className={styles.stat}>
                 <span className={`${atoms.num} ${styles.statN}`}>{markets}</span>
-                <span className={styles.statL}>個市場</span>
+                <span className={styles.statL}>{t('search.briefTile.markets')}</span>
               </span>
             )}
           </div>
           <Link className={`${atoms.lk} ${styles.more}`} to="/brief">
-            閱讀全文<ChevronRight size={14} strokeWidth={1.8} aria-hidden />
+            {t('search.briefTile.readMore')}<ChevronRight size={14} strokeWidth={1.8} aria-hidden />
           </Link>
         </>
       )}

@@ -3,6 +3,8 @@
  * 這裡一律以「日曆日」處理，不經過 Date 的時區換算（`new Date('2026-10-05')` 會被當成 UTC 午夜）。
  */
 
+import { t } from '@/i18n'
+
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
@@ -39,13 +41,13 @@ function weekdayOf({ y, m, d }: DayParts): number {
 /** 「10 月 28 日」 */
 export function dayTitle(iso: string): string {
   const { m, d } = partsOf(iso)
-  return `${m} 月 ${d} 日`
+  return t('brief.briefDates.text', { m, d })
 }
 
 /** 「2026 年 星期三」 */
 export function yearWeekday(iso: string): string {
   const p = partsOf(iso)
-  return `${p.y} 年 星期${WEEKDAYS[weekdayOf(p)]}`
+  return t('brief.briefDates.text2', { y: p.y, WEEKDAYS: WEEKDAYS[weekdayOf(p)] })
 }
 
 /** 來源研報的日期：「10-27」（同一份簡報的研報多半同年，省掉年份）。 */

@@ -1,15 +1,16 @@
 import type { RatingNorm, StanceFilter, Window } from '../../lib/radarSchemas'
+import { t } from '@/i18n'
 
 /** 立場三桶的前端鍵名。API 參數那層用後端拼法，對接點只有 `BUCKET_TO_STANCE`。 */
 export type Bucket = 'bull' | 'neu' | 'bear'
 
 export const RATING_DISPLAY: Record<RatingNorm, string> = {
-  buy: '買進',
-  overweight: '加碼',
-  neutral: '中立',
-  underweight: '減碼',
-  sell: '賣出',
-  unknown: '未評等',
+  get buy() { return t('radar.radarFormat.buy') },
+  get overweight() { return t('radar.radarFormat.overweight') },
+  get neutral() { return t('radar.radarFormat.neutral') },
+  get underweight() { return t('radar.radarFormat.underweight') },
+  get sell() { return t('radar.radarFormat.sell') },
+  get unknown() { return t('radar.radarFormat.notRated') },
 }
 
 /** 評等 → 三桶（偏多／中立／偏空）。 */
@@ -24,9 +25,9 @@ export const RATING_BUCKET: Record<RatingNorm, Bucket> = {
 
 /** 三桶的顯示字樣。與後端 `radar/scale.py` 的 `BUCKET_DISPLAY` 逐字相同。 */
 export const BUCKET_DISPLAY: Record<Bucket, string> = {
-  bull: '偏多',
-  neu: '中立',
-  bear: '偏空',
+  get bull() { return t('radar.radarFormat.bullish') },
+  get neu() { return t('radar.radarFormat.neutral') },
+  get bear() { return t('radar.radarFormat.bearish') },
 }
 
 /** 三桶 → API 的 `stance` 參數值。兩套拼法只在這一處對接。 */
@@ -38,10 +39,10 @@ export const BUCKET_TO_STANCE: Record<Bucket, StanceFilter> = {
 
 /** 期間分段（交接包：30／90／180 天／全部），值與 API 的 `window` 逐字相同。 */
 export const WINDOW_OPTIONS: ReadonlyArray<{ value: Window; label: string }> = [
-  { value: '30', label: '30 天' },
-  { value: '90', label: '90 天' },
-  { value: '180', label: '180 天' },
-  { value: 'all', label: '全部' },
+  { value: '30', get label() { return t('radar.radarFormat.30Days') } },
+  { value: '90', get label() { return t('radar.radarFormat.90Days') } },
+  { value: '180', get label() { return t('radar.radarFormat.180Days') } },
+  { value: 'all', get label() { return t('radar.radarFormat.all') } },
 ]
 
 function fmtNum(n: number, digits: number): string {

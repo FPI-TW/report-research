@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { marketColor, marketTint } from '../../lib/meta'
 import styles from './HelpDemos.module.css'
+import { t } from '@/i18n'
 
 /** 示範畫面的設計寬度。座標都以這個寬度寫死（游標要準確點到目標），窄於它就整塊等比縮小。 */
 const STAGE_W = 640
@@ -89,36 +90,36 @@ function Dist({ parts }: { parts: [string, number][] }) {
 /** 研報庫：輸入關鍵字按 Enter，結果出現後點「台股」篩選，美股那篇淡出。 */
 export function LibraryDemo() {
   return (
-    <Demo label="操作示範：在研報庫輸入關鍵字後按 Enter 搜尋，再點台股篩選結果">
+    <Demo label={t('help.helpDemos.demoTypeAKeywordIn')}>
       <div className={`${styles.card} ${styles.lSearch}`}>
         <Search size={14} strokeWidth={2} className={styles.faint} />
-        <span className={styles.lType}>AI 伺服器散熱</span>
+        <span className={styles.lType}>{t('help.helpDemos.aiServerCooling')}</span>
         <span className={styles.grow} />
         <span className={styles.lEnter}>Enter</span>
       </div>
       <div className={styles.lChips}>
-        <span className={`${styles.chip} ${styles.lAll}`}>全部<span className={styles.chipN}>24</span></span>
-        <span className={`${styles.chip} ${styles.lTw}`}>台股<span className={styles.chipN}>15</span></span>
-        <span className={styles.chip}>美股<span className={styles.chipN}>9</span></span>
+        <span className={`${styles.chip} ${styles.lAll}`}>{t('help.helpDemos.all')}<span className={styles.chipN}>24</span></span>
+        <span className={`${styles.chip} ${styles.lTw}`}>{t('help.helpDemos.taiwan')}<span className={styles.chipN}>15</span></span>
+        <span className={styles.chip}>{t('help.helpDemos.us')}<span className={styles.chipN}>9</span></span>
       </div>
       <div className={`${styles.card} ${styles.lRow} ${styles.lR1}`}>
-        <span className={styles.lMkt} style={{ color: marketColor('TW') }}>台股</span>
-        <span className={styles.lTitle}>伺服器散熱：液冷滲透率加速</span>
-        <span className={styles.top}>最相關</span>
+        <span className={styles.lMkt} style={{ color: marketColor('TW') }}>{t('help.helpDemos.taiwan')}</span>
+        <span className={styles.lTitle}>{t('help.helpDemos.serverCoolingLiquidCoolingAdoption')}</span>
+        <span className={styles.top}>{t('help.helpDemos.mostRelevant')}</span>
         <span className={`${styles.line} ${styles.markLine}`} style={{ maxWidth: 80 }} />
-        <span className={styles.lMeta}>元大投顧{'\u3000'}10-27</span>
+        <span className={styles.lMeta}>{t('help.helpDemos.yuanta')}{t('help.helpDemos.text')}10-27</span>
       </div>
       <div className={`${styles.card} ${styles.lRow} ${styles.lR2}`}>
-        <span className={styles.lMkt} style={{ color: marketColor('TW') }}>台股</span>
-        <span className={styles.lTitle}>散熱模組廠：AI 機櫃出貨上修</span>
+        <span className={styles.lMkt} style={{ color: marketColor('TW') }}>{t('help.helpDemos.taiwan')}</span>
+        <span className={styles.lTitle}>{t('help.helpDemos.thermalModuleMakersAiRack')}</span>
         <span className={`${styles.line} ${styles.markLine}`} style={{ maxWidth: 60 }} />
-        <span className={styles.lMeta}>凱基投顧{'\u3000'}10-24</span>
+        <span className={styles.lMeta}>{t('help.helpDemos.kgi')}{t('help.helpDemos.text')}10-24</span>
       </div>
       <div className={`${styles.card} ${styles.lRow} ${styles.lR3}`}>
-        <span className={styles.lMkt} style={{ color: marketColor('US') }}>美股</span>
-        <span className={styles.lTitle}>資料中心電力與散熱需求更新</span>
+        <span className={styles.lMkt} style={{ color: marketColor('US') }}>{t('help.helpDemos.us')}</span>
+        <span className={styles.lTitle}>{t('help.helpDemos.dataCenterPowerAndCooling')}</span>
         <span className={`${styles.line} ${styles.markLine}`} style={{ maxWidth: 70 }} />
-        <span className={styles.lMeta}>摩根大通{'\u3000'}10-22</span>
+        <span className={styles.lMeta}>{t('help.helpDemos.jPMorgan')}{t('help.helpDemos.text')}10-22</span>
       </div>
       <Cursor className={styles.lCur} />
     </Demo>
@@ -128,12 +129,12 @@ export function LibraryDemo() {
 /** 閱讀頁：點第 2 條重點摘錄 → PDF 捲到第 2 頁並標出原文 → 在 PDF 上拖曳選字 → 工具列的複製鈕。 */
 export function ReaderDemo() {
   return (
-    <Demo label="操作示範：點重點摘錄，PDF 捲到原文並標出位置；再拖曳選取一行文字，按工具列的複製鈕">
+    <Demo label={t('help.helpDemos.demoClickAKeyTakeaway')}>
       <div className={`${styles.card} ${styles.rPanel}`}>
         <span className={`${styles.line} ${styles.lineDark} ${styles.rTitle}`} />
         <span className={`${styles.line} ${styles.rMeta1}`} />
         <span className={`${styles.line} ${styles.rMeta2}`} />
-        <span className={`${styles.rH} ${styles.rH1}`}>重點摘錄</span>
+        <span className={`${styles.rH} ${styles.rH1}`}>{t('help.helpDemos.keyTakeaways')}</span>
         <span className={`${styles.rTk} ${styles.rTk1}`}>
           <span className={styles.rNo}>1</span>
           <span className={styles.rBody}><span className={styles.line} /><span className={styles.line} style={{ width: '64%' }} /></span>
@@ -144,8 +145,8 @@ export function ReaderDemo() {
             <span className={styles.line} />
             <span className={styles.rSlot}>
               <span className={`${styles.line} ${styles.rL2}`} style={{ width: '76%' }} />
-              <span className={styles.rFinding}>尋找中…</span>
-              <span className={styles.rFound}>第 2 頁</span>
+              <span className={styles.rFinding}>{t('help.helpDemos.locating')}</span>
+              <span className={styles.rFound}>{t('help.helpDemos.page2')}</span>
             </span>
           </span>
         </span>
@@ -153,7 +154,7 @@ export function ReaderDemo() {
           <span className={styles.rNo}>3</span>
           <span className={styles.rBody}><span className={styles.line} /><span className={styles.line} style={{ width: '58%' }} /></span>
         </span>
-        <span className={`${styles.rH} ${styles.rH2}`}>相似研報</span>
+        <span className={`${styles.rH} ${styles.rH2}`}>{t('help.helpDemos.similarReports')}</span>
         <span className={`${styles.line} ${styles.rSim}`} />
       </div>
 
@@ -185,7 +186,7 @@ export function ReaderDemo() {
           </div>
         </div>
         <div className={styles.rToastBox}>
-          <span className={styles.rToast}><Check size={9} strokeWidth={3} />已複製</span>
+          <span className={styles.rToast}><Check size={9} strokeWidth={3} />{t('help.helpDemos.copied')}</span>
         </div>
         <div className={styles.rDockBox}>
           <span className={styles.rDock}>
@@ -231,8 +232,8 @@ function PageLines() {
 /** 研究助理：送出提問 → 思考 → 回答逐行出現、引用編號彈出 → 來源卡片 → 滑過引用編號浮出來源預覽。 */
 export function AssistantDemo() {
   return (
-    <Demo label="操作示範：送出提問，思考完成後回答逐步出現，下方列出來源，滑過引用編號預覽來源">
-      <div className={styles.aBubble}>台積電明年資本支出怎麼看？</div>
+    <Demo label={t('help.helpDemos.demoSendAQuestionOnce')}>
+      <div className={styles.aBubble}>{t('help.helpDemos.howDoBrokersViewTsmc')}</div>
       <div className={styles.aThink}>
         <span className={styles.aArcBox}>
           <svg className={styles.aArc} viewBox="0 0 16 16" fill="none">
@@ -241,8 +242,8 @@ export function AssistantDemo() {
           </svg>
         </span>
         <span className={styles.aLabels}>
-          <span className={styles.aL1}>檢索研報…</span>
-          <span className={styles.aL2}>已思考 3 秒{'\u3000'}參考 5 篇研報<ChevronDown size={11} strokeWidth={2} /></span>
+          <span className={styles.aL1}>{t('help.helpDemos.searchingReports')}</span>
+          <span className={styles.aL2}>{t('help.helpDemos.thoughtFor3S')}{t('help.helpDemos.text')}{t('help.helpDemos.referenced5Reports')}<ChevronDown size={11} strokeWidth={2} /></span>
         </span>
       </div>
       <div className={styles.aAns}>
@@ -254,13 +255,13 @@ export function AssistantDemo() {
         </span>
       </div>
       <div className={styles.aSrc}>
-        {['台積電：先進封裝擴產提前', '晶圓代工：明年資本支出展望', '半導體設備：海外廠進度'].map(t => (
-          <span key={t} className={`${styles.card} ${styles.aSrcCard}`}>
-            <span className={styles.aSrcT}>{t}</span>
+        {[t('help.helpDemos.tsmcAdvancedPackagingExpansionBrought'), t('help.helpDemos.foundryCapitalExpenditureOutlookFor'), t('help.helpDemos.semiconductorEquipmentOverseasFabProgress')].map(item => (
+          <span key={item} className={`${styles.card} ${styles.aSrcCard}`}>
+            <span className={styles.aSrcT}>{item}</span>
             <span className={`${styles.line} ${styles.aSrcM}`} />
           </span>
         ))}
-        <span className={styles.aAll}>全部 5 則來源<ArrowRight size={10} strokeWidth={2} /></span>
+        <span className={styles.aAll}>{t('help.helpDemos.all5Sources')}<ArrowRight size={10} strokeWidth={2} /></span>
       </div>
       <div className={styles.aActs}>
         <ThumbsUp size={11} strokeWidth={1.8} />
@@ -269,8 +270,8 @@ export function AssistantDemo() {
         <RotateCcw size={11} strokeWidth={1.8} />
       </div>
       <div className={styles.aPeek}>
-        <span className={styles.aPeekT}>台積電：先進封裝擴產提前</span>
-        <span className={styles.aPeekM}>凱基投顧{'\u3000'}10-27</span>
+        <span className={styles.aPeekT}>{t('help.helpDemos.tsmcAdvancedPackagingExpansionBrought')}</span>
+        <span className={styles.aPeekM}>{t('help.helpDemos.kgi')}{t('help.helpDemos.text')}10-27</span>
         <span className={`${styles.line} ${styles.markLine}`} style={{ width: '92%' }} />
       </div>
       <Cursor className={styles.aCur} />
@@ -279,9 +280,9 @@ export function AssistantDemo() {
 }
 
 const CAT_ROWS: { name: string; code: string; rating: 'buy' | 'neutral'; label: string; dist: [string, number][]; change: string; dir?: 'up' | 'down' }[] = [
-  { name: '台積電', code: '2330', rating: 'buy', label: '買進', dist: [['dBuy', 6], ['dOw', 2], ['dNeu', 1]], change: '調升 1', dir: 'up' },
-  { name: '鴻海', code: '2317', rating: 'buy', label: '買進', dist: [['dBuy', 4], ['dOw', 2], ['dNeu', 1]], change: '無變動' },
-  { name: '聯電', code: '2303', rating: 'neutral', label: '中立', dist: [['dOw', 1], ['dNeu', 3], ['dUw', 1]], change: '調降 1', dir: 'down' },
+  { get name() { return t('help.helpDemos.tsmc') }, code: '2330', rating: 'buy', get label() { return t('help.helpDemos.buy') }, dist: [['dBuy', 6], ['dOw', 2], ['dNeu', 1]], get change() { return t('help.helpDemos.1Upgrade') }, dir: 'up' },
+  { get name() { return t('help.helpDemos.honHai') }, code: '2317', rating: 'buy', get label() { return t('help.helpDemos.buy') }, dist: [['dBuy', 4], ['dOw', 2], ['dNeu', 1]], get change() { return t('help.helpDemos.noChange') } },
+  { get name() { return t('help.helpDemos.umc') }, code: '2303', rating: 'neutral', get label() { return t('help.helpDemos.neutral') }, dist: [['dOw', 1], ['dNeu', 3], ['dUw', 1]], get change() { return t('help.helpDemos.1Downgrade') }, dir: 'down' },
 ]
 
 const DOTS: [number, number, number][] = [[22, 55, 0], [41, 55, 0.15], [50, 41, 0.3], [58, 55, 0.45], [73, 55, 0.6]]
@@ -293,11 +294,11 @@ const THESIS: [string, string, string][] = [
 /** 券商共識：在清單點一檔標的 → 詳情的三張摘要卡、各券商目標價點圖與四向觀點依序出現。 */
 export function ConsensusDemo() {
   return (
-    <Demo label="操作示範：在券商共識清單點選標的，進入詳情看共識評等、目標價中位數與各券商目標價分布">
+    <Demo label={t('help.helpDemos.demoClickAnInstrumentIn')}>
       <div className={`${styles.card} ${styles.cCat}`}>
         <div className={styles.cHead}>
-          <span className={styles.grow}>標的</span><span className={styles.cColR}>共識評等</span>
-          <span className={styles.cColD}>評等分布</span><span className={styles.cColC}>近期變化</span>
+          <span className={styles.grow}>{t('help.helpDemos.instrument')}</span><span className={styles.cColR}>{t('help.helpDemos.consensusRating')}</span>
+          <span className={styles.cColD}>{t('help.helpDemos.ratingDistribution')}</span><span className={styles.cColC}>{t('help.helpDemos.recentChanges')}</span>
         </div>
         {CAT_ROWS.map((r, i) => (
           <div key={r.code} className={i === 0 ? `${styles.cRow} ${styles.cRow1}` : styles.cRow}>
@@ -310,35 +311,35 @@ export function ConsensusDemo() {
       </div>
       <div className={styles.cDet}>
         <div className={styles.cDetHead}>
-          <span className={styles.cDetName}>台積電</span>
+          <span className={styles.cDetName}>{t('help.helpDemos.tsmc')}</span>
           <span className={styles.code}>2330</span>
-          <Mkt code="TW" label="台股" />
+          <Mkt code="TW" label={t('help.helpDemos.taiwan')} />
           <span className={styles.grow} />
           <span className={styles.cSeg}>
-            {['30 天', '90 天', '180 天', '全部'].map(p => (
+            {[t('help.helpDemos.30Days'), t('help.helpDemos.90Days'), t('help.helpDemos.180Days'), t('help.helpDemos.all')].map(p => (
               <span key={p} className={p === '90 天' ? `${styles.cSegItem} ${styles.cSegOn}` : styles.cSegItem}>{p}</span>
             ))}
           </span>
         </div>
         <div className={styles.cCards}>
           <span className={`${styles.card} ${styles.cCard}`}>
-            <span className={styles.cLbl}>共識評等</span>
-            <span className={styles.cVal}><span className={`${styles.badge} ${styles.buy}`}>買進</span><Dist parts={[['dBuy', 6], ['dOw', 2], ['dNeu', 1]]} /></span>
+            <span className={styles.cLbl}>{t('help.helpDemos.consensusRating')}</span>
+            <span className={styles.cVal}><span className={`${styles.badge} ${styles.buy}`}>{t('help.helpDemos.buy')}</span><Dist parts={[['dBuy', 6], ['dOw', 2], ['dNeu', 1]]} /></span>
           </span>
           <span className={`${styles.card} ${styles.cCard}`} style={{ animationDelay: '0.25s' }}>
-            <span className={styles.cLbl}>目標價中位數</span>
-            <span className={styles.cVal}><span className={styles.cNum}>1,400</span><span className={styles.cUnit}>元</span></span>
+            <span className={styles.cLbl}>{t('help.helpDemos.medianTargetPrice')}</span>
+            <span className={styles.cVal}><span className={styles.cNum}>1,400</span><span className={styles.cUnit}>{t('help.helpDemos.twd')}</span></span>
           </span>
           <span className={`${styles.card} ${styles.cCard}`} style={{ animationDelay: '0.5s' }}>
-            <span className={styles.cLbl}>EPS 中位數</span>
-            <span className={styles.cVal}><span className={styles.cNum}>63.6</span><span className={styles.cUnit}>元</span></span>
+            <span className={styles.cLbl}>{t('help.helpDemos.medianEps')}</span>
+            <span className={styles.cVal}><span className={styles.cNum}>63.6</span><span className={styles.cUnit}>{t('help.helpDemos.twd')}</span></span>
           </span>
         </div>
         <div className={`${styles.card} ${styles.cPlot}`}>
-          <span className={styles.cLbl}>各券商目標價</span>
+          <span className={styles.cLbl}>{t('help.helpDemos.targetPriceByBroker')}</span>
           <span className={styles.cAxis} />
           <span className={styles.cMed} />
-          <span className={styles.cMedLbl}>中位數</span>
+          <span className={styles.cMedLbl}>{t('help.helpDemos.median')}</span>
           {DOTS.map(([x, y, d]) => (
             <span key={x} className={styles.cDot} style={{ left: `${x}%`, top: y, animationDelay: `${d}s` }} />
           ))}
@@ -366,12 +367,12 @@ interface BriefDay {
 }
 
 const BRIEF_A: BriefDay = {
-  date: '10 月 28 日', weekday: '2026 年 星期三', stats: [39, 4, 6],
+  get date() { return t('help.helpDemos.oct28') }, get weekday() { return t('help.helpDemos.wed2026') }, stats: [39, 4, 6],
   mix: [['TW', 19], ['US', 10], ['MACRO', 6], ['HK', 4]],
   sources: [['TW', '78%'], ['US', '64%']],
 }
 const BRIEF_B: BriefDay = {
-  date: '10 月 27 日', weekday: '2026 年 星期二', stats: [31, 5, 7],
+  get date() { return t('help.helpDemos.oct27') }, get weekday() { return t('help.helpDemos.tue2026') }, stats: [31, 5, 7],
   mix: [['TW', 12], ['US', 9], ['MACRO', 5], ['CN', 3], ['GLOBAL', 2]],
   sources: [['US', '70%'], ['TW', '58%']],
 }
@@ -388,7 +389,7 @@ function BriefColumn({ day, className }: { day: BriefDay; className: string }) {
           <span className={styles.bArr}><ChevronRight size={10} strokeWidth={2} /></span>
         </span>
         <span className={styles.bStats}>
-          {(['篇新進研報', '個市場', '家券商'] as const).map((l, i) => (
+          {([t('help.helpDemos.newReports'), t('help.helpDemos.markets'), t('help.helpDemos.brokers')] as const).map((l, i) => (
             <span key={l} className={styles.bStat}><span className={styles.bStatN}>{day.stats[i]}</span>{l}</span>
           ))}
         </span>
@@ -397,7 +398,7 @@ function BriefColumn({ day, className }: { day: BriefDay; className: string }) {
         </span>
       </div>
       <div className={`${styles.card} ${styles.bHl}`}>
-        <span className={styles.bHlTitle}>今日重點</span>
+        <span className={styles.bHlTitle}>{t('help.helpDemos.todaySHighlights')}</span>
         <span className={styles.bHlRow}><span className={`${styles.bNo} ${styles.bNoBig}`}>01</span><span className={`${styles.aLine} ${styles.grow}`} style={{ maxWidth: '82%', height: 8 }} /></span>
         <span className={styles.bHlRow}><span className={styles.bNo}>02</span><span className={`${styles.line} ${styles.grow}`} style={{ maxWidth: '66%' }} /></span>
         <span className={styles.bHlRow}><span className={styles.bNo}>03</span><span className={`${styles.line} ${styles.grow}`} style={{ maxWidth: '72%' }} /></span>
@@ -429,17 +430,17 @@ const hasBrief = (d: number) => d <= 28 && ![17, 18, 24, 25].includes(d) && d !=
 /** 每日簡報：在右側月曆點 27 日，左欄整欄重播進場、換成 27 日的內容。 */
 export function BriefDemo() {
   return (
-    <Demo label="操作示範：在右側月曆點選 27 日，左側簡報切換成 27 日的內容">
+    <Demo label={t('help.helpDemos.demoClickThe27thIn')}>
       <BriefColumn day={BRIEF_A} className={styles.bA} />
       <BriefColumn day={BRIEF_B} className={styles.bB} />
       <div className={`${styles.card} ${styles.bCal}`}>
         <span className={styles.bCalHead}>
-          <span className={styles.bMonth}>2026 年 10 月</span>
+          <span className={styles.bMonth}>{t('help.helpDemos.october2026')}</span>
           <span className={styles.grow} />
           <ChevronLeft size={10} strokeWidth={2} className={styles.faint} />
           <ChevronRight size={10} strokeWidth={2} className={styles.faint} />
         </span>
-        <span className={styles.bWeek}>{['日', '一', '二', '三', '四', '五', '六'].map(w => <span key={w}>{w}</span>)}</span>
+        <span className={styles.bWeek}>{[t('help.helpDemos.s'), t('help.helpDemos.m'), t('help.helpDemos.t'), t('help.helpDemos.w'), t('help.helpDemos.t2'), t('help.helpDemos.f'), t('help.helpDemos.s2')].map(w => <span key={w}>{w}</span>)}</span>
         <span className={styles.bGrid}>
           <span className={styles.bSelMark}><span /></span>
           {CAL_WEEKS.flat().map(d => {
@@ -450,7 +451,7 @@ export function BriefDemo() {
             return <span key={d} className={cls.join(' ')}>{d}</span>
           })}
         </span>
-        <span className={styles.bSrcTitle}>本期來源研報</span>
+        <span className={styles.bSrcTitle}>{t('help.helpDemos.sourceReports')}</span>
         <BriefSources day={BRIEF_A} className={styles.bA} />
         <BriefSources day={BRIEF_B} className={styles.bB} />
       </div>

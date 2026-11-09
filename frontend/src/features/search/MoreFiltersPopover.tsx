@@ -5,6 +5,7 @@ import { Pressable } from '../../components/primitives/Pressable'
 import { instrumentLabel, reportTypeLabel } from '../../lib/meta'
 import { activeAdvancedCount, type SearchState } from '../../lib/searchFilters'
 import styles from './MoreFiltersPopover.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   state: SearchState
@@ -64,12 +65,12 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
       <button type="button" className={styles.trigger} onClick={() => setOpen(o => !o)}
         aria-haspopup="dialog" aria-expanded={open} data-on={count > 0 || undefined}>
         <SlidersHorizontal size={14} strokeWidth={1.8} aria-hidden />
-        更多篩選
+        {t('search.moreFiltersPopover.moreFilters')}
         {count > 0 && <span className={styles.badge}>{count}</span>}
       </button>
       <Popover open={open} onClose={() => setOpen(false)} className={styles.panel}
-        role="dialog" ariaLabel="更多篩選">
-        <div className={styles.sectionLabel}>商品類型</div>
+        role="dialog" ariaLabel={t('search.moreFiltersPopover.moreFilters')}>
+        <div className={styles.sectionLabel}>{t('search.moreFiltersPopover.assetClass')}</div>
         <div className={styles.pillRow}>
           {instrumentOptions.map(o => (
             <Pressable key={o} className={pillClass(draft.instrument_type === o)}
@@ -78,7 +79,7 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
           ))}
         </div>
 
-        <div className={styles.sectionLabel}>報告類型</div>
+        <div className={styles.sectionLabel}>{t('search.moreFiltersPopover.reportType')}</div>
         <div className={styles.pillRow}>
           {reportTypeOptions.map(o => (
             <Pressable key={o} className={pillClass(draft.report_type === o)}
@@ -87,20 +88,20 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
           ))}
         </div>
 
-        <div className={styles.sectionLabel}>標的</div>
+        <div className={styles.sectionLabel}>{t('search.moreFiltersPopover.instrument')}</div>
         <div className={styles.pillRow}>
           <Pressable className={pillClass(draft.relates_stock)}
             aria-pressed={draft.relates_stock}
-            onClick={() => toggle('relates_stock')}>個股相關</Pressable>
+            onClick={() => toggle('relates_stock')}>{t('search.moreFiltersPopover.stockRelated')}</Pressable>
           <Pressable className={pillClass(draft.relates_futures)}
             aria-pressed={draft.relates_futures}
-            onClick={() => toggle('relates_futures')}>期貨相關</Pressable>
+            onClick={() => toggle('relates_futures')}>{t('search.moreFiltersPopover.futuresRelated')}</Pressable>
         </div>
 
         <div className={styles.footer}>
           <Pressable className={styles.clearBtn}
-            onClick={() => setDraft(EMPTY)}>清除條件</Pressable>
-          <Pressable className={styles.applyBtn} onClick={apply}>套用</Pressable>
+            onClick={() => setDraft(EMPTY)}>{t('search.moreFiltersPopover.clear')}</Pressable>
+          <Pressable className={styles.applyBtn} onClick={apply}>{t('search.moreFiltersPopover.apply')}</Pressable>
         </div>
       </Popover>
     </div>

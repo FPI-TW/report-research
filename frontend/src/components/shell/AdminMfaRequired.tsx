@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { SecurityDialog } from '../../features/account/SecurityDialog'
 import { Icon } from '../primitives/Icon'
 import styles from './RequireAdmin.module.css'
+import { t } from '@/i18n'
 
 /**
  * 管理員 TOTP 強制（後端 `ADMIN_MFA_REQUIRED`，預設關；只有部署時設成開才會用到）：還沒開兩步驟驗證的管理員進管理後台時，
@@ -17,13 +18,12 @@ export function AdminMfaRequired() {
     <div className={styles.wrap}>
       <div className={styles.card} role="alert">
         <Icon name="shield" size={28} />
-        <h1 className={styles.title}>請先開啟兩步驟驗證</h1>
+        <h1 className={styles.title}>{t('admin.shell.adminMfaRequired.turnOnTwoStepVerification')}</h1>
         <p className={styles.body}>
-          管理後台要求所有管理員開啟兩步驟驗證（TOTP）。開啟之前，帳號管理、待複核、維運等管理功能都無法使用；
-          研報平台的一般功能不受影響。
+          {t('admin.shell.adminMfaRequired.theAdminConsoleRequiresEvery')}
         </p>
-        <p className={styles.body}>準備好手機上的驗證器 App（例如 Google Authenticator），依畫面輸入一次驗證碼即可完成。</p>
-        <button type="button" className={styles.action} onClick={() => setOpen(true)}>設定兩步驟驗證</button>
+        <p className={styles.body}>{t('admin.shell.adminMfaRequired.haveAnAuthenticatorAppReady')}</p>
+        <button type="button" className={styles.action} onClick={() => setOpen(true)}>{t('admin.shell.adminMfaRequired.setUpTwoStepVerification')}</button>
       </div>
       <SecurityDialog open={open} onClose={() => setOpen(false)} />
     </div>

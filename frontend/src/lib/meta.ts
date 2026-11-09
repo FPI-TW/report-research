@@ -1,16 +1,18 @@
+import { t } from '@/i18n'
+
 interface MarketMeta { label: string; color: string }
 
 /** 市場語意色：降彩度重校（oklch 同層亮度/彩度），配合淡底深字 chip 使用。 */
 const MARKETS: Record<string, MarketMeta> = {
-  TW: { label: '台股', color: '#237a46' },
-  US: { label: '美股', color: '#2e5fa3' },
-  HK: { label: '港股', color: '#b26a0b' },
-  CN: { label: '陸股', color: '#b03a30' },
-  FX: { label: '外匯', color: '#0e7d74' },
-  WTX: { label: '台指期', color: '#6e48a8' },
-  MACRO: { label: '總經', color: '#a03052' },
-  GLOBAL: { label: '全球', color: '#4a4fa0' },
-  CRYPTO: { label: '加密', color: '#7d6234' },
+  TW: { get label() { return t('lib.meta.taiwan') }, color: '#237a46' },
+  US: { get label() { return t('lib.meta.us') }, color: '#2e5fa3' },
+  HK: { get label() { return t('lib.meta.hongKong') }, color: '#b26a0b' },
+  CN: { get label() { return t('lib.meta.china') }, color: '#b03a30' },
+  FX: { get label() { return t('lib.meta.fx') }, color: '#0e7d74' },
+  WTX: { get label() { return t('lib.meta.taiexFutures') }, color: '#6e48a8' },
+  MACRO: { get label() { return t('lib.meta.macro') }, color: '#a03052' },
+  GLOBAL: { get label() { return t('lib.meta.global') }, color: '#4a4fa0' },
+  CRYPTO: { get label() { return t('lib.meta.crypto') }, color: '#7d6234' },
 }
 
 const PTYPE: Record<string, string> = {
@@ -47,12 +49,12 @@ export function ptypeColor(name: string): string {
 
 // 商品類型代碼 → 中文顯示（鏡像 app/services/tagging.py INSTRUMENT_DISPLAY）
 const INSTRUMENT_LABEL: Record<string, string> = {
-  equity: '股票', index: '指數', futures: '期貨', options: '選擇權', etf: 'ETF',
-  bond: '債券', fx: '外匯', commodity: '原物料', crypto: '加密',
+  get equity() { return t('lib.meta.equity') }, get index() { return t('lib.meta.index') }, get futures() { return t('lib.meta.futures') }, get options() { return t('lib.meta.options') }, etf: 'ETF',
+  get bond() { return t('lib.meta.bonds') }, get fx() { return t('lib.meta.fx') }, get commodity() { return t('lib.meta.commodities') }, get crypto() { return t('lib.meta.crypto') },
 }
 // 報告類型：多數標註已是中文，僅少數英文碼需對照；其餘回傳原字串
 const REPORT_TYPE_LABEL: Record<string, string> = {
-  memo: '備忘', snapshot: '快照',
+  get memo() { return t('lib.meta.memo') }, get snapshot() { return t('lib.meta.snapshot') },
 }
 
 export function instrumentLabel(code: string): string {

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { t } from '@/i18n'
 
 /**
  * 管理清單的勾選狀態（研報頁、帳號頁共用）。只記 id；「全選」只選呼叫端給的那一組（目前這一頁、
@@ -35,6 +36,6 @@ export type BulkOutcome = {
 
 /** 確認對話框裡的對象清單：最多列 `max` 個名稱，其餘以「等 N 筆」帶過。 */
 export function namesPreview(names: readonly string[], max = 5): string {
-  const head = names.slice(0, max).map(n => `「${n}」`).join('、')
-  return names.length > max ? `${head} 等 ${names.length} 筆` : head
+  const head = names.slice(0, max).map(n => t('admin.useSelection.text', { n })).join(t('admin.useSelection.text2'))
+  return names.length > max ? t('admin.useSelection.andTotal', { head, length: names.length }) : head
 }

@@ -1,6 +1,7 @@
 import { Skel } from './Skel'
 import atoms from './atoms.module.css'
 import styles from './LibrarySkeleton.module.css'
+import { t } from '@/i18n'
 
 function RowSkeletons() {
   return (
@@ -20,7 +21,7 @@ function RowSkeletons() {
 /** 首頁 bento 的骨架：版面與實際四張卡對齊，換入時不跳動。 */
 export function HomeSkeleton() {
   return (
-    <div className={`${styles.bento} ${styles.fade}`} aria-busy="true" aria-label="載入中" data-testid="home-skeleton">
+    <div className={`${styles.bento} ${styles.fade}`} aria-busy="true" aria-label={t('search.librarySkeleton.loading')} data-testid="home-skeleton">
       <div className={`${atoms.tile} ${styles.headline}`}>
         <Skel w="28%" h={12} />
         <Skel w="92%" h={22} />
@@ -55,7 +56,7 @@ export function HomeSkeleton() {
 /** 結果清單的骨架（標題列＋三列）。 */
 export function ListSkeleton() {
   return (
-    <div className={`${styles.list} ${styles.fade}`} aria-busy="true" aria-label="搜尋中" data-testid="list-skeleton">
+    <div className={`${styles.list} ${styles.fade}`} aria-busy="true" aria-label={t('search.librarySkeleton.searching')} data-testid="list-skeleton">
       <div className={styles.listHead}>
         <Skel w={90} h={16} />
         <Skel w={40} h={16} />

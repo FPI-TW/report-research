@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
 import { Search, X } from 'lucide-react'
 import styles from './SearchBar.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   /** 已套用的查詢（網址上的 q）。外部清空（「清除條件」）時輸入框跟著清空。 */
@@ -46,14 +47,14 @@ export function SearchBar({ initial, onSubmit }: Props) {
         type="search"
         className={styles.input}
         value={draft}
-        placeholder="搜尋產業、公司、事件"
-        aria-label="搜尋研報"
+        placeholder={t('search.searchBar.searchSectorsCompaniesEvents')}
+        aria-label={t('search.searchBar.searchReports')}
         enterKeyHint="search"
         onChange={e => setDraft(e.target.value)}
         onKeyDown={onKeyDown}
       />
       {draft && (
-        <button type="button" className={styles.clear} aria-label="清除搜尋" onClick={clear}>
+        <button type="button" className={styles.clear} aria-label={t('search.searchBar.clearSearch')} onClick={clear}>
           <X size={16} strokeWidth={1.8} aria-hidden />
         </button>
       )}

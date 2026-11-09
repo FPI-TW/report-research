@@ -3,7 +3,8 @@ import { createBrowserRouter, Navigate, useLocation, useParams } from 'react-rou
 import { RouterProvider } from 'react-router/dom'
 import { AppShell } from './components/shell/AppShell'
 import { RouteError } from './components/shell/RouteError'
-import { routeLoaders, preloadIdle } from './lib/routePreload'
+import { routeLoaders, preloadIdle, withAdminMessages } from './lib/routePreload'
+import { t } from '@/i18n'
 
 const SearchPage = lazy(routeLoaders.search)
 const AskPage = lazy(routeLoaders.ask)
@@ -41,10 +42,10 @@ const AdminSecurityPage = lazy(routeLoaders.adminSecurity)
 const AdminQuotaPage = lazy(routeLoaders.adminQuota)
 const AdminFlagsPage = lazy(routeLoaders.adminFlags)
 // 管理後台裡的 404：主控台的頁面骨架，一般使用者的瀏覽器不會下載（研報平台的 NotFound 在下面，維持原樣）。
-const AdminNotFound = lazy(() => import('./components/shell/AdminNotFound'))
+const AdminNotFound = lazy(withAdminMessages(() => import('./components/shell/AdminNotFound')))
 
 function NotFound() {
-  return <div style={{ padding: 20 }}>找不到頁面</div>
+  return <div style={{ padding: 20 }}>{t('app.pageNotFound')}</div>
 }
 
 /** `/admin/ops/*` 是 `/admin/operations/*` 的短別名：子路徑、query 與 hash 原樣帶過去。 */

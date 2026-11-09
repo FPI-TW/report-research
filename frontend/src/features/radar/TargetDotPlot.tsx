@@ -4,6 +4,7 @@ import { targetDots } from './consensusData'
 import { fmtValue } from './radarFormat'
 import shared from './shared.module.css'
 import styles from './TargetDotPlot.module.css'
+import { t } from '@/i18n'
 
 const LEVEL_PX = 18
 const DOT_PX = 14
@@ -36,13 +37,13 @@ export function TargetDotPlot({ brokers, group, activeKey, onSelect }: Props) {
   return (
     <section className={`${shared.tile} ${styles.tile}`} aria-labelledby={id}>
       <div className={styles.head}>
-        <h2 id={id} className={styles.title}>各券商目標價</h2>
+        <h2 id={id} className={styles.title}>{t('radar.targetDotPlot.targetPriceByBroker')}</h2>
         <span className={styles.ccy}>{group.currency}</span>
       </div>
       <div
         className={styles.plot}
         role="group"
-        aria-label={`各券商目標價分布，中位數 ${fmtValue(group.median)}`}
+        aria-label={t('radar.targetDotPlot.targetPriceDistributionByBroker', { median: fmtValue(group.median) })}
         style={{ height: axisY + 38, '--axis-y': `${axisY}px` } as CSSProperties}
       >
         <span className={styles.axis} aria-hidden="true" />
@@ -53,7 +54,7 @@ export function TargetDotPlot({ brokers, group, activeKey, onSelect }: Props) {
           style={{ left: `${medianX}%` }}
           aria-hidden="true"
         >
-          中位 {fmtValue(group.median)}
+          {t('radar.targetDotPlot.median', { median: fmtValue(group.median) })}
         </span>
         {dots.map(d => (
           <button
@@ -63,7 +64,7 @@ export function TargetDotPlot({ brokers, group, activeKey, onSelect }: Props) {
             data-on={d.key === activeKey || undefined}
             data-edge={d.x < 10 ? 'start' : d.x > 90 ? 'end' : undefined}
             style={{ left: `${d.x}%`, top: axisY - DOT_PX / 2 - d.level * LEVEL_PX }}
-            aria-label={`${d.broker}，目標價 ${fmtValue(d.value)}`}
+            aria-label={t('radar.targetDotPlot.targetPrice', { broker: d.broker, value: fmtValue(d.value) })}
             onClick={() => onSelect(d.key)}
           >
             <span className={styles.tip} aria-hidden="true">

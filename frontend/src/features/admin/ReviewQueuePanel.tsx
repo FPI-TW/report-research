@@ -10,6 +10,7 @@ import {
 import { useReviewParams } from './reviews/useReviewParams'
 import { useReviewItem, useReviewOpenCounts, useReviewQueue } from './useReviewQueue'
 import styles from './ReviewQueue.module.css'
+import { t } from '@/i18n'
 
 /**
  * 待複核頁的內容：頁首（右側是狀態篩選）、三個分頁籤（數字是待處理數）、左清單右詳情。
@@ -36,7 +37,7 @@ const HELP = '系統偵測到需要人看的問答與研報；處理狀態、註
   + '問答刻意不顯示原文，只列中繼資料與提問者代號；有 qa_content.read 的人可逐筆「查看內容」，每次查看都寫稽核。'
 
 function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.reviewQueuePanel.tryAgain')
 }
 
 /** 清單上的分數顏色：原型以 0.5 分界，更低的用紅字。只是顯示上的強調，與複核門檻（`min_score`）無關。 */
@@ -48,7 +49,7 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
   const { kind, status, review, setKind, setStatus, select } = useReviewParams()
   const q = useReviewQueue(kind, status)
   const counts = useReviewOpenCounts()
-  const tab = KIND_TABS.find(t => t.value === kind)!
+  const tab = KIND_TABS.find(item => item.value === kind)!
   // 選中的那筆：清單裡有就用清單的；沒有就向後端取那一筆；再取不到才退回第一筆。
   const listed = review ? q.items.find(item => itemId(kind, item) === review) : undefined
   // 儲存中不查：存完那筆可能剛離開目前的篩選，等一下就會被取消選取，不必為它多打一次。
@@ -61,37 +62,37 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
 
   const save = (item: ReviewItem, update: ReviewUpdate) => {
     q.save(itemId(kind, item), update).then(() => {
-      toast(`已儲存：${subjectOf(kind, item)}・${STATUS_LABEL[update.status]}・${VERIFY_LABEL[update.verification]}`)
+      toast(t('admin.reviewQueuePanel.saved', { kind: subjectOf(kind, item), STATUS_LABEL: STATUS_LABEL[update.status], VERIFY_LABEL: VERIFY_LABEL[update.verification] }))
       // 存完就不在目前這個篩選裡的，不再指著它：清單會補上下一筆。要同步清掉：`isSaving` 轉回 false 的
       // 那次 render（React Query 排在下一個 macrotask）若還看得到舊的 `?review=`，單筆查詢會為這筆多打一次，
       // 右欄也會閃一下「載入中…」；預設的 transition 在主機忙時就會晚到。
       if (status !== 'all' && status !== update.status) select(null, { flushSync: true })
-    }).catch(() => toast('儲存失敗，請重試', { tone: 'bad' }))
+    }).catch(() => toast(t('admin.reviewQueuePanel.saveFailedTryAgain'), { tone: 'bad' }))
   }
 
   return (
     <>
       <PageHeader
-        summary="忠實度低分、倒讚與抽取品質需要人工確認的項目。"
+        summary={t('admin.reviewQueuePanel.itemsNeedingHumanConfirmationLow')}
         help={HELP}
-        actions={<Segmented label="複核狀態" options={STATUS_FILTERS} value={status} onChange={setStatus} />}
+        actions={<Segmented label={t('admin.reviewQueuePanel.reviewStatus')} options={STATUS_FILTERS} value={status} onChange={setStatus} />}
       />
-      <Tabs label="待複核種類" value={kind} onChange={setKind}
-        tabs={KIND_TABS.map(t => ({ ...t, count: counts[t.value] }))} />
+      <Tabs label={t('admin.reviewQueuePanel.reviewKind')} value={kind} onChange={setKind}
+        tabs={KIND_TABS.map(item => ({ ...item, count: counts[item.value] }))} />
       <div className={styles.cols} role="tabpanel" aria-label={tab.label}>
         <section className={`${c.card} ${styles.listCard}`}>
           {q.isLoading ? (
-            <div className={styles.listEmpty}>載入中…</div>
+            <div className={styles.listEmpty}>{t('admin.reviewQueuePanel.loading')}</div>
           ) : q.isError ? (
             <div className={styles.listError}>
-              <p className={c.error} role="alert">佇列載入失敗：{messageOf(q.error)}</p>
-              <button type="button" className={c.linkBtn} onClick={q.refetch}>重試</button>
+              <p className={c.error} role="alert">{t('admin.reviewQueuePanel.couldnTLoadTheQueue', { error: messageOf(q.error) })}</p>
+              <button type="button" className={c.linkBtn} onClick={q.refetch}>{t('admin.reviewQueuePanel.retry')}</button>
             </div>
           ) : q.items.length === 0 ? (
-            <div className={styles.listEmpty}>目前沒有項目</div>
+            <div className={styles.listEmpty}>{t('admin.reviewQueuePanel.nothingHereRightNow')}</div>
           ) : (
             <>
-              <ul className={styles.list} aria-label="待複核清單">
+              <ul className={styles.list} aria-label={t('admin.reviewQueuePanel.reviewList')}>
                 {q.items.map(item => {
                   const id = itemId(kind, item)
                   const itemStatus = item.review_status ?? 'open'
@@ -119,24 +120,24 @@ export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
               </ul>
               {q.hasMore && (
                 <button type="button" className={styles.more} onClick={q.loadMore} disabled={q.isFetchingMore}>
-                  {q.isFetchingMore ? '載入中…' : `載入更多（共 ${q.total} 筆）`}
+                  {q.isFetchingMore ? t('admin.reviewQueuePanel.loading') : t('admin.reviewQueuePanel.loadMoreTotal', { total: q.total })}
                 </button>
               )}
             </>
           )}
           <div className={styles.listFoot}>
-            {pinned && <p role="status">連結指的這一筆不在目前載入的清單裡（已處理，或在後面的分頁）；詳情在右邊。</p>}
-            {gone && <p role="status">連結指的那一筆已不在這個分頁的佇列裡（或已超過 30 天）{q.items.length > 0 ? '，右邊顯示第一筆' : ''}。</p>}
+            {pinned && <p role="status">{t('admin.reviewQueuePanel.theLinkedItemIsnT')}</p>}
+            {gone && <p role="status">{t('admin.reviewQueuePanel.theLinkedItemIsNo')}{q.items.length > 0 ? t('admin.reviewQueuePanel.showingTheFirstItemOn') : ''}{t('admin.reviewQueuePanel.text')}</p>}
             <p>{hintText(kind, q.minScore)}</p>
             {kind === 'faithfulness' && scale && isNewScale(scale) && (
-              <p>{`判定尺 ${scale.judge_model} 是${newScaleText(scale)}：分數與換尺前的不可直接比較`}</p>
+              <p>{t('admin.reviewQueuePanel.judgeIsScoresArenT', { judge_model: scale.judge_model, scale: newScaleText(scale) })}</p>
             )}
           </div>
         </section>
-        <section className={c.card} aria-label="詳情">
+        <section className={c.card} aria-label={t('admin.reviewQueuePanel.details')}>
           {current
             ? <ReviewDetail kind={kind} item={current} canReadContent={canReadContent} saving={q.isSaving} onSave={save} />
-            : <div className={styles.detailEmpty}>{lookingUp ? '載入中…' : '從左邊選一筆'}</div>}
+            : <div className={styles.detailEmpty}>{lookingUp ? t('admin.reviewQueuePanel.loading') : t('admin.reviewQueuePanel.selectAnItemOnThe')}</div>}
         </section>
       </div>
     </>

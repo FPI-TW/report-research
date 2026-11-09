@@ -7,6 +7,7 @@ import { useConversations } from '../../lib/useConversations'
 import { usePendingConversations } from '../../lib/pendingConversation'
 import { useDeleteConversation } from '../../lib/useDeleteConversation'
 import styles from './ConversationList.module.css'
+import { t } from '@/i18n'
 
 const OPEN_KEY = 'tf.sidebar.recents'
 
@@ -74,10 +75,10 @@ export function ConversationList() {
     <>
       <div className={styles.head}>
         <button type="button" className={styles.heading} aria-expanded={open} onClick={toggle}>
-          最近
+          {t('shell.conversationList.recent')}
           <ChevronDown size={12} strokeWidth={2} aria-hidden className={styles.chev} data-open={open} />
         </button>
-        <Link to="/assistant" className={styles.newBtn} aria-label="新對話" title="新對話">
+        <Link to="/assistant" className={styles.newBtn} aria-label={t('shell.conversationList.newConversation')} title={t('shell.conversationList.newConversation')}>
           <Plus size={14} strokeWidth={1.8} aria-hidden />
         </Link>
       </div>
@@ -85,7 +86,7 @@ export function ConversationList() {
         // 只讓 deleteConversation throw 還不夠——沒有任何畫面反應等於仍是靜默失敗，
         // 而使用者的下一步是再按一次刪除。role="alert" 讓螢幕閱讀器也收得到。
         <div className={styles.error} role="alert">
-          {del.error instanceof Error ? del.error.message : '刪除對話失敗'}
+          {del.error instanceof Error ? del.error.message : t('shell.conversationList.couldnTDeleteTheConversation')}
         </div>
       )}
       {open && (
@@ -115,7 +116,7 @@ export function ConversationList() {
                     <motion.button
                       type="button"
                       className={styles.del}
-                      aria-label="刪除對話"
+                      aria-label={t('shell.conversationList.deleteConversation')}
                       variants={delVariants}
                       whileFocus={{ opacity: 1 }}
                       onClick={() => setPending(id)}
@@ -129,16 +130,16 @@ export function ConversationList() {
           </AnimatePresence>
           {hasMore && (
             <button type="button" className={styles.more} onClick={loadMore} disabled={isFetchingMore}>
-              {isFetchingMore ? '載入中…' : '載入更多'}
+              {isFetchingMore ? t('shell.conversationList.loading') : t('shell.conversationList.loadMore')}
             </button>
           )}
         </div>
       )}
       <ConfirmDialog
         open={pending !== null}
-        title="刪除此對話？"
-        body="將永久移除整個對話串，無法復原。"
-        confirmLabel="刪除"
+        title={t('shell.conversationList.deleteThisConversation')}
+        body={t('shell.conversationList.theWholeThreadWillBe')}
+        confirmLabel={t('shell.conversationList.delete')}
         onConfirm={confirmDelete}
         onCancel={() => setPending(null)}
       />

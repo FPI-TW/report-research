@@ -4,6 +4,7 @@ import { fmtDateTime } from '../auditLabels'
 import {
   REJECTABLE_STATES, failureLabel, graceRemaining, isRetryableFailure, type UploadState,
 } from '../uploadLabels'
+import { t } from '@/i18n'
 
 /** 狀態 → 燈號色。草稿是「等人處理」（warn），會自己往前走的用 info，終態且不需處理的用 idle。 */
 const STATE_TONE: Record<UploadState, LampTone> = {
@@ -54,28 +55,28 @@ export function reviewOptions(upload: Target, now: number): ReviewOptions {
     opts.reject = 'ok'
   } else if (state === 'scanning' || state === 'processing') {
     opts.reject = 'busy'
-    opts.note = `${BUSY_HINT}。`
+    opts.note = t('admin.uploads.reviewRules.text', { BUSY_HINT })
   }
   if (state === 'failed') {
     opts.retry = isRetryableFailure(upload.failure_kind) ? 'ok' : 'not_retryable'
-    if (opts.retry !== 'ok') opts.note = `${notRetryableHint(upload.failure_kind)}。`
+    if (opts.retry !== 'ok') opts.note = t('admin.uploads.reviewRules.text2', { failure_kind: notRetryableHint(upload.failure_kind) })
   }
   if (state === 'rejected') {
     if (upload.purged_at) {
       opts.unreject = 'purged'
-      opts.note = `已於 ${fmtDateTime(upload.purged_at)} 清除，無法撤銷。`
+      opts.note = t('admin.uploads.reviewRules.purgedAtCanTBe', { purged_at: fmtDateTime(upload.purged_at) })
     } else {
       opts.grace = graceRemaining(upload.purge_after, now)
       opts.unreject = opts.grace ? 'ok' : 'expired'
-      opts.note = opts.grace ? `寬限期還剩 ${opts.grace}，期間內可以撤銷退回。` : `${EXPIRED_HINT}。`
+      opts.note = opts.grace ? t('admin.uploads.reviewRules.leftInTheGracePeriod', { grace: opts.grace }) : t('admin.uploads.reviewRules.text3', { EXPIRED_HINT })
     }
   }
-  if (state === 'published') opts.note = '已發布的研報不能退回；如需下架，請到「研報管理」隱藏。'
-  if (state === 'infected' || state === 'blocked') opts.note = '被攔截的檔案留在隔離區，不提供下載或預覽，也沒有可執行的動作。'
-  if (state === 'duplicate') opts.note = '語料庫已有同一份檔案，這筆上傳不會再處理。'
+  if (state === 'published') opts.note = t('admin.uploads.reviewRules.publishedReportsCanTBe')
+  if (state === 'infected' || state === 'blocked') opts.note = t('admin.uploads.reviewRules.blockedFilesStayInQuarantine')
+  if (state === 'duplicate') opts.note = t('admin.uploads.reviewRules.theCorpusAlreadyHasThe')
   return opts
 }
 
 export function notRetryableHint(kind: string | null | undefined): string {
-  return `「${failureLabel(kind)}」重試也不會成功，不能重試；可以退回`
+  return t('admin.uploads.reviewRules.retryingWonTFixSo', { kind: failureLabel(kind) })
 }

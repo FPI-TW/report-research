@@ -1,6 +1,7 @@
 import type { BrokerSummary, EpsGroup } from '../../lib/radarSchemas'
 import { brokerName, epsBasisKey, epsGroupKey } from './brokerKeys'
 import { RATING_DISPLAY } from './radarFormat'
+import { t } from '@/i18n'
 
 /**
  * 「各券商最新觀點」→ TSV（貼進 Excel／Google Sheets 會自動分欄）。
@@ -26,7 +27,7 @@ function cell(v: string | number | null | undefined): string {
 }
 
 function yesNo(applicable: boolean, included: boolean): string {
-  return applicable ? (included ? '是' : '否') : ''
+  return applicable ? (included ? t('radar.consensusExport.yes') : t('radar.consensusExport.no')) : ''
 }
 
 export function brokerTableTsv(
@@ -53,7 +54,7 @@ export function brokerTableTsv(
       hasEps ? b.latest_eps_unit : null,
       yesNo(hasEps, epsKey != null && epsBasisKey(b) === epsKey),
       b.latest_report_date,
-      b.stale ? '否' : '是',
+      b.stale ? t('radar.consensusExport.no') : t('radar.consensusExport.yes'),
     ].map(cell).join('\t')
   })
   return [HEADERS.join('\t'), ...rows].join('\n')

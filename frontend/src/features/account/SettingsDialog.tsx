@@ -13,12 +13,13 @@ import { useStats } from '../../lib/useStats'
 import { useSystemStatus } from '../../lib/useSystemStatus'
 import { SecurityPanel } from './SecurityDialog'
 import styles from './SettingsDialog.module.css'
+import { t } from '@/i18n'
 
 const TABS: { key: SettingsTab; label: string; icon: LucideIcon }[] = [
-  { key: 'account', label: '帳號', icon: User },
-  { key: 'security', label: '安全', icon: Shield },
-  { key: 'prefs', label: '偏好', icon: SlidersHorizontal },
-  { key: 'about', label: '關於', icon: Info },
+  { key: 'account', get label() { return t('account.settingsDialog.account') }, icon: User },
+  { key: 'security', get label() { return t('account.settingsDialog.security') }, icon: Shield },
+  { key: 'prefs', get label() { return t('account.settingsDialog.preferences') }, icon: SlidersHorizontal },
+  { key: 'about', get label() { return t('account.settingsDialog.about') }, icon: Info },
 ]
 
 const LOCALES: { value: Locale; label: string }[] = [
@@ -26,7 +27,7 @@ const LOCALES: { value: Locale; label: string }[] = [
   { value: 'en', label: 'English' },
 ]
 
-const ROLE_LABEL: Record<string, string> = { admin: '管理員', user: '使用者' }
+const ROLE_LABEL: Record<string, string> = { get admin() { return t('account.settingsDialog.admin') }, get user() { return t('account.settingsDialog.user') } }
 const GLIDE = { duration: 0.3, ease: [0.32, 0.72, 0, 1] as const }
 
 /**
@@ -44,7 +45,7 @@ export function SettingsDialog({ open, tab, onTab, onClose }: {
   const tabsRef = useRef<HTMLDivElement>(null)
   // 只量每個分頁的位置給選取那塊滑動底色；hover 是每個分頁自己的底色（與側欄主導覽一致）。
   const rows = useFluidHover(tabsRef)
-  const activeIdx = TABS.findIndex(t => t.key === tab)
+  const activeIdx = TABS.findIndex(item => item.key === tab)
   const activeRect = useStableRect(rows, activeIdx)
   const title = TABS[activeIdx]?.label ?? ''
 
@@ -62,21 +63,21 @@ export function SettingsDialog({ open, tab, onTab, onClose }: {
   }
 
   return (
-    <Modal open={open} onClose={() => { if (!elevating) onClose() }} bare ariaLabel="設定" className={styles.dialog}>
+    <Modal open={open} onClose={() => { if (!elevating) onClose() }} bare ariaLabel={t('account.settingsDialog.settings')} className={styles.dialog}>
       <div className={styles.layout}>
-        <nav className={styles.nav} aria-label="設定分類">
-          <h1 className={styles.navTitle}>設定</h1>
+        <nav className={styles.nav} aria-label={t('account.settingsDialog.settingsSections')}>
+          <h1 className={styles.navTitle}>{t('account.settingsDialog.settings')}</h1>
           <div ref={tabsRef} className={styles.tabs} role="tablist" aria-orientation="vertical" onKeyDown={onKeyDown}>
             <FluidHoverHighlight rect={activeRect} session={0} fadeIn={false} transition={GLIDE} className={styles.hlActive} />
-            {TABS.map((t, i) => (
-              <TabButton key={t.key} register={rows.registerItem} index={i} def={t} on={t.key === tab} onPick={() => onTab(t.key)} />
+            {TABS.map((item, i) => (
+              <TabButton key={item.key} register={rows.registerItem} index={i} def={item} on={item.key === tab} onPick={() => onTab(item.key)} />
             ))}
           </div>
         </nav>
         <section id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className={styles.panel}>
           <header className={styles.panelHead}>
             <h2 className={styles.panelTitle}>{title}</h2>
-            <button type="button" className={styles.close} aria-label="關閉" onClick={onClose}>
+            <button type="button" className={styles.close} aria-label={t('account.settingsDialog.close')} onClick={onClose}>
               <X size={16} strokeWidth={1.8} aria-hidden />
             </button>
           </header>
@@ -124,8 +125,8 @@ function TabButton({ register, index, def, on, onPick }: {
 function AccountTab() {
   const me = useMe()
   const { data: stats } = useStats()
-  const name = me.data?.username ?? stats?.username ?? '使用者'
-  const role = ROLE_LABEL[me.data?.role ?? 'user'] ?? '使用者'
+  const name = me.data?.username ?? stats?.username ?? t('account.settingsDialog.user')
+  const role = ROLE_LABEL[me.data?.role ?? 'user'] ?? t('account.settingsDialog.user')
   return (
     <div className={styles.tabIn}>
       <div className={styles.profile}>
@@ -133,12 +134,12 @@ function AccountTab() {
         <span className={styles.profileText}><span className={styles.profileName}>{name}</span><span className={styles.muted}>{role}</span></span>
       </div>
       <dl className={styles.rows}>
-        <div className={styles.row}><dt>使用者名稱</dt><dd className={styles.num}>{name}</dd></div>
-        <div className={styles.row}><dt>角色</dt><dd>{role}</dd></div>
-        <div className={styles.row}><dt>密碼</dt><dd className={styles.muted}>由管理員重設</dd></div>
+        <div className={styles.row}><dt>{t('account.settingsDialog.username')}</dt><dd className={styles.num}>{name}</dd></div>
+        <div className={styles.row}><dt>{t('account.settingsDialog.role')}</dt><dd>{role}</dd></div>
+        <div className={styles.row}><dt>{t('account.settingsDialog.password')}</dt><dd className={styles.muted}>{t('account.settingsDialog.resetByAnAdministrator')}</dd></div>
       </dl>
       <form method="post" action="/logout">
-        <button type="submit" className={`${styles.btn} ${styles.danger}`}>登出</button>
+        <button type="submit" className={`${styles.btn} ${styles.danger}`}>{t('account.settingsDialog.signOut')}</button>
       </form>
     </div>
   )
@@ -153,8 +154,8 @@ function PrefsTab() {
   return (
     <div className={styles.tabIn}>
       <div className={styles.row}>
-        <span className={styles.rowLabel}>回答語言</span>
-        <div ref={segRef} className={styles.seg} role="radiogroup" aria-label="回答語言">
+        <span className={styles.rowLabel}>{t('account.settingsDialog.language')}</span>
+        <div ref={segRef} className={styles.seg} role="radiogroup" aria-label={t('account.settingsDialog.language')}>
           <FluidHoverHighlight rect={onRect} session={0} fadeIn={false} transition={GLIDE} className={styles.segThumb} />
           {LOCALES.map((o, i) => (
             <SegButton key={o.value} register={seg.registerItem} index={i} label={o.label} on={locale === o.value} onPick={() => setLocale(o.value)} />
@@ -194,7 +195,7 @@ function AboutTab({ onClose }: { onClose: () => void }) {
     <div className={styles.tabIn}>
       <SystemStatusRow status={status} />
       <button type="button" className={styles.linkRow} onClick={() => { onClose(); navigate('/help') }}>
-        <span className={styles.rowLabel}>使用說明</span>
+        <span className={styles.rowLabel}>{t('account.settingsDialog.help')}</span>
         <ChevronRight size={16} strokeWidth={1.5} aria-hidden className={styles.linkChev} />
       </button>
     </div>

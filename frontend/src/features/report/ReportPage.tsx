@@ -16,6 +16,7 @@ import { isValidHash } from './readingFormat'
 import { isNotFound, useReadingDoc, useReadingText, useSimilarReports } from './useReading'
 import panel from './panel.module.css'
 import styles from './ReportPage.module.css'
+import { t } from '@/i18n'
 
 /**
  * 能不能內嵌原始 PDF。
@@ -51,7 +52,7 @@ export default function ReportPage() {
   const similarItems = useMemo(() => similar.data?.items ?? [], [similar.data])
   // 縮圖列上的金色編號：有引文的摘錄才有落點可找
   const marks = useMemo(
-    () => (d?.takeaways ?? []).flatMap(t => (t.quote ? [{ ordinal: t.ordinal, quote: t.quote }] : [])),
+    () => (d?.takeaways ?? []).flatMap(item => (item.quote ? [{ ordinal: item.ordinal, quote: item.quote }] : [])),
     [d?.takeaways],
   )
 
@@ -78,16 +79,16 @@ export default function ReportPage() {
   const pdfDown = degradedHash === hash || failedHash === hash
 
   const onJump = useCallback(
-    (t: { ordinal: number; quote?: string | null }) => {
-      if (!t.quote) return
+    (item: { ordinal: number; quote?: string | null }) => {
+      if (!item.quote) return
       setJumpState(prev => {
         // 在途時忽略對**同一條**的重複點擊（jumpState 非 null ⇔ 在途，見下方消費即清除）：
         // 外掛的 searchAllPages 對「query 已等於這個關鍵字」直接回快取，而搜尋一開始就把
         // results 清空、total 設 0 —— 重按會拿到假的「找不到」，同時第一次的搜尋跑完又把
         // 高亮畫上去。點**別條**則照常接管（舊的由 effect cleanup 中止）。
-        if (prev?.hash === hash && prev.ordinal === t.ordinal) return prev
+        if (prev?.hash === hash && prev.ordinal === item.ordinal) return prev
         nonceRef.current += 1
-        return { hash, ordinal: t.ordinal, quote: t.quote as string, nonce: nonceRef.current }
+        return { hash, ordinal: item.ordinal, quote: item.quote as string, nonce: nonceRef.current }
       })
       setJumpResult(null)
     },
@@ -156,7 +157,7 @@ export default function ReportPage() {
       <div className={styles.main}>
         {/* 研報面板：可獨立捲動。順序是交接包拍板的：頁首 → 本篇評等 → 摘要 → 重點摘錄 →
             相似研報；免責在面板之外常駐（見下方 .disc）。 */}
-        <aside className={styles.intel} aria-label="研報">
+        <aside className={styles.intel} aria-label={t('report.reportPage.report')}>
           <ReportHeader doc={d} back={back} />
 
           {/* 本篇評等：無訊號時整區不進 DOM（不是空框、不是骨架）。
@@ -165,7 +166,7 @@ export default function ReportPage() {
 
           {d.summary && (
             <section className={panel.sec} aria-labelledby="rd-sum">
-              <h2 id="rd-sum" className={panel.h}>摘要</h2>
+              <h2 id="rd-sum" className={panel.h}>{t('report.reportPage.summary')}</h2>
               <p className={styles.sum}>{d.summary}</p>
             </section>
           )}
@@ -173,7 +174,7 @@ export default function ReportPage() {
           {showTakeaways && (
             <section className={panel.sec} aria-labelledby="rd-tk">
               <div className={panel.head}>
-                <h2 id="rd-tk" className={panel.h}>重點摘錄</h2>
+                <h2 id="rd-tk" className={panel.h}>{t('report.reportPage.keyTakeaways')}</h2>
                 <span className={panel.count}>{d.takeaways.length}</span>
               </div>
               <TakeawayList
@@ -195,7 +196,7 @@ export default function ReportPage() {
           />
         </aside>
 
-        <section className={styles.doc} ref={docRef} aria-label="原始文件">
+        <section className={styles.doc} ref={docRef} aria-label={t('report.reportPage.originalDocument')}>
           {/* 三態，且刻意以 needsText（而非 pdfViewable）分派：
               內嵌得了 → PdfPane 掛檢視器；內嵌不了但有全文 → TextPane；
               **內嵌不了又沒有全文 → 也走 PdfPane**，由它既有的兩個分支給出終態
@@ -231,7 +232,7 @@ export default function ReportPage() {
             窄版堆疊時落到整頁最末。位置全由 grid-template-areas 決定，**DOM 只有這一份** ——
             寬窄各放一份會讓 getByText 撞到兩個節點而整批測試爆掉。 */}
         <div className={styles.disc}>
-          本平台內容彙整自券商研究報告，僅供內部研究參考，不構成任何投資建議或要約。評等、目標價與論點均為原報告發布券商之意見，非{brand.institutionName}之立場。投資請自行判斷並承擔風險。
+          {t('report.reportPage.contentOnThisPlatformIs', { institutionName: brand.institutionName })}
         </div>
       </div>
     </div>

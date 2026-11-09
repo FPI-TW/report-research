@@ -1,6 +1,7 @@
 import type { QuotaItem, QuotaUserRow } from '../../../lib/generated/adminApi'
 import { KIND_LABELS, KINDS, LIMIT_MAX } from './quotaLabels'
 import type { QuotaKind, QuotaMode } from './useQuota'
+import { t } from '@/i18n'
 
 export interface QuotaChange { kind: QuotaKind; mode: QuotaMode; daily_limit: number | null; reason: string | null }
 
@@ -34,7 +35,7 @@ export function planChanges(user: QuotaUserRow, draft: Draft, note: string): { c
     if (d.mode === 'limit') {
       limit = Number(d.limit)
       if (d.limit.trim() === '' || !Number.isInteger(limit) || limit < 0 || limit > LIMIT_MAX) {
-        return { changes: [], error: `${KIND_LABELS[kind]}的每日上限必須是 0–${LIMIT_MAX} 的整數` }
+        return { changes: [], error: t('admin.quota.quotaPlan.theDailyLimitForMust', { KIND_LABELS: KIND_LABELS[kind], LIMIT_MAX }) }
       }
     }
     const change: QuotaChange = { kind, mode: d.mode, daily_limit: limit, reason: d.mode === 'default' ? null : reason }

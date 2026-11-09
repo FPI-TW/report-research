@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod'
+import { t } from '@/i18n'
 
 export class ApiError extends Error {
   status: number
@@ -28,7 +29,7 @@ export async function getJSON<T>(path: string, schema: ZodType<T>, init?: Reques
   const resp = await fetch(path, { ...init, credentials: 'same-origin' })
   if (resp.status === 401) {
     redirectToLogin()
-    throw new ApiError(401, '未登入')
+    throw new ApiError(401, t('lib.api.notSignedIn'))
   }
   if (!resp.ok) throw new ApiError(resp.status, `HTTP ${resp.status}`)
   return schema.parse(await resp.json())
@@ -45,9 +46,9 @@ export function errorDetail(body: unknown, status: number): string {
     const msgs = detail
       .map(d => (d && typeof d === 'object' && typeof (d as { msg?: unknown }).msg === 'string') ? (d as { msg: string }).msg : '')
       .filter(Boolean)
-    if (msgs.length) return msgs.join('；')
+    if (msgs.length) return msgs.join(t('lib.api.text'))
   }
-  if (status === 403) return '需要管理員權限'
+  if (status === 403) return t('lib.api.administratorAccessRequired')
   return `HTTP ${status}`
 }
 
@@ -59,7 +60,7 @@ export async function requestJSON<T>(path: string, schema: ZodType<T>, init?: Re
   const resp = await fetch(path, { ...init, credentials: 'same-origin' })
   if (resp.status === 401) {
     redirectToLogin()
-    throw new ApiError(401, '未登入')
+    throw new ApiError(401, t('lib.api.notSignedIn'))
   }
   if (!resp.ok) {
     let body: unknown = null

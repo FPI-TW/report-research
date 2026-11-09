@@ -1,13 +1,14 @@
 import type { RatingNorm } from '../../lib/radarSchemas'
+import { t } from '@/i18n'
 
 /** 五級評等的中文（與券商共識頁、閱讀頁同一組字）。unknown 不顯示徽章。 */
 export const RATING_LABEL: Record<RatingNorm, string> = {
-  buy: '買進',
-  overweight: '加碼',
-  neutral: '中立',
-  underweight: '減碼',
-  sell: '賣出',
-  unknown: '未提供',
+  get buy() { return t('search.libraryFormat.buy') },
+  get overweight() { return t('search.libraryFormat.overweight') },
+  get neutral() { return t('search.libraryFormat.neutral') },
+  get underweight() { return t('search.libraryFormat.underweight') },
+  get sell() { return t('search.libraryFormat.sell') },
+  get unknown() { return t('search.libraryFormat.notProvided') },
 }
 
 function ymd(iso: string | null | undefined): [string, string, string] | null {
@@ -37,7 +38,7 @@ export function isSameLocalDay(iso: string | null | undefined, now: Date = new D
 /** 「更多最新入庫」標題旁的月份（2026 年 10 月）。 */
 export function monthOf(iso: string | null | undefined): string {
   const d = ymd(iso)
-  return d ? `${d[0]} 年 ${Number(d[1])} 月` : ''
+  return d ? t('search.libraryFormat.text', { d: d[0], Number: Number(d[1]) }) : ''
 }
 
 // 簡報條目結尾的券商代碼（「…領漲（yuanta）。」）：首頁小卡只放重點，代碼對讀者沒有意義。
@@ -73,5 +74,5 @@ export function briefHighlights(markdown: string, limit = 4): string[] {
 
 /** 研究助理預填的提問（沿用閱讀頁「就這篇提問」的寫法）。 */
 export function askHref(title: string): string {
-  return `/assistant?q=${encodeURIComponent(`關於《${title}》：`)}`
+  return `/assistant?q=${encodeURIComponent(t('search.libraryFormat.about', { title }))}`
 }

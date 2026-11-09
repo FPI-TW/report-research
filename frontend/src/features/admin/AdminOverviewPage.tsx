@@ -14,17 +14,18 @@ import { buildTiles, externalTile } from './overview/tiles'
 import { UsageCard } from './overview/UsageCard'
 import { useAdminSignals } from './useAdminSignals'
 import styles from './Overview.module.css'
+import { t } from '@/i18n'
 
 const PAGE_TO = Object.fromEntries(flattenPages(ADMIN_IA).map(e => [e.page.key, e.page.to])) as Record<AdminPageKey, string>
 
 const ACTION_LABEL: Partial<Record<AdminPageKey, string>> = {
-  services: '看服務', dependencies: '看依賴圖', remoteHosts: '看來源主機', pipeline: '看管線', incidents: '看事件', host: '看主機', dataHealth: '看資料健康', security: '看安全',
+  get services() { return t('admin.adminOverviewPage.viewServices') }, get dependencies() { return t('admin.adminOverviewPage.viewDependencies') }, get remoteHosts() { return t('admin.adminOverviewPage.viewSourceHosts') }, get pipeline() { return t('admin.adminOverviewPage.viewPipeline') }, get incidents() { return t('admin.adminOverviewPage.viewIncidents') }, get host() { return t('admin.adminOverviewPage.viewHost') }, get dataHealth() { return t('admin.adminOverviewPage.viewDataHealth') }, get security() { return t('admin.adminOverviewPage.viewSecurity') },
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
 /** 頁首的日期 kicker：2026-10-08（四）。 */
 function dateKicker(now: Date): string {
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}（${'日一二三四五六'[now.getDay()]}）`
+  return t('admin.adminOverviewPage.text', { getFullYear: now.getFullYear(), pad: pad(now.getMonth() + 1), pad2: pad(now.getDate()), v: '日一二三四五六'[now.getDay()] })
 }
 function clock(ms: number): string {
   const d = new Date(ms)
@@ -63,16 +64,16 @@ function Overview() {
   const reviews = sources.reviews === 'ready' ? signals.reviews : undefined
   const drafts = sources.uploads === 'ready' ? signals.uploads : undefined
   const summary = [
-    `${nBad} 項異常、${nWarn} 項注意`,
-    reviews && `${reviews.count ?? 0} 筆待複核`,
-    drafts && `${drafts.count ?? 0} 份待審草稿`,
+    t('admin.adminOverviewPage.errorsWarnings', { nBad, nWarn }),
+    reviews && t('admin.adminOverviewPage.pendingReviews', { v: reviews.count ?? 0 }),
+    drafts && t('admin.adminOverviewPage.draftsAwaitingReview', { v: drafts.count ?? 0 }),
   ].filter(Boolean).join('・')
 
   const onRefresh = async () => {
     setRefreshing(true)
     try {
       await refresh()
-      toast('已更新')
+      toast(t('admin.adminOverviewPage.updated'))
     } finally {
       setRefreshing(false)
     }
@@ -86,22 +87,22 @@ function Overview() {
         actions={
           <>
             <span className={styles.updated}>
-              更新於 <span className={styles.updatedAt}>{updatedAt ? clock(updatedAt) : '—'}</span>
+              {t('admin.adminOverviewPage.updatedAt')}{' '}<span className={styles.updatedAt}>{updatedAt ? clock(updatedAt) : '—'}</span>
             </span>
             <Button onClick={onRefresh} disabled={refreshing} aria-busy={refreshing || undefined}>
-              <Icon name="refresh" size={14} />重新整理
+              <Icon name="refresh" size={14} />{t('admin.adminOverviewPage.refresh')}
             </Button>
           </>
         }
       />
 
       {tiles.length > 0 && (
-        <section className={styles.tiles} aria-label="狀態">
-          {tiles.map(t => (
-            <Link key={t.key} to={PAGE_TO[t.key]} className={`${c.tile} ${styles.tile}`}>
-              <span className={c.tileLabel}><Lamp tone={t.tone} size={7} />{t.label}</span>
-              <span className={styles.tileValue} data-tone={t.tone}>{t.value}</span>
-              <span className={c.tileSub} title={t.sub}>{t.sub}</span>
+        <section className={styles.tiles} aria-label={t('admin.adminOverviewPage.status')}>
+          {tiles.map(item => (
+            <Link key={item.key} to={PAGE_TO[item.key]} className={`${c.tile} ${styles.tile}`}>
+              <span className={c.tileLabel}><Lamp tone={item.tone} size={7} />{item.label}</span>
+              <span className={styles.tileValue} data-tone={item.tone}>{item.value}</span>
+              <span className={c.tileSub} title={item.sub}>{item.sub}</span>
             </Link>
           ))}
         </section>
@@ -109,10 +110,10 @@ function Overview() {
 
       <div className={styles.columns}>
         <div className={styles.stack}>
-          <Card title="異常與注意" labelledBy="overview-alerts"
+          <Card title={t('admin.adminOverviewPage.errorsAndWarnings')} labelledBy="overview-alerts"
             hint={alerts.length > 0 && <span className={styles.badge}>{alerts.length}</span>}>
             {alerts.length === 0 ? (
-              <p className={c.empty}>沒有異常</p>
+              <p className={c.empty}>{t('admin.adminOverviewPage.noErrors')}</p>
             ) : (
               <ul className={styles.alerts}>
                 {alerts.map(a => (
@@ -123,7 +124,7 @@ function Overview() {
                       {a.signal.detail && <div className={styles.alertDetail}>{a.signal.detail}</div>}
                     </div>
                     <Link to={a.page.to} className={`${c.btn} ${c.btnSm} ${styles.alertBtn}`}>
-                      {ACTION_LABEL[a.page.key] ?? `看${a.page.label}`}
+                      {ACTION_LABEL[a.page.key] ?? t('admin.adminOverviewPage.view', { label: a.page.label })}
                     </Link>
                   </li>
                 ))}

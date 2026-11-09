@@ -627,6 +627,9 @@ class Settings:
     host_beacon_feed_stale_hours: int = 7
     # OIDC 單一登入（OidcSettings；OIDC_ISSUER 沒設＝停用，本地帳密照舊）。
     oidc: OidcSettings = OidcSettings()
+    # 資料來源連接器（app/services/connectors/、scripts/ingest_connectors.py）的狀態目錄：各連接器的處理紀錄
+    # （state/<名>.json）、失敗清單（failures.log）、本輪入庫 hashes 與計數。空字串＝repo 根 data/connectors/。
+    connector_data_dir: str = ""
     # ── 應用層監控訊號（docs/CONTAINER_DEPLOYMENT.md「監控對接」）────────────────────────────────
     # log_format：text＝現行一行文字（systemd 主機預設不變）；json＝結構化 JSON 到 stdout（容器映像預設，
     # app/logging_setup.py）。metrics_*：`GET /metrics`（web/metrics.py）的總開關與允許的對端 CIDR（預設只收本機；
@@ -857,6 +860,7 @@ def _load() -> Settings:
         host_beacon_stale_minutes=_int_at_least("HOST_BEACON_STALE_MINUTES", 45, 15),
         host_beacon_feed_stale_hours=_int_at_least("HOST_BEACON_FEED_STALE_HOURS", 7, 4),
         oidc=_oidc_settings(),
+        connector_data_dir=(os.getenv("CONNECTOR_DATA_DIR") or "").strip(),
         log_format=_log_format(),
         metrics_enabled=_flag("METRICS_ENABLED", "1"),
         metrics_allowed_cidrs=_metrics_cidrs(),

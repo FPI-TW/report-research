@@ -125,9 +125,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 本節適用 DB 在容器裡的辦公室主機。EC2 沒有應用層備份（只有 RDS 自動備份，見 `deploy/aws/README.md`）與稽核錨點；帳號刪除的 tombstone 在 EC2 寫本機磁碟（見「還原後重放帳號刪除」）。
 
-### 為什麼只備這二十張表
+### 為什麼只備這二十一張表
 
-`scripts/db_backup.sh` 的 `BACKUP_TABLES` 是不可重建的表，共二十張。`user_session` 刻意不備（遺失只是全員重新登入）；`api_client_usage` 不備（每日額度的計數器，遺失只是當天額度重新起算）；監控觀測（`service_observation*`、`job_execution`、`db_stat_snapshot`）不備（遺失只少了歷史）。
+`scripts/db_backup.sh` 的 `BACKUP_TABLES` 是不可重建的表，共二十一張。`user_session` 刻意不備（遺失只是全員重新登入）；`api_client_usage` 不備（每日額度的計數器，遺失只是當天額度重新起算）；監控觀測（`service_observation*`、`job_execution`、`db_stat_snapshot`）不備（遺失只少了歷史）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -150,6 +150,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.auth_event` | 登入與安全事件，保留至少 365 天。刪帳時刻意保留（只有 UUID、IP、UA，從不存帳號名稱） |
 | `research.api_client` | 對外 API 用戶端：名稱、啟用狀態、key scopes、限流與每日額度、建立人。只存金鑰的 sha256 與 prefix（還原後既有金鑰照常可用）；遺失＝所有用戶端要重建並重新發金鑰 |
 | `research.api_client_entitlement` | API 用戶端的授權範圍；遺失＝每個用戶端能看到哪些研報的設定全部消失 |
+| `research.report_metadata` | 連接器帶進來的 metadata 側檔（以 `file_hash` 為鍵；評等、目標價、分析師只存在這裡）。來源端的側檔可能已刪，重建語料不會重建它 |
 
 沒備的是語料層（`research_report`、`report_chunk`）：它確定重建得回來——研報原檔在 NAS／R2，`extract → tag → ingest` 全程可續；代價是 CPU 時間（BGE-M3 約 3 篇／分），不是資料消失。
 

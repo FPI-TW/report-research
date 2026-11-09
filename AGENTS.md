@@ -119,6 +119,7 @@ uv run python scripts/ingest_all.py
 | 讀忠實度分數 | 一律經 `app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`／`JUDGE_MODEL_SQL`／`is_current_judge`，不自寫過濾；`LEGACY_JUDGE_MODEL` 永遠不跟著現行預設改 |
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露。網搜暫停與否由 `frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`（功能旗標 `ask.web_search`，讀 `/api/features`）控制，不要刪 web 項；清單為空時 `ComposerTools` 回 null |
 | 新增或修改功能旗標 | 先讀 `app/services/feature_flags.py` 的 docstring：DB 讀取失敗退回 registry 預設，所以**安全閘門不可做成旗標**；批次腳本不讀旗標 |
+| 資料來源連接器（`app/services/connectors/`）、metadata 側檔欄位，或 sync 殼第 4 段起的下游步驟 | 連接器只落地新檔，入庫一律經 `scripts/_ingest_core.py` 的 `ingest_one`，不另寫一份；側檔欄位改 `sidecar.FIELDS` 並同步 `docs/WORKFLOW.md`「資料來源連接器」的欄位表（驗證照樣 fail-closed，不合格進失敗清單、不入庫）。`scripts/connector_sync.py` 照抄 sync 殼第 5 到 8 段（`tests/test_connector_sync.py` 以殼的文字對帳、並釘住 `extract_signals` 永遠帶 `--limit`）：改殼的下游就要同步改它。新的連接器類型要在 `app/profile.py` 的 `CONNECTOR_KINDS` 與 `connectors.build` 各加一處；plugin 只以 profile 明確引用的檔名載入，不做目錄掃描 |
 | 上傳 worker、PDF 預檢或清除流程 | 先讀 `app/services/upload_worker.py` 與 `app/services/pdf_preflight.py` 的 docstring（交易邊界、條件式狀態轉移、commit 之後才刪檔與 R2 物件、不可信 PDF 只在受限子行程檢查）；入庫重用 `scripts/_ingest_core.py` 的 `ingest_one`，不另寫一份 |
 | `/metrics` 的指標或標籤（`web/metrics.py`） | 指標寫進 `docs/CONTAINER_DEPLOYMENT.md`「監控對接」的表（`tests/test_metrics.py` 對帳兩邊）；標籤只能是封閉詞彙或路由模板（認不得歸 `other`），不放原始路徑、查詢字串、使用者識別、IP 或研報 id。計數器是 web 行程內狀態，靠單 worker 守門成立 |
 | 使用分析新增維度或匯出 | 先讀 `app/services/analytics.py` 的隱私契約（只出彙總、k 門檻、互補抑制與被抑制格子的處理）；不讀問答原文 |

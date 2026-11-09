@@ -102,6 +102,7 @@ app/
     accounts.py, visibility.py, uploads.py, upload_*.py, quota.py, feature_flags.py,
     analytics.py, security_ops.py, api_clients.py, ops_*.py, host_beacon.py   帳號與管理後台
     object_storage.py     R2（local / hybrid / r2）
+    connectors/           資料來源連接器（folder／s3／plugin）與 metadata 側檔：落地新檔，入庫共用 _ingest_core
 web/
   server.py               組合層：env → logging → auth middleware → lifespan → routers
   routers/                每個領域一支 APIRouter，不帶 prefix
@@ -112,14 +113,14 @@ frontend/src/
   lib/                    API 邊界：zod schema、readSSE、askReducer、hooks；generated/adminApi.ts 由 OpenAPI 產生
   components/{shell,console,primitives,animate-ui}       shell＝兩組外框（研報平台、管理後台），console＝管理頁共用元件
 scripts/                  批次與維運；呼叫 LLM 的批次取 _claude_lock.py 的 flock
-db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision，head 0011、0009 留空不用）、
+db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision，head 0014、0009 留空不用）、
                           db/expected_constraints.txt（約束 golden）
 deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
                           deploy/ops/：維運代理的 Service Catalog（services.prod.toml＝辦公室主機、
                                        services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
                           deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
                           deploy/aws/：EC2／RDS 的 CloudFormation
-profiles/<name>/          部署 profile：profile.toml（非祕密的產品設定）＋ assets/（logo、favicon）；預設 profiles/tingfong
+profiles/<name>/          部署 profile：profile.toml（非祕密的產品設定）＋ assets/（logo、favicon）＋ plugins/（插件連接器）；預設 profiles/tingfong
 ops_agent/                維運代理（標準庫、不 import app.*；部署時安裝到 /opt/report-mark-ops）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
@@ -178,6 +179,8 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/report/{report_id}/file` | — | 原檔（PDF inline）或 302 到 presigned URL | `r2` 模式缺 key 回 503；被隱藏或未發布的研報回 404 |
 | GET | `/external/v1/search` | `q`（1–500 必填）、`limit`（每頁篇數 1–20，10）、`page`（從 1 起算，1）、`sort`（`relevance`／`date_desc`／`date_asc`）、選填 `market`／`source`／`report_type`／`instrument_type`（各一個值） | `{query, total, page, limit, results: [{report_id, title, file_name, market, source, source_name, report_date, report_type, instrument_types, summary, score}]}`（不回命中段落；超過最後一頁回空的 `results`）；金鑰有 `report.file` 時每筆另附 `file_url`、`file_url_expires_at`（ISO 8601 UTC，產生失敗的那筆為 null） | **對外 API**，`Authorization: Bearer <api_key>`、需 `search` scope。檢索與排序同 `/api/search`，結果限於該 API 用戶端的授權範圍；請求的過濾只能縮小、與授權範圍交集為空直接回空結果。不回目標價等雷達欄位 |
 | GET | `/external/v1/reports/{report_id}/file-url` | `report_id`（UUID） | `{report_id, file_url, expires_at}`（`Cache-Control: no-store`） | **對外 API**，需 `report.file` scope。每次重新查研報（可見性＋授權範圍）：查無、隱藏、草稿、授權外一律 404 `report_not_found`；HEAD 驗 sha256 後才簽，有效期 `EXTERNAL_FILE_URL_TTL_SECONDS`；沒有原檔 404 `original_not_found`、儲存或完整性錯誤 503 `original_unavailable` |
+| POST | `/external/v1/uploads` | `filename`（必填，`.pdf`）、`last_modified`（選填，毫秒）；raw body、`Content-Type: application/pdf` | 202 `{upload_id, file_hash, file_name, size_bytes, status, uploaded_at, updated_at}`（`status` 是對外的四種：`processing`／`pending_review`／`published`／`rejected`） | **對外 API**，需 `report.upload` scope。檔案進現有上傳流程（隔離區 → 預檢與 ClamAV → worker 入庫成草稿 → 管理員發布），不直接入庫；`UPLOAD_ENABLED` 與功能旗標 `uploads.intake` 任一關閉回 503 `upload_unavailable`。上傳者記成 API 用戶端（`report_upload.api_client_id`），每日份數依用戶端計（`UPLOAD_DAILY_QUOTA`）；重複一律 409 `upload_duplicate`（不洩漏語料裡的狀態） |
+| GET | `/external/v1/uploads/{upload_id}` | `upload_id`（UUID） | 同上傳回應（`Cache-Control: no-store`） | **對外 API**，需 `report.upload` scope。只查得到同一個 API 用戶端收進來的上傳，其餘一律 404 `upload_not_found`；不回掃描特徵、失敗細節與決策原因 |
 | GET | `/api/reading/{file_hash}` | — | `ReadingDoc`（metadata ＋ 重點摘錄 ＋ 訊號，不含全文） | `file_hash` 須 64 hex |
 | GET | `/api/reading/{file_hash}/text` | `chunk`（選填） | `ReadingText`（正典文字，超過 `READING_TEXT_MAX_CHARS` 截斷並標 `truncated`） | `text_sha256` 一律對完整文字算 |
 | GET | `/api/reading/{file_hash}/similar` | `limit`（1–20，6） | 相似研報清單 | dense 近鄰 |
@@ -325,6 +328,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `OIDC_MFA_AMR`、`OIDC_MFA_ACR`、`OIDC_ASSUME_IDP_MFA` | `mfa,mca,http://schemas.microsoft.com/claims/multipleauthn`、空、0 | `ADMIN_MFA_REQUIRED` 對公司帳號登入的管理員怎麼判定：ID token 的 `amr` 含 `OIDC_MFA_AMR` 任一值、或 `acr` 是 `OIDC_MFA_ACR` 之一、或 `OIDC_ASSUME_IDP_MFA` 開啟（IdP 端已對這個應用程式強制 MFA）就算做過多重驗證。Entra ID、Okta 會在 `amr` 帶 `mfa`，ADFS 帶 multipleauthn 那個 URI；Keycloak 預設不送 `amr`，改設 `OIDC_MFA_ACR` 為它的 LoA 值 |
 | `OIDC_CLOCK_SKEW_SECONDS` | 120 | ID token `exp`／`iat`／`nbf` 與權限提升 `auth_time`（5 分鐘內）的時鐘誤差容忍（上限 600） |
 | `USAGE_EVENTS_ENABLED`、`USAGE_EVENTS_FLUSH_SECONDS`、`USAGE_EVENTS_MAX_KEYS` | 1、60、50000 | 用量收集（`app/services/usage_events.py`）：閱讀頁、原檔、搜尋、問答的每日主題計數與每人每日次數，以及線上 LLM 用量歸因，每 60 秒與關機時寫 DB。0＝不寫庫、不註冊 LLM observer（測試如此）。搜尋字串永不記錄 |
+| `CONNECTOR_DATA_DIR` | 空（＝`data/connectors/`） | 資料來源連接器（`scripts/ingest_connectors.py`）的處理紀錄（`state/<名稱>.json`）、失敗清單、本輪 hashes 與計數。s3 連接器的連線與憑證是 `<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`（選填 `<env>_ENDPOINT`、`<env>_REGION`），`<env>` 是 profile `[connectors.sources.<名稱>]` 的 `env`；設定見 `docs/WORKFLOW.md`「資料來源連接器」 |
 | `QUOTA_ASK_DAILY`、`QUOTA_EXPORT_DAILY`、`QUOTA_ENFORCE` | 100、20、0 | 每人每日配額（上傳沿用 `UPLOAD_DAILY_QUOTA`）。`QUOTA_ENFORCE` 是正式阻擋的環境上限，預設 0＝影子模式；即使設 1 還要 DB 旗標 `quota.enforce` 開啟。影子模式照常計數、超額只記 `<kind>_over` 與一行 `quota_over` log；個人覆寫在管理後台「配額」頁（`user_quota`）。打錯的值退回預設並警告 |
 | `AUTH_EVENT_RETENTION_DAYS`、`USAGE_COUNTER_RETENTION_DAYS`、`LLM_USAGE_DAILY_RETENTION_DAYS`、`SESSION_EXPIRED_RETENTION_DAYS`、`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`、`DB_SNAPSHOT_DAILY_RETENTION_DAYS` | 365、400、400、90、30、400 | 各表的保留期（天）。`auth_event`（至少 365，設更小會被拉回 365）與已結束的 `user_session` 由 `scripts/security_retention.py` 清，`db_stat_snapshot` 由 `scripts/db_snapshot.py` 清；`USAGE_COUNTER_RETENTION_DAYS`、`LLM_USAGE_DAILY_RETENTION_DAYS` 目前沒有任何清除工作讀取（`usage_counter`、`llm_usage_daily` 不會被刪） |
 | `ASK_ENABLE_WEB`、`UPLOAD_ENABLED`、`QA_AGENTIC_ENABLED`、`ASK_FAITHFULNESS_ENABLED`、`ASK_RERANK_ENABLED`、`TRUSTED_DATA_ENABLED`、`QUOTA_ENFORCE`（功能旗標的上限） | 0、0、1、1、1、1、0 | 依序是功能旗標 `ask.web_search`、`uploads.intake`、`qa.agentic`、`qa.faithfulness`、`ask.rerank`、`trusted_data`、`quota.enforce`（`app/services/feature_flags.py`）的**上限**：實際值＝上限 AND 管理後台「功能旗標」頁的 DB 覆寫（`research.feature_flag`；沒有覆寫或 DB 讀不到＝registry 預設：`ask.web_search` 與 `quota.enforce` 預設關、其餘預設開，所以不設覆寫時網搜不開放、配額是影子模式，其餘就是這些環境變數）。覆寫只能在上限之下關閉或限定給角色／使用者；上限關時一律關，改上限要改環境檔並重啟 web。旗標只影響 web 的請求路徑，批次與評測只看環境變數。網搜要 `ASK_ENABLE_WEB=1` 且 `ask.web_search` 有覆寫開啟，開關才會出現，但後端不存在。各環境建議值與搬移步驟見 `docs/production_resilience.md`「功能開關與啟用矩陣」 |
@@ -387,7 +391,7 @@ make eval-compare BASE=<基準線.json> CAND=eval/candidate-ragas.json
 |---|---|---|
 | `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --host 0.0.0.0 --port 8097`，單 worker、`Restart=always` |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
-| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：二十張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`、`api_client`、`api_client_entitlement`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
+| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：二十一張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`、`api_client`、`api_client_entitlement`、`report_metadata`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-audit-anchor.timer` | 04:15 | `scripts/audit_anchor.py`：驗稽核雜湊鏈、比對先前所有錨點、把鏈頭追加到 `$REPORT_MARK_BACKUP_DIR/audit-anchors.jsonl`（NAS）；鏈斷或與錨點不符 rc=1 告警 |
@@ -427,7 +431,7 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 
 ### 容器部署（docker compose）
 
-給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。systemd timer 與容器排程的對照、零外連清單、備份還原、監控對接（`/metrics` 指標與告警規則、JSON 日誌欄位、版本對帳、通用 webhook 告警）見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
+給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。研報來源以 profile 的 `[connectors]` 接上（監看資料夾、S3 相容 bucket、插件；scheduler 的 `connectors` 工作輪詢入庫並跑下游批次），外部系統也可以經 `POST /external/v1/uploads` 送進上傳流程；設定與 metadata 側檔格式見 `docs/WORKFLOW.md`「資料來源連接器」。systemd timer 與容器排程的對照、零外連清單、備份還原、監控對接（`/metrics` 指標與告警規則、JSON 日誌欄位、版本對帳、通用 webhook 告警）見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
 
 ### 其他維運入口
 

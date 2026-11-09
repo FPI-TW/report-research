@@ -34,3 +34,25 @@ features = ["search", "reading", "tagging_markets", "summary", "title", "takeawa
 
 [doc_types.non_research]
 features = []
+
+[connectors]
+# 資料來源連接器（app/services/connectors/）。廷豐的來源由主機層的 scripts/sync_new_reports.sh 執行
+# （辦公室主機：NAS 掛載 → rsync；EC2：SYNC_SOURCE=r2-inbox），sync 鏈第 4 段起不變；框架的連接器輪詢
+# （scripts/connector_sync.py）因此不啟用任何連接器。下面兩個宣告是現行來源在框架詞彙裡的對應：
+# 改由框架輪詢時把名稱加進 enabled，並停用該主機的 report-mark-sync.timer（兩條路徑不可同時跑）。
+enabled = []
+
+[connectors.sources.nas]
+# NAS 研報資料夾經 rsync 落地的本地鏡像（掛載與 rsync 屬主機層，框架不做 mount）。
+kind = "folder"
+path = "研報自動匯入"
+poll_minutes = 180
+
+[connectors.sources.r2-inbox]
+# 辦公室主機推到 R2 的 inbox/（scripts/r2_inbox.py push）；拉回同一個本地鏡像。
+# 憑證：CONNECTOR_R2_INBOX_ENDPOINT／_BUCKET／_ACCESS_KEY_ID／_SECRET_ACCESS_KEY，值同 R2_*。
+kind = "s3"
+prefix = "inbox/"
+landing = "研報自動匯入"
+env = "CONNECTOR_R2_INBOX"
+poll_minutes = 180

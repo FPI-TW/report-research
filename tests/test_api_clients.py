@@ -132,9 +132,10 @@ class EntitlementValidationTests(unittest.TestCase):
         sql = schema_source_text()
         dims = ", ".join(f"'{d}'" for d in api_clients.ENTITLEMENT_DIMENSIONS)
         self.assertIn(f"dimension IN ({dims})", sql)
-        scopes = re.search(r"scopes <@ ARRAY\[([^\]]*)\]", sql)
-        self.assertIsNotNone(scopes)
-        self.assertEqual(set(re.findall(r"'([^']+)'", scopes.group(1))), set(api_clients.KEY_SCOPES))
+        # 最後一個 revision 的 CHECK 才是現行約束（0010 建表、之後的 revision 以 DROP／ADD 改寫）。
+        scopes = re.findall(r"scopes <@ ARRAY\[([^\]]*)\]", sql)
+        self.assertTrue(scopes)
+        self.assertEqual(set(re.findall(r"'([^']+)'", scopes[-1])), set(api_clients.KEY_SCOPES))
 
 
 class CreateValidationTests(unittest.IsolatedAsyncioTestCase):

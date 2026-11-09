@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 把「重建不回來」的那幾張表 pg_dump 到 NAS。
 #
-# 為什麼只備二十張表而不是整庫：語料層（research_report / report_chunk）雖然大，
+# 為什麼只備二十一張表而不是整庫：語料層（research_report / report_chunk）雖然大，
 # 但確定重跑得回來——研報原檔還在 NAS，extract → tag → ingest 全程 checkpoint 可續。
-# 下面這二十張不一樣，它們是「人、LLM 與事故產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
+# 下面這二十一張不一樣，它們是「人、LLM 與事故產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
 #
 #   research.qa_log            每一次提問、當時的來源與證據帳本、使用者的讚／倒讚
 #   research.report_takeaway   閱讀頁重點摘錄（LLM 批次產物，含錨點）
@@ -25,11 +25,12 @@
 #   research.auth_event        登入與安全事件（保留至少 365 天；刪帳時刻意保留，只有 UUID、IP、UA，沒有帳號名稱）
 #   research.api_client        對外 API 用戶端：限流、額度、key scopes、建立人（只有金鑰的 sha256，沒有原始金鑰）
 #   research.api_client_entitlement  API 用戶端的授權範圍（市場、來源等 allowlist；遺失＝用戶端全部要重設）
+#   research.report_metadata   連接器帶進來的 metadata 側檔（以 file_hash 為鍵；來源端的側檔可能已刪）
 #
 # user_session 刻意不備：遺失的代價只是全員重新登入。
 # api_client_usage 刻意不備：只是每日額度的計數器，遺失的代價是當天額度重新起算。
 #
-# 體積小、價值最高 ⇒ 先備這二十張。要不要連語料層一起備是另一個（成本）決定，
+# 體積小、價值最高 ⇒ 先備這二十一張。要不要連語料層一起備是另一個（成本）決定，
 # 連同已知的 report_id 耦合限制寫在 docs/production_resilience.md「備份與還原」。
 #
 # 用法：bash scripts/db_backup.sh   或   make db-backup
@@ -116,6 +117,7 @@ BACKUP_TABLES=(
   research.auth_event
   research.api_client
   research.api_client_entitlement
+  research.report_metadata
 )
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -230,7 +232,7 @@ fi
 # ── 4) 驗這份 dump 不是空殼 ───────────────────────────────────────────────
 # 備份最惡劣的失敗型態是「檔案在、內容不能用」。兩道最便宜的檢查：
 #   a) 檔頭魔數：pg_dump -Fc 的前五個位元組固定是 PGDMP，被截斷或被 stdout 攪過就對不上
-#   b) 大小下限：二十張表的 schema 本身就不只 1KB，比這小一定是空輸出
+#   b) 大小下限：二十一張表的 schema 本身就不只 1KB，比這小一定是空輸出
 MAGIC="$(head -c 5 "$TMP" 2>/dev/null || true)"
 [ "$MAGIC" = "PGDMP" ] || die "產出的檔案不是 pg_dump custom 格式（檔頭='$MAGIC'）→ 視為失敗。"
 SIZE=0

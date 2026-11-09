@@ -54,6 +54,8 @@ export const AdminUploadSchema = z.object({
   decision_reason: z.string().nullable().optional(),
   purge_after: z.string().nullable().optional(),
   purged_at: z.string().nullable().optional(),
+  api_client_id: z.number().int().nullable().optional(),
+  api_client: z.string().nullable().optional(),
 })
 export type AdminUpload = z.infer<typeof AdminUploadSchema>
 
@@ -254,7 +256,7 @@ export const ApiClientItemSchema = z.object({
   name: z.string(),
   key_prefix: z.string(),
   enabled: z.boolean(),
-  scopes: z.array(z.enum(['search', 'report.file'])),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])),
   rate_limit_per_min: z.number().int(),
   daily_quota: z.number().int(),
   entitlements: ApiClientEntitlementsSchema,
@@ -276,7 +278,7 @@ export const ApiClientWithKeySchema = z.object({
   name: z.string(),
   key_prefix: z.string(),
   enabled: z.boolean(),
-  scopes: z.array(z.enum(['search', 'report.file'])),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])),
   rate_limit_per_min: z.number().int(),
   daily_quota: z.number().int(),
   entitlements: ApiClientEntitlementsSchema,
@@ -460,7 +462,7 @@ export type ConfigLimits = z.infer<typeof ConfigLimitsSchema>
 
 export const CreateApiClientRequestSchema = z.object({
   name: z.string(),
-  scopes: z.array(z.enum(['search', 'report.file'])),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])),
   rate_limit_per_min: z.number().int(),
   daily_quota: z.number().int(),
   entitlements: ApiClientEntitlementsSchema,
@@ -1454,7 +1456,7 @@ export type UnusedIndexesSection = z.infer<typeof UnusedIndexesSectionSchema>
 
 export const UpdateApiClientRequestSchema = z.object({
   enabled: z.boolean().nullable().optional(),
-  scopes: z.array(z.enum(['search', 'report.file'])).nullable().optional(),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])).nullable().optional(),
   rate_limit_per_min: z.number().int().nullable().optional(),
   daily_quota: z.number().int().nullable().optional(),
   note: z.string().nullable().optional(),
@@ -1540,6 +1542,8 @@ export const AdminUploadDetailSchema = z.object({
   decision_reason: z.string().nullable().optional(),
   purge_after: z.string().nullable().optional(),
   purged_at: z.string().nullable().optional(),
+  api_client_id: z.number().int().nullable().optional(),
+  api_client: z.string().nullable().optional(),
   report: AdminUploadReportSchema.nullable().optional(),
 })
 export type AdminUploadDetail = z.infer<typeof AdminUploadDetailSchema>

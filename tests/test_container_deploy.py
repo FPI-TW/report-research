@@ -218,13 +218,15 @@ def _timers() -> dict[str, str]:
 class SchedulerInventoryTests(unittest.TestCase):
     def test_every_timer_has_exactly_one_home(self):
         timers = set(_timers())
-        homes = [j.unit for j in sch.JOBS] + list(sch.WORKER_UNITS) + list(sch.HOST_LAYER)
+        homes = [j.unit for j in sch.JOBS if j.unit] + list(sch.WORKER_UNITS) + list(sch.HOST_LAYER)
         self.assertEqual(len(homes), len(set(homes)), "同一支 timer 被歸到兩個地方")
         self.assertEqual(set(homes), timers, "deploy/systemd 的 timer 與 scheduler.py 的歸屬不一致")
 
     def test_job_schedules_match_their_timers(self):
         timers = _timers()
         for job in sch.JOBS:
+            if job.unit is None:
+                continue
             with self.subTest(job=job.name):
                 self.assertEqual(job.cron, _on_calendar_to_cron(timers[job.unit]))
 
@@ -237,6 +239,8 @@ class SchedulerInventoryTests(unittest.TestCase):
     def test_job_commands_match_the_units(self):
         """容器裡的指令與 unit 的 ExecStart 跑同一支腳本、同一組參數。"""
         for job in sch.JOBS:
+            if job.unit is None:
+                continue
             service = (SYSTEMD / job.unit.replace(".timer", ".service")).read_text(encoding="utf-8")
             exec_line = next(ln for ln in service.splitlines() if ln.startswith("ExecStart="))
             tail = " ".join(job.command[1:])
@@ -249,7 +253,7 @@ class SchedulerInventoryTests(unittest.TestCase):
         by_unit = {u: (home.strip(), detail.strip()) for u, home, detail in rows}
         self.assertEqual(len(rows), len(by_unit), "文件對照表有重複的 timer")
         self.assertEqual(set(by_unit), set(_timers()), "文件對照表與 deploy/systemd 的 timer 不一致")
-        for job in sch.JOBS:
+        for job in (j for j in sch.JOBS if j.unit):
             home, detail = by_unit[job.unit]
             with self.subTest(job=job.name):
                 self.assertEqual(home, "scheduler")
@@ -260,6 +264,17 @@ class SchedulerInventoryTests(unittest.TestCase):
         for unit in sch.HOST_LAYER:
             self.assertEqual(by_unit[unit][0], "廷豐主機層")
 
+    def test_framework_only_jobs_are_documented(self):
+        """沒有對應 timer 的框架專屬工作，列在文件的另一張表（`| \`工作名\` | 排程 | 說明 |`）。"""
+        text = DOC.read_text(encoding="utf-8")
+        rows = dict(re.findall(r"^\| `([a-z][\w-]*)` \| `([^`]+)` \| [^|]+ \|$", text, re.M))
+        own = {j.name: j for j in sch.JOBS if j.unit is None}
+        self.assertTrue(own, "預期至少有 connectors 這個框架專屬工作")
+        self.assertEqual(set(rows), set(own), "文件的框架專屬排程表與 scheduler.py 不一致")
+        for name, job in own.items():
+            with self.subTest(job=name):
+                self.assertEqual(rows[name], job.cron)
+
 
 class SchedulerSelectionTests(unittest.TestCase):
     def test_defaults(self):
@@ -267,6 +282,7 @@ class SchedulerSelectionTests(unittest.TestCase):
         self.assertIn("backup", names)
         self.assertNotIn("retrieval-regression", names)
         self.assertNotIn("r2-reconcile", names)
+        self.assertIn("connectors", names)
 
     def test_enable_and_disable(self):
         names = [j.name for j in sch.selected_jobs({sch.ENABLE_ENV: "retrieval-regression",

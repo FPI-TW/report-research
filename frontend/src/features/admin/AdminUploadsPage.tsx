@@ -157,7 +157,7 @@ function UploadList({ tab, now, review, onOpen }: {
                 </td>
                 <td data-label="狀態" className={u.stateCell}><StateCell item={it} /></td>
                 <td data-label="上傳">
-                  <div>{it.uploaded_by ?? '—'}</div>
+                  <div>{it.uploaded_by ?? (it.api_client ? `API：${it.api_client}` : '—')}</div>
                   <div className={`${c.sub} ${c.num}`}>{fmtDateTime(it.uploaded_at)}</div>
                 </td>
                 <td data-label="狀態更新" className={c.num}>{fmtDateTime(it.state_changed_at)}</td>

@@ -82,7 +82,7 @@ docker compose up -d
 curl -fsS http://127.0.0.1:8097/readyz       # {"status":"ok"}
 ```
 
-- `PROFILE_HOST_DIR` 指向 profile 目錄（profile.toml、assets/、plugins/、eval/），唯讀掛到容器的 `/app/profile`（`PROFILE_DIR`）。
+- `PROFILE_HOST_DIR` 指向 profile 目錄（profile.toml、`[sources]` 引用的發行機構名單檔、assets/、plugins/、eval/），唯讀掛到容器的 `/app/profile`（`PROFILE_DIR`）。
 - 掛載的主機目錄刻意不讓 Docker 自動建立：路徑打錯時寧可起不來。`data` 與 `pgdata` 是 named volume，第一次掛上時擁有者就是容器的 UID 10001。
 - `/readyz`（免登入）四項全過才 200：DB、嵌入模型（已載入或權重在映像裡）、profile、LLM 設定（不呼叫 LLM）。web 的 compose healthcheck 用它；`/healthz` 仍是只探 DB 的存活探測。
 

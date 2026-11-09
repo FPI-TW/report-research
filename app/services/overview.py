@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.profile import get_profile
 from app.services.doc_types import doc_type_enabled_sql
-from app.services.filename import BROKER_MAP, SOURCE_DISPLAY, source_display
+from app.services.filename import source_display
 from app.services.tagging import INSTRUMENT_DISPLAY, MARKET_DISPLAY
 from app.services.textnorm import norm_for_match
 from app.services.visibility import visible_report_sql
@@ -54,15 +54,28 @@ _INSTRUMENT_SYNONYMS: dict[str, str] = {
 }
 _INSTRUMENT_SYNONYMS_NORM = {norm_for_match(k): v for k, v in _INSTRUMENT_SYNONYMS.items()}
 
-# 券商查找：中文券商名（BROKER_MAP 含中文鍵）+ 顯示名（含外資中文名）+ 代碼本身。
-# 跳過 BROKER_MAP 的英文短碼（MS/GS…），避免在中文查詢裡誤命中。
-_SOURCE_LOOKUP: dict[str, str] = {}
-for _k, _v in BROKER_MAP.items():
-    if re.search(r"[一-鿿]", _k):
-        _SOURCE_LOOKUP[norm_for_match(_k)] = _v
-for _code, _disp in SOURCE_DISPLAY.items():
-    _SOURCE_LOOKUP[norm_for_match(_disp)] = _code
-    _SOURCE_LOOKUP[norm_for_match(_code)] = _code
+# 券商查找：中文券商名（profile 名單的 CJK 檔名 token）+ 顯示名（含外資中文名）+ 代碼本身。
+# 跳過英文短碼（MS/GS…），避免在中文查詢裡誤命中。名單來自 profile，所以在呼叫時才組（import 期定值會留著
+# 上一個 profile 的名單），同一份名單只組一次。
+_SOURCE_LOOKUP_CACHE: tuple[object, dict[str, str], tuple[str, ...]] | None = None
+
+
+def _source_tables() -> tuple[dict[str, str], tuple[str, ...]]:
+    """(券商查找表, 公司名停用詞)；後者含前者的鍵，所以一起組。"""
+    global _SOURCE_LOOKUP_CACHE
+    sources = get_profile().sources
+    if _SOURCE_LOOKUP_CACHE is None or _SOURCE_LOOKUP_CACHE[0] is not sources:
+        lookup: dict[str, str] = {}
+        for token, code in sources.filename_tokens:
+            if re.search(r"[一-鿿]", token):
+                lookup[norm_for_match(token)] = code
+        for code, disp in sources.display.items():
+            lookup[norm_for_match(disp)] = code
+            lookup[norm_for_match(code)] = code
+        stopwords = _NAME_STOPWORDS_HEAD + tuple(lookup) + _NAME_STOPWORDS_TAIL
+        _SOURCE_LOOKUP_CACHE = (sources, lookup, stopwords)
+    return _SOURCE_LOOKUP_CACHE[1], _SOURCE_LOOKUP_CACHE[2]
+
 
 # 維度表面名詞（指「某個維度」本身而非其值，如「市場/商品/分類」）與狀態填充詞。
 # 必須剝除，否則「目前市場」「市場分類」這類泛化片段會殘留成 ≥3 字 CJK 段，被
@@ -73,12 +86,14 @@ _DIMENSION_NOUNS: tuple[str, ...] = (
 )
 
 # 解析個股中文名時，先剝除的非個股詞（提示詞 + 各維度表面詞 + 常見填充詞）
-_NAME_STOPWORDS: tuple[str, ...] = (
+# （券商名在中段，由 `_source_tables()` 依 profile 補上）
+_NAME_STOPWORDS_HEAD: tuple[str, ...] = (
     _OVERVIEW_CUES
     + tuple(_MARKET_SYNONYMS)
     + tuple(_INSTRUMENT_SYNONYMS)
-    + tuple(k for k in _SOURCE_LOOKUP)
-    + _DIMENSION_NOUNS
+)
+_NAME_STOPWORDS_TAIL: tuple[str, ...] = (
+    _DIMENSION_NOUNS
     + ("研報", "報告", "研究", "給我", "我", "想", "請", "幫我", "關於",
        "相關", "這", "那", "的", "最新", "出過", "出", "有", "最近", "今年",
        "去年", "本週", "這週", "一覽")
@@ -178,7 +193,7 @@ def _resolve_dates(s_norm: str, today: date) -> tuple[date | None, date | None]:
 def _extract_stock_name(q: str) -> str | None:
     """剝除各維度表面詞後，取最長的 CJK 殘餘段（3~8 字）當公司名候選。"""
     residual = q
-    for w in sorted(_NAME_STOPWORDS, key=len, reverse=True):
+    for w in sorted(_source_tables()[1], key=len, reverse=True):
         if re.search(r"[一-鿿]", w):  # 只剝中文停用詞，英文交給其他維度
             residual = residual.replace(w, " ")
     # v1 取精確優先於召回：殘餘段下限 3 字。2 字常見名詞（如「天氣」）若被誤判成
@@ -214,11 +229,13 @@ def resolve_filters(q: str, today: date) -> OverviewFilters:
     """中文條件 → 結構化過濾（確定性對應；解析不到的維度留空）。"""
     s = norm_for_match(q)
     date_from, date_to = _resolve_dates(s, today)
-    # 4 位數字 = 個股代碼，但緊跟「年」的（如「2025年」）是年份字面，非代碼。
-    m = re.search(r"(?<!\d)(\d{4})(?!\d)(?!\s*年)", q)
+    # 數字串 = 個股代碼（長度依 profile 的 [instruments] 純數字格式；廷豐是 4 碼），但緊跟「年」的
+    # （如「2025年」）是年份字面，非代碼。字母 ticker 不從問句抓：英文縮寫（AI、ETF）誤中面積太大。
+    lengths = get_profile().instruments.digit_lengths()
+    m = re.search(rf"(?<!\d)(\d{{{lengths[0]},{lengths[1]}}})(?!\d)(?!\s*年)", q) if lengths else None
     stock_code = m.group(1) if m else None
     f = OverviewFilters(
-        source=_match_longest(s, _SOURCE_LOOKUP),
+        source=_match_longest(s, _source_tables()[0]),
         market=_match_longest(s, _MARKET_SYNONYMS_NORM),
         instrument_type=_match_longest(s, _INSTRUMENT_SYNONYMS_NORM),
         date_from=date_from,

@@ -120,7 +120,7 @@ deploy/                   systemd unit、nginx、docker-compose（部署真相�
                                        services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
                           deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
                           deploy/aws/：EC2／RDS 的 CloudFormation
-profiles/<name>/          部署 profile：profile.toml（非祕密的產品設定）＋ assets/（logo、favicon）＋ plugins/（插件連接器）；預設 profiles/tingfong
+profiles/<name>/          部署 profile：profile.toml（非祕密的產品設定）＋ sources.toml（發行機構名單，[sources] 引用）＋ assets/（logo、favicon）＋ plugins/（插件連接器）；預設 profiles/tingfong
 ops_agent/                維運代理（標準庫、不 import app.*；部署時安裝到 /opt/report-mark-ops）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
@@ -290,7 +290,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | `127.0.0.1/32,::1/128` | 可信代理網段；走 Cloudflare Tunnel 時必填（WSL 的 docker 網段） |
 | `REPORT_MARK_EDGE_SECRET` | 空（停用） | 邊緣共享祕密，與 `deploy/.env` 的 `EDGE_SECRET` 逐字相同；與 CIDR 是 OR |
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | 唯一留在 `app/services/db.py` 的 getenv |
-| `PROFILE_DIR` | `profiles/tingfong` | 部署 profile 的目錄（相對路徑以 repo 根為基準）：機構名（含英文介面用的名稱）、品牌（logo、favicon、強調色）、介面語系（預設與可選的語系）、prompt 注入的稱謂、使用者端啟用的市場子集與顯示名稱、TOTP 發行者。web 在 lifespan 第一步載入並嚴格驗證（未知 section 或鍵、型別錯、引用不存在的 asset、非標準市場代碼、目錄不存在都拒絕啟動）；改了要重啟 web。格式見 `app/profile.py` 的 docstring 與 `profiles/tingfong/profile.toml`。換稱謂會讓系統提示與評測基準線不同，也會讓舊稱謂的婉拒列在歷史重播時認不得 |
+| `PROFILE_DIR` | `profiles/tingfong` | 部署 profile 的目錄（相對路徑以 repo 根為基準）：機構名（含英文介面用的名稱）、品牌（logo、favicon、強調色）、介面語系（預設與可選的語系）、prompt 注入的稱謂、使用者端啟用的市場子集與顯示名稱、TOTP 發行者、個股代號格式、發行機構名單、每日簡報的作息。web 在 lifespan 第一步載入並嚴格驗證（未知 section 或鍵、型別錯、引用不存在的 asset、非標準市場代碼、目錄不存在都拒絕啟動）；改了要重啟 web。格式見 `app/profile.py` 的 docstring 與 `profiles/tingfong/profile.toml`。換稱謂會讓系統提示與評測基準線不同，也會讓舊稱謂的婉拒列在歷史重播時認不得 |
 | `LOG_LEVEL` | `INFO` | 調到 WARNING 會失去登入成功稽核、`qa_timing`、`/api/*` 請求耗時與檢索遙測。每行帶 `rid=`，與回應的 `X-Request-Id` 相同 |
 | `LOG_FORMAT` | `text`（容器映像為 `json`） | `json`＝web 每行一個 JSON 物件到 stdout（`ts`、`level`、`logger`、`request_id`、`message`，有例外另加 `exc_type`、`exc`），祕密、URL 查詢字串與 SQL bind 參數遮成 `[redacted]`，uvicorn access log 去掉查詢字串與對端位址（`app/logging_setup.py`）；`text` 是現行格式。未知值退回 `text` |
 | `METRICS_ENABLED`、`METRICS_ALLOWED_CIDRS` | `1`、`127.0.0.1/32,::1/128` | `/metrics` 的總開關與允許的對端（逗號分隔 CIDR；無效項目略過，全部無效＝誰都不收）。帶代理 header 的請求一律不收（`web/metrics.py`） |

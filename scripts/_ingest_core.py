@@ -26,6 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from app.profile import get_profile
 from app.services.doc_types import ingest_gate
 from app.services.extraction import cache as extraction_cache
 from app.services.llm_models import TASK_TAG, resolve_model
@@ -159,7 +160,7 @@ def _tag_via_cli(
     )
     if not res.text:
         return None, res.error or "LLM 無回應"
-    tag = parse_tags(res.text)
+    tag = parse_tags(res.text, normalize_code=get_profile().instruments.normalize_code)
     return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
 
 
@@ -348,7 +349,7 @@ async def ingest_one(
     if dry_run:
         return Outcome("would_ingest", path, file_hash=res.file_hash)
 
-    tag = load_tag(tags_dir, res.file_hash)
+    tag = load_tag(tags_dir, res.file_hash, normalize_code=get_profile().instruments.normalize_code)
     tag_error = None
     tag_skipped = False
     if metadata is not None and metadata.skips_tagging():

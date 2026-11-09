@@ -103,8 +103,8 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### ⑧ 每日簡報：`scripts/generate_brief.py`（LLM，簡報頁用）
 
-- 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7），用 `created_at` 界定；`--force` 重寫已有的列時沿用該列存的窗期；補過去的日子時，終點是目標日結束（本地時間）與下一份的 `window_start` 取早的，窗期長度為零就不寫列。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
-- `--date`、`--after-hour`（9，未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
+- 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7；兩者的預設來自 profile 的 `[brief]`，括號內是廷豐的值），用 `created_at` 界定；`--force` 重寫已有的列時沿用該列存的窗期；補過去的日子時，終點是目標日結束（本地時間）與下一份的 `window_start` 取早的，窗期長度為零就不寫列。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
+- `--date`、`--after-hour`（預設 profile 的 `[brief].after_hour`，廷豐 9；未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
 
 ### LLM 批次互斥：`scripts/_claude_lock.py`
 
@@ -339,9 +339,9 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | `LEGACY_TO_FINDB` | 台股→TW、美股→US、港股→HK、陸股→CN、外匯→FX、期貨→WTX、總體經濟→MACRO、多元配置→GLOBAL、債券→MACRO、原物料→GLOBAL |
 | `instrument_types` | `equity`、`index`、`futures`、`options`、`etf`、`bond`、`fx`、`commodity`、`crypto` |
 | `futures_targets` | 台指期、小型台指、電子期、金融期、個股期貨、其他 |
-| `stock_targets` | 四碼數字，最多 8 個，去重保序 |
+| `stock_targets` | 個股代號，最多 8 個，去重保序。格式由 profile 的 `[instruments]` 宣告（`[instruments.code_formats.<市場>]`：`kind = "digits"` 純數字或 `"letters"` 大寫字母 ticker，加長度；字母代號轉大寫），標註結果只留符合其一者（各市場格式的聯集，不看研報的市場）。廷豐 profile（與 section 缺席時）只收正好 4 碼數字。標註 prompt 不變、只要求 4 碼代碼；側檔的 `stock_targets` 不經這道驗證（是來源方宣告的值） |
 | `doc_type`（文件類型，`research_report.doc_type`） | 標註器產生 `research`（`is_research=true`）、`non_research`（`is_research=false`）（`tagging.DOC_TYPE_RESEARCH`／`DOC_TYPE_NON_RESEARCH`）。詞彙與各類型啟用的功能由 profile 的 `[doc_types]` 宣告（`app/profile.py`；功能清單 `DOC_FEATURES`，各功能管到哪些查詢見 `app/services/doc_types.py` docstring），DB 只限形狀 `^[a-z][a-z0-9_]{0,31}$`。廷豐 profile：`research` 全開、`non_research` 全關 |
-| `source`（券商） | `filename.BROKER_MAP` 由檔名代碼正規化（如 `kgi`、`masterlink`、`sinopac`、`yuanta`、`morgan_stanley`），`SOURCE_DISPLAY` 給顯示名；缺檔名代碼時由 `extract_source_from_text` 從內文補 |
+| `source`（發行機構） | 名單由 profile 的 `[sources].catalog` 提供（廷豐：`profiles/tingfong/sources.toml`，代碼如 `kgi`、`masterlink`、`sinopac`、`yuanta`、`morgan_stanley`）：`filename_tokens` 由檔名代碼正規化、`text_signatures`／`fallback_signatures` 從內文補、`display` 給顯示名；判定順序是 `filename.resolve_source`（內文指紋 → 檔名 token → fallback 指紋）。沒有名單的 profile 不從檔名或內文推斷（只靠側檔的 `source`），顯示名稱就是代碼本身 |
 | `report_type` | 檔名解析 |
 
 ## Web API 契約

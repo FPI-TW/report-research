@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text as sql_text  # noqa: E402
 
+from app.profile import get_profile  # noqa: E402
 from app.services.boilerplate import strip_boilerplate  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
@@ -92,7 +93,7 @@ async def main(force: bool) -> None:
                 stats["skip_scanned"] += 1
                 continue
 
-            tag = load_tag(TAGS_DIR, rec["file_hash"])
+            tag = load_tag(TAGS_DIR, rec["file_hash"], normalize_code=get_profile().instruments.normalize_code)
             if tag is None:
                 stats["skip_untagged"] += 1
                 print(f"  skip(untagged) {name[:45]}")

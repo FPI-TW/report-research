@@ -36,6 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.profile import get_profile
 from app.services import upload_review, uploads
 from app.services import upload_worker as uw
 from app.services.clamd import EngineVersion, ScanResult
@@ -204,7 +205,7 @@ class WorkerDbTest(unittest.TestCase):
             raise item
         if isinstance(item, str):  # 錯誤字串
             return None, item
-        return parse_tags(json.dumps(item)), None
+        return parse_tags(json.dumps(item), normalize_code=get_profile().instruments.normalize_code), None
 
     async def _observe(self):
         if not self.hashes:

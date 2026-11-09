@@ -128,7 +128,7 @@ class TaggingMappingTests(unittest.TestCase):
         self.assertEqual(MarketTag(market=None, is_research=False).doc_type, "non_research")
 
     def test_parse_tags_unchanged_and_mapped(self):
-        tag = parse_tags('{"market": "TW", "is_research": false, "confidence": 0.4}')
+        tag = parse_tags('{"market": "TW", "is_research": false, "confidence": 0.4}', normalize_code=str)
         assert tag is not None
         self.assertFalse(tag.is_research)
         self.assertEqual(tag.doc_type, "non_research")

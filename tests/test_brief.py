@@ -12,6 +12,7 @@ import os
 import sys
 import time
 import unittest
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -112,6 +113,51 @@ class WindowTests(unittest.TestCase):
     def test_not_after_later_than_now_does_not_extend_past_now(self):
         _, end = generate_brief.resolve_window(None, NOW, not_after=NOW + timedelta(hours=5))
         self.assertEqual(end, NOW)
+
+
+class ProfileScheduleTests(unittest.TestCase):
+    """作息取自 profile 的 [brief]：廷豐是 9 時、24 小時、7 天（框架化之前寫死的值）；其他 profile 可以改。"""
+
+    def _main_args(self, argv, brief=None):
+        from app import profile as P
+
+        captured = {}
+
+        async def fake_generate(args):
+            captured["args"] = args
+            return 0
+
+        prof = P.get_profile() if brief is None else replace(P.get_profile(), brief=brief)
+        old = sys.argv
+        sys.argv = ["generate_brief.py", "--dry-run", *argv]
+        try:
+            with mock.patch.object(generate_brief, "generate", fake_generate), \
+                 mock.patch.object(generate_brief, "get_profile", return_value=prof):
+                self.assertEqual(generate_brief.main(), 0)
+        finally:
+            sys.argv = old
+        return captured["args"]
+
+    def test_tingfong_defaults(self):
+        args = self._main_args([])
+        self.assertEqual((args.after_hour, args.max_lookback_days), (9, 7))
+        self.assertEqual(generate_brief.resolve_window(None, NOW), (NOW - timedelta(hours=24), NOW))
+
+    def test_cli_overrides_profile(self):
+        args = self._main_args(["--after-hour", "0", "--max-lookback-days", "2"])
+        self.assertEqual((args.after_hour, args.max_lookback_days), (0, 2))
+
+    def test_other_profile_schedule(self):
+        from app import profile as P
+
+        brief = P.Brief(after_hour=6, default_lookback_hours=12, max_lookback_days=3)
+        args = self._main_args([], brief=brief)
+        self.assertEqual((args.after_hour, args.max_lookback_days), (6, 3))
+        prof = replace(P.get_profile(), brief=brief)
+        with mock.patch.object(generate_brief, "get_profile", return_value=prof):
+            self.assertEqual(generate_brief.resolve_window(None, NOW), (NOW - timedelta(hours=12), NOW))
+            start, _ = generate_brief.resolve_window(NOW - timedelta(days=30), NOW)
+            self.assertEqual(start, NOW - timedelta(days=3))
 
 
 class _TzMixin:

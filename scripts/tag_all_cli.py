@@ -23,6 +23,7 @@ from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
 # 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
 load_llm_env()
 
+from app.profile import get_profile  # noqa: E402
 from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from app.services.rating_index import strip_rating_index  # noqa: E402
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
@@ -72,14 +73,15 @@ def call_cli(prompt: str, timeout: int = 150, *, file_hash: str | None = None) -
 def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
     h = rec["file_hash"]
     out_path = TAGS_DIR / f"{h}.json"
-    if out_path.exists() and parse_tags(out_path.read_text(encoding="utf-8")):
+    rule = get_profile().instruments.normalize_code
+    if out_path.exists() and parse_tags(out_path.read_text(encoding="utf-8"), normalize_code=rule):
         return "skip"
     prompt = build_prompt(rec["file_name"], rec.get("text", ""), excerpt)
     last_error = "LLM 無回應"
     for _ in range(retries + 1):
         # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
         res = call_cli(prompt, file_hash=h)
-        tag = parse_tags(res.text) if res.text else None
+        tag = parse_tags(res.text, normalize_code=rule) if res.text else None
         if res.text and tag is None:
             last_error = "回應無法解析為標籤"
         elif res.error:

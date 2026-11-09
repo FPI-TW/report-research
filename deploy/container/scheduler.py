@@ -112,9 +112,13 @@ def selected_jobs(env: Mapping[str, str]) -> list[Job]:
     return [j for j in JOBS if j.name not in disable and (j.default_enabled or j.name in enable)]
 
 
+# 每個工作都經這支包一層：結束時記一行退出碼與耗時，失敗時送通用 webhook 告警（預設關；deploy/container/run_job.py）。
+RUN_JOB = ("python", "deploy/container/run_job.py")
+
+
 def render_crontab(jobs: list[Job]) -> str:
     lines = ["# 由 deploy/container/scheduler.py 產生；不要手改（容器重啟就重新產生）"]
     for j in jobs:
         lines.append(f"# {j.name}（取代 {j.unit}）")
-        lines.append(f"{j.cron} {shlex.join(j.command)}")
+        lines.append(f"{j.cron} {shlex.join((*RUN_JOB, j.name, '--', *j.command))}")
     return "\n".join(lines) + "\n"

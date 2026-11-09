@@ -74,6 +74,11 @@ def bypass_allowed(request) -> bool:
     return is_direct_loopback(request)
 
 
+def has_proxy_headers(headers) -> bool:
+    """請求帶了任何一個代理 header（`_PROXY_HEADERS`）。`/metrics` 的存取判定也用它（web/metrics.py）。"""
+    return any(h in headers for h in _PROXY_HEADERS)
+
+
 def is_direct_loopback(request) -> bool:
     """請求是否為「本機直連、未經任何代理」——與 DEV_NO_AUTH 旗標無關的那幾個條件。
 
@@ -81,8 +86,7 @@ def is_direct_loopback(request) -> bool:
     開發旗標牽動。經邊緣進來的請求一定帶代理 header、對端是 docker 網段、Host 是公開網域，
     三者任一即否決。
     """
-    headers = request.headers
-    if any(h in headers for h in _PROXY_HEADERS):
+    if has_proxy_headers(request.headers):
         return False
     peer = request.client.host if request.client else None
     if not _is_loopback(peer):

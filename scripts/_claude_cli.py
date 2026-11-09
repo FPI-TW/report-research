@@ -304,7 +304,19 @@ class _Breaker:
                 "確認供應商恢復後可刪除標記"
             )
         _write_breaker_marker(message)
+        _notify_breaker(message)
         raise LlmEnvironmentError(message)
+
+
+def _notify_breaker(message: str) -> None:
+    """通用 webhook 告警（`app/services/alert_webhook.py`；沒設 ALERT_WEBHOOK_URL＝不送）。永不拋例外。"""
+    try:
+        from app.services import alert_webhook
+
+        alert_webhook.notify(alert_webhook.EVENT_LLM_BREAKER, message, severity="critical",
+                             details={"window": BREAKER_WINDOW, "trip": BREAKER_TRIP})
+    except Exception as exc:  # noqa: BLE001 — 告警不能改變斷路器的行為
+        _warn(f"斷路器 webhook 告警失敗：{type(exc).__name__}")
 
 
 _BREAKER = _Breaker()

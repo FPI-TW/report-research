@@ -29,8 +29,13 @@ Dockerfile 放在 `deploy/container/` 而不是 repo 根：repo 根的 `deploy/d
 ## 建置映像
 
 ```bash
-docker build -f deploy/container/Dockerfile -t report-mark:<版本> .
+docker build -f deploy/container/Dockerfile -t report-mark:<版本> \
+  --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" \
+  --build-arg BUILD_VERSION="$(git describe --tags --always)" \
+  --build-arg BUILD_TREE_CLEAN="$(test -z "$(git status --porcelain)" && echo 1 || echo 0)" .
 ```
+
+- 三個 `BUILD_*` 是版本對帳用（見「監控對接」的版本對帳）：映像不帶 `.git`，commit、版本 tag、建置時工作樹是否乾淨只能在 build 時傳進來，寫在映像的 `/app/build_info.json`。不給也能 build，管理後台只會顯示「建置時未提供」。
 
 - build 需要網路（npm、PyPI、download.pytorch.org、Hugging Face、supercronic 與 uv 的發布檔）；**執行期不需要**。離線環境可在有網路的機器 build、`docker save`／`docker load` 搬進去，或推到內部 registry。
 - 權重：嵌入用 `app/services/embed.py` 的 `MODEL_NAME`（BGE-M3），rerank 用 build arg `RERANK_MODEL`（預設與 `app/config.py` 相同）。改 rerank 模型要重 build，執行期的 `RERANK_MODEL` 也設同一個值。
@@ -171,6 +176,7 @@ docker compose up -d
 | 物件儲存 | 關（`OBJECT_STORAGE_MODE=local`，原檔在 `data` volume） | `OBJECT_STORAGE_MODE=hybrid`／`r2`＋`R2_*` | S3 相容端點 |
 | 網搜 | 關（`ASK_ENABLE_WEB=0`；沒有後端，保持關） | — | — |
 | 告警 webhook | 關（`REPORT_MARK_ALERT_WEBHOOK` 空） | 設 webhook URL | 該 URL |
+| 通用 webhook 告警 | 關（`ALERT_WEBHOOK_URL` 空） | 設 webhook URL（見「監控對接」） | 該 URL |
 | 上傳的病毒碼更新 | 只在起了 clamav profile 時 | `docker compose --profile clamav up -d` | freshclam 連 ClamAV 的病毒碼伺服器 |
 | 來源主機信標 | 關（`HOST_BEACON_WATCH` 空） | 廷豐主機層，框架不用 | 物件儲存 |
 
@@ -179,6 +185,119 @@ docker compose up -d
 ## 對外入口
 
 web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外一律經部署方自備的 TLS 反向代理：非 localhost 的明文 HTTP 不會建立登入 session。代理不在同一台主機的 loopback 時，App 看到的來源是 Docker 網路的閘道位址，要把它列進 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，或改用共享祕密 `REPORT_MARK_EDGE_SECRET`（代理注入 `X-Edge-Secret`），規則見 `docs/EXTERNAL_ACCESS.md`。對外 API（`/external/v1/*`）要讓代理透傳 `Authorization`。
+
+## 監控對接
+
+框架只提供**應用層訊號**，接到部署方自己的監控（Prometheus＋Grafana、Zabbix、ELK 等）：`/metrics`、結構化 JSON 日誌、`/readyz`／`/healthz`、版本對帳與選配的 webhook 告警。廷豐的維運代理、主機信標、事件處理、探針與 Slack 屬廷豐主機層，框架不需要也不依賴它們。
+
+### `GET /metrics`
+
+Prometheus 文字格式，不登入。實作與約束在 `web/metrics.py` 的模組 docstring。
+
+**存取控制**：不通過一律 404（與不存在的路徑無從分辨）。
+
+- 對端位址必須落在 `METRICS_ALLOWED_CIDRS`（逗號分隔 CIDR；沒設＝只收 loopback）。全部寫錯時是誰都不收，不是全開。
+- 帶任何代理 header（`X-Forwarded-For`、`X-Real-IP`、`Forwarded`、`CF-Connecting-IP`、`X-Forwarded-Proto`、`X-Forwarded-Host`、`X-Edge-Secret`）的請求一律不收：經反向代理進來的就是外部請求。部署方的反向代理要照常帶 `X-Forwarded-For`，或直接在代理上擋掉 `/metrics`。
+- `METRICS_ENABLED=0` 整個關掉。
+- compose 部署：讓 Prometheus 加入同一個 compose 網路，直接抓 `web:8097/metrics`，再把那個網路的網段（`docker network inspect` 看得到）設進 `METRICS_ALLOWED_CIDRS`。不要為了 `/metrics` 把 web 對外發佈到 loopback 以外的位址。
+
+**多行程**：計數器是 web 行程內的狀態。web 只會有一個 worker（多 worker 在啟動時就拒起，`web/concurrency.py`），所以數字是正確的；web 重啟時計數器歸零（`rate()`／`increase()` 本來就處理）。worker、scheduler 與批次是別的行程：它們的 LLM 呼叫不在 LLM 指標內，批次健康改看從 DB 算的新鮮度指標與 webhook 告警。
+
+**標籤**：`route` 是路由模板（例如 `/api/reading/{file_hash}`），比對不到的是 `<unmatched>`；沒有查詢字串、路徑參數、帳號、IP 或問答內容。
+
+| 指標 | 型別 | 標籤 | 意義 |
+|---|---|---|---|
+| `report_mark_http_requests_total` | counter | `method`、`route`、`status` | HTTP 請求數（含認證擋下的 401／302 與 500） |
+| `report_mark_http_request_duration_seconds` | histogram | `method`、`route` | 請求耗時；SSE（問答）是整條串流的長度 |
+| `report_mark_http_requests_in_progress` | gauge | — | 處理中的請求（含開著的 SSE） |
+| `report_mark_qa_requests_total` | counter | `outcome` | 問答結局：`ok`、`llm_error`、`error`、`cancelled`（使用者中途停止或斷線）、`queue_full`（排隊滿回 429） |
+| `report_mark_qa_llm_errors_total` | counter | `kind` | 問答因 LLM 不可用而失敗的類別（`auth`、`quota`、`config`、`content_filter`、`timeout`、`overloaded`、`network`…） |
+| `report_mark_llm_calls_total` | counter | `task`、`provider`、`result` | web 行程的 LLM 呼叫數（`result`＝`ok`／`error`） |
+| `report_mark_llm_call_failures_total` | counter | `task`、`provider`、`kind` | LLM 呼叫失敗的類別 |
+| `report_mark_llm_call_duration_seconds` | histogram | `task`、`provider` | LLM 呼叫耗時（含傳輸層重試） |
+| `report_mark_llm_tokens_total` | counter | `task`、`provider`、`type` | token 用量：`prompt_cached`、`prompt_uncached`、`completion`、`reasoning`（`reasoning` 含在 `completion` 內） |
+| `report_mark_llm_breaker_active` | gauge | — | LLM 批次斷路器標記在有效期內（1）：批次會拒跑 |
+| `report_mark_batch_freshness_age_seconds` | gauge | `asset` | 批次資產最新產出距今（NaN＝從未產出）；`asset`：`pipeline`、`corpus`、`summary`、`takeaway`、`signal` |
+| `report_mark_batch_freshness_threshold_seconds` | gauge | `asset` | 停更門檻（0＝不告警） |
+| `report_mark_batch_freshness_stale` | gauge | `asset` | 停更（1）；判定與 `scripts/check_batch_freshness.py`、管理後台資料健康頁相同（含語料閘的抑制） |
+| `report_mark_upload_queue` | gauge | `state` | 研報上傳依狀態的筆數（狀態詞彙見 `app/services/uploads.py`） |
+| `report_mark_upload_oldest_in_flight_age_seconds` | gauge | — | 最舊一筆處理中（隔離、掃描中、待入庫、處理中）的上傳已等待的秒數 |
+| `report_mark_signal_source_up` | gauge | `source` | 上面兩組從 DB 算的值這次查不查得到（`freshness`、`uploads`）；查不到時該組指標清空，不留舊值 |
+| `report_mark_db_pool_size`、`report_mark_db_pool_max_overflow`、`report_mark_db_pool_checked_out`、`report_mark_db_pool_checked_in` | gauge | — | DB 連線池（`DB_POOL_SIZE`＋`DB_MAX_OVERFLOW` 是上限） |
+| `report_mark_gate_in_use`、`report_mark_gate_capacity`、`report_mark_gate_waiting` | gauge | `gate` | 行程內併發閘（問答 `ask` 等）的使用中、上限與排隊 |
+| `report_mark_build_info` | gauge | `commit`、`version`、`tree_clean`、`source` | 恆為 1；版本對帳看標籤 |
+| `process_*`、`python_*` | — | — | prometheus_client 內建的行程指標（記憶體、CPU、檔案描述元、GC） |
+
+`pipeline` 是 sync 殼的管線心跳（廷豐主機層）；容器部署沒有它，`report_mark_batch_freshness_stale{asset="pipeline"}` 會一直是 1，告警規則不要用它。從 DB 算的值快取 15 秒、每次查詢 5 秒逾時，抓取間隔建議 30 秒以上。
+
+**建議告警規則**（Prometheus；門檻依部署調）：
+
+```yaml
+groups:
+  - name: report-mark
+    rules:
+      - alert: ReportMarkDown
+        expr: up{job="report-mark"} == 0
+        for: 5m
+      - alert: ReportMarkHigh5xx
+        expr: sum(rate(report_mark_http_requests_total{status=~"5.."}[5m])) / sum(rate(report_mark_http_requests_total[5m])) > 0.05
+        for: 10m
+      - alert: ReportMarkQaLlmAccount
+        # 帳號層級（金鑰、額度、設定）：每一題都會失敗，使用者無能為力
+        expr: increase(report_mark_qa_llm_errors_total{kind=~"auth|quota|config"}[10m]) > 0
+      - alert: ReportMarkQaFailing
+        expr: sum(increase(report_mark_qa_requests_total{outcome=~"llm_error|error"}[30m])) / sum(increase(report_mark_qa_requests_total[30m])) > 0.2
+        for: 15m
+      - alert: ReportMarkQaQueueFull
+        expr: increase(report_mark_qa_requests_total{outcome="queue_full"}[15m]) > 0
+      - alert: ReportMarkLlmBreaker
+        expr: report_mark_llm_breaker_active == 1
+      - alert: ReportMarkBatchStale
+        expr: report_mark_batch_freshness_stale{asset=~"summary|takeaway"} == 1
+        for: 1h
+      - alert: ReportMarkUploadBacklog
+        expr: report_mark_upload_oldest_in_flight_age_seconds > 7200
+        for: 15m
+      - alert: ReportMarkSignalSourceDown
+        expr: report_mark_signal_source_up == 0
+        for: 15m
+      - alert: ReportMarkDbPoolSaturated
+        expr: report_mark_db_pool_checked_out >= report_mark_db_pool_size + report_mark_db_pool_max_overflow
+        for: 5m
+```
+
+存活與就緒另有 `/healthz`（只探 DB）與 `/readyz`（DB、模型、profile、LLM 設定），回應都只有 `status` 一鍵。
+
+### 結構化日誌
+
+`LOG_FORMAT=json`（映像的預設；systemd 主機沒設，維持原本的一行文字）時，web 每行一個 JSON 物件寫到 stdout，容器日誌（`docker compose logs`、json-file driver）直接收：
+
+| 欄位 | 內容 |
+|---|---|
+| `ts` | UTC、ISO-8601、毫秒（`2026-11-10T03:00:00.123Z`） |
+| `level` | `DEBUG`／`INFO`／`WARNING`／`ERROR`／`CRITICAL`（門檻 `LOG_LEVEL`） |
+| `logger` | logger 名稱（`web.request_log`、`app.services.llm_http`…） |
+| `request_id` | 這一行屬於哪個 HTTP 請求（回應 header `X-Request-Id`、錯誤回應的 `request_id` 是同一個值）；批次與啟動期為 `-` |
+| `message` | 訊息 |
+| `exc_type`、`exc` | 只在有例外時：例外型別與 traceback |
+
+只有這幾個欄位（白名單）。遮罩：名稱像祕密的環境變數之值、DB 密碼、URL 裡的帳密、`Bearer` token、URL 的查詢字串、SQL 錯誤訊息的 bind 參數一律換成 `[redacted]`；uvicorn 的 access log 去掉查詢字串與對端位址。問答原文與查詢字串本來就不進日誌。每個 `/api/*` 請求另有一行 `http <method> <path> status=… elapsed_ms=…`（`web.request_log`）。worker 與 scheduler 跑的殼腳本與批次照舊輸出文字，排程工作結束時另有一行 `[run_job] job=… rc=… elapsed_s=…`。
+
+### 版本對帳
+
+`GET /api/admin/diagnostics` 的 `versions.build`（管理後台「營運 → 診斷」的「版本」卡）與 `report_mark_build_info` 回報建置 commit、版本 tag、建置時工作樹是否乾淨與來源：映像是 build 時以 build arg 寫入（見「建置映像」）；systemd 主機是部署時 `make build-info` 從 git 讀出寫進 repo 根的 build_info.json，檔案與正在跑的 commit 不同時作廢（只回 `.git` 的 commit，`stale_file=true`）。唯讀，不擋任何操作。
+
+### 通用 webhook 告警（選配，預設關）
+
+設 `ALERT_WEBHOOK_URL` 才會送（URL 只經環境變數，不進 argv、不進日誌）。給沒有 Alertmanager、只想出事時往聊天室或工單系統丟一則的部署；與廷豐既有的 `REPORT_MARK_ALERT_WEBHOOK` 並存、互不取代。
+
+| 事件 | 何時送 |
+|---|---|
+| `batch_failed` | scheduler 的工作非零退出（撞鎖的 75 不算） |
+| `llm_breaker_tripped` | LLM 批次斷路器跳脫 |
+| `upload_backlog` | 最舊一筆處理中的上傳超過 `ALERT_UPLOAD_BACKLOG_MINUTES`（預設 120；0＝不檢查），web 每 `ALERT_CHECK_INTERVAL_SECONDS`（預設 300）秒檢查一次 |
+
+`POST` JSON：`source`、`event`、`severity`、`summary`、`text`、`details`、`host`、`at`。`text` 是一行可讀的摘要，Slack、Teams、Mattermost、Google Chat 的 incoming webhook 都直接認得；`details` 只有計數、工作名、退出碼與時間，不帶日誌內容或使用者資料。同一個事件（同一個工作）在 `ALERT_WEBHOOK_COOLDOWN_MINUTES`（預設 60）內只送一次；只送「出事」，恢復與趨勢看 `/metrics`。送不出去不影響批次與 web。
 
 ## 從主機部署遷入
 
@@ -192,4 +311,5 @@ web 預設只發佈在 `127.0.0.1:8097`（`WEB_PUBLISH`）。對外一律經部�
 | `docker compose up` 報 `BACKUP_HOST_DIR`／`PROFILE_HOST_DIR` 不存在 | 主機目錄要先建（刻意不自動建立） |
 | 每日備份失敗「不可寫」 | 備份目錄的擁有者不是 UID 10001 |
 | `/readyz` 503、`/healthz` 200 | 看 web 日誌的「readyz 未就緒：…」：`embedding`（映像沒有權重，或 `RERANK_MODEL`／嵌入模型名與 build 時不同）、`profile`（profile 驗證失敗）、`llm`（金鑰空、模型名不在白名單、`LLM_PROVIDER` 拼錯） |
+| `/metrics` 回 404 | 對端不在 `METRICS_ALLOWED_CIDRS`（預設只有 loopback），或請求經過反向代理（帶了 `X-Forwarded-For` 等 header）；見「監控對接」 |
 | `scheduler` 拒絕啟動「不認得的工作名」 | `SCHEDULER_DISABLE`／`SCHEDULER_ENABLE` 拼錯；可用的名字在 `deploy/container/scheduler.py` |

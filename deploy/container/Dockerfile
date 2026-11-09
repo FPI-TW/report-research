@@ -3,7 +3,11 @@
 # 由 entrypoint 的第一個參數決定（deploy/container/entrypoint.py）。說明見 docs/CONTAINER_DEPLOYMENT.md。
 #
 # 建置（context 是 repo 根；.dockerignore 也在 repo 根）：
-#   docker build -f deploy/container/Dockerfile -t report-mark:<版本> .
+#   docker build -f deploy/container/Dockerfile -t report-mark:<版本> \
+#     --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" \
+#     --build-arg BUILD_VERSION="$(git describe --tags --always)" \
+#     --build-arg BUILD_TREE_CLEAN="$(test -z "$(git status --porcelain)" && echo 1 || echo 0)" .
+# 三個 BUILD_* 是版本對帳用（管理後台診斷頁、/metrics 的 report_mark_build_info）；不給也能 build，只是顯示「建置時未提供」。
 #
 # 三條硬規則（tests/test_container_deploy.py 靜態對帳）：
 # - 執行期零外連（除了設定的 LLM 端點）：嵌入與 rerank 權重在 build 時下載並封入，執行期 HF_HUB_OFFLINE=1；
@@ -97,10 +101,19 @@ RUN mkdir -p /app/data /app/backups /app/profile \
  && chown app:app /app/data /app/backups \
  && python -c "import compileall, sys; sys.exit(not compileall.compile_dir('/app/app', quiet=1))"
 
+# 建置資訊（app/services/build_info.py）：映像不帶 .git，commit／版本／工作樹是否乾淨只能在 build 時由 arg 傳進來。
+# 寫在 /app/build_info.json（不是 data/：那是 volume，會蓋掉映像裡的檔）。放在最後幾層，換 commit 只重做這之後的層。
+ARG BUILD_COMMIT=
+ARG BUILD_VERSION=
+ARG BUILD_TREE_CLEAN=
+RUN python scripts/build_info.py write --source image --out /app/build_info.json \
+      --commit "${BUILD_COMMIT}" --version "${BUILD_VERSION}" --tree-clean "${BUILD_TREE_CLEAN}"
+
 ARG RERANK_MODEL=BAAI/bge-reranker-v2-m3
 # 執行期離線：HF 系列一律不連網（權重已在 /opt/models/hf）。UV_NO_SYNC：殼腳本裡的 `uv run` 直接用映像內的
 # .venv，不重新解析或下載相依。HOME 指到可寫的使用者目錄（torch／transformers 會寫小快取）。
 # 備份落點是 compose 掛進來的 /app/backups：scripts/db_backup.sh 要求它是掛載點（沒掛就失敗、不寫進容器自己的檔案系統）。
+# LOG_FORMAT=json：web 的日誌是一行一個 JSON 物件到 stdout（app/logging_setup.py；欄位與遮罩見 docs/CONTAINER_DEPLOYMENT.md）。
 ENV PATH=/app/.venv/bin:${PATH} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -118,6 +131,7 @@ ENV PATH=/app/.venv/bin:${PATH} \
     UV=/usr/local/bin/uv \
     HOME=/home/app \
     REPORT_MARK_CONTAINER=1 \
+    LOG_FORMAT=json \
     REPORT_MARK_BACKUP_DIR=/app/backups \
     REPORT_MARK_BACKUP_MOUNT=/app/backups \
     TZ=Asia/Taipei

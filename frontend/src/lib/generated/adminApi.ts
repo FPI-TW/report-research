@@ -374,6 +374,17 @@ export const AuthEventListResponseSchema = z.object({
 })
 export type AuthEventListResponse = z.infer<typeof AuthEventListResponseSchema>
 
+export const BuildInfoSchema = z.object({
+  available: z.boolean().optional(),
+  source: z.enum(['image', 'host', 'git']).nullable().optional(),
+  commit: z.string().nullable().optional(),
+  version: z.string().nullable().optional(),
+  tree_clean: z.boolean().nullable().optional(),
+  built_at: z.string().nullable().optional(),
+  stale_file: z.boolean().optional(),
+})
+export type BuildInfo = z.infer<typeof BuildInfoSchema>
+
 export const BulkReportResultSchema = z.object({
   file_hash: z.string(),
   status: z.enum(['ok', 'skipped']),
@@ -1269,6 +1280,7 @@ export const SecretsPresentSchema = z.object({
   edge_secret: z.boolean(),
   r2_credentials: z.boolean(),
   alert_webhook: z.boolean(),
+  generic_alert_webhook: z.boolean().nullable().optional(),
 })
 export type SecretsPresent = z.infer<typeof SecretsPresentSchema>
 
@@ -1480,6 +1492,7 @@ export const UserListResponseSchema = z.object({
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
 
 export const VersionsSectionSchema = z.object({
+  build: BuildInfoSchema.nullable().optional(),
   git: GitInfoSchema.nullable().optional(),
   frontend: FrontendBuildSchema.nullable().optional(),
   python: z.string().nullable().optional(),
@@ -1611,6 +1624,7 @@ export const ConfigSectionSchema = z.object({
   models: z.record(z.string(), z.unknown()).optional(),
   extractor: z.string().nullable().optional(),
   log_level: z.string().nullable().optional(),
+  log_format: z.string().nullable().optional(),
   ops_agent_environment: z.string().nullable().optional(),
   ops_agent_socket: z.string().nullable().optional(),
   flags: ConfigFlagsSchema.nullable().optional(),

@@ -304,6 +304,31 @@ class FeedStateTests(unittest.TestCase):
         feed = self._feed()
         self.assertEqual((feed["result"], feed["push"], feed["new_files"]), ("mount_failed", "none", 0))
 
+    def test_rsync_reads_the_mounted_folder_itself(self):
+        """掛的是 `研報自動匯入` 子資料夾本身（share 根目錄的 ACL 讀不到，drvfs 掛不上）：SRC 是掛載點。"""
+        mount = self.h.root / "nas"
+        mount.mkdir()
+        args = self.h.root / "rsync_args"
+        self.h._fake("rsync", f'printf "%s\\n" "$@" > "{args}"\ncat "{self.h.delta_file}"\n')
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="0", SYNC_NAS_MOUNT=str(mount))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        argv = args.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(argv[-2:], [f"{mount}/", "研報自動匯入/"])
+
+    def test_whole_share_mount_is_refused(self):
+        """掛到整個 share（舊版腳本或手動繞法）時不 rsync：否則整棵目錄樹會被當成新檔整批匯入。"""
+        mount = self.h.root / "nas"
+        (mount / "02.研究資源" / "研報自動匯入").mkdir(parents=True)
+        called = self.h.root / "rsync_called"
+        self.h._fake("rsync", f'touch "{called}"\n')
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="1", SYNC_NAS_MOUNT=str(mount))
+        self.assertNotEqual(p.returncode, 0)
+        self.assertFalse(called.exists(), "不可以跑 rsync")
+        feed = self._feed()
+        self.assertEqual((feed["result"], feed["push"], feed["new_files"]), ("mount_failed", "none", 0))
+        log = "".join(f.read_text(encoding="utf-8") for f in (self.h.root / "data").glob("sync_run_*.log"))
+        self.assertIn("整個 share", log)
+
     def test_inbox_source_writes_nothing(self):
         """從 R2 inbox 拉的那一端沒有來源段可言。"""
         p = self.h.run(SYNC_SOURCE="r2-inbox", SYNC_INBOX_PUSH="0")

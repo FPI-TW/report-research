@@ -1,6 +1,6 @@
 # NAS 定時增量同步匯入 — 部署指南
 
-辦公室主機（測試環境）專用：`report-mark-sync.timer` 每 3 小時整點 → oneshot service → `scripts/sync_new_reports.sh`。來源段以 drvfs 唯讀掛載 NAS（沿用 Windows Credential Manager 既有「Jacky Yeh」快取憑證，**免明文密碼**）→ rsync 擷取 delta；之後的匯入與 LLM 各段見 `docs/WORKFLOW.md`「生產同步鏈」。
+辦公室主機（測試環境）專用：`report-mark-sync.timer` 每 3 小時整點 → oneshot service → `scripts/sync_new_reports.sh`。來源段以 drvfs 唯讀掛載 NAS 上的研報資料夾 `\\192.168.1.100\投資研究處\02.研究資源\研報自動匯入`（沿用 Windows Credential Manager 既有「Jacky Yeh」快取憑證，**免明文密碼**）→ rsync 擷取 delta；之後的匯入與 LLM 各段見 `docs/WORKFLOW.md`「生產同步鏈」。
 
 正式環境（EC2）碰不到 NAS，不做本文的掛載與 sudoers：它以 `SYNC_SOURCE=r2-inbox` 從 R2 拉辦公室主機推上去的檔，unit 用 `deploy/install_units.sh` 安裝，見 `deploy/aws/README.md`「應用層」。
 
@@ -34,11 +34,17 @@ LLM 批次走 HTTP（這台是 `LLM_PROVIDER=opencode_go`），金鑰另放 `/et
 ## 實測 drvfs 掛載（關鍵：確認免密碼讀得到）
 
 ```bash
-sudo /usr/local/sbin/mount-nas-research
-ls "/mnt/nas-research/02.研究資源/研報自動匯入" | head
+sudo systemd-run --wait --pipe /usr/local/sbin/mount-nas-research
+sudo systemd-run --wait --pipe sh -c 'ls /mnt/nas-research | head'
 ```
 
-預期：列得出 PDF 檔名。若失敗，多半是 Windows 端「Jacky Yeh」快取憑證失效——在 Windows 檔案總管手動連一次 `\\192.168.1.100\投資研究處`（勾「記住認證」）即可重存。
+預期：列得出 PDF 檔名（掛載點就是研報資料夾本身）。包在 `systemd-run` 裡是因為互動 shell 與 systemd 服務不一定在同一個 mount namespace：在終端機直接 `sudo mount`／`umount`，sync 服務可能看不到。
+
+只掛子資料夾、不掛整個 `投資研究處`：這台的 Windows 帳號讀不到那個 share 根目錄的 ACL，drvfs 掛根目錄會失敗。掛載點底下若出現 `02.研究資源`，代表掛到的是整個 share，sync 會拒跑（否則 rsync 會把整棵目錄樹當新檔匯入）。
+
+掛不上時：
+- Windows 檔案總管也連不上 `\\192.168.1.100\投資研究處` → 多半是「Jacky Yeh」快取憑證失效，手動連一次（勾「記住認證」）即可重存。
+- Windows 讀得到、掛載卻回 `cannot mount ... read-only`（`status 0x2000`）→ 是 NAS 端權限：在 Windows 用 PowerShell 的 `Get-Acl -LiteralPath '<UNC 路徑>'` 檢查要掛的那一層，讀不到 ACL 的那一層 drvfs 就掛不上。
 
 ## 安裝排程單元
 
@@ -71,7 +77,7 @@ make stats            # 確認 reports 篇數有隨新檔增加
 ## 維運排錯
 
 - 線上變慢：匯入與各 LLM 段跑在 `nice -n 19` ＋ `ionice -c3`，不該搶線上服務。觸發時刻不要隨手改：EC2 的 sync 刻意比這台晚 20 分鐘（`deploy/aws/report-mark-sync.timer.d/offset.conf`），這台改了那邊要跟著改。
-- 掛載失敗：service 記 log 並以 rc=1 結束、不跑 rsync、不動 DB；下次 timer 自動再試。先看 NAS 是否在線、Windows 的快取憑證，再跑 `sudo -n /usr/local/sbin/mount-nas-research`。EC2 那端會以來源主機信標的 `source_failed` 告警。
+- 掛載失敗：service 記 log 並以 rc=1 結束、不跑 rsync、不動 DB；下次 timer 自動再試。處置見上面「實測 drvfs 掛載」的「掛不上時」；重掛要包在 `sudo systemd-run --wait --pipe` 裡。log 寫「掛載點是整個 share」時，先卸載（`sudo systemd-run --wait --pipe umount /mnt/nas-research`；有巢狀掛載時由內而外卸）再重跑掛載腳本。EC2 那端會以來源主機信標的 `source_failed` 告警。
 - 單檔失敗：見 `data/sync_failures.log`；修因後用 `scripts/failures_to_delta.py` 轉 delta 重放，不要 `--all-local`（只有匯入撞鎖或上一輪被砍且 delta 不可靠時才用；整批中止的重放見 `docs/production_resilience.md`「整批中止後的重放」）。
 - LLM 段整批 rc=2：多半是金鑰或額度（`API[auth]`／`API[quota]`），處置見 `docs/production_resilience.md`「LLM 批次的失敗處置」與「LLM 帳號告警與處置」；沒有備援後端。
 - service 啟不來：先看 `/etc/default/report-mark-sync` 的 `REPORT_MARK_ROOT` 與 `SYNC_PATH_EXTRA` 是否指到實機正確路徑。

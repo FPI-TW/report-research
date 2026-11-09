@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# 以快取憑證 drvfs 唯讀掛載 NAS 共享。冪等：已掛則直接成功。
+# 以快取憑證 drvfs 唯讀掛載 NAS 上的研報來源資料夾。冪等：已掛則直接成功。
 # 部署到 /usr/local/sbin/mount-nas-research（root:root 0755），搭配 sudoers NOPASSWD。
+#
+# 掛的是 `投資研究處` 底下 sync 讀的那個子資料夾，不是整個 share：這台的 Windows 帳號讀不到
+# share 根目錄的 ACL（2026-11-06 實測 `Get-Acl` 被拒，子資料夾讀得到），drvfs 掛根目錄會失敗
+# （`cannot mount ... read-only`，不帶 ro 時是 `Operation not supported`，都是 `status 0x2000`），
+# 而 Windows 的 `dir` 照常讀得到。掛載點的內容就是研報本身，`scripts/sync_new_reports.sh` 的
+# `SRC` 是 `$MOUNT/`；掛載點底下若出現 `02.研究資源`，代表掛到的是整個 share，sync 會拒跑。
 set -eu
 mountpoint -q /mnt/nas-research && exit 0
-exec mount -t drvfs '\\192.168.1.100\投資研究處' /mnt/nas-research -o ro,uid=1000,gid=1000
+exec mount -t drvfs '\\192.168.1.100\投資研究處\02.研究資源\研報自動匯入' /mnt/nas-research -o ro,uid=1000,gid=1000

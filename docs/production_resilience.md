@@ -2109,7 +2109,9 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
      不適用 RDS）。套完 `make schema-version` 回 0、再做一次零 drift 比對。
    - 每日 schema 檢查（`report-mark-schema-check`）已啟用的主機，套 schema 與換程式要在同一個維護窗口內做完，
      否則當天的檢查會以版本不一致告警。
-2. **換程式**：`make build-web`，緊接著重啟 web（部署目錄的 `frontend/dist` 不存在時 SPA 回 503）。驗收：
+2. **換程式**：`make build-web` 與 `make build-info`（寫 build_info.json：commit、版本 tag、工作樹是否乾淨，管理後台
+   診斷頁與 `/metrics` 的版本對帳讀它；讀不到 git 只印說明、不失敗），緊接著重啟 web（部署目錄的 `frontend/dist` 不存在時
+   SPA 回 503）。驗收：
    `curl -s http://127.0.0.1:8097/healthz` 回 `{"status":"ok"}`、`/healthz/security` 回 `{"security":"ok"}` 或 `unknown`。
    備份清單的變動由部署目錄裡的 `scripts/db_backup.sh` 直接生效，備份 unit 不用重裝。
 3. **安裝或更新 unit**（辦公室主機直接 `install` 到 `/etc/systemd/system/`；EC2 用 `deploy/install_units.sh --user ubuntu

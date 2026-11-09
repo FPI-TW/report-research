@@ -42,6 +42,9 @@ dependencies = [
     # OIDC 單一登入的 ID token 驗證（JWS 驗簽、JWKS、claims；app/services/oidc.py）。BSD-3-Clause，
     # 只依賴 cryptography（已在鎖檔裡）。刻意不自己寫 JWT 驗簽，也不用整套 authlib（只需要 JOSE 這一層）。
     "joserfc>=1.0,<2",
+    # 應用層監控訊號 `GET /metrics` 的 Prometheus 文字格式與指標型別（web/metrics.py）。Apache-2.0，
+    # 純 Python、無相依。只用它的 registry 與 exposition；刻意不用它的多行程模式（web 是單一 worker，見該模組）。
+    "prometheus-client>=0.21,<1",
 ]
 
 [dependency-groups]

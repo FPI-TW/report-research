@@ -15,8 +15,9 @@ data/
 backups/
 **/*.dump
 
-# 版控、相依與建置產物（前端在映像內重新 build）
+# 版控、相依與建置產物（前端在映像內重新 build；建置資訊檔由 Dockerfile 以 build arg 重寫）
 .git/
+build_info.json
 .github/
 .venv/
 .uv/

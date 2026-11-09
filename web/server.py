@@ -40,13 +40,14 @@ configure_logging()
 from app import profile as app_profile  # noqa: E402
 from app import request_context  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.services import accounts, db, llm_http, llm_models, usage_events  # noqa: E402
+from app.services import accounts, alert_webhook, db, llm_http, llm_models, usage_events  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
     csrf,  # noqa: E402
     deps,  # noqa: E402
     errors,  # noqa: E402
+    metrics,  # noqa: E402
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
@@ -73,6 +74,7 @@ from web.routers import external as external_routes  # noqa: E402
 from web.routers import features as features_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
 from web.routers import me_quota as me_quota_routes  # noqa: E402
+from web.routers import metrics as metrics_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import oidc_login as oidc_login_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
@@ -219,6 +221,11 @@ async def lifespan(app: FastAPI):
     # 線上 LLM 呼叫經 llm_http 的 observer 歸到人（只有 metadata）。USAGE_EVENTS_ENABLED=0 時都不啟動
     # （tests/conftest.py 如此，測試不寫任何庫）。詳見 app/services/usage_events.py。
     flusher = _start_usage_collection()
+    # 應用層監控訊號（web/metrics.py）：線上 LLM 呼叫的次數、耗時、失敗類別與 token 進 /metrics（只有 metadata）。
+    # 與用量收集分開註冊：USAGE_EVENTS_ENABLED=0 不該讓監控也跟著看不到 LLM。
+    llm_http.add_observer(metrics.observe_llm_call)
+    # 通用 webhook 告警的週期檢查（上傳積壓）；沒設 ALERT_WEBHOOK_URL 時不啟動（app/services/alert_webhook.py）。
+    alert_task = alert_webhook.start_watch()
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)
@@ -232,6 +239,13 @@ async def lifespan(app: FastAPI):
                 await warmup_task
             except asyncio.CancelledError:
                 pass
+        if alert_task is not None:
+            alert_task.cancel()
+            try:
+                await alert_task
+            except asyncio.CancelledError:
+                pass
+        llm_http.remove_observer(metrics.observe_llm_call)
         if flusher is not None:
             llm_http.remove_observer(usage_events.observe_llm_call)
             try:
@@ -262,9 +276,11 @@ errors.install(app)
 # asset URL 與色票，asset 端點只交 profile 引用的檔（web/routers/branding.py）。
 # /login/oidc 與 /login/oidc/callback：OIDC 單一登入的起點與 IdP 導回點（還沒登入才需要；OIDC_ISSUER 沒設時回 404，
 # web/routers/oidc_login.py）。
+# /metrics：Prometheus 不登入；路由自己只回答允許的對端（METRICS_ALLOWED_CIDRS，預設只有本機、經代理一律 404），
+# 見 web/metrics.py。
 _AUTH_ALLOWLIST = {
     "/login", "/healthz", "/readyz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed",
-    "/api/branding", "/login/oidc", "/login/oidc/callback",
+    "/api/branding", "/login/oidc", "/login/oidc/callback", "/metrics",
 }
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/", "/api/branding/assets/")
 # 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
@@ -359,6 +375,8 @@ async def reject_cross_site(request: Request, call_next):
 
 # 最後加＝最外層：401、302 與未捕捉例外的 500 也都拿得到關聯 id、也都記得到一行。
 app.add_middleware(RequestLogMiddleware)
+# HTTP 請求數與耗時（web/metrics.py）：比關聯 id 再外一層，所有回應（含 401／302／500）都算到。
+app.add_middleware(metrics.MetricsMiddleware)
 
 
 
@@ -372,6 +390,8 @@ app.add_middleware(RequestLogMiddleware)
 # /healthz（免認證存活探測）——必須與 _AUTH_ALLOWLIST 的白名單成對存在，
 # 只掛路由而沒放行等於它永遠回 302，與不存在的路由無從分辨（那正是它要解決的問題）。
 app.include_router(health_routes.router)
+# /metrics（免認證、只回答允許的對端）：同樣必須與 _AUTH_ALLOWLIST 成對存在。
+app.include_router(metrics_routes.router)
 # /api/branding、/api/branding/assets/{name}：登入前就要畫品牌，同樣在白名單（只交顯示用的欄位）。
 app.include_router(branding_routes.router)
 

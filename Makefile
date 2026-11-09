@@ -38,7 +38,7 @@ COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema schema-check schema-version schema-stamp-baseline setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align boilerplate \
-        serve serve-dev serve-preview search build-web \
+        serve serve-dev serve-preview search build-web build-info \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
         eval-compare \
         up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
@@ -148,6 +148,12 @@ brief:  ## 每日簡報（一天一列；當日已有或未到 --after-hour 即 
 # 先跑 `make build-web`（或 cd frontend && npm run build）再 restart。
 build-web:  ## 建置 SPA → frontend/dist（前端改動後必跑；npm run build 內含 tsc）
 	cd frontend && npm ci && npm run build
+
+# 版本對帳（管理後台診斷頁、/metrics 的 report_mark_build_info；app/services/build_info.py）：從 git 讀 commit、
+# 版本 tag 與工作樹是否乾淨，寫 build_info.json（repo 根、不進版控）。在部署目錄更新程式之後、重啟 web 之前跑。
+# 讀不到 git 時只印說明、不失敗。
+build-info:  ## 寫建置資訊檔 build_info.json（commit／版本 tag／工作樹是否乾淨；部署時重啟 web 之前跑）
+	uv run python scripts/build_info.py write
 
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
 	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)

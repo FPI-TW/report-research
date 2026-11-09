@@ -29,6 +29,23 @@ SchemaStatus = Literal["ok", "behind", "ahead", "unversioned", "ambiguous", "err
 WarmupState = Literal["skipped", "absent", "running", "done", "failed", "cancelled"]
 
 
+BuildSource = Literal["image", "host", "git"]
+
+
+class BuildInfo(BaseModel):
+    """建置資訊（app/services/build_info.py）。
+
+    source：image＝映像建置時寫入；host＝主機 `make build-info` 寫入；git＝只讀到 `.git` 的 commit。
+    """
+    available: bool = False
+    source: BuildSource | None = None
+    commit: str | None = None
+    version: str | None = None
+    tree_clean: bool | None = None
+    built_at: str | None = None
+    stale_file: bool = False
+
+
 class GitInfo(BaseModel):
     available: bool = False
     reason: str | None = None
@@ -46,6 +63,7 @@ class FrontendBuild(BaseModel):
 
 
 class VersionsSection(BaseModel):
+    build: BuildInfo | None = None
     git: GitInfo | None = None
     frontend: FrontendBuild | None = None
     python: str | None = None
@@ -117,6 +135,8 @@ class SecretsPresent(BaseModel):
     edge_secret: bool
     r2_credentials: bool
     alert_webhook: bool
+    # 通用 webhook 告警（ALERT_WEBHOOK_URL，app/services/alert_webhook.py）；舊 web 不回，所以可缺。
+    generic_alert_webhook: bool | None = None
 
 
 class ConfigLimits(BaseModel):
@@ -137,6 +157,7 @@ class ConfigSection(BaseModel):
     models: dict[str, str] = {}
     extractor: str | None = None
     log_level: str | None = None
+    log_format: str | None = None
     ops_agent_environment: str | None = None
     ops_agent_socket: str | None = None
     flags: ConfigFlags | None = None

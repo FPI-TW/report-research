@@ -15,11 +15,16 @@ afterEach(() => {
 
 const SHA_START = '8aa38ce19e5dac15192dedf26d8db8cddaff894d'
 const SHA_DISK = 'aacec4500000000000000000000000000000beef'
+const SHA_BUILD = 'b1d0000000000000000000000000000000000001'
 
 const DIAG = {
   generated_at: '2026-10-06T12:00:00Z',
   cache_ttl_s: 30,
   versions: {
+    build: {
+      available: true, source: 'image', commit: SHA_BUILD, version: 'v1.4.0', tree_clean: false,
+      built_at: '2026-10-06T09:00:00Z', stale_file: false,
+    },
     git: {
       available: true, reason: null, commit_at_start: SHA_START, branch_at_start: 'main',
       commit_on_disk: SHA_DISK, branch_on_disk: 'main', restart_pending: true,
@@ -136,6 +141,10 @@ test('診斷頁：每一區的每一項都還在（連通性、每日檢查、�
   expect(field(schema, '每日檢查', '說明')).toHaveTextContent('DB 落後')
 
   const versions = await region('版本')
+  expect(field(versions, '建置資訊', 'commit')).toHaveTextContent(SHA_BUILD)
+  expect(field(versions, '建置資訊', '版本')).toHaveTextContent('v1.4.0')
+  expect(field(versions, '建置資訊', '建置時工作樹')).toHaveTextContent('有未提交的變更')
+  expect(field(versions, '建置資訊', '來源')).toHaveTextContent('容器映像（建置時寫入）')
   expect(field(versions, '程式版本', '啟動時分支')).toHaveTextContent('main')
   expect(field(versions, '程式版本', '磁碟上 commit')).toHaveTextContent(SHA_DISK)
   expect(field(versions, '套件版本', 'Python')).toHaveTextContent('3.13.11')

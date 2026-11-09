@@ -164,7 +164,7 @@ test('帳號表格列出角色、狀態與有效 session；自己那列的停用
 })
 
 test('長帳號單行截斷、完整名稱放 title；操作欄釘在右邊，表格橫向捲動時還看得到', async () => {
-  const long = 'institutional-sales.asia-pacific.derivative-desk@tingfong.com.tw'
+  const long = 'institutional-sales.asia-pacific.derivative-desk@example-securities.tw'
   mount({ users: [user('me', 'root', { role: 'admin' }), user('u2', long)] })
   const name = await screen.findByText(long)
   expect(name).toHaveAttribute('title', long)

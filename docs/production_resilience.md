@@ -1812,6 +1812,89 @@ sudo systemctl disable --now report-mark-security-retention.timer
 持續性的撞庫（大量不同 IP、低頻）不適合逐條封：改在 Cloudflare 對 `/login` 的 POST 加 **Rate limiting rule**（例如同一 IP
 10 分鐘 20 次 → Managed Challenge），並請同事開 TOTP。區網直連（不經 Cloudflare）不受這些規則影響，本來就被視為可信。
 
+## OIDC 單一登入（公司帳號登入＋本地緊急帳號）
+
+員工以公司 IdP（Entra ID、ADFS 2016 以上、Keycloak、Okta）登入，流程是 Authorization Code＋PKCE（S256）。IdP 只負責
+「這個人是誰」；**管理員與 scope 一律在管理後台授予**，IdP 的群組、角色 claim 不讀。設定全在 repo 根 `.env`
+（`OIDC_*`，各鍵語意見 `.env.example` 與 README 的環境變數表），`OIDC_ISSUER` 沒設時登入行為與沒有這個功能時完全一樣。
+改了要重啟 web。
+
+### 帳號規則
+
+- 帳號以 `(issuer, subject)` 綁定（`research.app_user.oidc_issuer`／`oidc_subject`，revision 0013）。第一次登入沒有綁定時
+  JIT 建成**一般使用者**（名稱取 `OIDC_USERNAME_CLAIM`，之後 IdP 端改名不影響），稽核 `user.create`（操作者為系統、
+  `via: sso_jit`）。要給管理員，在帳號頁照常升級並授予 scope。
+- 同名的既有帳號：預設拒絕（登入頁「這個公司帳號無法登入本系統」，事件 `login.sso_failure`／`username_conflict`）。要把
+  既有的本地帳號移轉成公司帳號登入，暫時開 `OIDC_LINK_BY_USERNAME=1`、請當事人以公司帳號登入一次（稽核 `user.sso_link`），
+  移轉完再關掉。
+- 擋掉一個公司帳號：在帳號頁**停用**（綁定留著，IdP 怎麼放行都登不進來）。**刪除**會清掉綁定，同一個人之後再從 IdP 登入
+  會 JIT 成一個全新的一般帳號——要永久擋人，同時請 IdP 管理者把他從這個應用程式的指派移除。
+- SSO 帳號沒有本地密碼（`password_hash` 是 `!sso`）。權限提升改成回 IdP 重新登入（`prompt=login`、`max_age=0`，回來的
+  `auth_time` 要在 5 分鐘＋時鐘誤差內）；IdP 不回 `auth_time` 時權限提升會一直失敗（事件 `elevate.failure`／`sso_stale_auth`）。
+
+### 只允許 SSO 與緊急管理員
+
+`OIDC_SSO_ONLY=1` 時本地帳密只收 `OIDC_BREAK_GLASS_USERS` 列出、而且是管理員的帳號（登入頁的帳密表單收在「緊急管理員登入」
+之下）；其他帳號密碼正確也回「請改以公司帳號登入」，既有的密碼 session 下一個請求就失效。緊急管理員帳號永遠不與 IdP 綁定，
+IdP 掛掉或設定壞掉時用它進來修。建議：
+
+1. 先在 IdP 那端與 `OIDC_SSO_ONLY=0` 跑過一輪，確認同事都登得進來、該升級的管理員都升級了。
+2. 至少準備兩個緊急管理員（`scripts/create_admin.py` 建立），都開 TOTP，帳密分開保管。
+3. 再設 `OIDC_SSO_ONLY=1`、`OIDC_BREAK_GLASS_USERS=<名稱>,<名稱>` 並重啟 web；以緊急管理員實際登入一次確認。
+
+### `ADMIN_MFA_REQUIRED` 對 SSO 管理員
+
+SSO 管理員**不用本系統的 TOTP**（在 SSO session 裡另外開 TOTP 也不算數）。政策開啟時看那次登入的 ID token：`amr` 含
+`OIDC_MFA_AMR`（預設 `mfa`、`mca`、ADFS 的 `http://schemas.microsoft.com/claims/multipleauthn`）任一值、或 `acr` 是
+`OIDC_MFA_ACR` 之一、或設了 `OIDC_ASSUME_IDP_MFA=1`（IdP 端的條件式存取已對這個應用程式強制 MFA）。都不成立時管理端點一律
+403 `sso_mfa_required`，管理後台改顯示「需要經過多重驗證的公司帳號登入」。判斷結果在登入當下記在 session（`idp_mfa`），
+改設定後要重新登入才會重新判斷。
+
+### 對接 Entra ID（Microsoft Entra）
+
+1. Entra 系統管理中心 → **應用程式註冊 → 新增註冊**：名稱自訂；支援的帳戶類型選「僅此組織目錄中的帳戶」（單一租戶；
+   多租戶的 `{tenantid}` issuer 不支援）；重新導向 URI 選 **Web**，填 `https://<站台>/login/oidc/callback`。
+2. **憑證與祕密 → 新增用戶端密碼**，把「值」放進 `.env` 的 `OIDC_CLIENT_SECRET`（只在這時候看得到；記下到期日，到期前要換）。
+3. **權杖設定**（選用）：要在 ID token 帶 email 時加選用宣告 `email`。帳號名稱預設用 `preferred_username`（UPN）。
+4. `.env`：
+   - `OIDC_ISSUER=https://login.microsoftonline.com/<目錄（租用戶）識別碼>/v2.0`
+   - `OIDC_CLIENT_ID=<應用程式（用戶端）識別碼>`
+   - `OIDC_REDIRECT_URI=https://<站台>/login/oidc/callback`
+   - `OIDC_ALLOWED_DOMAINS=<公司網域>`（UPN 的網域）
+5. 只讓特定人登入：**企業應用程式 → 該應用程式 → 內容 → 需要指派＝是**，再到「使用者和群組」指派。MFA 用條件式存取對這個
+   應用程式要求；Entra 的 ID token 在做過 MFA 時 `amr` 會帶 `mfa`，預設設定就認得。
+
+### 對接 Keycloak
+
+1. 該 realm → **Clients → Create client**：Client type `OpenID Connect`、Client ID 自訂；**Client authentication 開啟**
+   （confidential）、Authentication flow 只勾 **Standard flow**。
+2. **Valid redirect URIs** 填 `https://<站台>/login/oidc/callback`（逐字，不用萬用字元）；Web origins 可留空。
+3. **Advanced → Proof Key for Code Exchange Code Challenge Method** 設 `S256`（強制 PKCE）。
+4. **Credentials** 分頁的 Client secret 放進 `OIDC_CLIENT_SECRET`。
+5. `.env`：`OIDC_ISSUER=https://<主機>/realms/<realm>`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI`；帳號名稱用預設的
+   `preferred_username`（或 `OIDC_USERNAME_CLAIM=email`）。
+6. MFA：Keycloak 預設不送 `amr`。在 realm 用 Authentication flow 的 step-up 設定 LoA，`OIDC_MFA_ACR` 設成代表 OTP 的那個
+   `acr` 值；或在 client scope 加 `amr` 的 mapper；或整個 realm 強制 OTP 時設 `OIDC_ASSUME_IDP_MFA=1`。
+
+ADFS（2016 以上）與 Okta 同理：在 IdP 建一個使用授權碼流程的 confidential 應用程式、redirect URI 填同一個網址；ADFS 的 issuer
+是 `https://<主機>/adfs`、帳號名稱常用 `upn`（`OIDC_USERNAME_CLAIM=upn`），Okta 是 `https://<組織>.okta.com`（或
+`/oauth2/<授權伺服器>`）。
+
+### 驗證與排查
+
+1. 重啟 web 後打開登入頁，應出現「以公司帳號登入」；按下去應導到 IdP。啟動時 `.env` 設了一半（有 issuer 沒 client id 或
+   redirect URI、或不是 https）會直接拒絕啟動。
+2. 登入後管理後台 **安全 → 登入事件** 應有一列 `登入成功（公司帳號）`，帳號頁多一個一般使用者。
+3. 失敗時看 web 日誌（`journalctl -u report-mark-web`）的 `SSO 登入失敗`／`SSO 無法開始` 那一行與安全頁的 `公司帳號登入失敗` 事件：
+   - `sso_unavailable`／`SSO 無法開始`：discovery 抓不到、或 discovery 回的 `issuer` 與 `OIDC_ISSUER` 不是逐字相同
+     （常見是結尾多一個 `/`）。主機要連得到 IdP 的 discovery、token 與 JWKS 端點（這是除了 LLM 端點以外唯一的對外連線）。
+   - `token`：token 端點回錯（`error=invalid_client`＝secret 錯或過期；`invalid_grant`＝redirect URI 不一致或授權碼過期）、
+     或 ID token 驗不過（簽章、`aud`、過期——主機時鐘要校時，誤差容忍見 `OIDC_CLOCK_SKEW_SECONDS`）。
+   - `state`：登入流程超過 10 分鐘、在另一個分頁又開了一次、或瀏覽器擋了 cookie。重新登入即可。
+   - `domain`、`username_conflict`、`invalid_username`、`break_glass`：見上面的帳號規則。
+4. IdP 換簽章金鑰不需要任何動作：遇到不認得的 `kid` 會重抓 JWKS（同一個行程至少隔 10 秒）。
+5. 日誌與事件**不含任何 token、授權碼、client secret 或 IdP 給的帳號名稱**；成功那一行只記本系統的帳號名稱。
+
 ## 使用分析每晚彙總（report-mark-analytics-rollup）
 
 管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，

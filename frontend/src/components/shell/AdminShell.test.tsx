@@ -362,6 +362,34 @@ test('管理員 TOTP 強制：/api/me 說 mfa_enrollment_required 時，導覽�
   expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/admin/'))).toBe(false)
 })
 
+test('SSO 管理員在 TOTP 強制下沒有經過 IdP 多重驗證：換成重新登入提示，不顯示 TOTP 設定', async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === '/api/me') {
+      return new Response(JSON.stringify({ id: 'me', username: 'erin@corp.example', role: 'admin', scopes: ['admin'],
+        auth_method: 'sso', mfa_enrollment_required: false, sso_mfa_required: true }), { status: 200 })
+    }
+    return new Response('{}', { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/admin/reviews']}>
+        <Routes>
+          <Route path="/admin" element={<AdminShell />}>
+            <Route path="reviews" element={<div>待複核內容</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByRole('heading', { name: '需要經過多重驗證的公司帳號登入' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '設定兩步驟驗證' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '以公司帳號重新登入' })).toBeInTheDocument()
+  expect(screen.queryByText('待複核內容')).not.toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/admin/'))).toBe(false)
+})
+
 function ProbePage() {
   const q = useQuery({ queryKey: ['probe'], queryFn: () => requestJSON('/api/admin/probe', z.object({})), retry: false })
   return <div>{q.isError ? '探測失敗' : '探測內容'}</div>

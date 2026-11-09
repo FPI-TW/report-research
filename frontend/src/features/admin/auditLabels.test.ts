@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { AuditEntry } from '../../lib/adminSchemas'
-import { actionLabel, auditSummary, authEventLabel } from './auditLabels'
+import { actionLabel, actorLabel, auditSummary, authEventLabel } from './auditLabels'
 
 const entry = (over: Partial<AuditEntry>): AuditEntry => ({
   id: 1, actor_user_id: 'u1', actor_username: 'root', action: 'data.export', target_type: 'export',
@@ -61,4 +61,14 @@ test('Admin v2 預先放好的稽核標籤與登入事件標籤；未知值原�
   expect(authEventLabel('login.failure', 'bad_password')).toBe('登入失敗（密碼錯誤）')
   expect(authEventLabel('login.locked')).toBe('登入被限流')
   expect(authEventLabel('login.weird', 'odd_reason')).toBe('login.weird（odd_reason）')
+})
+
+test('公司帳號（OIDC）登入：事件與 JIT 建帳的操作者標籤', () => {
+  expect(authEventLabel('login.success', 'sso')).toBe('登入成功（公司帳號）')
+  expect(authEventLabel('login.sso_failure', 'domain')).toBe('公司帳號登入失敗（網域不允許）')
+  expect(actionLabel('user.sso_link')).toBe('綁定公司帳號')
+  const jit = entry({ actor_user_id: null, actor_username: null, action: 'user.create', target_type: 'user',
+    detail: { username: 'alice@corp.example', role: 'user', via: 'sso_jit' } })
+  expect(actorLabel(jit)).toBe('系統（公司帳號登入）')
+  expect(actorLabel(entry({ actor_user_id: null, actor_username: null, detail: { via: 'cli' } }))).toBe('指令列（CLI）')
 })

@@ -23,9 +23,10 @@ const isElevationRequired = (err: unknown) => err instanceof ApiError && err.cod
  * `ElevationCancelledError`。
  *
  * 帳號開了 TOTP 時要一起輸入驗證碼：`needTotp` 由 `/api/me` 的 `totp_enabled` 決定；若沒帶到，
- * 後端回 `totp_required` 時也會把驗證碼欄位打開。
+ * 後端回 `totp_required` 時也會把驗證碼欄位打開。`sso`（`/api/me` 的 `auth_method` 是 `sso`）時改成回公司帳號
+ * 重新登入（整頁導走，不會自動重試；回來後再做一次）。
  */
-export function useElevationGate(elevate: ElevateFn, needTotp: boolean) {
+export function useElevationGate(elevate: ElevateFn, needTotp: boolean, sso = false) {
   const pendingRef = useRef<{ retry: () => void; cancel: () => void } | null>(null)
   const [open, setOpen] = useState(false)
 
@@ -50,7 +51,7 @@ export function useElevationGate(elevate: ElevateFn, needTotp: boolean) {
   }
 
   const dialog: ReactNode = (
-    <ElevationDialog open={open} needTotp={needTotp} elevate={elevate}
+    <ElevationDialog open={open} needTotp={needTotp} sso={sso} elevate={elevate}
       onDone={() => finish(true)} onCancel={() => finish(false)} />
   )
   // open：外層若也是 Modal，Escape 會同時送到兩個對話框；外層據此在驗證框開著時忽略關閉。

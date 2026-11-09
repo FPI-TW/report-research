@@ -107,9 +107,10 @@ class AccessTests(_Base):
         """白名單是精確集合：`/healthz` 開頭的其他路徑照樣要登入（放寬成前綴等於把未來任何
         `/healthz/*` 端點都免認證對外開放，而只有列出的這幾支自己守了本機直連；/healthz/security 是 Admin v2 加的，
         /healthz/feed 是來源主機信標；/api/branding 是登入前就要畫的品牌，只交顯示用欄位；/readyz 是容器部署的
-        就緒探測）。"""
+        就緒探測；/login/oidc 與其 callback 是 OIDC 單一登入，沒設定時回 404）。"""
         self.assertEqual(server._AUTH_ALLOWLIST, {"/login", "/healthz", "/readyz", "/healthz/storage", "/healthz/llm",
-                                                  "/healthz/security", "/healthz/feed", "/api/branding"})
+                                                  "/healthz/security", "/healthz/feed", "/api/branding",
+                                                  "/login/oidc", "/login/oidc/callback"})
         for path in ("/healthz/llm/", "/healthz/llmx", "/healthz/other", "/healthzz", "/healthz/storage/x",
                      "/healthz/security/x", "/healthz/feed/x", "/readyz/", "/readyz/x"):
             with self.subTest(path=path):

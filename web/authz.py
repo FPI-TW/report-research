@@ -24,6 +24,11 @@ scope 的詞彙與「誰有哪些 scope」在 `app/services/accounts.py`（`effe
 都只用 `current_user` 或不需登入（`tests/test_admin_mfa.py` 結構性釘住這份白名單）。開發模式免登入的
 `DEV_USER`（id=None，沒有真的帳號可以設定 TOTP）不受這條限制。救援：`scripts/create_admin.py --reset-totp`
 之後該管理員會被要求重新設定。政策是環境變數不是 DB 旗標：DB 遺失時不可放寬。
+
+**SSO 登入的管理員**（`User.auth_method == "sso"`）不用本系統的 TOTP——多重驗證交給 IdP。政策開啟時改看這個
+session 登入當下 IdP 是否表明做過多重驗證（`User.idp_mfa`，判準在 `app/services/oidc.py` 的 `is_mfa`：
+`OIDC_ASSUME_IDP_MFA`、`amr`／`acr`）；沒有就 403 `sso_mfa_required`，要以經過多重驗證的公司帳號重新登入。
+在 SSO session 裡另外開本系統 TOTP **不算數**：SSO 登入從不檢查本系統的驗證碼，拿它抵 IdP 的 MFA 等於繞過政策。
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from app.services.accounts import ALL_SCOPES, User
 from web.errors import AppError
 
 MFA_ENROLLMENT_REQUIRED = "mfa_enrollment_required"
+SSO_MFA_REQUIRED = "sso_mfa_required"
 
 
 def current_user(request: Request) -> User:
@@ -50,7 +56,19 @@ def mfa_enrollment_required(user: User) -> bool:
     return (
         user.is_admin
         and user.id is not None  # 開發模式免登入（DEV_USER）沒有真的帳號
+        and user.auth_method != "sso"  # SSO 管理員看 sso_mfa_required
         and not user.totp_enabled
+        and get_settings().admin_mfa_required
+    )
+
+
+def sso_mfa_required(user: User) -> bool:
+    """SSO 登入的管理員在「管理員 TOTP 強制」下，這個 session 是否欠一次 IdP 的多重驗證（`/api/me` 也回這個值）。"""
+    return (
+        user.is_admin
+        and user.id is not None
+        and user.auth_method == "sso"
+        and not user.idp_mfa
         and get_settings().admin_mfa_required
     )
 
@@ -61,6 +79,8 @@ def require_admin(request: Request) -> User:
         raise HTTPException(status_code=403, detail="需要管理員權限")
     if mfa_enrollment_required(user):
         raise AppError(403, MFA_ENROLLMENT_REQUIRED, "管理員必須先開啟兩步驟驗證（TOTP）才能使用管理功能")
+    if sso_mfa_required(user):
+        raise AppError(403, SSO_MFA_REQUIRED, "管理功能需要以經過多重驗證的公司帳號登入")
     return user
 
 
@@ -91,7 +111,8 @@ require_super.__scope__ = frozenset({"super"})  # type: ignore[attr-defined]
 
 
 def require_elevated(user: User = Depends(current_user)) -> User:
-    """近 10 分鐘內在這個 session 重新驗證過密碼（POST /api/admin/elevate）。"""
+    """近 10 分鐘內在這個 session 重新驗證過身分：本地帳號是密碼（POST /api/me/elevate），SSO 帳號是回 IdP
+    重新登入（GET /login/oidc?intent=elevate）。兩者寫的是同一個 `user_session.elevated_until`。"""
     if not user.is_elevated:
         raise AppError(403, "elevation_required", "這項操作需要重新驗證密碼")
     return user

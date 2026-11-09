@@ -168,6 +168,7 @@ uv run python scripts/ingest_all.py
 
 - 路由模組寫 `from web import deps` 再用 `deps.X`，**不要 `from web.deps import X`**：值在 import 時就複製走，測試的 patch 會靜默落空（`web/deps.py` 檔頭）。路由在 `web/routers/`、不帶 `APIRouter(prefix=...)`；服務層測試直接 patch `app.services.*`。
 - Auth deny-by-default、fail-closed：middleware 驗完 cookie 簽章後**每個請求查 DB**（`deps.accounts.resolve_session`，刻意不快取：停用、強制登出、重設密碼、降級都要下一個請求就生效），查 DB 失敗回 503 不導回登入頁。授權只在後端 `web/authz.py`：`/api/review/*`、`/api/admin/*` 整組限管理員且每條宣告 scope；不在這兩個前綴下的 `/api/progress` 在路由上掛 `require_admin`＋`ops.read`，列在 `tests/test_authz.py` 的 `_ADMIN_PATHS`。前端的 `RequireAdmin` 與管理後台入口都只是顯示層。super admin、權限提升、免登入白名單與帳號刪除的流程見 §7 與 `app/services/accounts.py` docstring。
+- OIDC 單一登入（`OIDC_*`，沒設 `OIDC_ISSUER`＝停用）：IdP 只負責認證，管理員與 scope 照常在系統內授予，帳號規則（JIT、`(issuer, subject)` 綁定、只允許 SSO 時的緊急管理員）在 `accounts.sso_login`／`local_login_permitted`，流程與 cookie 在 `web/routers/oidc_login.py`；改之前先讀這兩處與 `app/services/oidc.py` 的 docstring。JWT 驗簽交給 joserfc，不自己寫。
 - `REPORT_MARK_SESSION_SECRET` 兩個環境都必須設：未設會用隨機值（每次重啟全員登出），待複核的 `asker_code` 也由它衍生、換掉就全部改變；改它或 `REPORT_MARK_SESSION_EPOCH` 都會全員登出（預期行為）。
 - 對外 API（`/external/v1/*`）不走 session，認證只由 `web/external_auth.py` 的 `require_api_client(scope)` 負責，其餘路徑一律不認 Bearer；新增對外路由必須掛它（`tests/test_external_auth.py`）。研報查詢同時帶 entitlement 與 `visible_report_sql`，`file-url` 不信任先前的搜尋結果（§7）。
 - 外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR）；祕密在 repo 根 `.env` 與 `deploy/.env` 逐字相同（後者鍵名不帶前綴），見 `docs/EXTERNAL_ACCESS.md`。

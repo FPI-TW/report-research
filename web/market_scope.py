@@ -4,7 +4,7 @@
 出現在不帶篩選的清單與問答裡（要藏研報走 `app/services/visibility.py`）。
 
 篩選帶了**未啟用的標準市場代碼**時回 422 `market_disabled`；不是標準代碼的值維持各端點原本的行為（多半是查無結果），
-所以全部啟用的 profile（廷豐）行為與改動前完全相同。
+所以全部啟用的 profile（例如預設 profile）行為與改動前完全相同。
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { curlCommand, endpointsOf, parseInline, parseMarkdown, requestPath, withBaseUrl, type ApiEndpoint } from './apiDoc'
+import { curlCommand, endpointsOf, parseInline, parseMarkdown, requestPath, withBaseUrl, withProductName, type ApiEndpoint } from './apiDoc'
 import { EXTERNAL_API_MD } from './externalApiDoc'
 
 describe('parseMarkdown', () => {
@@ -52,6 +52,13 @@ describe('docs/EXTERNAL_API.md', () => {
     expect(search.scope).toBe('search')
     expect(search.params.find(p => p.name === 'q')).toMatchObject({ location: 'query', required: true, defaultValue: null })
     expect(search.params.find(p => p.name === 'limit')).toMatchObject({ required: false, defaultValue: '10' })
+  })
+
+  it('產品名只寫佔位字（文件屬於框架），交出去前代入 profile 的產品名', () => {
+    expect(EXTERNAL_API_MD.split('\n')[0]).toBe('# {PRODUCT_NAME} 對外 API 說明（v1）')
+    const md = withProductName(EXTERNAL_API_MD, '艾克米研究平台')
+    expect(md).not.toContain('{PRODUCT_NAME}')
+    expect(md.split('\n')[0]).toBe('# 艾克米研究平台 對外 API 說明（v1）')
   })
 
   it('站台網址只寫佔位字，交出去前代入；整份文件只用渲染器支援的語法', () => {

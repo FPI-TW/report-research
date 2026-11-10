@@ -1,5 +1,7 @@
 # 維運手冊：重啟策略、健康探針、告警、備份還原與各元件的安裝停用
 
+本文件描述廷豐 profile 的主機部署（正式環境 EC2 與測試環境辦公室主機的 systemd 部署、維運與備份還原）；框架的容器部署見 `docs/CONTAINER_DEPLOYMENT.md`，檔案的歸屬見 `deploy/OWNERSHIP.toml`。
+
 > **用語**：正式環境＝EC2（`research.tingfong.com`，DB 是 RDS）；測試環境＝辦公室主機（`research.kashionzarchive.com`，DB 是容器 `report-mark-postgres`），見 `AGENTS.md`「環境角色與資料安全」。資源名、catalog、unit、使用者名稱與環境變數值裡的 `staging`、`prod`、`production` 是歷史命名，不代表角色。各主機實際裝了哪些元件、版本與開關記在 `docs/DEPLOYMENT_STATUS.md`；本文只寫程序、退出碼契約與刻意設計的理由。
 >
 > **安裝指令的寫法**：沒有另外註明時是辦公室主機的寫法（`sudo cp`／`sudo install` 到 `/etc/systemd/system/`，repo 根是 `/home/kashionz/projects/report-mark`）。EC2 的 unit 一律改用 `sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；給 `.timer` 會連同名的 `.service` 一起裝；只複製與 `daemon-reload`，不 enable），其餘步驟相同。

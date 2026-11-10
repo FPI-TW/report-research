@@ -1,6 +1,6 @@
-# report-mark 運作流程
+# 券商研報平台運作流程
 
-券商研報從 `研報自動匯入/` 進來，經過抽文字 → LLM（`gpt-6-luna`）多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
+券商研報從資料來源進來（profile 的 `[connectors]`；廷豐的主機部署是 `研報自動匯入/` 這個 NAS 唯讀鏡像，下圖以它為例），經過抽文字 → LLM（`gpt-6-luna`）多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
 
 ## 全景流程圖
 

@@ -1,5 +1,7 @@
 # 硬體用量量測（選型與容量旋鈕的證據基礎）
 
+本文件的量測方法適用任何部署；已量到的數字是廷豐 profile 的辦公室主機（測試環境）。
+
 這份文件記兩件事：**怎麼量這套服務吃多少 vCPU／RAM／磁碟**，以及**已經量到的數字**——`ASK_RERANK_CANDIDATES`、`EMBED_TORCH_THREADS`、上傳 worker 與 ClamAV 的記憶體上限都是依這裡的實測定的，改之前先讀對應段落。
 
 所有數字都量自辦公室主機（Intel Core i7-14700、20 核、WSL2，同時是開發機）。正式環境（EC2）是 `c7i.xlarge`（4 vCPU／8 GiB，`deploy/aws/infrastructure.yaml`），沒有裝取樣器、也沒有在那台上重測；要把數字搬過去只能用可移植的量（核心秒），不能直接套延遲與峰值。

@@ -21,7 +21,7 @@
   /* ── 石墨（導航與操作：按鈕、連結、選取態、焦點環、提問氣泡底） ──
      #161 把值從墨青 #1E5175 換成中性石墨後，這組曾沿用 ink 這個舊名字；名稱與實際色
      不符會讓每個讀 CSS 的人先誤判一次色相，故一併更名為 graphite（含 --tf-ring-graphite）。
-     全站唯一強調色仍是鎏金，石墨是「操作」不是「強調」——兩者用途別互換。 */
+     全站唯一強調色是下面的 --tf-gold-*，石墨是「操作」不是「強調」——兩者用途別互換。 */
   --tf-graphite: #2c2c2e;
   --tf-graphite-deep: #1d1d1f;
   --tf-graphite-hover: #1d1d1f;
@@ -29,13 +29,19 @@
   --tf-graphite-line: #dededf;
   --tf-on-graphite: #ffffff;
 
-  /* ── 鎏金（全站唯一強調色：引用 [n]、品牌、選取指示條） ── */
-  --tf-gold-text: #8a5a0f;
-  --tf-gold-strong: #ae7415;
-  --tf-gold-hover: #7a4f0c;
-  --tf-gold-tint: #f8f1e0;
-  --tf-gold-line: #ead9ae;
-  --tf-gold-panel: #fbf7ec;
+  /* ── 強調色（全站唯一強調色：引用 [n]、品牌、選取指示條） ──
+     這裡是框架的中性預設（石板藍）；機構色由 profile 的 [branding.colors] 在執行期覆寫
+     （lib/branding.ts 的 ACCENT_CSS_VARS；預設 profile 宣告的是鎏金）。變數名的 gold 是沿用的舊名，
+     改名會牽動上百處引用，刻意不改。 */
+  --tf-gold-text: #2f5577;
+  --tf-gold-strong: #3d6890;
+  --tf-gold-hover: #23435f;
+  --tf-gold-tint: #e9eff5;
+  --tf-gold-line: #cbd8e5;
+  --tf-gold-panel: #f4f7fa;
+  /* Fluid 元件（tailwind.css 的 --fluid-accent）的強調色：只取亮色的 accent_text，深色主題不覆寫它
+     （lib/branding.ts 的 LIGHT_ONLY_CSS_VARS），管理後台深色下的焦點環與選取反白因此仍是亮色那一階。 */
+  --tf-fluid-accent: #2f5577;
   /* 介面改版：側欄底、清單 hover／選取底（Fluid 的 4%／7% 黑） */
   --tf-sidebar: #f7f7f7;
   --tf-hover: rgba(0, 0, 0, 0.04);
@@ -241,16 +247,16 @@
   --ac-t4: #4b5057;
   --ac-t5: #5f646b;
   --ac-t6: #b4b8be;
-  --ac-gold: #ae7415;
-  --ac-goldt: #8a5a0f;
+  --ac-gold: #3d6890;
+  --ac-goldt: #2f5577;
   --ac-ongold: #ffffff;
   /* 實心按鈕的底與字（主要＝金、確認框的最後一步＝紅）。--ac-gold／--ac-bad 是燈號、指示條與邊框的色，
      配白字不到 4.5:1，所以按鈕另外給一組；hover 的 brightness(1.06) 之後仍 ≥ 4.5（components/console/consoleCss.test.ts 守）。 */
-  --ac-goldbtn: #946110;
+  --ac-goldbtn: #355d82;
   --ac-badbtn: #c0392e;
   --ac-onbad: #ffffff;
-  --ac-gsel: #fbf6ea;
-  --ac-gline: #e6d3a3;
+  --ac-gsel: #f4f7fa;
+  --ac-gline: #cbd8e5;
   --ac-scrim: rgba(20, 22, 26, 0.28);
   --ac-pop: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.14);
   /* 燈號：實色（圓點）／t 文字／g 光暈／p 淡底 */
@@ -312,14 +318,14 @@
   --ac-t4: #a6a9b0;
   --ac-t5: #8b8f96;
   --ac-t6: #4b4f56;
-  --ac-gold: #d4a64a;
-  --ac-goldt: #e2b968;
-  --ac-ongold: #17130a;
-  --ac-goldbtn: #d4a64a;
+  --ac-gold: #7fa8d1;
+  --ac-goldt: #a3c3e3;
+  --ac-ongold: #0c1622;
+  --ac-goldbtn: #7fa8d1;
   --ac-badbtn: #f2655a;
   --ac-onbad: #17130a;
-  --ac-gsel: rgba(212, 166, 74, 0.07);
-  --ac-gline: rgba(212, 166, 74, 0.4);
+  --ac-gsel: rgba(127, 168, 209, 0.07);
+  --ac-gline: rgba(127, 168, 209, 0.4);
   --ac-scrim: rgba(0, 0, 0, 0.55);
   --ac-pop: 0 14px 36px rgba(0, 0, 0, 0.55);
   --ac-ok: #4cc38a;
@@ -366,13 +372,13 @@
   --tf-graphite-tint: #1d2024;
   --tf-graphite-line: #2b2f35;
   --tf-on-graphite: #121417;
-  --tf-gold-text: #e2b968;
-  --tf-gold-strong: #d4a64a;
-  --tf-gold-hover: #edc97f;
-  --tf-gold-tint: rgba(212, 166, 74, 0.14);
-  --tf-gold-line: rgba(212, 166, 74, 0.4);
-  --tf-gold-panel: rgba(212, 166, 74, 0.07);
-  --tf-on-gold: #17130a;
+  --tf-gold-text: #a3c3e3;
+  --tf-gold-strong: #7fa8d1;
+  --tf-gold-hover: #bdd5ec;
+  --tf-gold-tint: rgba(127, 168, 209, 0.14);
+  --tf-gold-line: rgba(127, 168, 209, 0.4);
+  --tf-gold-panel: rgba(127, 168, 209, 0.07);
+  --tf-on-gold: #0c1622;
   --tf-on-gold-muted: rgba(23, 19, 10, 0.75);
   --tf-glass: rgba(18, 20, 23, 0.86);
   --tf-glass-strong: rgba(18, 20, 23, 0.94);
@@ -400,7 +406,7 @@
   --tf-error-bg: rgba(242, 101, 90, 0.14);
   --tf-error-border: rgba(242, 101, 90, 0.28);
   --tf-error-text: #f58a80;
-  --tf-mark: rgba(212, 166, 74, 0.3);
+  --tf-mark: color-mix(in srgb, var(--tf-gold-strong) 30%, transparent);
 }
 
 * { box-sizing: border-box; }

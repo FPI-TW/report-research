@@ -5,14 +5,15 @@
 
 - `JOBS`：進框架的排程。排程時間與對應 timer 的 OnCalendar 相同（同一個測試逐支換算比對），在容器的
   `TZ`（預設 Asia/Taipei）下解讀。`default_enabled=False` 的要部署方明確開啟（理由寫在 note）。
-  `unit=None` 的是**框架專屬**、沒有對應 timer 的工作（例如 `connectors`：廷豐主機的對應是 sync 殼，
+  `unit=None` 的是**框架專屬**、沒有對應 timer 的工作（例如 `connectors`：systemd 主機的對應是 sync 殼，
   它屬主機層；`backfill-tiers`：首次導入的第三層背景補齊，由 profile 開），文件另有一張表對帳。
 - `WORKER_UNITS`：改由常駐的 `worker` 服務（迴圈）取代的 timer。
-- `HOST_LAYER`：屬廷豐主機層、不進框架的 timer（探針、事件、信標、NAS、LINE bot、主機監控匯入、來源同步）。
+- `HOST_LAYER`：屬主機層（歸屬清單 `deploy/OWNERSHIP.toml`）、不進框架的 timer（探針、事件、信標、NAS、LINE bot、
+  主機監控匯入、來源同步）。
 
 `enabled_by_profile_questions=True` 的工作（`retrieval-regression`）另在目前的 profile（`PROFILE_DIR`）自帶凍結題集
 （`profiles/<名稱>/eval/questions.json`，`eval/profile_eval.py` 的 `own_questions_path`）時自動排入：有題集才量得了。
-廷豐的題集留在 repo 的 `eval/`、不算 profile 自帶，所以預設 profile 下照舊是關。
+預設 profile 的題集留在 repo 的 `eval/`、不算 profile 自帶，所以預設 profile 下照舊是關。
 
 開關：`SCHEDULER_DISABLE`／`SCHEDULER_ENABLE`（逗號分隔的工作名）。名字打錯就拒絕啟動——拼錯的
 停用名單等於沒停用，那正是這類旋鈕靜默失效的方式。
@@ -84,7 +85,7 @@ WORKER_UNITS: dict[str, str] = {
 }
 
 HOST_LAYER: dict[str, str] = {
-    "report-mark-sync.timer": "來源同步（NAS 掛載／R2 inbox）是廷豐的來源；框架的對應是 scheduler 的 connectors",
+    "report-mark-sync.timer": "來源同步（NAS 掛載／R2 inbox）是主機層的來源；框架的對應是 scheduler 的 connectors",
     "report-mark-freshness.timer": "判讀 sync 殼的心跳與下游批次，隨 sync 一起",
     "report-mark-beacon.timer": "主機信標",
     "report-mark-load-observations.timer": "主機監控 spool（資源取樣、P5 事件）匯入",

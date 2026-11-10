@@ -6,7 +6,7 @@ import {
 import c from '../../components/console/Console.module.css'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import type { ApiClientEntitlements, CreateApiClientRequest } from '../../lib/generated/adminApi'
-import { endpointsOf, parseMarkdown, withBaseUrl } from './apiClients/apiDoc'
+import { endpointsOf, parseMarkdown, withBaseUrl, withProductName } from './apiClients/apiDoc'
 import { ApiDocView } from './apiClients/ApiDocView'
 import { ApiTester } from './apiClients/ApiTester'
 import { ClientDrawer, type ClientAction } from './apiClients/ClientDrawer'
@@ -21,6 +21,7 @@ import {
 } from './useAdminApiClients'
 import local from './ApiClients.module.css'
 import { t } from '@/i18n'
+import { useBranding } from '@/lib/branding'
 
 type TabKey = 'clients' | 'docs' | 'try'
 const TABS: readonly { value: TabKey; label: string }[] = [
@@ -52,9 +53,11 @@ function ApiClients() {
   const [openId, setOpenId] = useQueryParam('client')
   const [tabParam, setTabParam] = useQueryParam('tab')
   const tab = TABS.find(item => item.value === tabParam)?.value ?? 'clients'
-  // 文件裡的 {BASE_URL} 代入目前站台：在哪個環境下載，交出去的就是那個環境的網址。
+  // 文件裡的 {BASE_URL} 代入目前站台：在哪個環境下載，交出去的就是那個環境的網址；{PRODUCT_NAME} 代入 profile 的產品名。
   const baseUrl = window.location.origin
-  const docMarkdown = useMemo(() => withBaseUrl(EXTERNAL_API_MD, baseUrl), [baseUrl])
+  const { productName } = useBranding()
+  const docMarkdown = useMemo(
+    () => withProductName(withBaseUrl(EXTERNAL_API_MD, baseUrl), productName), [baseUrl, productName])
   const endpoints = useMemo(() => endpointsOf(parseMarkdown(docMarkdown)), [docMarkdown])
   const [form, setForm] = useState<Form | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)

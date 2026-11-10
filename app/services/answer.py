@@ -138,7 +138,7 @@ MAX_HISTORY_ANSWER_CHARS = 600
 #
 # **prompt 只注入 profile 的稱謂（`app/profile.py` 的 `[prompt]`），不開放覆寫。** 各段以函式在呼叫時渲染
 # （`system_prompt_base()` 等），舊的常數名（`SYSTEM_PROMPT`、`OFF_TOPIC_MESSAGES`…）由檔尾的模組
-# `__getattr__` 照舊提供給 eval／scripts／測試。廷豐 profile 渲染出的全文與改動前逐字相同
+# `__getattr__` 照舊提供給 eval／scripts／測試。預設 profile 渲染出的全文與改動前逐字相同
 # （tests/test_profile_prompts.py 對 golden），否則評測基準線與 LLM 跳過名單都會失真。
 
 

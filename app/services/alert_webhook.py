@@ -2,7 +2,7 @@
 
 **預設關**：沒設 `ALERT_WEBHOOK_URL` 就什麼都不送。
 
-給沒有 Prometheus Alertmanager、只想「出事時往聊天室或工單系統丟一則」的部署方。與廷豐既有的
+給沒有 Prometheus Alertmanager、只想「出事時往聊天室或工單系統丟一則」的部署方。與主機層（systemd 部署）既有的
 `REPORT_MARK_ALERT_WEBHOOK`（Slack，`deploy/systemd/report-mark-alert.sh`、`scripts/incident_handler.sh`、
 上傳 worker 的感染通知）**並存、互不取代**：兩個變數各管各的，設了哪個就送哪個。
 

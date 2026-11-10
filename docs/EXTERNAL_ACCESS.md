@@ -1,5 +1,7 @@
 # 對外存取：Cloudflare Tunnel + nginx
 
+本文件描述廷豐 profile 的主機部署（兩台主機的對外入口）；框架的容器部署見 `docs/CONTAINER_DEPLOYMENT.md`，檔案的歸屬見 `deploy/OWNERSHIP.toml`。
+
 > 本文是測試環境（辦公室主機，`research.kashionzarchive.com`）的對外入口。正式環境（EC2，`research.tingfong.com`）不走 Tunnel，而是 Cloudflare 橘雲 A record 直連 EC2 上 apt 安裝的 nginx，見 `deploy/aws/README.md`「對外入口」與 README「非辦公室主機」一節。
 
 讓辦公室外的同事從外網連入廷豐研報。登入由 App 內建登入頁處理（個別帳號），邊緣 nginx 只做反向代理與限流。

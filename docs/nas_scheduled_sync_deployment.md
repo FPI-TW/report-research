@@ -1,5 +1,7 @@
 # NAS 定時增量同步匯入 — 部署指南
 
+本文件描述廷豐 profile 的主機部署（辦公室主機的 NAS 定時同步）；框架的容器部署見 `docs/CONTAINER_DEPLOYMENT.md`，檔案的歸屬見 `deploy/OWNERSHIP.toml`。
+
 辦公室主機（測試環境）專用：`report-mark-sync.timer` 每 3 小時整點 → oneshot service → `scripts/sync_new_reports.sh`。來源段以 drvfs 唯讀掛載 NAS 上的研報資料夾 `\\192.168.1.100\投資研究處\02.研究資源\研報自動匯入`（沿用 Windows Credential Manager 既有「Jacky Yeh」快取憑證，**免明文密碼**）→ rsync 擷取 delta；之後的匯入與 LLM 各段見 `docs/WORKFLOW.md`「生產同步鏈」。
 
 正式環境（EC2）碰不到 NAS，不做本文的掛載與 sudoers：它以 `SYNC_SOURCE=r2-inbox` 從 R2 拉辦公室主機推上去的檔，unit 用 `deploy/install_units.sh` 安裝，見 `deploy/aws/README.md`「應用層」。

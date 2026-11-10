@@ -37,8 +37,11 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 configure_logging()
 
+from app import (
+    FRAMEWORK_NAME,  # noqa: E402
+    request_context,  # noqa: E402
+)
 from app import profile as app_profile  # noqa: E402
-from app import request_context  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services import accounts, alert_webhook, db, llm_http, llm_models, usage_events  # noqa: E402
 from web import (
@@ -191,6 +194,7 @@ async def lifespan(app: FastAPI):
     # PROFILE_DIR 不存在）就在這裡拋 ProfileError、拒絕啟動，不等到第一個問答或第一次載入品牌才炸。
     loaded = app_profile.get_profile()
     logger.warning("profile：%s（%s）", loaded.institution.product_name, loaded.root)
+    llm_models.set_identity_url(loaded.institution.website)  # 送給 LLM 供應商的自報身分（LLM 呼叫層不讀 profile）
     # 併發上限與背景 run 登錄表都是 per-process 狀態，多 worker 會讓上限翻倍、模型
     # 記憶體翻倍、研報重連隨機 404。偵測得到就拒絕啟動（fail-closed），偵測不到就
     # 放行——判準與已知缺口見 web/concurrency.py。
@@ -260,7 +264,7 @@ async def lifespan(app: FastAPI):
             logger.exception("llm_http.aclose 失敗")
 
 
-app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
+app = FastAPI(title=FRAMEWORK_NAME, lifespan=lifespan)
 # 統一錯誤格式 {"detail", "code", "request_id"}（web/errors.py）。
 errors.install(app)
 

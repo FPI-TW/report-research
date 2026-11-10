@@ -199,7 +199,7 @@ def sha256_of(canonical: str) -> str:
 def build_reports_sql(by_hashes: bool = False) -> str:
     """工作集：近 N 天（或指定 file_hash 清單）、有全文的研究報告。
 
-    母體＝類型開了摘錄的文件（`doc_types.doc_type_enabled_sql`；廷豐 profile 下即研報）。
+    母體＝類型開了摘錄的文件（`doc_types.doc_type_enabled_sql`；預設 profile 下即研報）。
     report_date 為 NULL 者天然被 >= 比較排除（NULL 比較結果非 true）。
 
     by_hashes=True：改以 file_hash 清單選取，**且不套 report_date 條件**。

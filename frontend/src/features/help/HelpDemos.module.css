@@ -186,12 +186,12 @@
 /* 跳到原文：引文淡金高亮（進場先深後淡）＋左側頁緣同號金點 */
 .rHit {
   position: absolute; left: 17px; top: 59px; width: 182px; height: 11px; border-radius: 2px;
-  background: rgba(174, 116, 21, 0.3); box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3); animation-name: rHit;
+  background: color-mix(in srgb, var(--tf-gold-strong) 30%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf-gold-strong) 30%, transparent); animation-name: rHit;
 }
 @keyframes rHit {
   0%, 26% { opacity: 0; }
-  28% { opacity: 1; background: rgba(174, 116, 21, 0.6); box-shadow: 0 0 0 5px rgba(174, 116, 21, 0.25); }
-  42%, 100% { opacity: 1; background: rgba(174, 116, 21, 0.3); box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3); }
+  28% { opacity: 1; background: color-mix(in srgb, var(--tf-gold-strong) 60%, transparent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--tf-gold-strong) 25%, transparent); }
+  42%, 100% { opacity: 1; background: color-mix(in srgb, var(--tf-gold-strong) 30%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf-gold-strong) 30%, transparent); }
 }
 .rDot {
   position: absolute; left: 1px; top: 57px; width: 14px; height: 14px; border-radius: 999px;

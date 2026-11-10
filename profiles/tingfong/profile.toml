@@ -6,6 +6,8 @@
 name = "廷豐"
 product_name = "廷豐智能研報"
 short_name = "廷豐研報"
+# 對外網址：只用在送給 LLM 供應商的自報身分（OpenCode Go 的 User-Agent；tests/fixtures/llm_wire_golden.json 逐字釘住）。
+website = "https://research.tingfong.com"
 
 # 英文介面用的名稱（name_en、product_name_en、short_name_en）沒給：英文介面沿用上面的中文原名。
 
@@ -13,7 +15,33 @@ short_name = "廷豐研報"
 logo_light = "logo.png"
 logo_dark = "logo.png"
 favicon = "favicon.svg"
-# 強調色不覆寫：frontend/src/styles/tokens.css 的預設鎏金即廷豐的色票。
+
+# 強調色：廷豐的鎏金（框架預設是中性的石板藍，見 frontend/src/styles/tokens.css）。鍵見 app/profile.py 的
+# ACCENT_TOKENS，對到哪些 CSS 變數見 frontend/src/lib/branding.ts 的 ACCENT_CSS_VARS（登入頁另見
+# web/routers/auth_pages.py 的 LOGIN_ACCENT_VARS）。值是框架去品牌之前 tokens.css 與 login.html 的原值，
+# tests/test_brand_accent.py 逐變數比對：改了廷豐畫面就會變。
+[branding.colors.light]
+accent_text = "#8a5a0f"
+accent_strong = "#ae7415"
+accent_hover = "#7a4f0c"
+accent_tint = "#f8f1e0"
+accent_line = "#ead9ae"
+accent_panel = "#fbf7ec"
+on_accent = "#ffffff"
+accent_button = "#946110"
+# 管理後台的線色與選取底色比研報平台淺一階（主控台改版時的定稿值）。
+console_accent_line = "#e6d3a3"
+console_accent_panel = "#fbf6ea"
+
+[branding.colors.dark]
+accent_text = "#e2b968"
+accent_strong = "#d4a64a"
+accent_hover = "#edc97f"
+accent_tint = "rgba(212, 166, 74, 0.14)"
+accent_line = "rgba(212, 166, 74, 0.4)"
+accent_panel = "rgba(212, 166, 74, 0.07)"
+on_accent = "#17130a"
+accent_button = "#d4a64a"
 
 [prompt]
 # 注入問答、路由、規劃、評估各段 prompt 的稱謂。改了它，系統提示就與評測基準線不同

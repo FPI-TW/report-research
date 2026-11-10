@@ -40,7 +40,7 @@ HEARTBEAT_PATH = Path(__file__).resolve().parents[2] / "data" / ".last_successfu
 # 08-18 的真實中斷，**應該被報出來**，不是要被門檻容忍掉。
 DEFAULT_PIPELINE_HOURS = 9
 
-# 語料閘：與批次實際處理的母體同一組條件（有全文、類型開了摘要；廷豐 profile 下即研報）。用全表
+# 語料閘：與批次實際處理的母體同一組條件（有全文、類型開了摘要；預設 profile 下即研報）。用全表
 # `max(created_at)` 會被行政/活動檔拉新，於是「連續幾天只進非研報」會讓抑制失效、
 # 三個資產一起假紅。類型片段在呼叫時依 profile 渲染（app/services/doc_types.py），所以是函式。
 def _eligible() -> str:

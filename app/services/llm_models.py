@@ -31,7 +31,8 @@
 | `anthropic` | Anthropic 原生 Messages API（`x-api-key`＋`anthropic-version`） | `ANTHROPIC_MODELS` 宣告的 |
 | `openai_compatible` | 自架的 OpenAI 相容端點（vLLM 等） | `OPENAI_COMPATIBLE_MODELS` 宣告的 |
 
-廷豐的兩條路徑（`openai`、`opencode_go`）白名單、預設表、judge 系譜一律相同，兩個環境的產出與量尺因此可以互相代表。
+內建的兩條路徑（`openai`、`opencode_go`）白名單、預設表、judge 系譜一律相同，同一個部署的兩個環境
+各走一條時，產出與量尺因此可以互相代表。
 後三者的端點、金鑰與模型名都是部署層設定（環境變數，見 `ENDPOINT_ENV`、`DECLARED_MODELS_ENV`），不進 profile。
 
 ## 白名單＝內建＋設定宣告（`allowed_models`）
@@ -235,6 +236,22 @@ def _log_once(level: int, key: tuple[str, ...], msg: str, *args: object) -> None
         return
     _LOGGED.add(key)
     logger.log(level, msg, *args)
+
+
+# 送給供應商的自報身分網址（profile 的 `[institution].website`；OpenCode Go 的 User-Agent 帶它，
+# 見 `llm_http.go_user_agent`）。
+# 本模組與 llm_http 都是葉模組、不讀 profile：由載入 profile 的入口設定——web 的 lifespan 與 LLM 批次／評測入口必經的
+# `scripts/_llm_env.load_llm_env()`（`tests/test_llm_identity.py` 釘住兩處）。空字串＝不帶網址。
+_identity_url = ""
+
+
+def set_identity_url(url: str) -> None:
+    global _identity_url
+    _identity_url = url
+
+
+def identity_url() -> str:
+    return _identity_url
 
 
 def provider(env: Mapping[str, str] | None = None) -> str:

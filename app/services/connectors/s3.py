@@ -1,6 +1,6 @@
 """S3 相容 bucket 連接器：把 bucket 某個 prefix 底下的新檔拉到本機落地資料夾。
 
-`pull()` 是 `scripts/r2_inbox.py pull` 一般化出來的核心（廷豐的 R2 inbox 照舊用它、行為不變）：
+`pull()` 是 `scripts/r2_inbox.py pull` 一般化出來的核心（主機層的 R2 inbox 照舊用它、行為不變）：
 「是不是新檔」沿用 rsync `--size-only` 的判準——落地資料夾沒有、或大小不同才拉；先寫 `.<名>.part`
 再改名，中途被殺不會留下以正式檔名存在的半個檔；物件 metadata 的 `mtime` 有給就還原（入庫靠 mtime
 補 report_date）。所以落地資料夾要保留（入庫後 `research_report.file_path` 也指向它），bucket 端的物件

@@ -1,4 +1,4 @@
-# 廷豐研報 運作流程編排
+# 券商研報平台 運作流程編排
 # 流程：deps/db/schema → sample → extract → worklist → [LLM 標註] → ingest → serve
 # 詳見 docs/WORKFLOW.md
 

@@ -262,6 +262,20 @@ def _reset_llm_batch_state():
 
 
 @pytest.fixture(autouse=True)
+def _reset_llm_identity():
+    """`llm_models` 的自報身分網址是模組層狀態（由 lifespan 與 load_llm_env 設定）：每題前後清空，不留給下一題。"""
+
+    def _clear() -> None:
+        mod = sys.modules.get("app.services.llm_models")
+        if mod is not None:
+            mod.set_identity_url("")
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_profile_cache():
     """`app.profile.get_profile()` 的快取每題前後各清一次：換 profile 的測試不能把別人的品牌留給下一題。"""
 

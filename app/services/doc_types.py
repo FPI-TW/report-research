@@ -38,7 +38,7 @@ profile 的類型清單，而且 import 就讀 profile）：一律寫成函式�
 ## 入庫閘
 
 `ingest_gate(類型, market)`：類型至少啟用一個功能才入庫；啟用 `tagging_markets` 時另要求 market 非空。
-廷豐 profile 下等同改動前的 `is_research and market`（非研究檔全關→不入庫、記 `not_research`）。
+預設 profile 下等同改動前的 `is_research and market`（非研究檔全關→不入庫、記 `not_research`）。
 
 ## 與 `is_research` 的關係
 

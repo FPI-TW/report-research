@@ -81,8 +81,11 @@ export const NEUTRAL_BRANDING: Branding = brandingWithNames({}, {}, {
 })
 
 /**
- * profile 的強調色鍵 → 要覆寫的 CSS 變數（`styles/tokens.css` 的鎏金系列與管理後台的 `--ac-gold*`）。
- * 鍵與後端 `app/profile.py` 的 `ACCENT_TOKENS` 逐一相同（`tests/test_profile.py` 對帳）。
+ * profile 的強調色鍵 → 要覆寫的 CSS 變數（`styles/tokens.css` 的強調色 `--tf-gold-*` 與管理後台的 `--ac-gold*`；
+ * 預設是框架的中性色票）。鍵與後端 `app/profile.py` 的 `ACCENT_TOKENS` 逐一相同（`tests/test_profile.py` 對帳）。
+ *
+ * `console_*` 只覆寫管理後台的同一個變數：主控台的線色與選取底色可以和研報平台不同階（預設 profile 的色票就是），沒給時沿用
+ * `accent_line`／`accent_panel`。宣告依本表的順序輸出，`console_*` 排在後面才蓋得過前面那兩個鍵寫的值。
  */
 export const ACCENT_CSS_VARS: Record<string, readonly string[]> = {
   accent_text: ['--tf-gold-text', '--ac-goldt'],
@@ -93,6 +96,13 @@ export const ACCENT_CSS_VARS: Record<string, readonly string[]> = {
   accent_panel: ['--tf-gold-panel', '--ac-gsel'],
   on_accent: ['--tf-on-gold', '--ac-ongold'],
   accent_button: ['--ac-goldbtn'],
+  console_accent_line: ['--ac-gline'],
+  console_accent_panel: ['--ac-gsel'],
+}
+
+/** 只由亮色覆寫的變數：深色主題沿用亮色的值（Fluid 元件的強調色向來不隨管理後台的深色主題變）。 */
+export const LIGHT_ONLY_CSS_VARS: Record<string, readonly string[]> = {
+  accent_text: ['--tf-fluid-accent'],
 }
 
 // 後端已驗過色值；這裡再擋一次，因為它會被原樣寫進 <style>（多一道防線，不信任網路另一端）。
@@ -122,20 +132,23 @@ export function fromResponse(raw: z.infer<typeof brandingResponseSchema>): Brand
   })
 }
 
-function declarations(colors: Record<string, string>): string {
+function declarations(colors: Record<string, string>, scheme: 'light' | 'dark'): string {
   const out: string[] = []
-  for (const [key, value] of Object.entries(colors)) {
-    const vars = ACCENT_CSS_VARS[key]
-    if (!vars || !COLOR_RE.test(value)) continue
-    for (const v of vars) out.push(`${v}: ${value};`)
+  const tables = scheme === 'light' ? [ACCENT_CSS_VARS, LIGHT_ONLY_CSS_VARS] : [ACCENT_CSS_VARS]
+  for (const table of tables) {
+    for (const [key, vars] of Object.entries(table)) {
+      const value = colors[key]
+      if (typeof value !== 'string' || !COLOR_RE.test(value)) continue
+      for (const v of vars) out.push(`${v}: ${value};`)
+    }
   }
   return out.join(' ')
 }
 
 /** 強調色覆寫的樣式表文字。亮色同時寫 `:root`（主平台沒有 data-theme），暗色只在管理後台的 data-theme 下生效。 */
 export function accentStyleText(b: Pick<Branding, 'colorsLight' | 'colorsDark'>): string {
-  const light = declarations(b.colorsLight)
-  const dark = declarations(b.colorsDark)
+  const light = declarations(b.colorsLight, 'light')
+  const dark = declarations(b.colorsDark, 'dark')
   return [
     light && `:root, :root[data-theme='light'] { ${light} }`,
     dark && `:root[data-theme='dark'] { ${dark} }`,

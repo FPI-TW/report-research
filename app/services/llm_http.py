@@ -79,7 +79,7 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
   `stop_reason` 對應到 `finish_reason`（`ANTHROPIC_STOP_REASONS`）；usage 由 input 與兩個快取欄補成 hit／miss
   （`_normalize_anthropic_usage`）；`billing_error`、credit balance 訊息歸 QUOTA，413 歸 BAD_REQUEST，529 照 5xx。
 
-廷豐的兩條路徑（openai、opencode_go）送出的 URL、header 與 body 與加入其他 provider 之前逐字相同（golden 測試）。
+既有的兩條路徑（openai、opencode_go）送出的 URL、header 與 body 與加入其他 provider 之前逐字相同（golden 測試）。
 - **judge 走非串流 JSON 模式**（`complete_json`）：judge 不需要串流。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），
   呼叫端再依自己的預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
 """
@@ -123,6 +123,7 @@ from app.services.llm_models import (  # noqa: F401
     config_problems,
     declared_deployments,
     endpoint_base,
+    identity_url,
     is_http_model,
     supports_reasoning_effort,
 )
@@ -134,8 +135,9 @@ DEFAULT_BASE_URL = DEFAULT_ENDPOINTS[PROVIDER_OPENAI]
 DEFAULT_GO_BASE_URL = DEFAULT_ENDPOINTS[PROVIDER_OPENCODE_GO]
 # Anthropic Messages API 的版本 header。2023-06-01 是現行唯一的穩定版本；換版本＝換請求與回應的形狀，要發 PR。
 ANTHROPIC_VERSION = "2023-06-01"
-# Go 要求呼叫端自報身分（不要用 SDK／HTTP 函式庫的預設 UA），版本只是辨識用。
-GO_USER_AGENT = "report-mark/1 (+https://research.tingfong.com)"
+# Go 要求呼叫端自報身分（不要用 SDK／HTTP 函式庫的預設 UA），版本只是辨識用；括號裡的網址是 profile 的
+# `[institution].website`（沒給就只送產品代號），由載入 profile 的入口設定在 `llm_models.set_identity_url()`。
+GO_USER_AGENT_BASE = "report-mark/1"
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
 AUTH = "auth"                      # 缺金鑰、401、403
@@ -960,12 +962,18 @@ def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
     return httpx.Timeout(connect=connect, read=read, write=write, pool=_POOL_TIMEOUT)
 
 
+def go_user_agent() -> str:
+    """送給 Go 的 User-Agent：`report-mark/1 (+<對外網址>)`，沒設定網址時只有前半段。"""
+    url = identity_url()
+    return f"{GO_USER_AGENT_BASE} (+{url})" if url else GO_USER_AGENT_BASE
+
+
 def _provider_headers(user_id: str | None) -> dict:
     """Go 要求的自報 User-Agent 與每段對話穩定的 `x-opencode-session`。呼叫端傳的 `user_id` 本來就是
     每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；其他 provider 不送。"""
     if _provider() != PROVIDER_OPENCODE_GO:
         return {}
-    return {"User-Agent": GO_USER_AGENT, "x-opencode-session": _session_id(user_id) or "report-mark"}
+    return {"User-Agent": go_user_agent(), "x-opencode-session": _session_id(user_id) or "report-mark"}
 
 
 def _auth_headers(key: str) -> dict:

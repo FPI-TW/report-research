@@ -1,11 +1,11 @@
-# 廷豐智能研報（通用框架）的單機部署：一份應用映像、多個角色＋pgvector。說明見 docs/CONTAINER_DEPLOYMENT.md。
+# 券商研報平台的單機部署：一份應用映像、多個角色＋pgvector。說明見 docs/CONTAINER_DEPLOYMENT.md。
 #
 #   cp .env.example .env               # 填必填值（不要把 .env 進版控）
 #   docker compose run --rm migrate    # 首次安裝：空庫建到 head；升級時先備份再升級
 #   docker compose up -d               # web／worker／scheduler／postgres
 #   docker compose --profile clamav up -d   # 要開上傳（UPLOAD_ENABLED=1）時一併起 clamd
 #
-# 與 deploy/docker-compose.yml（廷豐測試環境的對外邊緣：nginx＋cloudflared）無關，刻意分開：那份是主機層，
+# 與 deploy/docker-compose.yml（主機層的對外邊緣：nginx＋cloudflared，歸屬見 deploy/OWNERSHIP.toml）無關，刻意分開：那份是主機層，
 # 這份是框架本體。對外 TLS／反向代理由部署方自備，見文件「對外入口」。
 #
 # 共用 data volume 是硬性前提：LLM 批次鎖、上傳 worker 的整輪鎖都是 data/ 底下的 flock，

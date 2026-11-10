@@ -282,7 +282,9 @@ class TingfongDefaultTests(unittest.TestCase):
     def test_branding_and_markets_unchanged(self):
         body = _anon().get("/api/branding").json()
         self.assertEqual(body["product_name"], "廷豐智能研報")
-        self.assertEqual(body["colors"], {"light": {}, "dark": {}})
+        # 廷豐明確宣告鎏金（框架預設是中性色票）；逐變數的比對在 tests/test_brand_accent.py。
+        self.assertEqual((body["colors"]["light"]["accent_strong"], body["colors"]["dark"]["accent_strong"]),
+                         ("#ae7415", "#d4a64a"))
         self.assertEqual(_anon().get(body["logo_light_url"]).content,
                          (P.REPO_ROOT / "profiles" / "tingfong" / "assets" / "logo.png").read_bytes())
         r = _login().get("/api/markets")

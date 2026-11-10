@@ -58,6 +58,21 @@ describe('強調色', () => {
     expect(css).toBe('')
   })
 
+  it('console_* 只蓋管理後台的變數，而且不論 profile 的鍵序都排在 accent_line／accent_panel 之後', () => {
+    const css = accentStyleText({
+      colorsLight: { console_accent_line: '#222222', console_accent_panel: '#444444', accent_panel: '#333333', accent_line: '#111111' },
+      colorsDark: {},
+    })
+    expect(css).toBe(":root, :root[data-theme='light'] { --tf-gold-line: #111111; --ac-gline: #111111; "
+      + '--tf-gold-panel: #333333; --ac-gsel: #333333; --ac-gline: #222222; --ac-gsel: #444444; }')
+  })
+
+  it('Fluid 的強調色只由亮色的 accent_text 覆寫，深色主題不動它', () => {
+    const css = accentStyleText({ colorsLight: { accent_text: '#123456' }, colorsDark: { accent_text: '#abcdef' } })
+    expect(css).toBe(":root, :root[data-theme='light'] { --tf-gold-text: #123456; --ac-goldt: #123456; "
+      + "--tf-fluid-accent: #123456; }\n:root[data-theme='dark'] { --tf-gold-text: #abcdef; --ac-goldt: #abcdef; }")
+  })
+
   it('每個鍵都有對應的 CSS 變數', () => {
     for (const vars of Object.values(ACCENT_CSS_VARS)) expect(vars.length).toBeGreaterThan(0)
   })

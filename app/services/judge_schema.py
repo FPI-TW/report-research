@@ -29,7 +29,7 @@
 
 **宣告模型的系譜**：設定宣告的模型（`llm_models.judge_lineage` 回 `declared:<模型>`）當生產 judge 時，evaluation 另記
 `judge_lineage`，讀分數比的是 judge 識別（`JUDGE_IDENTITY_SQL`／`judge_identity_of`），不只是名稱——宣告的名稱可能
-撞到上面那個歷史名稱。內建模型不記這個鍵，識別就是模型名，廷豐既有的判定逐列不變。
+撞到上面那個歷史名稱。內建模型不記這個鍵，識別就是模型名，既有部署的判定逐列不變。
 
 **刻意是葉模組**（不 import 任何 app.*）：`app/services/faithfulness.py`、`eval/`、
 `web/routers/` 與 `scripts/` 都要用它，放在任何一邊都會把另一邊的相依拖進來。
@@ -62,7 +62,7 @@ DECLARED_LINEAGE_PREFIX = "declared:"
 # SQL：一列 qa_log 的 evaluation 的 **judge 識別**——宣告模型量的列是它的系譜（`declared:<模型>`），其餘是
 # JUDGE_MODEL_SQL。理由：宣告的名稱可能撞到歷史名稱（例如以 Anthropic 宣告 `claude-haiku-4-5`，而缺 judge_model 的
 # 舊列也視為 `claude-haiku-4-5`），只比名稱會把 CLI 時代的舊尺與新的宣告模型混成同一把。內建模型與舊列的識別就是
-# 模型名，所以廷豐的結果與加入識別之前逐列相同。與 judge_identity_of 逐條等價。
+# 模型名，所以既有部署的結果與加入識別之前逐列相同。與 judge_identity_of 逐條等價。
 JUDGE_IDENTITY_SQL = (
     f"CASE WHEN starts_with(evaluation->>'judge_lineage', '{DECLARED_LINEAGE_PREFIX}') "
     f"THEN evaluation->>'judge_lineage' ELSE {JUDGE_MODEL_SQL} END"

@@ -74,8 +74,10 @@ class TingfongProfileTests(unittest.TestCase):
         # 全部標準市場啟用；顯示名稱就是標準名稱（零回歸）。
         self.assertEqual(set(prof.markets.enabled), set(MARKETS))
         self.assertEqual(dict(prof.markets.display_names), MARKET_DISPLAY)
-        # 強調色不覆寫（tokens.css 的鎏金即廷豐色票）。
-        self.assertEqual((dict(prof.branding.colors_light), dict(prof.branding.colors_dark)), ({}, {}))
+        # 強調色明確宣告鎏金（框架預設是中性色票）；廷豐畫面逐變數不變由 tests/test_brand_accent.py 比對。
+        self.assertEqual((prof.branding.colors_light["accent_strong"], prof.branding.colors_dark["accent_strong"]),
+                         ("#ae7415", "#d4a64a"))
+        self.assertEqual(prof.institution.website, "https://research.tingfong.com")
         self.assertEqual(sorted(prof.branding.assets()), ["favicon.svg", "logo.png"])
 
     def test_get_profile_caches_until_reset(self):
@@ -224,6 +226,18 @@ class ValidationTests(_TmpCase):
         for value in ("#a1b2c3", "#A1B2C3FF", "rgb(1, 2, 3)", "rgba(212, 166, 74, 0.4)", "rgba(0,0,0,1)"):
             with self.subTest(value=value):
                 self.load(MINIMAL + f"[branding.colors.dark]\naccent_text = '{value}'\n")
+
+    def test_website_is_optional_and_strict(self):
+        """`[institution].website` 原樣進 HTTP header：只收 https 網址，不收空白、括號、引號與其他 scheme。"""
+        self.assertEqual(self.load(MINIMAL).institution.website, "")
+        ok = "[institution]\nname = \"a\"\nproduct_name = \"x\"\nwebsite = \"{}\"\n"
+        for value in ("https://research.example.com", "https://a.example:8443/path/x"):
+            with self.subTest(value=value):
+                self.assertEqual(self.load(ok.format(value)).institution.website, value)
+        for value in ("http://a.example", "https://a.example/x y", "https://a.example/(x)", "javascript:1",
+                      "https://a.example/\\\"x"):
+            with self.subTest(value=value):
+                self.assertRejected(ok.format(value), "[institution].website")
 
     def test_totp_issuer_rejects_colon(self):
         self.assertRejected(MINIMAL + "[security]\ntotp_issuer = \"A:B\"\n", "[security].totp_issuer", "冒號")

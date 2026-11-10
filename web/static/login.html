@@ -11,10 +11,13 @@
 /* region:shell (lane login-shell)：:root、版面、登入卡、表單、功能磚共用樣式、響應式 */
   /* 登入頁在 auth 牆外，不可引用 /static 下受保護資產（tokens.css）；樣式全部 inline、字體走系統無襯線。
      --tf-* 四個是 frontend/src/styles/tokens.css 的手抄副本（tests/test_login_page.py 比對），改主題時兩邊都要動；
-     其餘色值是登入頁專用的設計定稿值。 */
+     其餘色值是登入頁專用的設計定稿值。
+     強調色（--tf-gold-text、--gold-hover、--gold-ink、--gold-tint）這裡是框架的中性預設，機構色由伺服器在
+     這段樣式表之後注入 profile 的 [branding.colors.light]（web/routers/auth_pages.py 的 LOGIN_ACCENT_VARS）；
+     半透明的強調色一律以 color-mix 從這四個變數算出來，不寫死色值。 */
   :root {
-    --tf-canvas: #f2f2f4; --tf-gold-text: #8a5a0f; --tf-surface: #ffffff; --tf-border: #e3e3e6;
-    --gold-hover: #7a4f0c; --gold-ink: #ae7415;
+    --tf-canvas: #f2f2f4; --tf-gold-text: #2f5577; --tf-surface: #ffffff; --tf-border: #e3e3e6;
+    --gold-hover: #23435f; --gold-ink: #3d6890; --gold-tint: #e9eff5;
     --page-bg: #efeeea; --tile-bg: #f8f7f4;
     --text-1: #1d1d1f; --text-2: #48484d; --text-desc: #5d5d58; --text-weak: #6b6b66;
     --rule: #efeee9; --hairline: rgba(0,0,0,.08);
@@ -35,7 +38,7 @@
     display: grid; gap: 16px;
     grid-template-columns: minmax(0,1fr) 440px minmax(0,1fr);
     grid-template-rows: repeat(3, minmax(0,1fr));
-    background: radial-gradient(520px 420px at 50% 50%, rgba(174,116,21,.10), transparent 70%);
+    background: radial-gradient(520px 420px at 50% 50%, color-mix(in srgb, var(--gold-ink) 10%, transparent), transparent 70%);
   }
   .intro { grid-column: 1; grid-row: 1 / span 3; }
   .login-card { grid-column: 2; grid-row: 1 / span 3; }
@@ -120,7 +123,7 @@
     background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: 12px; outline: none;
     transition: border-color .18s, box-shadow .18s, background-color .18s;
   }
-  .field input:focus { border-color: var(--tf-gold-text); box-shadow: 0 0 0 4px rgba(138,90,15,.12); }
+  .field input:focus { border-color: var(--tf-gold-text); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tf-gold-text) 12%, transparent); }
   .field input:disabled { background: var(--tf-canvas); color: var(--text-weak); }
   .field input#code { font-size: 18px; letter-spacing: .3em; text-align: center; }
   .form-error {
@@ -134,7 +137,7 @@
     transition: background-color .18s;
   }
   .submit:hover { background: var(--gold-hover); }
-  .submit:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(138,90,15,.22); }
+  .submit:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--tf-gold-text) 22%, transparent); }
   .submit:disabled { cursor: progress; background: var(--gold-hover); opacity: .85; }
   .form-alt { margin: -4px 0 0; text-align: center; font-size: 13px; }
   .form-alt a { color: var(--tf-gold-text); }
@@ -149,7 +152,7 @@
     background: var(--tf-gold-text); border-radius: 999px; transition: background-color .18s;
   }
   .sso-button:hover { background: var(--gold-hover); }
-  .sso-button:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(138,90,15,.22); }
+  .sso-button:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--tf-gold-text) 22%, transparent); }
   .sso-divider { display: none; align-items: center; gap: 12px; font-size: 12px; color: var(--text-desc); }
   .sso-divider::before, .sso-divider::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
   [data-sso="on"] .sso-divider { display: flex; }
@@ -186,7 +189,7 @@
       padding: 16px;
       grid-template-columns: minmax(0,1fr);
       grid-template-rows: none;
-      background: radial-gradient(520px 420px at 50% 320px, rgba(174,116,21,.10), transparent 70%);
+      background: radial-gradient(520px 420px at 50% 320px, color-mix(in srgb, var(--gold-ink) 10%, transparent), transparent 70%);
     }
     .login-card, .intro, .features { grid-column: 1; grid-row: auto; }
     .login-card { padding: 36px 28px 24px; }
@@ -210,7 +213,7 @@
 @keyframes tfPop{0%,34%{opacity:0;transform:scale(.6)}40%{opacity:1;transform:scale(1.08)}44%,86%{opacity:1;transform:scale(1)}96%,100%{opacity:0;transform:scale(1)}}
 @keyframes tfMark{0%,12%{transform:scaleX(0)}32%,86%{transform:scaleX(1);opacity:1}96%,100%{transform:scaleX(1);opacity:0}}
 @keyframes tfDrop{0%{opacity:0;transform:translateY(-10px)}12%,86%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(0)}}
-@keyframes tfPulse{0%{box-shadow:0 0 0 0 rgba(174,116,21,.45)}70%,100%{box-shadow:0 0 0 10px rgba(174,116,21,0)}}
+@keyframes tfPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--gold-ink) 45%, transparent)}70%,100%{box-shadow:0 0 0 10px color-mix(in srgb, var(--gold-ink) 0%, transparent)}}
 @keyframes tfRow{0%{opacity:0;transform:translateY(8px)}10%,86%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(0)}}
 @keyframes tfTravel{0%{transform:translateX(0);opacity:0}2%{opacity:1}10%{transform:translateX(38px);opacity:1}12%,100%{transform:translateX(38px);opacity:0}}
 /* 減少動態：停用所有動畫與轉場。各 lane 的元素「基本樣式＝最終狀態」，動畫只負責從隱藏長出來。 */
@@ -237,7 +240,7 @@
   }
   .anim-qa .qa-caret, .anim-search .srch-caret {
     display: inline-block; width: 2px; height: 1.1em; margin-left: 3px; vertical-align: -.18em;
-    background: #8a5a0f; animation: tfBlink 1.1s steps(1) infinite;
+    background: var(--tf-gold-text); animation: tfBlink 1.1s steps(1) infinite;
   }
   .anim-qa .qa-caret { display: none; }
   .anim-qa .qa.is-typing .qa-caret { display: inline-block; }
@@ -245,7 +248,7 @@
     flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
     padding: 5px 10px; border-radius: 999px; white-space: nowrap;
   }
-  .anim-qa .qa-send { color: #8a5a0f; background: #f8f1e0; transition: background-color .2s, color .2s; }
+  .anim-qa .qa-send { color: var(--tf-gold-text); background: var(--gold-tint); transition: background-color .2s, color .2s; }
   .anim-qa .qa.is-typing .qa-send { color: #6b6b66; background: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
   .anim-search .srch-enter { color: #6b6b66; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
 
@@ -256,17 +259,17 @@
     position: absolute; left: -21px; top: 21px; bottom: -12px; width: 2px; border-radius: 1px;
     background: #e3e1da; overflow: hidden;
   }
-  .anim-qa .qa-line-fill { display: block; width: 100%; height: 100%; background: #ae7415; transform-origin: top; }
+  .anim-qa .qa-line-fill { display: block; width: 100%; height: 100%; background: var(--gold-ink); transform-origin: top; }
   .anim-qa .qa-node {
     position: absolute; left: -28px; top: 2px; width: 16px; height: 16px; border-radius: 999px;
     display: flex; align-items: center; justify-content: center;
-    background: #ae7415; border: 2px solid #ae7415; color: #ffffff;
+    background: var(--gold-ink); border: 2px solid var(--gold-ink); color: #ffffff;
     transition: background-color .25s, border-color .25s;
   }
   .anim-qa .qa-node svg { display: block; width: 10px; height: 10px; }
-  .anim-qa .qa-node-dot { display: none; width: 5px; height: 5px; border-radius: 999px; background: #ae7415; }
+  .anim-qa .qa-node-dot { display: none; width: 5px; height: 5px; border-radius: 999px; background: var(--gold-ink); }
   .anim-qa .qa-row.is-active .qa-node {
-    background: #ffffff; border: 2px solid #ae7415; animation: tfPulse 1.4s ease-out infinite;
+    background: #ffffff; border: 2px solid var(--gold-ink); animation: tfPulse 1.4s ease-out infinite;
   }
   .anim-qa .qa-row.is-pending .qa-node { background: #ffffff; border: 1.5px solid #d6d4cd; }
   .anim-qa .qa-row.is-active .qa-node svg, .anim-qa .qa-row.is-pending .qa-node svg { display: none; }
@@ -278,7 +281,7 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px;
     letter-spacing: .06em; color: #6b6b66; white-space: nowrap;
   }
-  .anim-qa .qa-status-active { display: none; color: #8a5a0f; }
+  .anim-qa .qa-status-active { display: none; color: var(--tf-gold-text); }
   .anim-qa .qa-row.is-active .qa-status-active { display: inline; }
   .anim-qa .qa-row.is-active .qa-status-done, .anim-qa .qa-row.is-pending .qa-status-done { display: none; }
   .anim-qa .qa-body-intent { min-height: 24px; }
@@ -310,7 +313,7 @@
     background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
     transition: box-shadow .25s, transform .25s;
   }
-  .anim-qa .qa-src-chip.is-lit { box-shadow: inset 0 0 0 1.5px #ae7415; transform: translateY(-2px); }
+  .anim-qa .qa-src-chip.is-lit { box-shadow: inset 0 0 0 1.5px var(--gold-ink); transform: translateY(-2px); }
   .anim-qa .qa-src-code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
     letter-spacing: .06em; color: #5d5d58;
@@ -318,9 +321,9 @@
   .anim-qa .qa-cite {
     flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
     font-weight: 700; line-height: 1.5; padding: 0 6px; border-radius: 999px;
-    background: #f8f1e0; color: #8a5a0f; transition: background-color .25s, color .25s;
+    background: var(--gold-tint); color: var(--tf-gold-text); transition: background-color .25s, color .25s;
   }
-  .anim-qa .qa-cite.is-lit { background: #8a5a0f; color: #ffffff; }
+  .anim-qa .qa-cite.is-lit { background: var(--tf-gold-text); color: #ffffff; }
   .anim-qa .qa-read { display: flex; flex-direction: column; gap: 7px; padding: 3px 0; }
   .anim-qa .qa-read-mark { position: relative; display: block; height: 4px; width: 94%; }
   .anim-qa .qa-read-hl {
@@ -345,7 +348,7 @@
     height: 18px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5d5d58;
     animation: tfFadeUp .3s ease-out both;
   }
-  .anim-qa .qa-grounded-in svg { display: block; flex: none; width: 14px; height: 14px; color: #ae7415; }
+  .anim-qa .qa-grounded-in svg { display: block; flex: none; width: 14px; height: 14px; color: var(--gold-ink); }
   .anim-qa .qa .qa-off { display: none; }
 
   /* 02 檢索 */
@@ -365,7 +368,7 @@
   .anim-search .srch-rel {
     flex: none; position: relative; width: 48px; height: 4px; border-radius: 2px; background: #e7e5df; overflow: hidden;
   }
-  .anim-search .srch-rel-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: #ae7415; }
+  .anim-search .srch-rel-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--gold-ink); }
   .anim-search .srch .srch-off { display: none; }
   /* <1280：功能磚移到下方、檢索磚寬可達 1000px；搜尋列可以全寬，結果列不跟著拉長，
      上限參考 1440 設計稿的結果列寬（388px），靠左對齊。 */
@@ -401,7 +404,7 @@
 .anim-reading .rd-foot { display: flex; justify-content: flex-end; }
 .anim-reading .rd-chip {
   font-size: 11px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px;
-  background: #f8f1e0; color: #8a5a0f; white-space: nowrap;
+  background: var(--gold-tint); color: var(--tf-gold-text); white-space: nowrap;
   animation: tfPop 4.8s ease-out .1s infinite both;
 }
 
@@ -424,7 +427,7 @@
   animation: tfDrop 5s ease-out .65s infinite both;
 }
 .anim-radar .rdr-gold-core {
-  display: block; width: 12px; height: 12px; border-radius: 50%; background: #ae7415;
+  display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--gold-ink);
   animation: tfPulse 1.6s ease-out 1.2s infinite;
 }
 .anim-radar .rdr-note { font-size: 11.5px; color: #6b6b66; }
@@ -448,7 +451,7 @@
 }
 .anim-brief .br-pulse {
   position: absolute; left: 0; top: -2px; width: 6px; height: 6px; border-radius: 999px;
-  background: #ae7415; opacity: 0;
+  background: var(--gold-ink); opacity: 0;
   animation: tfTravel 6s ease-in-out .7s infinite both;
 }
 .anim-brief .br-pulse:nth-child(2) { animation-delay: 1.2s; }
@@ -460,19 +463,19 @@
 }
 .anim-brief .br-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .anim-brief .br-title { font-size: 11.5px; font-weight: 600; color: #1d1d1f; white-space: nowrap; }
-.anim-brief .br-date { font-size: 10.5px; color: #8a5a0f; }
+.anim-brief .br-date { font-size: 10.5px; color: var(--tf-gold-text); }
 .anim-brief .br-item {
   display: flex; align-items: center; gap: 7px;
   animation: tfRow 6s ease-out 1.3s infinite both;
 }
 .anim-brief .br-item:nth-child(3) { animation-delay: 1.8s; }
 .anim-brief .br-item:nth-child(4) { animation-delay: 2.3s; }
-.anim-brief .br-bullet { flex: none; width: 5px; height: 5px; border-radius: 999px; background: #ae7415; }
+.anim-brief .br-bullet { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--gold-ink); }
 .anim-brief .br-item-body { flex: 1; min-width: 0; }
 .anim-brief .br-item-line { display: block; height: 4px; border-radius: 2px; background: #dcdad3; }
 .anim-brief .br-chip {
   flex: none; font-size: 10px; font-weight: 700; line-height: 1.5; padding: 0 6px;
-  border-radius: 999px; background: #f8f1e0; color: #8a5a0f;
+  border-radius: 999px; background: var(--gold-tint); color: var(--tf-gold-text);
 }
 /* <1280：功能磚移到下方後磚會變寬，動畫內容不跟著拉滿，維持接近 1440 設計稿的比例
    （1440 實測：閱讀頁、雷達 170px，簡報 388px、其中今日簡報卡 210px），靠左對齊磚內文字。 */
@@ -486,6 +489,7 @@
 }
 /* end:anim-css */
 </style>
+{{brand_colors}}
 </head>
 <body>
 <div class="page">

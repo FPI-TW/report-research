@@ -40,7 +40,7 @@
 `tests/test_backfill_tiers.py` 以各批次的 prompt 常數對帳）。
 
 **誤差**：係數是 o200k 類 tokenizer 對中文約 0.6～1 token／字、英數約 3～4 字元／token 的經驗值，**沒有在本 repo
-對真實 tokenizer 量過**，未校正的估計請當成 ±30% 的量級看；表格、數字多的研報偏低估。對照組：廷豐語料的實測
+對真實 tokenizer 量過**，未校正的估計請當成 ±30% 的量級看；表格、數字多的研報偏低估。對照組：預設 profile 語料的實測
 平均（每份輸入）是標註約 6.1k、摘要 5.9k、摘錄 6.7k、標題 2.6k、訊號 9.9k token。報價前的建議做法是**先小跑一批**
 （例如 `backfill_tiers.py --tier 2 --max-reports 50`），再帶 `data/llm_usage.jsonl` 重估：`calibration_from_usage`
 以同一批研報的實測 ÷ 估計得出每項任務的輸入倍率，輸出 token 與每次秒數改用實測平均，誤差就由同一份語料決定。

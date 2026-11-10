@@ -229,7 +229,7 @@ def resolve_filters(q: str, today: date) -> OverviewFilters:
     """中文條件 → 結構化過濾（確定性對應；解析不到的維度留空）。"""
     s = norm_for_match(q)
     date_from, date_to = _resolve_dates(s, today)
-    # 數字串 = 個股代碼（長度依 profile 的 [instruments] 純數字格式；廷豐是 4 碼），但緊跟「年」的
+    # 數字串 = 個股代碼（長度依 profile 的 [instruments] 純數字格式；預設 profile 是 4 碼），但緊跟「年」的
     # （如「2025年」）是年份字面，非代碼。字母 ticker 不從問句抓：英文縮寫（AI、ETF）誤中面積太大。
     lengths = get_profile().instruments.digit_lengths()
     m = re.search(rf"(?<!\d)(\d{{{lengths[0]},{lengths[1]}}})(?!\d)(?!\s*年)", q) if lengths else None
@@ -312,7 +312,7 @@ async def aggregate_facets(
 ) -> CorpusOverview:
     """對 research.research_report 跑分面聚合（WHERE = 文件類型 + 解析到的條件）。"""
     where, params = _build_where(f)
-    # 母體＝類型啟用了總覽的文件（app/services/doc_types.py；廷豐 profile 下即研報），且沒被管理員隱藏
+    # 母體＝類型啟用了總覽的文件（app/services/doc_types.py；預設 profile 下即研報），且沒被管理員隱藏
     # （app/services/visibility.py）。
     where = " AND ".join([doc_type_enabled_sql("r", "overview"), *([where] if where else []), visible_report_sql("r")])
     base = f"FROM research.research_report r WHERE {where}"

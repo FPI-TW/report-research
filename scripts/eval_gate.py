@@ -191,7 +191,7 @@ def to_json(res: GateResult) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="上線驗收：RAGAS 結果對 profile 的凍結題集與政策門檻逐項判定",
                                      epilog="退出碼：0 通過／1 有未豁免的指標沒過／2 結果不完整或不可比")
-    parser.add_argument("--profile", required=True, help="profile 名稱或目錄（例如 tingfong）")
+    parser.add_argument("--profile", required=True, help="profile 名稱（profiles/ 底下的目錄名）或目錄路徑")
     parser.add_argument("--result", required=True, help="eval/run_ragas.py 寫出的結果 JSON")
     parser.add_argument("--json", action="store_true", help="輸出機器可讀 JSON")
     args = parser.parse_args(argv)

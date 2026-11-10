@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 
-# 同一個 PR 連推多次時，取消尚未跑完的舊次（節省私有 repo 的 Actions 額度）。
+# 同一個 PR 連推多次時，取消尚未跑完的舊次（節省 Actions 額度與排隊時間）。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

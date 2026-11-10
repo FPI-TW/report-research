@@ -10,6 +10,8 @@
  */
 
 export const BASE_URL_PLACEHOLDER = '{BASE_URL}'
+/** 產品名的佔位字：文件屬於框架、不寫任何一家機構的名字，交出去前代入 profile 的產品名。 */
+export const PRODUCT_NAME_PLACEHOLDER = '{PRODUCT_NAME}'
 
 export type Block =
   | { kind: 'heading'; level: number; text: string }
@@ -21,6 +23,11 @@ export type Block =
 /** 文件裡的站台網址佔位字換成實際網址（後台以目前站台的 origin 代入）。 */
 export function withBaseUrl(md: string, baseUrl: string): string {
   return md.split(BASE_URL_PLACEHOLDER).join(baseUrl)
+}
+
+/** 文件裡的產品名佔位字換成 profile 的產品名（後台以 `useBranding().productName` 代入）。 */
+export function withProductName(md: string, productName: string): string {
+  return md.split(PRODUCT_NAME_PLACEHOLDER).join(productName)
 }
 
 const FENCE = /^```(\S*)\s*$/

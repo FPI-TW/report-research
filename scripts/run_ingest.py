@@ -1,6 +1,7 @@
 """讀 extracted JSONL + Claude tag JSON → chunk → BGE-M3 嵌入 → upsert pgvector。
 
-過濾串：行政 → 掃描/空 → 無 tag → is_research=false → 已在 DB（除非 --force）。
+過濾串：行政 → 掃描/空 → 無 tag → 入庫閘（doc_types.ingest_gate：類型沒開任何功能或缺 market）
+→ 已在 DB（除非 --force）。
 用法：uv run python scripts/run_ingest.py [--force]
 """
 
@@ -17,9 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text as sql_text  # noqa: E402
 
+from app.profile import get_profile  # noqa: E402
 from app.services.boilerplate import strip_boilerplate  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
+from app.services.doc_types import ingest_gate  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
 from app.services.extract import file_sha256  # noqa: E402
 from app.services.object_storage import get_object_storage, original_object_key  # noqa: E402
@@ -90,12 +93,12 @@ async def main(force: bool) -> None:
                 stats["skip_scanned"] += 1
                 continue
 
-            tag = load_tag(TAGS_DIR, rec["file_hash"])
+            tag = load_tag(TAGS_DIR, rec["file_hash"], normalize_code=get_profile().instruments.normalize_code)
             if tag is None:
                 stats["skip_untagged"] += 1
                 print(f"  skip(untagged) {name[:45]}")
                 continue
-            if not tag.is_research or not tag.market:
+            if not ingest_gate(tag.doc_type, tag.market):
                 stats["skip_non_research"] += 1
                 continue
             if not force and await report_exists(session, rec["file_hash"]):
@@ -128,7 +131,7 @@ async def main(force: bool) -> None:
                 file_name=name,
                 file_path=rec["file_path"],
                 market=tag.market,
-                is_research=tag.is_research,
+                doc_type=tag.doc_type,
                 confidence=tag.confidence,
                 source_object_key=source_object_key,
                 stock_code=rec.get("stock_code"),

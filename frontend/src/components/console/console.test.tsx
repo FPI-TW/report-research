@@ -400,6 +400,21 @@ describe('useElevate', () => {
     expect(elevateCalls(fetchMock)).toHaveLength(1)
   })
 
+  it('SSO 登入的帳號：不問密碼，改導去公司帳號重新驗證', async () => {
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...window.location, pathname: '/admin/users', search: '', assign })
+    const action = vi.fn(async () => 'done')
+    const { fetchMock, qc } = mount({ auth_method: 'sso' }, action)
+    await waitFor(() => expect(qc.getQueryData(['me'])).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '執行' }))
+    const dlg = within(await screen.findByRole('dialog', { name: '重新驗證身分' }))
+    expect(dlg.queryByLabelText('密碼')).not.toBeInTheDocument()
+    fireEvent.click(dlg.getByRole('button', { name: '以公司帳號重新驗證' }))
+    expect(assign).toHaveBeenCalledWith('/login/oidc?intent=elevate&next=%2Fadmin%2Fusers')
+    expect(action).not.toHaveBeenCalled()
+    expect(elevateCalls(fetchMock)).toHaveLength(0)
+  })
+
   it('取消：動作不執行，呼叫端拿到可辨識的取消', async () => {
     const action = vi.fn(async () => 'done')
     const { outcomes, qc } = mount({ totp_enabled: false }, action)

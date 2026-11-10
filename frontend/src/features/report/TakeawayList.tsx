@@ -2,6 +2,7 @@ import { ArrowUpRight, Info } from 'lucide-react'
 import type { Takeaway } from '../../lib/readingSchemas'
 import type { JumpResult } from './pdf/PdfViewer'
 import styles from './TakeawayList.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   takeaways: Takeaway[]
@@ -15,7 +16,7 @@ interface Props {
   pendingOrdinal?: number | null
   /** 最近一次尋找的結果 */
   result?: (JumpResult & { ordinal: number }) | null
-  onJump?: (t: Takeaway) => void
+  onJump?: (item: Takeaway) => void
 }
 
 /**
@@ -45,36 +46,36 @@ export function TakeawayList({ takeaways, canJump, pendingOrdinal, result, onJum
           不會重播，第二次點擊對螢幕閱讀器等於零回饋。換 key 讓節點重建才會再播一次。 */}
       <span key={result?.nonce ?? 'idle'} className={styles.srOnly} role="status">
         {result?.ok
-          ? `已在第 ${result.page} 頁找到${(result.total ?? 1) > 1 ? `，此句全篇出現 ${result.total} 次` : ''}`
+          ? t('report.takeawayList.foundOnPage', { page: String(result.page), v: (result.total ?? 1) > 1 ? t('report.takeawayList.thisSentenceAppearsTimesIn', { total: String(result.total) }) : '' })
           : result
-            ? '原文中找不到這段文字'
+            ? t('report.takeawayList.thisPassageWasnTFound')
             : ''}
       </span>
-      {takeaways.map(t => {
-        const pending = pendingOrdinal === t.ordinal
-        const mine = result?.ordinal === t.ordinal ? result : null
+      {takeaways.map(item => {
+        const pending = pendingOrdinal === item.ordinal
+        const mine = result?.ordinal === item.ordinal ? result : null
         const found = Boolean(mine?.ok)
-        const interactive = Boolean(canJump && t.quote)
+        const interactive = Boolean(canJump && item.quote)
         const body = (
           <>
-            <span className={styles.n}>{t.ordinal}</span>
+            <span className={styles.n}>{item.ordinal}</span>
             <span className={styles.x}>
-              <span className={styles.claim}>{t.claim}</span>
-              {t.quote && <span className={styles.q}>{t.quote}</span>}
-              {pending && <span className={styles.finding}>尋找中…</span>}
+              <span className={styles.claim}>{item.claim}</span>
+              {item.quote && <span className={styles.q}>{item.quote}</span>}
+              {pending && <span className={styles.finding}>{t('report.takeawayList.locating')}</span>}
               {/* 頁碼就是 PDF 縮圖列上那一頁的金色編號，兩邊對得起來。多重命中（約 6-7% 的
                   引文在同一份 PDF 裡不只出現一次）跳到的是第一處，未必是摘錄真正引用的那一處
                   —— 所以要再標「共 N 處」，否則落錯位置看起來會跟成功一模一樣。 */}
               {found && mine && (
                 <span className={styles.found}>
-                  <span>第 {mine.page} 頁</span>
-                  {(mine.total ?? 1) > 1 && <span>共 {mine.total} 處</span>}
+                  <span>{t('report.takeawayList.p')}{' '}{mine.page}{' '}{t('report.takeawayList.text')}</span>
+                  {(mine.total ?? 1) > 1 && <span>{t('report.takeawayList.text2')}{' '}{mine.total}{' '}{t('report.takeawayList.matches')}</span>}
                 </span>
               )}
               {mine && !mine.ok && (
                 <span className={styles.miss}>
                   <Info size={13} strokeWidth={2} aria-hidden />
-                  原文中找不到這段文字
+                  {t('report.takeawayList.thisPassageWasnTFound')}
                 </span>
               )}
             </span>
@@ -85,7 +86,7 @@ export function TakeawayList({ takeaways, canJump, pendingOrdinal, result, onJum
         // 拿它去搜 PDF 幾乎必然落空）。
         if (!interactive) {
           return (
-            <div key={t.ordinal} className={styles.tk}>
+            <div key={item.ordinal} className={styles.tk}>
               {body}
             </div>
           )
@@ -98,14 +99,14 @@ export function TakeawayList({ takeaways, canJump, pendingOrdinal, result, onJum
           // （SelectionLayer 只畫色塊），左欄摘錄是視障讀者唯一拿得到研報內容的地方。
           // 動作說明改成 sr-only 節點附加在內容之後：可及名稱＝內容 ＋ 動作。
           <button
-            key={t.ordinal}
+            key={item.ordinal}
             type="button"
             className={`${styles.tk} ${styles.tkOn}${pending || found ? ` ${styles.tkSel}` : ''}`}
-            onClick={() => onJump?.(t)}
+            onClick={() => onJump?.(item)}
           >
             {body}
             <ArrowUpRight className={styles.go} size={14} strokeWidth={1.8} aria-hidden />
-            <span className={styles.srOnly}>：在原文中尋找這段引文</span>
+            <span className={styles.srOnly}>{t('report.takeawayList.findThisQuoteInThe')}</span>
           </button>
         )
       })}

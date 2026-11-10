@@ -1,0 +1,918 @@
+"""部署 profile：一個機構（租戶）的非祕密產品設定——身分、品牌、prompt 參數、市場子集。
+
+同一個 codebase 服務不同機構，差異只放在 `profiles/<name>/`：
+
+- `profile.toml`：本模組讀取與驗證的設定檔（`tomllib`）。
+- `assets/`：logo、favicon 等靜態檔，只能由 `profile.toml` 以檔名引用（`GET /api/branding/assets/{name}`
+  也只交出被引用的檔，見 `web/routers/branding.py`）。
+- `plugins/`：插件連接器（`[connectors.sources.<name>]` 的 `kind = "plugin"`）。只載入 `profile.toml` 以名稱
+  明確引用的檔，不掃描、不自動 import 目錄裡的其他檔（`app/services/connectors/__init__.py`）。
+
+祕密與部署層設定（金鑰、DB URL、LLM 端點）**不放這裡**，照舊走環境變數。
+
+## 載入
+
+`get_profile()` 回傳 frozen dataclass `Profile`，第一次呼叫時讀 `PROFILE_DIR`（預設 `profiles/tingfong`，相對路徑
+以 repo 根為基準）並快取；`reset_profile_cache()` 清掉快取（`tests/conftest.py` 每題前後各清一次）。web 在 lifespan
+的第一步就呼叫它：設定錯了拒絕啟動，不等到第一個問答才炸。
+
+`PROFILE_DIR` 刻意在這裡以 `os.getenv` 讀、不進 `app/config.py` 的 `Settings`，理由同 `llm_models.py` 的葉模組設計：
+讀 profile 的有 `totp.py` 這種純計算模組、批次與評測入口（`eval/run_ragas.py` 經 `answer` 取系統提示），而
+`get_settings()` 會連帶做 R2 設定的 fail-closed 驗證、並在 import 期快取。本模組只 import 標準函式庫與
+`app.services.tagging`（標準市場代碼；它本身也只 import 標準函式庫），任何模組都能安全依賴它。
+
+## 嚴格驗證（fail-closed）
+
+未知 section、未知鍵、型別錯、引用不存在的 asset、市場子集含非標準代碼、`PROFILE_DIR` 不存在——一律拋
+`ProfileError`，訊息說出檔案、鍵與原因。不做「認不得就忽略」：拼錯的鍵靜默退回預設，正是換了品牌卻沒生效、
+而且沒有任何錯誤訊息的那種失事。
+
+## 加新 section（後續 lane 的掛點）
+
+1. 寫一個 frozen dataclass 與一個 parser：`def _parse_x(table: dict, ctx: _Ctx) -> X`，table 是該 section 的內容
+   （section 缺席時是空 dict，parser 自己給預設），以 `ctx.reject_unknown`／`ctx.string` 等輔助驗證。
+2. 用 `@_section("x")` 登記，並在 `Profile` **末尾**加一個有預設值的欄位（名稱同 section）。
+3. parser 依登記順序執行，可以讀 `ctx.parsed` 裡已解析的 section（例如 `[prompt]` 的預設取自 `[institution]`）。
+
+`tests/test_profile.py` 對帳登記表與 `Profile` 的欄位一一對應。
+
+## 市場
+
+市場代碼是框架固定的**標準市場代碼**（`app/services/tagging.py` 的 `MARKETS`，標註 prompt 與 `tests/test_tagging.py`
+逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
+個別 profile 與機構既有系統的代碼對齊（例如預設 profile 與 findb）是該 profile 的跨 repo 契約，不是框架的。
+
+## 語系
+
+`[locale]` 決定介面（與問答輸出）的語系：`default` 是使用者沒選過語言時的預設，`available` 是可選的語系（框架固定的
+`LOCALES` 的子集）。section 缺席時兩種都開、預設 `zh-Hant`。`[institution]` 的 `*_en` 是英文介面用的名稱，沒給就沿用
+原名（`Institution.localized`）；字串本身在 `frontend/src/i18n/`，profile 不覆寫介面文字。
+
+## 文件類型
+
+`[doc_types]` 宣告文件類型（`research_report.doc_type`）與每種類型啟用的功能（`DOC_FEATURES`，框架固定的詞彙）。
+SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設定產生過濾片段。section 缺席時是框架預設：
+`research` 全開、`non_research` 全關（等同改動前的 `is_research` true／false）。標註器會產生的類型
+（`tagging.TAGGER_DOC_TYPES`）必須全部宣告：漏宣告的類型所有功能都關，那類文件會靜默消失。
+
+## 個股代號、發行機構、簡報作息
+
+這三項原本寫死在程式裡、對所有 profile 生效，其實是第一個導入機構的假設；改由 profile 宣告後，預設 profile
+宣告原值（零回歸）。
+
+- `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
+  長度）。標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`；`tagging` 不 import
+  本模組，規則由呼叫端傳入 `get_profile().instruments.normalize_code`）；總覽題從問句抓代號也依純數字格式的長度。
+  標註 prompt 不變（它只要求 4 碼代碼），section 缺席＝只收 4 碼數字。
+- `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（例如預設 profile 的 `sources.toml`），內容是檔名 token、
+  內文指紋與顯示名稱；比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構
+  （只靠側檔的 `source`），顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
+- `[brief]`：每日簡報幾點後才產生、回看窗與回看上限（`scripts/generate_brief.py`；命令列參數仍可覆寫）。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import tomllib
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, fields
+from functools import cached_property
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any
+
+from app.services.tagging import DOC_TYPE_RESEARCH, MARKET_DISPLAY, MARKETS, TAGGER_DOC_TYPES
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PROFILE_DIR_ENV = "PROFILE_DIR"
+DEFAULT_PROFILE_DIR = "profiles/tingfong"
+PROFILE_FILE = "profile.toml"
+ASSETS_DIR = "assets"
+
+
+class ProfileError(RuntimeError):
+    """profile 設定錯誤。訊息一律帶檔案與鍵，讓維運不必讀原始碼就知道要改哪一行。"""
+
+
+# ── 各 section 的資料形狀 ───────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Institution:
+    name: str  # 機構名（例如免責聲明的「非○○之立場」）
+    product_name: str  # 產品全名（頁面標題、側欄、登入頁）
+    short_name: str  # 簡稱
+    # 英文介面用的名稱（選填）。沒給就沿用上面的原名；只影響介面，prompt 的稱謂看 [prompt].system_name_en。
+    name_en: str = ""
+    product_name_en: str = ""
+    short_name_en: str = ""
+    # 機構的對外網址（選填，https）。只用在送給 LLM 供應商的自報身分（OpenCode Go 的 User-Agent），不出現在介面上。
+    website: str = ""
+
+    def localized(self, locale: str) -> tuple[str, str, str]:
+        """(機構名, 產品名, 簡稱)：英文介面先用 *_en，沒給就用原名。"""
+        if locale == "en":
+            product = self.product_name_en or self.product_name
+            short = self.short_name_en or (self.product_name_en if self.product_name_en else self.short_name)
+            return (self.name_en or self.name, product, short)
+        return (self.name, self.product_name, self.short_name)
+
+
+@dataclass(frozen=True)
+class Asset:
+    name: str  # assets/ 底下的檔名（不含路徑）
+    path: Path
+    content_type: str
+    sha256: str  # 內容雜湊：URL 版本鍵與 ETag
+
+
+@dataclass(frozen=True)
+class Branding:
+    logo_light: Asset | None = None
+    logo_dark: Asset | None = None
+    favicon: Asset | None = None
+    # 強調色覆寫（鍵見 ACCENT_TOKENS）；空＝沿用 frontend/src/styles/tokens.css 的預設。
+    colors_light: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    colors_dark: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+
+    def assets(self) -> dict[str, Asset]:
+        """被 profile 引用的 asset（檔名 → Asset）；asset 端點只交出這幾個。"""
+        return {a.name: a for a in (self.logo_light, self.logo_dark, self.favicon) if a is not None}
+
+
+@dataclass(frozen=True)
+class PromptParams:
+    # prompt 不開放覆寫，只注入這幾個參數。system_name 是 prompt 裡「你是『○○』…」對本系統的稱謂，
+    # system_name_en 是英文文案裡的同一個稱謂（預設 profile 刻意沿用中文名，與改動前逐字相同）。
+    system_name: str
+    system_name_en: str
+
+
+@dataclass(frozen=True)
+class Markets:
+    enabled: tuple[str, ...]  # 使用者端啟用的標準市場代碼，順序＝顯示順序
+    display_names: Mapping[str, str]  # 全部標準代碼 → 顯示名稱（未覆寫者取 tagging.MARKET_DISPLAY）
+
+    def is_enabled(self, code: str | None) -> bool:
+        return code in self.enabled
+
+    def label(self, code: str) -> str:
+        return self.display_names.get(code, code)
+
+
+@dataclass(frozen=True)
+class Security:
+    totp_issuer: str  # 驗證器 App 顯示的發行者名稱（otpauth URI 的 issuer）
+
+
+# 介面語系（frontend/src/i18n 的字典與 app/services/locale.py 的輸出語言共用這組代碼）。
+LOCALES: tuple[str, ...] = ("zh-Hant", "en")
+
+
+@dataclass(frozen=True)
+class Locale:
+    default: str = "zh-Hant"  # 使用者沒選過語言時的介面與回答語言
+    available: tuple[str, ...] = LOCALES  # 使用者可選的語系（順序＝選單順序）；只有一個時不顯示切換
+
+
+# 文件類型可啟用的功能（框架固定的詞彙；`app/services/doc_types.py` 的 docstring 寫每一項管到哪些查詢）。
+DOC_FEATURES: tuple[str, ...] = (
+    "search",  # 混合檢索（檢索頁、問答、對外 API）、檢索頁瀏覽
+    "reading",  # 閱讀頁、相似研報、原檔
+    "tagging_markets",  # 以標準市場代碼標註：入庫要求 market 非空
+    "summary",  # 摘要批次
+    "title",  # 標題批次
+    "takeaway",  # 摘錄批次
+    "signal",  # 訊號擷取批次
+    "radar",  # 觀點雷達
+    "brief",  # 每日簡報
+    "overview",  # 總覽題的分面聚合
+)
+_DOC_TYPE_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")  # 與 revision 0012 的 CHECK 同一個形狀
+
+
+@dataclass(frozen=True)
+class DocTypes:
+    # 類型 → 啟用的功能。順序＝宣告順序（SQL 片段裡的 IN 清單依此排列，輸出穩定）。
+    features: Mapping[str, frozenset[str]]
+
+    def enabled(self, doc_type: str | None, feature: str) -> bool:
+        return feature in self.features.get(doc_type or "", frozenset())
+
+    def types_with(self, feature: str) -> tuple[str, ...]:
+        return tuple(t for t, fs in self.features.items() if feature in fs)
+
+
+def _default_doc_types() -> DocTypes:
+    return DocTypes(features=MappingProxyType({
+        DOC_TYPE_RESEARCH: frozenset(DOC_FEATURES),
+        **{t: frozenset() for t in TAGGER_DOC_TYPES if t != DOC_TYPE_RESEARCH},
+    }))
+
+CONNECTOR_KINDS = ("folder", "s3", "plugin")
+PLUGINS_DIR = "plugins"
+
+
+@dataclass(frozen=True)
+class ConnectorSpec:
+    """一個資料來源連接器的非祕密參數（`[connectors.sources.<name>]`）。祕密（S3 憑證）走環境變數，
+    名稱由 `env` 前綴決定；行為見 `app/services/connectors/__init__.py`。"""
+
+    name: str
+    kind: str  # CONNECTOR_KINDS 之一
+    poll_minutes: int = 180  # 兩次輪詢的最短間隔（排程每次叫起時，未到間隔的連接器略過）
+    settle_seconds: int = 60  # mtime 距今未滿這麼久的檔先不收（可能還在寫入）
+    path: Path | None = None  # folder：監看的資料夾（相對路徑以 repo 根為基準）
+    landing: Path | None = None  # s3／plugin：拉回的檔案落地的資料夾（入庫後 file_path 指向這裡，要長期保留）
+    prefix: str | None = None  # s3：bucket 內的 prefix（以 / 結尾）
+    env: str | None = None  # s3：環境變數前綴（<env>_BUCKET、<env>_ACCESS_KEY_ID…）
+    plugin: Path | None = None  # plugin：profile 的 plugins/<名稱>.py
+    params: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))  # plugin 自訂參數
+
+    @property
+    def root(self) -> Path:
+        """候選檔所在的資料夾：folder 是 path，其餘是 landing。"""
+        return self.path if self.kind == "folder" else self.landing  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class Connectors:
+    enabled: tuple[str, ...] = ()  # 框架的連接器輪詢要跑的連接器（順序＝輪詢順序）；空＝不輪詢
+    sources: Mapping[str, ConnectorSpec] = field(default_factory=lambda: MappingProxyType({}))
+
+    def enabled_specs(self) -> list[ConnectorSpec]:
+        return [self.sources[name] for name in self.enabled]
+
+
+@dataclass(frozen=True)
+class Backfill:
+    """首次導入的分層回填（`scripts/backfill_tiers.py`；分層規則見 `app/services/backfill_tiers.py`）。
+
+    第一層（全部歷史：抽取、嵌入、標註）不受這裡控制；第二層是 `report_date` 在最近 `recent_months` 個月內的
+    研報（摘要、標題、摘錄、訊號），其餘（含 `report_date` 為 NULL）是第三層，由背景補齊在上限內慢慢補。
+    """
+
+    recent_months: int = 12  # 第二層的窗期（以 report_date 判斷，含邊界當天）
+    background_enabled: bool = False  # 第三層背景補齊（scheduler 的 backfill-tiers 工作）；預設關
+    daily_token_limit: int = 2_000_000  # 背景補齊每個台北日的 token 上限（輸入＋輸出）
+    max_reports_per_round: int = 100  # 背景補齊每輪最多處理幾份研報
+
+
+# 個股代號格式的種類（框架固定的詞彙）：digits＝純數字（台股、港股、陸股），letters＝大寫英文字母（美股 ticker，
+# `share_class` 另收「.A」這種一個字母的股別後綴，例如 BRK.B）。只給種類與長度、不收任意 regex：同一份規則要能
+# 安全地在每份研報的標註結果上執行，也要講得清楚它收什麼。
+CODE_FORMAT_KINDS = ("digits", "letters")
+_CODE_LENGTH_MAX = {"digits": 12, "letters": 10}
+
+
+@dataclass(frozen=True)
+class CodeFormat:
+    market: str  # 這個格式屬於哪個標準市場（說明與對帳用；驗證是所有格式的聯集，見 Instruments）
+    kind: str  # CODE_FORMAT_KINDS 之一
+    min_length: int
+    max_length: int
+    share_class: bool = False  # letters：另收一個字母的股別後綴（BRK.B）
+
+    def regex(self) -> str:
+        span = f"{{{self.min_length},{self.max_length}}}"
+        if self.kind == "digits":
+            return rf"\d{span}"
+        return rf"[A-Z]{span}" + (r"(?:\.[A-Z])?" if self.share_class else "")
+
+
+@dataclass(frozen=True)
+class Instruments:
+    """個股代號的格式（`[instruments.code_formats.<市場>]`）：標註結果的 `stock_targets` 只留符合其一的代號。
+
+    驗證是所有格式的**聯集**、不看研報的市場：台股的報告常重點討論美股標的（反之亦然），按市場切會把它們丟掉。
+    section 缺席＝只收 4 碼數字（框架化之前的規則；標註 prompt 也只要求 4 碼代碼）。
+    """
+
+    code_formats: tuple[CodeFormat, ...] = (CodeFormat(market="TW", kind="digits", min_length=4, max_length=4),)
+
+    @cached_property
+    def _pattern(self) -> re.Pattern[str]:
+        return re.compile("|".join(f"(?:{f.regex()})" for f in self.code_formats))
+
+    def normalize_code(self, value: object) -> str | None:
+        """一個標註輸出的代號 → 正規化後的代號；不符合任何格式回 None。字母代號一律轉大寫（nvda → NVDA）。"""
+        v = str(value).strip()
+        if self._pattern.fullmatch(v):
+            return v
+        upper = v.upper()
+        if upper != v and self._pattern.fullmatch(upper):
+            return upper
+        return None
+
+    def digit_lengths(self) -> tuple[int, int] | None:
+        """純數字代號的長度範圍（總覽題從問句抓代號用）；沒有純數字格式回 None。"""
+        spans = [(f.min_length, f.max_length) for f in self.code_formats if f.kind == "digits"]
+        if not spans:
+            return None
+        return min(lo for lo, _ in spans), max(hi for _, hi in spans)
+
+
+@dataclass(frozen=True)
+class Sources:
+    """發行機構（研報的 `source`）名單：檔名推斷、內文指紋與顯示名稱（`[sources].catalog` 引用的檔）。
+
+    比對規則在 `app/services/filename.py`（`parse_filename`、`resolve_source`），這裡只放名單。順序都有意義：
+    檔名 token 依序比對、第一個命中者勝；內文指紋取最早出現者，同位置時依宣告順序。
+    section 缺席＝空名單：不從檔名或內文推斷發行機構（只靠側檔的 `source`），顯示名稱就是代碼本身。
+    """
+
+    filename_tokens: tuple[tuple[str, str], ...] = ()  # (檔名 token, source)
+    text_signatures: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (source, 指紋)：先於檔名，子字串比對
+    fallback_signatures: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (source, 指紋)：檔名之後，詞邊界比對
+    display: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))  # source → 顯示名稱
+
+
+@dataclass(frozen=True)
+class Brief:
+    """每日簡報的作息（`scripts/generate_brief.py`）。預設值＝框架化之前寫死在腳本裡的值。"""
+
+    after_hour: int = 9  # 本地時間到這個鐘點之後才產生當日簡報（早報多在上午進來；--after-hour 可覆寫）
+    default_lookback_hours: int = 24  # 沒有上一份簡報時的回看窗
+    max_lookback_days: int = 7  # 任何情況下的回看上限（--max-lookback-days 可覆寫）
+
+
+@dataclass(frozen=True)
+class Profile:
+    root: Path
+    institution: Institution
+    branding: Branding
+    prompt: PromptParams
+    markets: Markets
+    security: Security
+    doc_types: DocTypes = field(default_factory=_default_doc_types)
+    # 後續 lane 的新 section 欄位一律加在這裡之後、帶預設值（例如 `x: X = field(default_factory=X)`）。
+    connectors: Connectors = field(default_factory=Connectors)
+    backfill: Backfill = field(default_factory=Backfill)
+    locale: Locale = field(default_factory=Locale)
+    instruments: Instruments = field(default_factory=Instruments)
+    sources: Sources = field(default_factory=Sources)
+    brief: Brief = field(default_factory=Brief)
+
+
+# ── 驗證輔助 ─────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _Ctx:
+    file: Path
+    root: Path
+    section: str = ""
+    parsed: dict[str, Any] = field(default_factory=dict)
+
+    def error(self, key: str, reason: str) -> ProfileError:
+        where = f"[{self.section}].{key}" if self.section and key else (f"[{self.section}]" if self.section else key)
+        return ProfileError(f"profile 設定錯誤：{self.file}：{where}：{reason}")
+
+    def reject_unknown(self, table: Mapping[str, Any], allowed: set[str], *, prefix: str = "") -> None:
+        unknown = sorted(k for k in table if k not in allowed)
+        if unknown:
+            raise self.error(prefix + unknown[0], f"未知的鍵（可用：{'、'.join(sorted(allowed)) or '無'}）")
+
+    def table(self, table: Mapping[str, Any], key: str, *, key_label: str | None = None) -> dict[str, Any]:
+        value = table.get(key, {})
+        if not isinstance(value, dict):
+            raise self.error(key_label or key, f"必須是表格（table），目前是 {_type_name(value)}")
+        return value
+
+    def string(self, table: Mapping[str, Any], key: str, *, default: str | None = None, max_len: int = 80,
+               key_label: str | None = None) -> str:
+        label = key_label or key
+        if key not in table:
+            if default is None:
+                raise self.error(label, "必填")
+            return default
+        value = table[key]
+        if not isinstance(value, str):
+            raise self.error(label, f"必須是字串，目前是 {_type_name(value)}")
+        cleaned = value.strip()
+        if not cleaned:
+            raise self.error(label, "不可為空字串")
+        if len(cleaned) > max_len:
+            raise self.error(label, f"最多 {max_len} 個字元")
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in cleaned):
+            raise self.error(label, "不可含控制字元")
+        return cleaned
+
+    def string_list(self, table: Mapping[str, Any], key: str) -> list[str] | None:
+        if key not in table:
+            return None
+        value = table[key]
+        if not isinstance(value, list):
+            raise self.error(key, f"必須是字串陣列，目前是 {_type_name(value)}")
+        out: list[str] = []
+        for i, v in enumerate(value):
+            if not isinstance(v, str):
+                raise self.error(f"{key}[{i}]", f"必須是字串，目前是 {_type_name(v)}")
+            out.append(v)
+        return out
+
+    def asset(self, table: Mapping[str, Any], key: str) -> Asset | None:
+        if key not in table:
+            return None
+        name = self.string(table, key, max_len=100)
+        if not _ASSET_NAME.fullmatch(name):
+            raise self.error(
+                key, f"asset 必須是 {ASSETS_DIR}/ 底下的檔名（英數、點、底線、連字號；不含路徑）：{name!r}")
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        content_type = ASSET_CONTENT_TYPES.get(ext)
+        if content_type is None:
+            allowed = "、".join(sorted(ASSET_CONTENT_TYPES))
+            raise self.error(key, f"不支援的 asset 類型 {name!r}（可用副檔名：{allowed}）")
+        assets_dir = (self.root / ASSETS_DIR).resolve()
+        path = (assets_dir / name).resolve()
+        if not path.is_relative_to(assets_dir) or not path.is_file():
+            raise self.error(key, f"引用的 asset 不存在：{self.root / ASSETS_DIR / name}")
+        data = path.read_bytes()
+        if not data:
+            raise self.error(key, f"引用的 asset 是空檔：{path}")
+        return Asset(name=name, path=path, content_type=content_type, sha256=hashlib.sha256(data).hexdigest())
+
+
+def _type_name(value: Any) -> str:
+    return {str: "字串", int: "整數", float: "浮點數", bool: "布林", list: "陣列", dict: "表格"}.get(
+        type(value), type(value).__name__
+    )
+
+
+_ASSET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+ASSET_CONTENT_TYPES = {
+    "png": "image/png",
+    "svg": "image/svg+xml",
+    "ico": "image/x-icon",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+}
+
+# 強調色覆寫的鍵（profile.toml 的寫法）。對應的 CSS 變數由前端 `frontend/src/lib/branding.ts` 的
+# ACCENT_CSS_VARS 決定（tests/test_profile.py 對帳兩邊的鍵）。值只收 hex 或 rgb()／rgba()，
+# 因為它會被原樣寫進 <style>：任何其他寫法都可能是 CSS 注入。
+# 會原樣放進 HTTP header（User-Agent 的括號裡），所以不收空白、括號與引號。
+_WEBSITE = re.compile(r"https://[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?")
+ACCENT_TOKENS = frozenset({
+    "accent_text", "accent_strong", "accent_hover", "accent_tint", "accent_line", "accent_panel",
+    "on_accent", "accent_button",
+    # 只覆寫管理後台的線色與選取底色（沒給時沿用 accent_line／accent_panel；對照見 frontend/src/lib/branding.ts）
+    "console_accent_line", "console_accent_panel",
+})
+_COLOR = re.compile(
+    r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?"
+    r"|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*(?:0|1|0?\.\d{1,3})\s*)?\)"
+)
+
+
+# ── section 登記表 ───────────────────────────────────────────────────────
+
+_Parser = Callable[[dict, _Ctx], Any]
+_SECTIONS: dict[str, _Parser] = {}
+_REQUIRED_SECTIONS = {"institution"}
+
+
+def _section(name: str) -> Callable[[_Parser], _Parser]:
+    def register(fn: _Parser) -> _Parser:
+        if name in _SECTIONS:
+            raise RuntimeError(f"profile section [{name}] 重複登記")
+        _SECTIONS[name] = fn
+        return fn
+    return register
+
+
+@_section("institution")
+def _parse_institution(table: dict, ctx: _Ctx) -> Institution:
+    ctx.reject_unknown(table, {"name", "product_name", "short_name", "name_en", "product_name_en", "short_name_en",
+                               "website"})
+    name = ctx.string(table, "name", max_len=40)
+    product_name = ctx.string(table, "product_name", max_len=60)
+    website = ctx.string(table, "website", default="", max_len=120)
+    if website and not _WEBSITE.fullmatch(website):
+        raise ctx.error("website", f"只接受 https:// 開頭、不含空白與括號的網址：{website!r}")
+    return Institution(name=name, product_name=product_name, website=website,
+                       short_name=ctx.string(table, "short_name", default=product_name, max_len=40),
+                       name_en=ctx.string(table, "name_en", default="", max_len=80),
+                       product_name_en=ctx.string(table, "product_name_en", default="", max_len=80),
+                       short_name_en=ctx.string(table, "short_name_en", default="", max_len=60))
+
+
+@_section("branding")
+def _parse_branding(table: dict, ctx: _Ctx) -> Branding:
+    ctx.reject_unknown(table, {"logo_light", "logo_dark", "favicon", "colors"})
+    logo_light = ctx.asset(table, "logo_light")
+    logo_dark = ctx.asset(table, "logo_dark") or logo_light
+    colors = ctx.table(table, "colors")
+    ctx.reject_unknown(colors, {"light", "dark"}, prefix="colors.")
+    parsed: dict[str, Mapping[str, str]] = {}
+    for scheme in ("light", "dark"):
+        values = ctx.table(colors, scheme, key_label=f"colors.{scheme}")
+        ctx.reject_unknown(values, set(ACCENT_TOKENS), prefix=f"colors.{scheme}.")
+        out: dict[str, str] = {}
+        for key in sorted(values):
+            value = ctx.string(values, key, max_len=40, key_label=f"colors.{scheme}.{key}")
+            if not _COLOR.fullmatch(value):
+                raise ctx.error(f"colors.{scheme}.{key}", f"色值只接受 #rrggbb、#rrggbbaa 或 rgb()/rgba()：{value!r}")
+            out[key] = value
+        parsed[scheme] = MappingProxyType(out)
+    return Branding(logo_light=logo_light, logo_dark=logo_dark, favicon=ctx.asset(table, "favicon"),
+                    colors_light=parsed["light"], colors_dark=parsed["dark"])
+
+
+@_section("prompt")
+def _parse_prompt(table: dict, ctx: _Ctx) -> PromptParams:
+    ctx.reject_unknown(table, {"system_name", "system_name_en"})
+    institution: Institution = ctx.parsed["institution"]
+    system_name = ctx.string(table, "system_name", default=institution.short_name, max_len=40)
+    return PromptParams(system_name=system_name,
+                        system_name_en=ctx.string(table, "system_name_en", default=system_name, max_len=60))
+
+
+@_section("markets")
+def _parse_markets(table: dict, ctx: _Ctx) -> Markets:
+    ctx.reject_unknown(table, {"enabled", "display_names"})
+    enabled = ctx.string_list(table, "enabled")
+    if enabled is None:
+        enabled = list(MARKETS)
+    if not enabled:
+        raise ctx.error("enabled", "至少要啟用一個市場")
+    standard = set(MARKETS)
+    seen: set[str] = set()
+    for i, code in enumerate(enabled):
+        if code not in standard:
+            raise ctx.error(f"enabled[{i}]", f"不是標準市場代碼：{code!r}（可用：{' '.join(MARKETS)}）")
+        if code in seen:
+            raise ctx.error(f"enabled[{i}]", f"重複的市場代碼：{code!r}")
+        seen.add(code)
+    overrides = ctx.table(table, "display_names")
+    names = dict(MARKET_DISPLAY)
+    for code in sorted(overrides):
+        if code not in standard:
+            raise ctx.error(f"display_names.{code}", f"不是標準市場代碼（可用：{' '.join(MARKETS)}）")
+        names[code] = ctx.string(overrides, code, max_len=20, key_label=f"display_names.{code}")
+    return Markets(enabled=tuple(enabled), display_names=MappingProxyType(names))
+
+
+@_section("security")
+def _parse_security(table: dict, ctx: _Ctx) -> Security:
+    ctx.reject_unknown(table, {"totp_issuer"})
+    institution: Institution = ctx.parsed["institution"]
+    issuer = ctx.string(table, "totp_issuer", default=institution.product_name, max_len=60)
+    # otpauth URI 的 label 以冒號分隔 issuer 與帳號（Key Uri Format）：issuer 帶冒號會讓驗證器 App 拆錯。
+    if ":" in issuer:
+        raise ctx.error("totp_issuer", "不可含冒號（otpauth label 以冒號分隔發行者與帳號）")
+    return Security(totp_issuer=issuer)
+
+
+@_section("doc_types")
+def _parse_doc_types(table: dict, ctx: _Ctx) -> DocTypes:
+    if not table:
+        return _default_doc_types()
+    out: dict[str, frozenset[str]] = {}
+    for name, spec in table.items():
+        if not _DOC_TYPE_NAME.fullmatch(name):
+            raise ctx.error(name, "類型名稱只能是小寫英文開頭、小寫英數與底線，最多 32 字元")
+        if not isinstance(spec, dict):
+            raise ctx.error(name, f"必須是表格（[doc_types.{name}]），目前是 {_type_name(spec)}")
+        ctx.reject_unknown(spec, {"features"}, prefix=f"{name}.")
+        if "features" not in spec:
+            raise ctx.error(f"{name}.features", "必填（全部關閉請寫空陣列 []）")
+        feats = spec["features"]
+        if not isinstance(feats, list):
+            raise ctx.error(f"{name}.features", f"必須是字串陣列，目前是 {_type_name(feats)}")
+        seen: set[str] = set()
+        for i, feat in enumerate(feats):
+            if not isinstance(feat, str):
+                raise ctx.error(f"{name}.features[{i}]", f"必須是字串，目前是 {_type_name(feat)}")
+            if feat not in DOC_FEATURES:
+                raise ctx.error(f"{name}.features[{i}]", f"未知的功能 {feat!r}（可用：{'、'.join(DOC_FEATURES)}）")
+            if feat in seen:
+                raise ctx.error(f"{name}.features[{i}]", f"重複的功能：{feat!r}")
+            seen.add(feat)
+        out[name] = frozenset(seen)
+    for name in TAGGER_DOC_TYPES:
+        if name not in out:
+            raise ctx.error(name, f"標註器會產生的類型必須宣告（{'、'.join(TAGGER_DOC_TYPES)}）")
+    return DocTypes(features=MappingProxyType(out))
+
+_CONNECTOR_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+_ENV_PREFIX = re.compile(r"[A-Z][A-Z0-9_]{0,47}")
+_PLUGIN_NAME = re.compile(r"[a-z][a-z0-9_]{0,47}")
+
+
+def _int_in(ctx: _Ctx, table: Mapping[str, Any], key: str, default: int, lo: int, hi: int, label: str) -> int:
+    if key not in table:
+        return default
+    value = table[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ctx.error(label, f"必須是整數，目前是 {_type_name(value)}")
+    if not lo <= value <= hi:
+        raise ctx.error(label, f"必須介於 {lo} 與 {hi} 之間")
+    return value
+
+
+def _local_path(ctx: _Ctx, table: Mapping[str, Any], key: str, label: str) -> Path:
+    raw = ctx.string(table, key, max_len=500, key_label=label)
+    path = Path(raw)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+@_section("connectors")
+def _parse_connectors(table: dict, ctx: _Ctx) -> Connectors:
+    ctx.reject_unknown(table, {"enabled", "sources"})
+    sources_table = ctx.table(table, "sources")
+    sources: dict[str, ConnectorSpec] = {}
+    for name in sources_table:
+        base = f"sources.{name}"
+        if not _CONNECTOR_NAME.fullmatch(name):
+            raise ctx.error(base, "連接器名稱只能是小寫英文開頭的英數、底線、連字號（最多 32 字）")
+        spec = ctx.table(sources_table, name, key_label=base)
+        kind = ctx.string(spec, "kind", max_len=20, key_label=f"{base}.kind")
+        if kind not in CONNECTOR_KINDS:
+            raise ctx.error(f"{base}.kind", f"不支援的連接器類型 {kind!r}（可用：{'、'.join(CONNECTOR_KINDS)}）")
+        allowed = {"kind", "poll_minutes", "settle_seconds"} | {
+            "folder": {"path"}, "s3": {"landing", "prefix", "env"}, "plugin": {"landing", "plugin", "params"},
+        }[kind]
+        ctx.reject_unknown(spec, allowed, prefix=f"{base}.")
+        values: dict[str, Any] = {
+            "name": name, "kind": kind,
+            "poll_minutes": _int_in(ctx, spec, "poll_minutes", 180, 5, 7 * 24 * 60, f"{base}.poll_minutes"),
+            "settle_seconds": _int_in(ctx, spec, "settle_seconds", 60, 0, 24 * 3600, f"{base}.settle_seconds"),
+        }
+        if kind == "folder":
+            values["path"] = _local_path(ctx, spec, "path", f"{base}.path")
+        else:
+            values["landing"] = (_local_path(ctx, spec, "landing", f"{base}.landing") if "landing" in spec
+                                 else REPO_ROOT / "data" / "connectors" / name)
+        if kind == "s3":
+            prefix = ctx.string(spec, "prefix", max_len=200, key_label=f"{base}.prefix")
+            if not prefix.endswith("/") or prefix.startswith("/") or ".." in prefix.split("/"):
+                raise ctx.error(f"{base}.prefix", f"prefix 必須是相對的、以 / 結尾（例如 inbox/）：{prefix!r}")
+            env = ctx.string(spec, "env", max_len=48, key_label=f"{base}.env")
+            if not _ENV_PREFIX.fullmatch(env):
+                raise ctx.error(f"{base}.env", f"環境變數前綴只能是大寫英數與底線：{env!r}")
+            values.update(prefix=prefix, env=env)
+        if kind == "plugin":
+            plugin = ctx.string(spec, "plugin", max_len=48, key_label=f"{base}.plugin")
+            if not _PLUGIN_NAME.fullmatch(plugin):
+                raise ctx.error(f"{base}.plugin", f"plugin 名稱只能是小寫英數與底線（檔名不含 .py）：{plugin!r}")
+            plugin_path = ctx.root / PLUGINS_DIR / f"{plugin}.py"
+            if not plugin_path.is_file():
+                raise ctx.error(f"{base}.plugin", f"找不到 plugin 檔：{plugin_path}")
+            params = ctx.table(spec, "params", key_label=f"{base}.params")
+            for key, value in params.items():
+                if isinstance(value, (dict, list)) or not isinstance(value, (str, int, float, bool)):
+                    raise ctx.error(f"{base}.params.{key}", f"只接受字串、數字或布林，目前是 {_type_name(value)}")
+            values.update(plugin=plugin_path, params=MappingProxyType(dict(params)))
+        sources[name] = ConnectorSpec(**values)
+    enabled = ctx.string_list(table, "enabled") or []
+    seen: set[str] = set()
+    for i, name in enumerate(enabled):
+        if name not in sources:
+            raise ctx.error(f"enabled[{i}]", f"沒有這個連接器：{name!r}（先在 [connectors.sources.{name}] 宣告）")
+        if name in seen:
+            raise ctx.error(f"enabled[{i}]", f"重複的連接器：{name!r}")
+        seen.add(name)
+    return Connectors(enabled=tuple(enabled), sources=MappingProxyType(sources))
+
+
+@_section("backfill")
+def _parse_backfill(table: dict, ctx: _Ctx) -> Backfill:
+    ctx.reject_unknown(table, {"recent_months", "background_enabled", "daily_token_limit", "max_reports_per_round"})
+    defaults = Backfill()
+    enabled = table.get("background_enabled", defaults.background_enabled)
+    if not isinstance(enabled, bool):
+        raise ctx.error("background_enabled", f"必須是布林（true／false），目前是 {_type_name(enabled)}")
+    return Backfill(
+        recent_months=_int_in(ctx, table, "recent_months", defaults.recent_months, 1, 240, "recent_months"),
+        background_enabled=enabled,
+        daily_token_limit=_int_in(ctx, table, "daily_token_limit", defaults.daily_token_limit, 1, 10**10,
+                                  "daily_token_limit"),
+        max_reports_per_round=_int_in(ctx, table, "max_reports_per_round", defaults.max_reports_per_round, 1, 5000,
+                                      "max_reports_per_round"),
+    )
+
+
+@_section("locale")
+def _parse_locale(table: dict, ctx: _Ctx) -> Locale:
+    ctx.reject_unknown(table, {"default", "available"})
+    available = ctx.string_list(table, "available")
+    if available is None:
+        available = list(LOCALES)
+    if not available:
+        raise ctx.error("available", "至少要開放一個語系")
+    seen: set[str] = set()
+    for i, code in enumerate(available):
+        if code not in LOCALES:
+            raise ctx.error(f"available[{i}]", f"不支援的語系 {code!r}（可用：{'、'.join(LOCALES)}）")
+        if code in seen:
+            raise ctx.error(f"available[{i}]", f"重複的語系：{code!r}")
+        seen.add(code)
+    default = ctx.string(table, "default", default=available[0], max_len=10)
+    if default not in available:
+        raise ctx.error("default", f"預設語系 {default!r} 不在 available 裡（{'、'.join(available)}）")
+    return Locale(default=default, available=tuple(available))
+
+
+@_section("instruments")
+def _parse_instruments(table: dict, ctx: _Ctx) -> Instruments:
+    ctx.reject_unknown(table, {"code_formats"})
+    if "code_formats" not in table:
+        return Instruments()
+    formats_table = ctx.table(table, "code_formats")
+    if not formats_table:
+        raise ctx.error("code_formats", "至少要宣告一個市場的代號格式（要用框架預設就整個 section 不寫）")
+    formats: list[CodeFormat] = []
+    for market in formats_table:
+        base = f"code_formats.{market}"
+        if market not in MARKETS:
+            raise ctx.error(base, f"不是標準市場代碼（可用：{' '.join(MARKETS)}）")
+        spec = ctx.table(formats_table, market, key_label=base)
+        kind = ctx.string(spec, "kind", max_len=20, key_label=f"{base}.kind")
+        if kind not in CODE_FORMAT_KINDS:
+            raise ctx.error(f"{base}.kind", f"不支援的代號格式 {kind!r}（可用：{'、'.join(CODE_FORMAT_KINDS)}）")
+        allowed = {"kind", "min_length", "max_length"} | ({"share_class"} if kind == "letters" else set())
+        ctx.reject_unknown(spec, allowed, prefix=f"{base}.")
+        cap = _CODE_LENGTH_MAX[kind]
+        lo = _int_in(ctx, spec, "min_length", 1, 1, cap, f"{base}.min_length")
+        if "max_length" not in spec:
+            raise ctx.error(f"{base}.max_length", "必填")
+        hi = _int_in(ctx, spec, "max_length", lo, 1, cap, f"{base}.max_length")
+        if hi < lo:
+            raise ctx.error(f"{base}.max_length", f"不可小於 min_length（{lo}）")
+        share_class = spec.get("share_class", False)
+        if not isinstance(share_class, bool):
+            raise ctx.error(f"{base}.share_class", f"必須是布林（true／false），目前是 {_type_name(share_class)}")
+        formats.append(CodeFormat(market=market, kind=kind, min_length=lo, max_length=hi, share_class=share_class))
+    return Instruments(code_formats=tuple(formats))
+
+
+_SOURCE_CODE = re.compile(r"[a-z][a-z0-9_]{0,31}")  # research_report.source 的值（例如 morgan_stanley）
+_CATALOG_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.toml")
+
+
+def _parse_signature_list(data: Mapping[str, Any], ctx: _Ctx, key: str, declared: Mapping[str, str]
+                          ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    raw = data.get(key, [])
+    if not isinstance(raw, list):
+        raise ctx.error(key, f"必須是表格陣列（[{{ source = \"…\", markers = [\"…\"] }}, …]），"
+                             f"目前是 {_type_name(raw)}")
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for i, item in enumerate(raw):
+        label = f"{key}[{i}]"
+        if not isinstance(item, dict):
+            raise ctx.error(label, f"必須是表格（{{ source = \"…\", markers = [\"…\"] }}），目前是 {_type_name(item)}")
+        ctx.reject_unknown(item, {"source", "markers"}, prefix=f"{label}.")
+        source = ctx.string(item, "source", max_len=32, key_label=f"{label}.source")
+        if source not in declared:
+            raise ctx.error(f"{label}.source", f"{source!r} 沒有在 [display] 宣告顯示名稱")
+        markers = item.get("markers")
+        if not isinstance(markers, list) or not markers:
+            raise ctx.error(f"{label}.markers", "必須是非空的字串陣列")
+        for j, marker in enumerate(markers):
+            mlabel = f"{label}.markers[{j}]"
+            if not isinstance(marker, str):
+                raise ctx.error(mlabel, f"必須是字串，目前是 {_type_name(marker)}")
+            # 比對前整段內文轉小寫，指紋存成小寫才比得到；大寫的指紋會靜默永遠不中。
+            if (not marker or marker != marker.strip() or marker != marker.lower() or len(marker) > 80
+                    or any(ord(c) < 0x20 or ord(c) == 0x7F for c in marker)):
+                raise ctx.error(mlabel, f"指紋必須是 80 字以內的小寫字串、前後不留空白、不含控制字元：{marker!r}")
+        out.append((source, tuple(markers)))
+    return tuple(out)
+
+
+def _parse_sources_catalog(data: Mapping[str, Any], ctx: _Ctx) -> Sources:
+    ctx.reject_unknown(data, {"display", "filename_tokens", "text_signatures", "fallback_signatures"})
+    display_table = ctx.table(data, "display")
+    display: dict[str, str] = {}
+    for code in display_table:
+        if not _SOURCE_CODE.fullmatch(code):
+            raise ctx.error(f"display.{code}", "source 代碼只能是小寫英文開頭的小寫英數與底線（最多 32 字）")
+        display[code] = ctx.string(display_table, code, max_len=40, key_label=f"display.{code}")
+    raw_tokens = data.get("filename_tokens", [])
+    if not isinstance(raw_tokens, list):
+        raise ctx.error("filename_tokens", f"必須是表格陣列（[{{ token = \"…\", source = \"…\" }}, …]），目前是 "
+                                           f"{_type_name(raw_tokens)}")
+    tokens: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for i, item in enumerate(raw_tokens):
+        label = f"filename_tokens[{i}]"
+        if not isinstance(item, dict):
+            raise ctx.error(label, f"必須是表格（{{ token = \"…\", source = \"…\" }}），目前是 {_type_name(item)}")
+        ctx.reject_unknown(item, {"token", "source"}, prefix=f"{label}.")
+        token = ctx.string(item, "token", max_len=20, key_label=f"{label}.token")
+        if token.isascii() and (len(token) < 2 or not token.isalpha() or token != token.upper()):
+            raise ctx.error(f"{label}.token", f"拉丁 token 必須是 2 個以上的大寫英文字母：{token!r}")
+        if token.upper() in seen:
+            raise ctx.error(f"{label}.token", f"重複的 token：{token!r}")
+        seen.add(token.upper())
+        source = ctx.string(item, "source", max_len=32, key_label=f"{label}.source")
+        if source not in display:
+            raise ctx.error(f"{label}.source", f"{source!r} 沒有在 [display] 宣告顯示名稱")
+        tokens.append((token, source))
+    return Sources(
+        filename_tokens=tuple(tokens),
+        text_signatures=_parse_signature_list(data, ctx, "text_signatures", display),
+        fallback_signatures=_parse_signature_list(data, ctx, "fallback_signatures", display),
+        display=MappingProxyType(display),
+    )
+
+
+@_section("sources")
+def _parse_sources(table: dict, ctx: _Ctx) -> Sources:
+    ctx.reject_unknown(table, {"catalog"})
+    if "catalog" not in table:
+        return Sources()
+    name = ctx.string(table, "catalog", max_len=100)
+    if not _CATALOG_NAME.fullmatch(name):
+        raise ctx.error("catalog", f"必須是 profile 目錄底下的 .toml 檔名（不含路徑）：{name!r}")
+    path = (ctx.root / name).resolve()
+    if not path.is_relative_to(ctx.root) or not path.is_file():
+        raise ctx.error("catalog", f"引用的名單檔不存在：{ctx.root / name}")
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProfileError(f"profile 設定錯誤：{path}：TOML 語法錯誤：{exc}") from exc
+    # 名單檔的錯誤訊息指向名單檔本身（鍵名不帶 section 前綴）。
+    return _parse_sources_catalog(data, _Ctx(file=path, root=ctx.root))
+
+
+@_section("brief")
+def _parse_brief(table: dict, ctx: _Ctx) -> Brief:
+    ctx.reject_unknown(table, {"after_hour", "default_lookback_hours", "max_lookback_days"})
+    defaults = Brief()
+    return Brief(
+        after_hour=_int_in(ctx, table, "after_hour", defaults.after_hour, 0, 23, "after_hour"),
+        default_lookback_hours=_int_in(ctx, table, "default_lookback_hours", defaults.default_lookback_hours,
+                                       1, 24 * 7, "default_lookback_hours"),
+        max_lookback_days=_int_in(ctx, table, "max_lookback_days", defaults.max_lookback_days, 1, 60,
+                                  "max_lookback_days"),
+    )
+
+
+# ── 載入與快取 ───────────────────────────────────────────────────────────
+
+
+def resolve_profile_dir(raw: str | None = None) -> Path:
+    """`PROFILE_DIR` 的實際路徑：空值＝預設，相對路徑以 repo 根為基準（與工作目錄無關）。"""
+    value = (os.getenv(PROFILE_DIR_ENV, "") if raw is None else raw).strip() or DEFAULT_PROFILE_DIR
+    path = Path(value)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def load_profile(profile_dir: Path | str) -> Profile:
+    """讀取並驗證一個 profile 目錄；任何問題都拋 ProfileError（不快取，測試與工具直接用）。"""
+    root = Path(profile_dir)
+    if not root.is_dir():
+        raise ProfileError(f"profile 設定錯誤：{PROFILE_DIR_ENV} 指向的目錄不存在：{root}")
+    root = root.resolve()
+    file = root / PROFILE_FILE
+    if not file.is_file():
+        raise ProfileError(f"profile 設定錯誤：缺少 {file}")
+    try:
+        with file.open("rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProfileError(f"profile 設定錯誤：{file}：TOML 語法錯誤：{exc}") from exc
+    ctx = _Ctx(file=file, root=root)
+    for key, value in data.items():
+        if key not in _SECTIONS:
+            raise ctx.error(key, f"未知的 section（可用：{'、'.join(_SECTIONS)}）")
+        if not isinstance(value, dict):
+            raise ctx.error(key, f"必須是 section（[{key}]），目前是 {_type_name(value)}")
+    for name in sorted(_REQUIRED_SECTIONS - set(data)):
+        raise ctx.error(name, f"缺少必填的 section [{name}]")
+    for name, parse in _SECTIONS.items():
+        ctx.section = name
+        ctx.parsed[name] = parse(data.get(name, {}), ctx)
+    return Profile(root=root, **ctx.parsed)
+
+
+_PROFILE: Profile | None = None
+
+
+def get_profile() -> Profile:
+    """目前行程的 profile（第一次呼叫時依 `PROFILE_DIR` 載入並快取）。"""
+    global _PROFILE
+    if _PROFILE is None:
+        _PROFILE = load_profile(resolve_profile_dir())
+    return _PROFILE
+
+
+def reset_profile_cache() -> None:
+    """清掉快取；下一次 get_profile() 重新讀 `PROFILE_DIR`（測試用）。"""
+    global _PROFILE
+    _PROFILE = None
+
+
+def section_fields() -> tuple[str, ...]:
+    """`Profile` 上對應 section 的欄位名（扣掉 root），供對帳測試用。"""
+    return tuple(f.name for f in fields(Profile) if f.name != "root")
+
+
+def registered_sections() -> tuple[str, ...]:
+    return tuple(_SECTIONS)

@@ -16,6 +16,8 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+from app.services.doc_types import doc_type_enabled_sql
+
 EXIT_OK = 0
 EXIT_STALE = 1
 EXIT_UNKNOWN = 2
@@ -38,18 +40,21 @@ HEARTBEAT_PATH = Path(__file__).resolve().parents[2] / "data" / ".last_successfu
 # 08-18 的真實中斷，**應該被報出來**，不是要被門檻容忍掉。
 DEFAULT_PIPELINE_HOURS = 9
 
-# 語料閘：與三支批次實際處理的母體同一組條件（有全文、非行政檔）。用全表
+# 語料閘：與批次實際處理的母體同一組條件（有全文、類型開了摘要；預設 profile 下即研報）。用全表
 # `max(created_at)` 會被行政/活動檔拉新，於是「連續幾天只進非研報」會讓抑制失效、
-# 三個資產一起假紅。
-_ELIGIBLE = "full_text IS NOT NULL AND is_research IS NOT FALSE"
+# 三個資產一起假紅。類型片段在呼叫時依 profile 渲染（app/services/doc_types.py），所以是函式。
+def _eligible() -> str:
+    return f"full_text IS NOT NULL AND {doc_type_enabled_sql('r', 'summary')}"
 
-# 一次往返取四個時間戳。全部是小表或 14k 列的 seq scan，一天跑一次不需要索引。
-LATEST_SQL = f"""
+
+def latest_sql() -> str:
+    """一次往返取四個時間戳。全部是小表或 14k 列的 seq scan，一天跑一次不需要索引。"""
+    return f"""
 SELECT
-  (SELECT max(created_at) FROM research.research_report WHERE {_ELIGIBLE})
+  (SELECT max(created_at) FROM research.research_report r WHERE {_eligible()})
     AS corpus,
-  (SELECT max(created_at) FROM research.research_report
-     WHERE summary IS NOT NULL AND {_ELIGIBLE})                     AS summary,
+  (SELECT max(created_at) FROM research.research_report r
+     WHERE summary IS NOT NULL AND {_eligible()})                   AS summary,
   (SELECT max(created_at) FROM research.report_takeaway)            AS takeaway,
   (SELECT max(created_at) FROM research.report_signal)              AS signal
 """
@@ -248,7 +253,7 @@ def exit_code(findings: list[Finding]) -> int:
     return EXIT_OK
 
 async def fetch_latest(session) -> dict[str, datetime | None]:
-    row = (await session.execute(text(LATEST_SQL))).first()
+    row = (await session.execute(text(latest_sql()))).first()
     if row is None:      # 四個純量子查詢一律回一列；防的是假 session 回 None
         return {asset: None for asset, _ in ASSETS}
     return {"corpus": row[0], "summary": row[1], "takeaway": row[2], "signal": row[3]}

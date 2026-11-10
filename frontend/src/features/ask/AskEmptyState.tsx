@@ -3,13 +3,14 @@ import { BrandLogo } from '../../components/BrandLogo'
 import { marketLabel, marketTint } from '../../lib/meta'
 import { Composer } from './Composer'
 import styles from './AskEmptyState.module.css'
+import { t } from '@/i18n'
 
 /** 空白頁的建議題（交接包「研究助理／空白頁」2×2）：點一下只填進輸入框，不直接送出。 */
 const SUGGESTIONS: { q: string; market: string }[] = [
-  { q: '台積電 2027 年的資本支出，各家券商怎麼看？', market: 'TW' },
-  { q: '美元走勢對亞洲股市資金面的影響？', market: 'FX' },
-  { q: '本週總經數據有哪些值得注意的重點？', market: 'MACRO' },
-  { q: '比特幣 ETF 資金流向的最新觀察？', market: 'CRYPTO' },
+  { get q() { return t('ask.askEmptyState.howDoBrokersViewTsmc') }, market: 'TW' },
+  { get q() { return t('ask.askEmptyState.howDoesTheUsDollar') }, market: 'FX' },
+  { get q() { return t('ask.askEmptyState.whatAreTheKeyTakeaways') }, market: 'MACRO' },
+  { get q() { return t('ask.askEmptyState.whatSTheLatestOn') }, market: 'CRYPTO' },
 ]
 
 interface Props {
@@ -29,7 +30,7 @@ export function AskEmptyState({ value, onChange, onSubmit, boxRef }: Props) {
     <div className={styles.wrap}>
       <div className={styles.inner}>
         <BrandLogo size={52} alt="" className={styles.logo} />
-        <h2 className={styles.title}>今天想研究什麼？</h2>
+        <h2 className={styles.title}>{t('ask.askEmptyState.whatWouldYouLikeTo')}</h2>
         <Composer value={value} onChange={onChange} onSubmit={onSubmit} variant="center" boxRef={boxRef} />
         <div className={styles.grid}>
           {SUGGESTIONS.map((s, i) => (

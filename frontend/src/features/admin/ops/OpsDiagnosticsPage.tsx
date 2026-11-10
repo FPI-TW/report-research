@@ -7,28 +7,29 @@ import { Button, Card as ConsoleCard, PageHeader, Status, toast, type LampTone }
 import c from '../../../components/console/Console.module.css'
 import { OpsQueryError } from './OpsShared'
 import styles from './Diagnostics.module.css'
+import { t } from '@/i18n'
 
 type Tone = 'ok' | 'warn' | 'fail' | 'idle'
 const LAMP_TONE: Record<Tone, LampTone> = { ok: 'ok', warn: 'warn', fail: 'bad', idle: 'idle' }
 
 const SCHEMA_LABELS: Record<DiagnosticsResponse['schema_info']['status'], [string, Tone]> = {
-  ok: ['一致', 'ok'], behind: ['DB 落後', 'fail'], ahead: ['DB 超前', 'fail'], unversioned: ['未接管', 'warn'],
-  ambiguous: ['不明確', 'fail'], error: ['查不到', 'fail'],
+  get ok() { return [t('admin.ops.opsDiagnosticsPage.inSync'), 'ok'] as [string, Tone] }, get behind() { return [t('admin.ops.opsDiagnosticsPage.dbBehind'), 'fail'] as [string, Tone] }, get ahead() { return [t('admin.ops.opsDiagnosticsPage.dbAhead'), 'fail'] as [string, Tone] }, get unversioned() { return [t('admin.ops.opsDiagnosticsPage.notManaged'), 'warn'] as [string, Tone] },
+  get ambiguous() { return [t('admin.ops.opsDiagnosticsPage.ambiguous'), 'fail'] as [string, Tone] }, get error() { return [t('admin.ops.opsDiagnosticsPage.notFound'), 'fail'] as [string, Tone] },
 }
 const STORAGE_LABELS: Record<string, [string, Tone]> = {
-  ok: ['正常', 'ok'], degraded: ['異常', 'fail'], unknown: ['尚未探測', 'idle'], disabled: ['未啟用（local）', 'idle'],
+  get ok() { return [t('admin.ops.opsDiagnosticsPage.ok'), 'ok'] as [string, Tone] }, get degraded() { return [t('admin.ops.opsDiagnosticsPage.error'), 'fail'] as [string, Tone] }, get unknown() { return [t('admin.ops.opsDiagnosticsPage.notProbedYet'), 'idle'] as [string, Tone] }, get disabled() { return [t('admin.ops.opsDiagnosticsPage.disabledLocal'), 'idle'] as [string, Tone] },
 }
 const LLM_LABELS: Record<string, [string, Tone]> = {
-  ok: ['正常', 'ok'], exhausted: ['額度用完', 'fail'], auth_failed: ['金鑰失效', 'fail'],
-  unreachable: ['連不上', 'fail'], indeterminate: ['判斷不出', 'fail'], unknown: ['尚未查詢', 'idle'],
-  disabled: ['未使用', 'idle'],
+  get ok() { return [t('admin.ops.opsDiagnosticsPage.ok'), 'ok'] as [string, Tone] }, get exhausted() { return [t('admin.ops.opsDiagnosticsPage.quotaExhausted'), 'fail'] as [string, Tone] }, get auth_failed() { return [t('admin.ops.opsDiagnosticsPage.invalidKey'), 'fail'] as [string, Tone] },
+  get unreachable() { return [t('admin.ops.opsDiagnosticsPage.unreachable'), 'fail'] as [string, Tone] }, get indeterminate() { return [t('admin.ops.opsDiagnosticsPage.undetermined'), 'fail'] as [string, Tone] }, get unknown() { return [t('admin.ops.opsDiagnosticsPage.notCheckedYet'), 'idle'] as [string, Tone] },
+  get disabled() { return [t('admin.ops.opsDiagnosticsPage.notUsed'), 'idle'] as [string, Tone] },
 }
 const WARMUP_LABELS: Record<string, string> = {
-  skipped: '已略過（SKIP_WARMUP=1）', absent: '沒有暖機工作', running: '暖機中', done: '已結束', failed: '失敗',
-  cancelled: '已取消',
+  get skipped() { return t('admin.ops.opsDiagnosticsPage.skippedSkipWarmup1') }, get absent() { return t('admin.ops.opsDiagnosticsPage.noWarmupWork') }, get running() { return t('admin.ops.opsDiagnosticsPage.warmingUp') }, get done() { return t('admin.ops.opsDiagnosticsPage.finished') }, get failed() { return t('admin.ops.opsDiagnosticsPage.failed') },
+  get cancelled() { return t('admin.ops.opsDiagnosticsPage.canceled') },
 }
 const DAILY_REASON: Record<string, string> = {
-  missing: '還沒有狀態檔', too_large: '狀態檔過大，未讀取', invalid: '狀態檔格式不對', error: '讀取失敗',
+  get missing() { return t('admin.ops.opsDiagnosticsPage.noStatusFileYet') }, get too_large() { return t('admin.ops.opsDiagnosticsPage.statusFileTooLargeNot') }, get invalid() { return t('admin.ops.opsDiagnosticsPage.statusFileMalformed') }, get error() { return t('admin.ops.opsDiagnosticsPage.readFailed') },
 }
 
 function Pill({ tone, children }: { tone: Tone; children: ReactNode }) {
@@ -40,7 +41,7 @@ function Mono({ children }: { children: ReactNode }) {
   return <span className={`${c.mono} ${styles.breakAll}`}>{children}</span>
 }
 
-function yesNo(v: boolean | null | undefined, yes = '是', no = '否'): string {
+function yesNo(v: boolean | null | undefined, yes = t('admin.ops.opsDiagnosticsPage.yes'), no = t('admin.ops.opsDiagnosticsPage.no')): string {
   if (v == null) return '—'
   return v ? yes : no
 }
@@ -53,10 +54,10 @@ function fmtBytes(n: number | null | undefined): string {
 
 function fmtDuration(s: number | null | undefined): string {
   if (s == null) return '—'
-  if (s < 60) return `${Math.round(s)} 秒`
-  if (s < 3600) return `${Math.round(s / 60)} 分鐘`
-  if (s < 86_400) return `${(s / 3600).toFixed(1)} 小時`
-  return `${(s / 86_400).toFixed(1)} 天`
+  if (s < 60) return t('admin.ops.opsDiagnosticsPage.s', { s: Math.round(s) })
+  if (s < 3600) return t('admin.ops.opsDiagnosticsPage.min', { round: Math.round(s / 60) })
+  if (s < 86_400) return t('admin.ops.opsDiagnosticsPage.h', { v: (s / 3600).toFixed(1) })
+  return t('admin.ops.opsDiagnosticsPage.days', { v: (s / 86_400).toFixed(1) })
 }
 
 function fmtMs(ms: number | null | undefined): string {
@@ -83,7 +84,7 @@ function KV({ rows, label }: { rows: [string, ReactNode][]; label: string }) {
 
 function SectionError({ error }: { error: string | null | undefined }) {
   if (!error) return null
-  return <p className={c.error} role="alert">這一段讀取失敗：{error}</p>
+  return <p className={c.error} role="alert">{t('admin.ops.opsDiagnosticsPage.thisSectionFailedToLoad', { error })}</p>
 }
 
 function Card({ id, title, right, children }: { id: string; title: string; right?: ReactNode; children: ReactNode }) {
@@ -119,8 +120,8 @@ function useCopyBundle(data: DiagnosticsResponse | undefined) {
   const text = data ? JSON.stringify(data, null, 2) : ''
   const copy = () => {
     copyText(text).then(
-      () => { setFailed(false); toast('已複製（JSON，不含祕密）') },
-      () => { setFailed(true); toast('無法自動複製，請從下方手動複製', { tone: 'bad' }) },
+      () => { setFailed(false); toast(t('admin.ops.opsDiagnosticsPage.copiedJsonNoSecrets')) },
+      () => { setFailed(true); toast(t('admin.ops.opsDiagnosticsPage.couldnTCopyAutomaticallyCopy'), { tone: 'bad' }) },
     )
   }
   return { copy, failed, text }
@@ -133,21 +134,21 @@ function Summary({ d }: { d: DiagnosticsResponse }) {
   const [llmLabel, llmTone] = LLM_LABELS[llmState] ?? [llmState, 'warn']
   const git = d.versions.git
   const items: [string, ReactNode, string][] = [
-    ['資料庫', <Pill tone={d.checks.db.ok ? 'ok' : 'fail'}>{d.checks.db.ok ? '連得上' : '連不上'}</Pill>,
+    [t('admin.ops.opsDiagnosticsPage.database'), <Pill tone={d.checks.db.ok ? 'ok' : 'fail'}>{d.checks.db.ok ? t('admin.ops.opsDiagnosticsPage.reachable') : t('admin.ops.opsDiagnosticsPage.unreachable')}</Pill>,
       d.checks.db.ok ? fmtMs(d.checks.db.latency_ms) : (d.checks.db.error ?? '')],
-    ['Schema 版本', <Pill tone={schemaTone}>{schemaLabel}</Pill>,
-      `DB ${d.schema_info.db_revisions.join(',') || '—'}／程式 ${d.schema_info.code_heads.join(',') || '—'}`],
-    ['物件儲存', <Pill tone={storageTone}>{storageLabel}</Pill>, d.config.object_storage_mode ?? ''],
-    ['LLM', <Pill tone={llmTone}>{llmLabel}</Pill>, d.checks.llm.key_configured ? '已設金鑰' : '未設金鑰'],
-    ['維運代理', <Pill tone={d.checks.ops_agent.ok ? 'ok' : 'warn'}>{d.checks.ops_agent.ok ? '連得上' : '連不上'}</Pill>,
-      d.checks.ops_agent.ok ? `${d.checks.ops_agent.services ?? '—'} 個服務` : (d.checks.ops_agent.error ?? '')],
-    ['程式版本', git?.restart_pending
-      ? <Pill tone="warn">待重啟</Pill>
-      : <Pill tone={git?.available ? 'ok' : 'idle'}>{git?.available ? '與磁碟一致' : '無法取得'}</Pill>,
+    [t('admin.ops.opsDiagnosticsPage.schemaVersion'), <Pill tone={schemaTone}>{schemaLabel}</Pill>,
+      t('admin.ops.opsDiagnosticsPage.dbCode', { v: d.schema_info.db_revisions.join(',') || '—', v2: d.schema_info.code_heads.join(',') || '—' })],
+    [t('admin.ops.opsDiagnosticsPage.objectStorage'), <Pill tone={storageTone}>{storageLabel}</Pill>, d.config.object_storage_mode ?? ''],
+    ['LLM', <Pill tone={llmTone}>{llmLabel}</Pill>, d.checks.llm.key_configured ? t('admin.ops.opsDiagnosticsPage.keySet') : t('admin.ops.opsDiagnosticsPage.keyNotSet')],
+    [t('admin.ops.opsDiagnosticsPage.opsAgent'), <Pill tone={d.checks.ops_agent.ok ? 'ok' : 'warn'}>{d.checks.ops_agent.ok ? t('admin.ops.opsDiagnosticsPage.reachable') : t('admin.ops.opsDiagnosticsPage.unreachable')}</Pill>,
+      d.checks.ops_agent.ok ? t('admin.ops.opsDiagnosticsPage.services', { v: d.checks.ops_agent.services ?? '—' }) : (d.checks.ops_agent.error ?? '')],
+    [t('admin.ops.opsDiagnosticsPage.codeVersion'), git?.restart_pending
+      ? <Pill tone="warn">{t('admin.ops.opsDiagnosticsPage.restartPending')}</Pill>
+      : <Pill tone={git?.available ? 'ok' : 'idle'}>{git?.available ? t('admin.ops.opsDiagnosticsPage.matchesDisk') : t('admin.ops.opsDiagnosticsPage.unavailable')}</Pill>,
       shortSha(git?.commit_at_start)],
   ]
   return (
-    <div className={c.tiles} role="list" aria-label="診斷摘要">
+    <div className={c.tiles} role="list" aria-label={t('admin.ops.opsDiagnosticsPage.diagnosticSummary')}>
       {items.map(([label, pill, detail]) => (
         <div key={label} className={c.tile} role="listitem">
           <span className={c.tileLabel}>{label}</span>
@@ -159,35 +160,61 @@ function Summary({ d }: { d: DiagnosticsResponse }) {
   )
 }
 
+const BUILD_SOURCE_LABELS: Record<string, string> = {
+  get image() { return t('admin.ops.opsDiagnosticsPage.containerImageWrittenAtBuild') },
+  get host() { return t('admin.ops.opsDiagnosticsPage.hostMakeBuildInfo') },
+  get git() { return t('admin.ops.opsDiagnosticsPage.commitFromGitOnly') },
+}
+
+function treeLabel(clean: boolean | null | undefined): string {
+  if (clean == null) return t('admin.ops.opsDiagnosticsPage.unknown')
+  return clean ? t('admin.ops.opsDiagnosticsPage.clean') : t('admin.ops.opsDiagnosticsPage.uncommittedChanges')
+}
+
+function buildRows(build: DiagnosticsResponse['versions']['build']): [string, ReactNode][] {
+  if (!build?.available) return [[t('admin.ops.opsDiagnosticsPage.buildInfo'), t('admin.ops.opsDiagnosticsPage.unavailableNoBuildInfoFile')]]
+  return [
+    ['commit', <Mono>{build.commit ?? t('admin.ops.opsDiagnosticsPage.notProvidedAtBuild')}</Mono>],
+    [t('admin.ops.opsDiagnosticsPage.version'), build.version ?? '—'],
+    [t('admin.ops.opsDiagnosticsPage.workTreeAtBuild'), treeLabel(build.tree_clean)],
+    [t('admin.ops.opsDiagnosticsPage.source'), BUILD_SOURCE_LABELS[build.source ?? ''] ?? '—'],
+    ...(build.built_at ? [[t('admin.ops.opsDiagnosticsPage.writtenAt'), fmtDateTime(build.built_at)] as [string, ReactNode]] : []),
+  ]
+}
+
 function VersionsCard({ d }: { d: DiagnosticsResponse }) {
   const v = d.versions
   const git = v.git
   const fe = v.frontend
   return (
-    <Card id="diag-versions" title="版本">
+    <Card id="diag-versions" title={t('admin.ops.opsDiagnosticsPage.version')}>
       <SectionError error={v.error} />
+      {v.build?.stale_file && (
+        <Warn>{t('admin.ops.opsDiagnosticsPage.theBuildInfoFileAnd')}</Warn>
+      )}
+      <Sub>{t('admin.ops.opsDiagnosticsPage.build')}</Sub>
+      <KV label={t('admin.ops.opsDiagnosticsPage.buildInfo')} rows={buildRows(v.build)} />
       {git?.restart_pending && (
         <Warn>
-          磁碟上的程式（{shortSha(git.commit_on_disk)}）與這個行程啟動時（{shortSha(git.commit_at_start)}）不同：
-          程式已更新但 web 還沒重啟。
+          {t('admin.ops.opsDiagnosticsPage.theCodeOnDiskDiffers', { commit_on_disk: shortSha(git.commit_on_disk), commit_at_start: shortSha(git.commit_at_start) })}
         </Warn>
       )}
-      <Sub>程式</Sub>
-      <KV label="程式版本" rows={git?.available ? [
-        ['啟動時 commit', <Mono>{git.commit_at_start ?? '—'}</Mono>],
-        ['啟動時分支', git.branch_at_start ?? '（detached）'],
-        ['磁碟上 commit', <Mono>{git.commit_on_disk ?? '—'}</Mono>],
-      ] : [['commit', `無法取得（${git?.reason ?? '未知'}）`]]} />
-      <Sub>前端</Sub>
-      <KV label="前端 build" rows={fe?.available ? [
-        ['build 時間', fmtDateTime(fe.built_at)],
-        ['入口 bundle', <Mono>{(fe.entry_assets ?? []).join('、') || '—'}</Mono>],
-      ] : [['build', '找不到 frontend/dist/index.html（要先 make build-web）']]} />
-      <Sub>執行環境與套件</Sub>
-      <KV label="套件版本" rows={[
+      <Sub>{t('admin.ops.opsDiagnosticsPage.code')}</Sub>
+      <KV label={t('admin.ops.opsDiagnosticsPage.codeVersion')} rows={git?.available ? [
+        [t('admin.ops.opsDiagnosticsPage.commitAtStart'), <Mono>{git.commit_at_start ?? '—'}</Mono>],
+        [t('admin.ops.opsDiagnosticsPage.branchAtStart'), git.branch_at_start ?? t('admin.ops.opsDiagnosticsPage.detached')],
+        [t('admin.ops.opsDiagnosticsPage.commitOnDisk'), <Mono>{git.commit_on_disk ?? '—'}</Mono>],
+      ] : [['commit', t('admin.ops.opsDiagnosticsPage.unavailable2', { v: git?.reason ?? t('admin.ops.opsDiagnosticsPage.unknown2') })]]} />
+      <Sub>{t('admin.ops.opsDiagnosticsPage.frontend')}</Sub>
+      <KV label={t('admin.ops.opsDiagnosticsPage.frontendBuild')} rows={fe?.available ? [
+        [t('admin.ops.opsDiagnosticsPage.buildTime'), fmtDateTime(fe.built_at)],
+        [t('admin.ops.opsDiagnosticsPage.entryBundle'), <Mono>{(fe.entry_assets ?? []).join(t('admin.ops.opsDiagnosticsPage.text')) || '—'}</Mono>],
+      ] : [['build', t('admin.ops.opsDiagnosticsPage.frontendDistIndexHtmlNot')]]} />
+      <Sub>{t('admin.ops.opsDiagnosticsPage.runtimeAndPackages')}</Sub>
+      <KV label={t('admin.ops.opsDiagnosticsPage.packageVersions')} rows={[
         ['Python', v.python ?? '—'],
-        ['平台', v.platform ?? '—'],
-        ...Object.entries(v.packages ?? {}).map(([name, ver]): [string, ReactNode] => [name, ver == null ? '未安裝' : String(ver)]),
+        [t('admin.ops.opsDiagnosticsPage.platform'), v.platform ?? '—'],
+        ...Object.entries(v.packages ?? {}).map(([name, ver]): [string, ReactNode] => [name, ver == null ? t('admin.ops.opsDiagnosticsPage.notInstalled') : String(ver)]),
       ]} />
     </Card>
   )
@@ -200,26 +227,26 @@ function SchemaCard({ d }: { d: DiagnosticsResponse }) {
   return (
     <Card id="diag-schema" title="Schema" right={<Pill tone={tone}>{label}</Pill>}>
       <SectionError error={s.error} />
-      <KV label="schema 版本" rows={[
-        ['DB revision', s.db_revisions.join('、') || '—'],
-        ['程式 head', s.code_heads.join('、') || '—'],
-        ...(s.pending.length ? [['尚未套用', s.pending.join('、')] as [string, ReactNode]] : []),
+      <KV label={t('admin.ops.opsDiagnosticsPage.schemaVersion2')} rows={[
+        ['DB revision', s.db_revisions.join(t('admin.ops.opsDiagnosticsPage.text')) || '—'],
+        [t('admin.ops.opsDiagnosticsPage.codeHead'), s.code_heads.join(t('admin.ops.opsDiagnosticsPage.text')) || '—'],
+        ...(s.pending.length ? [[t('admin.ops.opsDiagnosticsPage.notApplied'), s.pending.join(t('admin.ops.opsDiagnosticsPage.text'))] as [string, ReactNode]] : []),
       ]} />
-      <Sub>每日檢查（report-mark-schema-check）</Sub>
+      <Sub>{t('admin.ops.opsDiagnosticsPage.dailyCheckReportMarkSchema')}</Sub>
       {dc.available ? (
         <>
-          <KV label="每日檢查" rows={[
-            ['最後一次', `${fmtDateTime(dc.checked_at)}${dc.age_hours != null ? `（${dc.age_hours.toFixed(1)} 小時前）` : ''}`],
-            ['模式', dc.mode ?? '—'],
-            ['退出碼', dc.exit_code == null ? '—' : `${dc.exit_code}${dc.alert ? '（會告警）' : ''}`],
-            ['版本／drift', `${dc.version_status ?? '—'}／${dc.drift_status ?? '—'}${dc.drift_count != null ? `（${dc.drift_count} 項）` : ''}`],
-            ['問題', dc.problems?.length ? dc.problems.join('、') : '無'],
-            ['說明', dc.message ?? '—'],
+          <KV label={t('admin.ops.opsDiagnosticsPage.dailyCheck')} rows={[
+            [t('admin.ops.opsDiagnosticsPage.lastRun'), `${fmtDateTime(dc.checked_at)}${dc.age_hours != null ? t('admin.ops.opsDiagnosticsPage.hAgo', { age_hours: dc.age_hours.toFixed(1) }) : ''}`],
+            [t('admin.ops.opsDiagnosticsPage.mode'), dc.mode ?? '—'],
+            [t('admin.ops.opsDiagnosticsPage.exitCode'), dc.exit_code == null ? '—' : `${dc.exit_code}${dc.alert ? t('admin.ops.opsDiagnosticsPage.alerts') : ''}`],
+            [t('admin.ops.opsDiagnosticsPage.versionDrift'), t('admin.ops.opsDiagnosticsPage.text2', { v: dc.version_status ?? '—', v2: dc.drift_status ?? '—', v3: dc.drift_count != null ? t('admin.ops.opsDiagnosticsPage.items', { drift_count: dc.drift_count }) : '' })],
+            [t('admin.ops.opsDiagnosticsPage.issues'), dc.problems?.length ? dc.problems.join(t('admin.ops.opsDiagnosticsPage.text')) : t('admin.ops.opsDiagnosticsPage.none')],
+            [t('admin.ops.opsDiagnosticsPage.description'), dc.message ?? '—'],
           ]} />
-          {dc.stale && <Warn>狀態檔超過 36 小時沒更新：確認 timer 有在跑、或狀態檔寫得進去。</Warn>}
+          {dc.stale && <Warn>{t('admin.ops.opsDiagnosticsPage.theStatusFileHasnT')}</Warn>}
         </>
       ) : (
-        <p className={c.muted}>{DAILY_REASON[dc.unavailable_reason ?? ''] ?? '無法讀取'}。</p>
+        <p className={c.muted}>{DAILY_REASON[dc.unavailable_reason ?? ''] ?? t('admin.ops.opsDiagnosticsPage.unreadable')}{t('admin.ops.opsDiagnosticsPage.text3')}</p>
       )}
     </Card>
   )
@@ -230,22 +257,22 @@ function ChecksCard({ d }: { d: DiagnosticsResponse }) {
   const [storageLabel, storageTone] = STORAGE_LABELS[ck.storage.state] ?? [ck.storage.state, 'warn']
   const [llmLabel, llmTone] = LLM_LABELS[ck.llm.state] ?? [ck.llm.state, 'warn']
   return (
-    <Card id="diag-checks" title="連通性">
-      <p className={c.meta}>R2 與 LLM 只讀健康檢查上一次的結論，診斷頁不會另外呼叫（計費）。</p>
-      <KV label="連通性" rows={[
-        ['資料庫', <><Pill tone={ck.db.ok ? 'ok' : 'fail'}>{ck.db.ok ? '正常' : '失敗'}</Pill>{' '}
-          {ck.db.ok ? `SELECT 1 ${fmtMs(ck.db.latency_ms)}；PostgreSQL ${ck.db.server_version ?? '—'}` : ck.db.error}</>],
-        ['物件儲存', <><Pill tone={storageTone}>{storageLabel}</Pill>{' '}
-          {ck.storage.last_probe_age_s != null ? `上次探測 ${fmtDuration(ck.storage.last_probe_age_s)}前` : ''}
-          {ck.storage.consecutive_failures ? `；連續失敗 ${ck.storage.consecutive_failures} 次` : ''}
-          {ck.storage.error ? `（${ck.storage.error}）` : ''}</>],
+    <Card id="diag-checks" title={t('admin.ops.opsDiagnosticsPage.connectivity')}>
+      <p className={c.meta}>{t('admin.ops.opsDiagnosticsPage.r2AndLlmShowOnly')}</p>
+      <KV label={t('admin.ops.opsDiagnosticsPage.connectivity')} rows={[
+        [t('admin.ops.opsDiagnosticsPage.database'), <><Pill tone={ck.db.ok ? 'ok' : 'fail'}>{ck.db.ok ? t('admin.ops.opsDiagnosticsPage.ok') : t('admin.ops.opsDiagnosticsPage.failed')}</Pill>{' '}
+          {ck.db.ok ? t('admin.ops.opsDiagnosticsPage.select1Postgresql', { latency_ms: fmtMs(ck.db.latency_ms), v: ck.db.server_version ?? '—' }) : ck.db.error}</>],
+        [t('admin.ops.opsDiagnosticsPage.objectStorage'), <><Pill tone={storageTone}>{storageLabel}</Pill>{' '}
+          {ck.storage.last_probe_age_s != null ? t('admin.ops.opsDiagnosticsPage.lastProbedAgo', { last_probe_age_s: fmtDuration(ck.storage.last_probe_age_s) }) : ''}
+          {ck.storage.consecutive_failures ? t('admin.ops.opsDiagnosticsPage.consecutiveFailures', { consecutive_failures: ck.storage.consecutive_failures }) : ''}
+          {ck.storage.error ? t('admin.ops.opsDiagnosticsPage.text4', { error: ck.storage.error }) : ''}</>],
         ['LLM', <><Pill tone={llmTone}>{llmLabel}</Pill>{' '}
-          {ck.llm.last_check_age_s != null ? `上次查詢 ${fmtDuration(ck.llm.last_check_age_s)}前` : ''}
-          {ck.llm.quota_latched ? '；本行程碰過額度用完' : ''}
-          {!ck.llm.ask_uses_http ? '；問答主答模型不在白名單' : ''}
-          {ck.llm.error ? `（${ck.llm.error}）` : ''}</>],
-        ['維運代理', <><Pill tone={ck.ops_agent.ok ? 'ok' : 'warn'}>{ck.ops_agent.ok ? '正常' : '連不上'}</Pill>{' '}
-          {ck.ops_agent.ok ? `${fmtMs(ck.ops_agent.latency_ms)}；${ck.ops_agent.services ?? '—'} 個服務` : ck.ops_agent.error}</>],
+          {ck.llm.last_check_age_s != null ? t('admin.ops.opsDiagnosticsPage.lastCheckedAgo', { last_check_age_s: fmtDuration(ck.llm.last_check_age_s) }) : ''}
+          {ck.llm.quota_latched ? t('admin.ops.opsDiagnosticsPage.thisProcessHasHitQuota') : ''}
+          {!ck.llm.ask_uses_http ? t('admin.ops.opsDiagnosticsPage.theMainAnswerModelIsn') : ''}
+          {ck.llm.error ? t('admin.ops.opsDiagnosticsPage.text4', { error: ck.llm.error }) : ''}</>],
+        [t('admin.ops.opsDiagnosticsPage.opsAgent'), <><Pill tone={ck.ops_agent.ok ? 'ok' : 'warn'}>{ck.ops_agent.ok ? t('admin.ops.opsDiagnosticsPage.ok') : t('admin.ops.opsDiagnosticsPage.unreachable')}</Pill>{' '}
+          {ck.ops_agent.ok ? t('admin.ops.opsDiagnosticsPage.services2', { latency_ms: fmtMs(ck.ops_agent.latency_ms), v: ck.ops_agent.services ?? '—' }) : ck.ops_agent.error}</>],
       ]} />
     </Card>
   )
@@ -256,35 +283,35 @@ function RuntimeCard({ d }: { d: DiagnosticsResponse }) {
   const m = d.models
   const p = d.db_pool
   return (
-    <Card id="diag-runtime" title="執行環境">
+    <Card id="diag-runtime" title={t('admin.ops.opsDiagnosticsPage.runtime')}>
       <SectionError error={r.error} />
-      <KV label="行程" rows={[
-        ['主機', r.hostname ?? '—'],
+      <KV label={t('admin.ops.opsDiagnosticsPage.process')} rows={[
+        [t('admin.ops.opsDiagnosticsPage.host'), r.hostname ?? '—'],
         ['PID', r.pid ?? '—'],
-        ['啟動時間', `${fmtDateTime(r.started_at)}（已執行 ${fmtDuration(r.uptime_s)}）`],
-        ['記憶體 RSS', `${fmtBytes(r.rss_bytes)}（峰值 ${fmtBytes(r.peak_rss_bytes)}）`],
-        ['執行緒', r.threads ?? '—'],
-        ['時區', r.timezone ? `${r.timezone.name} ${r.timezone.utc_offset}${r.timezone.tz_env ? `（TZ=${r.timezone.tz_env}）` : ''}` : '—'],
+        [t('admin.ops.opsDiagnosticsPage.startedAt'), t('admin.ops.opsDiagnosticsPage.up', { started_at: fmtDateTime(r.started_at), uptime_s: fmtDuration(r.uptime_s) })],
+        [t('admin.ops.opsDiagnosticsPage.memoryRss'), t('admin.ops.opsDiagnosticsPage.peak', { rss_bytes: fmtBytes(r.rss_bytes), peak_rss_bytes: fmtBytes(r.peak_rss_bytes) })],
+        [t('admin.ops.opsDiagnosticsPage.threads'), r.threads ?? '—'],
+        [t('admin.ops.opsDiagnosticsPage.timeZone'), r.timezone ? `${r.timezone.name} ${r.timezone.utc_offset}${r.timezone.tz_env ? t('admin.ops.opsDiagnosticsPage.tz', { tz_env: r.timezone.tz_env }) : ''}` : '—'],
         ['Python', <Mono>{r.python_executable ?? '—'}</Mono>],
       ]} />
-      <Sub>模型</Sub>
+      <Sub>{t('admin.ops.opsDiagnosticsPage.models')}</Sub>
       <SectionError error={m.error} />
-      <KV label="模型" rows={[
-        ['嵌入模型', `${m.embed_model ?? '—'}：${m.embed_loaded ? '已載入' : '尚未載入'}`],
-        ['rerank', m.rerank_load_failed ? '載入失敗（已熔斷）' : m.rerank_loaded ? '已載入' : '尚未載入'],
-        ['暖機', `${WARMUP_LABELS[m.warmup ?? ''] ?? '—'}${m.warmup_error ? `（${m.warmup_error}）` : ''}`],
+      <KV label={t('admin.ops.opsDiagnosticsPage.models')} rows={[
+        [t('admin.ops.opsDiagnosticsPage.embeddingModel'), t('admin.ops.opsDiagnosticsPage.text5', { v: m.embed_model ?? '—', v2: m.embed_loaded ? t('admin.ops.opsDiagnosticsPage.loaded') : t('admin.ops.opsDiagnosticsPage.notLoadedYet') })],
+        ['rerank', m.rerank_load_failed ? t('admin.ops.opsDiagnosticsPage.loadFailedCircuitOpen') : m.rerank_loaded ? t('admin.ops.opsDiagnosticsPage.loaded') : t('admin.ops.opsDiagnosticsPage.notLoadedYet')],
+        [t('admin.ops.opsDiagnosticsPage.warmup'), `${WARMUP_LABELS[m.warmup ?? ''] ?? '—'}${m.warmup_error ? t('admin.ops.opsDiagnosticsPage.text6', { warmup_error: m.warmup_error }) : ''}`],
       ]} />
-      <Sub>DB 連線池</Sub>
+      <Sub>{t('admin.ops.opsDiagnosticsPage.dbConnectionPool')}</Sub>
       <SectionError error={p.error} />
-      <KV label="連線池" rows={[
-        ['使用中', `${p.checked_out ?? '—'}／上限 ${p.size != null && p.max_overflow != null ? p.size + p.max_overflow : '—'}`],
-        ['已開啟', `${p.open_connections ?? '—'}（常駐 ${p.size ?? '—'}）`],
+      <KV label={t('admin.ops.opsDiagnosticsPage.connectionPool')} rows={[
+        [t('admin.ops.opsDiagnosticsPage.inUse'), t('admin.ops.opsDiagnosticsPage.max', { v: p.checked_out ?? '—', v2: p.size != null && p.max_overflow != null ? p.size + p.max_overflow : '—' })],
+        [t('admin.ops.opsDiagnosticsPage.open'), t('admin.ops.opsDiagnosticsPage.resident', { v: p.open_connections ?? '—', v2: p.size ?? '—' })],
       ]} />
-      <Sub>併發閘</Sub>
-      {d.gates_error && <p className={c.error} role="alert">讀取失敗：{d.gates_error}</p>}
-      <KV label="併發閘" rows={d.gates.length ? d.gates.map((g): [string, ReactNode] => [
-        g.name, `使用中 ${g.in_use ?? '—'}／${g.capacity}；排隊 ${g.waiting}（上限 ${g.max_queue || '不限'}）`,
-      ]) : [['—', '沒有閘門']]} />
+      <Sub>{t('admin.ops.opsDiagnosticsPage.concurrencyGates')}</Sub>
+      {d.gates_error && <p className={c.error} role="alert">{t('admin.ops.opsDiagnosticsPage.readFailed2', { gates_error: d.gates_error })}</p>}
+      <KV label={t('admin.ops.opsDiagnosticsPage.concurrencyGates')} rows={d.gates.length ? d.gates.map((g): [string, ReactNode] => [
+        g.name, t('admin.ops.opsDiagnosticsPage.inUseWaitingMax', { v: g.in_use ?? '—', capacity: g.capacity, waiting: g.waiting, v2: g.max_queue || t('admin.ops.opsDiagnosticsPage.unlimited') }),
+      ]) : [['—', t('admin.ops.opsDiagnosticsPage.noGates')]]} />
     </Card>
   )
 }
@@ -292,34 +319,34 @@ function RuntimeCard({ d }: { d: DiagnosticsResponse }) {
 function ConfigCard({ d }: { d: DiagnosticsResponse }) {
   const cfg = d.config
   return (
-    <Card id="diag-config" title="設定（白名單）">
+    <Card id="diag-config" title={t('admin.ops.opsDiagnosticsPage.settingsAllowlist')}>
       <SectionError error={cfg.error} />
-      <KV label="設定" rows={[
-        ['資料庫', <Mono>{cfg.db_target ?? '—'}</Mono>],
-        ['物件儲存', cfg.object_storage_mode ?? '—'],
-        ['LLM 供應商', cfg.llm_provider ?? '—'],
-        ['抽取器', cfg.extractor ?? '—'],
-        ['日誌等級', cfg.log_level ?? '—'],
-        ['維運代理', <Mono>{`${cfg.ops_agent_environment || '（停用）'} ${cfg.ops_agent_socket ?? ''}`}</Mono>],
+      <KV label={t('admin.ops.opsDiagnosticsPage.settings')} rows={[
+        [t('admin.ops.opsDiagnosticsPage.database'), <Mono>{cfg.db_target ?? '—'}</Mono>],
+        [t('admin.ops.opsDiagnosticsPage.objectStorage'), cfg.object_storage_mode ?? '—'],
+        [t('admin.ops.opsDiagnosticsPage.llmProvider'), cfg.llm_provider ?? '—'],
+        [t('admin.ops.opsDiagnosticsPage.extractor'), cfg.extractor ?? '—'],
+        [t('admin.ops.opsDiagnosticsPage.logLevel'), cfg.log_level ?? '—'],
+        [t('admin.ops.opsDiagnosticsPage.opsAgent'), <Mono>{`${cfg.ops_agent_environment || t('admin.ops.opsDiagnosticsPage.disabled')} ${cfg.ops_agent_socket ?? ''}`}</Mono>],
       ]} />
-      <Sub>線上任務的模型</Sub>
-      <KV label="模型" rows={Object.entries(cfg.models ?? {}).map(([task, model]): [string, ReactNode] => [task, String(model)])} />
+      <Sub>{t('admin.ops.opsDiagnosticsPage.modelsForOnlineTasks')}</Sub>
+      <KV label={t('admin.ops.opsDiagnosticsPage.models')} rows={Object.entries(cfg.models ?? {}).map(([task, model]): [string, ReactNode] => [task, String(model)])} />
       {cfg.flags && (
         <>
-          <Sub>功能旗標</Sub>
-          <KV label="功能旗標" rows={Object.entries(cfg.flags).map(([k, v]): [string, ReactNode] => [k, yesNo(v, '開', '關')])} />
+          <Sub>{t('admin.ops.opsDiagnosticsPage.featureFlags')}</Sub>
+          <KV label={t('admin.ops.opsDiagnosticsPage.featureFlags')} rows={Object.entries(cfg.flags).map(([k, v]): [string, ReactNode] => [k, yesNo(v, t('admin.ops.opsDiagnosticsPage.on'), t('admin.ops.opsDiagnosticsPage.off'))])} />
         </>
       )}
       {cfg.secrets_present && (
         <>
-          <Sub>祕密（只顯示有沒有設）</Sub>
-          <KV label="祕密" rows={Object.entries(cfg.secrets_present).map(([k, v]): [string, ReactNode] => [k, yesNo(v, '已設', '未設')])} />
+          <Sub>{t('admin.ops.opsDiagnosticsPage.secretsSetOrNotOnly')}</Sub>
+          <KV label={t('admin.ops.opsDiagnosticsPage.secrets')} rows={Object.entries(cfg.secrets_present).map(([k, v]): [string, ReactNode] => [k, yesNo(v, t('admin.ops.opsDiagnosticsPage.set'), t('admin.ops.opsDiagnosticsPage.notSet'))])} />
         </>
       )}
       {cfg.limits && (
         <>
-          <Sub>上限與逾時</Sub>
-          <KV label="上限" rows={Object.entries(cfg.limits).map(([k, v]): [string, ReactNode] => [k, String(v)])} />
+          <Sub>{t('admin.ops.opsDiagnosticsPage.limitsAndTimeouts')}</Sub>
+          <KV label={t('admin.ops.opsDiagnosticsPage.limits')} rows={Object.entries(cfg.limits).map(([k, v]): [string, ReactNode] => [k, String(v)])} />
         </>
       )}
     </Card>
@@ -335,38 +362,36 @@ export default function OpsDiagnosticsPage() {
   const bundle = useCopyBundle(q.data)
   const header = (
     <PageHeader
-      summary="這個 web 行程目前的版本、schema、執行環境、設定與連通性。"
+      summary={t('admin.ops.opsDiagnosticsPage.versionSchemaRuntimeSettingsAnd')}
       help={(
         <>
-          程式版本比對行程啟動時與磁碟上的 commit，兩者不同表示程式已更新、等著重新啟動；前端讀 frontend/dist 的建置時間；
-          schema 比對 DB 的 alembic 版本與程式的 head，並附每日檢查最後一次的結果。設定只列白名單裡的項目，祕密只顯示有沒有設。
-          R2 與 LLM 只讀健康檢查上一次的結論，不會另外呼叫。「複製診斷包」複製整份 JSON（不含祕密），可以直接貼給維運。
+          {t('admin.ops.opsDiagnosticsPage.codeVersionComparesTheCommit')}
         </>
       )}
       actions={q.data && (
         <>
           <Button onClick={() => q.refetch()} disabled={q.isFetching}>
-            {q.isFetching ? '重新整理中…' : '重新整理'}
+            {q.isFetching ? t('admin.ops.opsDiagnosticsPage.refreshing') : t('admin.ops.opsDiagnosticsPage.refresh')}
           </Button>
-          <Button variant="primary" onClick={bundle.copy}>複製診斷包</Button>
+          <Button variant="primary" onClick={bundle.copy}>{t('admin.ops.opsDiagnosticsPage.copyDiagnostics')}</Button>
         </>
       )}
     />
   )
-  if (q.isPending) return <>{header}<p className={c.empty}>載入中…</p></>
-  if (q.isError) return <>{header}<OpsQueryError error={q.error} what="診斷" /></>
+  if (q.isPending) return <>{header}<p className={c.empty}>{t('admin.ops.opsDiagnosticsPage.loading')}</p></>
+  if (q.isError) return <>{header}<OpsQueryError error={q.error} what={t('admin.ops.opsDiagnosticsPage.diagnostics')} /></>
   const d = q.data
   return (
     <>
       {header}
-      <p className={c.meta}><span>產生時間 <b>{fmtDateTime(d.generated_at)}</b>（伺服器快取 {d.cache_ttl_s} 秒）</span></p>
+      <p className={c.meta}><span>{t('admin.ops.opsDiagnosticsPage.generatedAt')}{' '}<b>{fmtDateTime(d.generated_at)}</b>{t('admin.ops.opsDiagnosticsPage.serverCacheS', { cache_ttl_s: d.cache_ttl_s })}</span></p>
       <Summary d={d} />
       {bundle.failed && (
         <textarea
           className={styles.manual}
           readOnly
           value={bundle.text}
-          aria-label="診斷包 JSON"
+          aria-label={t('admin.ops.opsDiagnosticsPage.diagnosticsJson')}
           onFocus={e => e.currentTarget.select()}
         />
       )}

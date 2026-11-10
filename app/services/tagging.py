@@ -1,19 +1,23 @@
-"""市場標籤 schema（對齊 findb 市場分類）+ Claude 標註指令 + tag JSON 解析/載入。
+"""市場標籤 schema（標準市場代碼）+ Claude 標註指令 + tag JSON 解析/載入。
 
-市場標籤採用 findb 的市場代碼（findb: app/models/canonical.py、scripts/seed_data.py）：
-TW/US/HK/CN/FX/WTX/MACRO/GLOBAL/CRYPTO。findb 未涵蓋的類別歸到最接近者
+市場標籤採用框架固定的**標準市場代碼** TW/US/HK/CN/FX/WTX/MACRO/GLOBAL/CRYPTO（`MARKETS`，
+`tests/test_tagging.py` 逐字釘住；標註 prompt 也用這一組）。profile 只能選子集與改顯示名稱
+（`app/profile.py` 的 `[markets]`），不能新增代碼。標準詞彙未涵蓋的類別歸到最接近者
 （債券→MACRO、原物料→GLOBAL）。
+
+這組代碼與 findb 的市場分類（findb: app/models/canonical.py、scripts/seed_data.py）對齊——那是預設
+profile 的跨 repo 契約，不是框架的；`LEGACY_TO_FINDB` 等名稱沿用當時的命名。
 """
 
 from __future__ import annotations
 
 import json
-import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# findb 市場代碼（大寫），與 findb instruments.market 一致
+# 標準市場代碼（大寫）；預設 profile 與 findb instruments.market 一致
 MARKETS = ["TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"]
 
 # 市場代碼 → 顯示名稱（前端/報表用）
@@ -29,7 +33,7 @@ MARKET_DISPLAY: dict[str, str] = {
     "CRYPTO": "加密",
 }
 
-# 舊中文標籤 → findb 代碼（含 findb 未涵蓋類別歸到最接近者）
+# 舊中文標籤 → 標準市場代碼（含標準詞彙未涵蓋類別歸到最接近者）
 LEGACY_TO_FINDB: dict[str, str] = {
     "台股": "TW",
     "美股": "US",
@@ -82,17 +86,37 @@ FUTURES_TARGETS = [
 # 個股標的清單儲存上限（依重要性排序後截斷）
 STOCK_TARGETS_MAX = 8
 
+# 文件類型（`research_report.doc_type`，revision 0012）。標註器的 `is_research` 判斷映射到這兩個類型：
+# true＝研報、false＝非研究檔（行政／活動檔，對應改動前的 is_research=false，所有功能關閉）。
+# 每種類型啟用哪些功能由 profile 的 `[doc_types]` 決定（`app/profile.py`、`app/services/doc_types.py`）；
+# 新增類型時這裡加上該類型的標註判斷，profile 宣告它的功能，各功能的 SQL 不必改。
+# 這兩個值同時是 revision 0012 回填與 `is_research` 同步約束的字面值，不可改名。
+DOC_TYPE_RESEARCH = "research"
+DOC_TYPE_NON_RESEARCH = "non_research"
+# 標註器會產生的類型；profile 的 `[doc_types]` 必須全部宣告（缺了會讓那類文件靜默消失）。
+TAGGER_DOC_TYPES: tuple[str, ...] = (DOC_TYPE_RESEARCH, DOC_TYPE_NON_RESEARCH)
+
+
+def doc_type_for(is_research: bool) -> str:
+    """標註器的 is_research 判斷 → 文件類型。"""
+    return DOC_TYPE_RESEARCH if is_research else DOC_TYPE_NON_RESEARCH
+
 
 @dataclass
 class MarketTag:
-    market: Optional[str]  # findb 市場代碼；非研究檔為 None
+    market: Optional[str]  # 標準市場代碼；非研究檔為 None
     is_research: bool
     confidence: float = 0.0
     instrument_types: Optional[list[str]] = None  # 商品類型（詞表見上）
     relates_stock: Optional[bool] = None  # 是否與個股相關
     relates_futures: Optional[bool] = None  # 是否與期貨/指數部位相關
-    stock_targets: Optional[list[str]] = None  # 個股標的 4 碼代碼清單
+    stock_targets: Optional[list[str]] = None  # 個股標的代號清單（格式見 normalize_stock_targets）
     futures_targets: Optional[list[str]] = None  # 期貨商品（FUTURES_TARGETS 詞表）
+
+    @property
+    def doc_type(self) -> str:
+        """文件類型（由 is_research 映射）。刻意是屬性而不是欄位：tag JSON 的格式不變。"""
+        return doc_type_for(self.is_research)
 
 
 # 給 Claude 標註 agent 的規則（嵌入 workflow 指令中）
@@ -142,7 +166,7 @@ futures_targets：報告涉及的期貨商品，從下列固定小詞表選 0 �
 
 
 def normalize_market(value: Optional[str]) -> Optional[str]:
-    """把舊中文標籤或代碼正規化為 findb 市場代碼；無法對應回傳 None。"""
+    """把舊中文標籤或代碼正規化為標準市場代碼；無法對應回傳 None。"""
     if not value:
         return None
     v = value.strip()
@@ -164,20 +188,26 @@ def normalize_instruments(value) -> list[str]:
     return out
 
 
-_RE_STOCK_CODE = re.compile(r"^\d{4}$")
+# 個股代號的驗證規則：一個標註輸出的代號 → 正規化後的代號，不合格回 None。由呼叫端傳入 profile 的
+# `get_profile().instruments.normalize_code`（`app/profile.py` 的 `Instruments`）：本模組是 profile 的依賴、
+# 刻意不 import `app.*`（`tests/test_profile.py` 守），所以規則不在這裡讀。參數一律必填：漏傳就 TypeError，
+# 不會靜默退回某一套規則。
+CodeRule = Callable[[object], Optional[str]]
 
 
-def normalize_stock_targets(value) -> list[str]:
-    """正規化個股標的：只留「正好 4 碼數字」、去重保序、截斷到上限；非 list 回傳 []。
+def normalize_stock_targets(value, *, normalize_code: CodeRule) -> list[str]:
+    """正規化個股標的：只留通過 `normalize_code` 的值、去重保序、截斷到上限；非 list 回傳 []。
 
-    防呆：擋掉把日期/頁碼（如 0209、Page 6）誤當代碼的情形。
+    格式由 profile 的 `[instruments]` 宣告（預設 profile 只收「正好 4 碼數字」，section 缺席時也是這條）。
+    防呆：擋掉把日期/頁碼（如 0209、Page 6）誤當代碼的情形。只改解析後的驗證，標註 prompt
+    （`TAG_INSTRUCTION`，只要求 4 碼代碼）不變。
     """
     if not isinstance(value, list):
         return []
     out: list[str] = []
     for item in value:
-        v = str(item).strip()
-        if _RE_STOCK_CODE.match(v) and v not in out:
+        v = normalize_code(item)
+        if v is not None and v not in out:
             out.append(v)
     return out[:STOCK_TARGETS_MAX]
 
@@ -204,8 +234,8 @@ def build_tagging_prompt(file_path: str, file_name: str) -> str:
     )
 
 
-def parse_tags(raw: str) -> Optional[MarketTag]:
-    """容錯解析 Claude 回應；market 一律正規化為 findb 代碼。"""
+def parse_tags(raw: str, *, normalize_code: CodeRule) -> Optional[MarketTag]:
+    """容錯解析 Claude 回應；market 一律正規化為標準市場代碼，stock_targets 經 `normalize_code` 過濾。"""
     if not raw:
         return None
     text = raw.strip()
@@ -231,7 +261,7 @@ def parse_tags(raw: str) -> Optional[MarketTag]:
     rf = obj.get("relates_futures")
     relates_stock = bool(rs) if rs is not None else None
     relates_futures = bool(rf) if rf is not None else None
-    stock_targets = normalize_stock_targets(obj.get("stock_targets"))
+    stock_targets = normalize_stock_targets(obj.get("stock_targets"), normalize_code=normalize_code)
     futures_targets = normalize_futures_targets(obj.get("futures_targets"))
     return MarketTag(
         market=market,
@@ -245,8 +275,8 @@ def parse_tags(raw: str) -> Optional[MarketTag]:
     )
 
 
-def load_tag(tags_dir: Path, file_hash: str) -> Optional[MarketTag]:
+def load_tag(tags_dir: Path, file_hash: str, *, normalize_code: CodeRule) -> Optional[MarketTag]:
     p = tags_dir / f"{file_hash}.json"
     if not p.exists():
         return None
-    return parse_tags(p.read_text(encoding="utf-8"))
+    return parse_tags(p.read_text(encoding="utf-8"), normalize_code=normalize_code)

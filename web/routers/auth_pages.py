@@ -39,16 +39,22 @@ INFO**。失敗／鎖定／遭拒是異常，值得在把 `LOG_LEVEL` 調成 WAR
 記憶體計數、定期寫一列彙總（`security_ops.ThrottledTally`），被攻擊時不會放大成 DB 寫入。每 IP 失敗限流
 （`web.auth`）原封不動。
 """
+import html
+import json
 import logging
+import re
 import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
+from app.config import get_settings
+from app.profile import get_profile
 from app.services import accounts, security_ops
 from app.services.accounts import User
 from web import auth, authz, deps
+from web.routers.branding import branding_payload
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +75,110 @@ def _safe_next(raw: str | None) -> str:
     return raw
 
 
-def _static_page(name: str) -> FileResponse:
-    """回傳 HTML 殼，並標記 no-cache（瀏覽器每次重新向伺服器取用，改版後同事免強制重整即見新版）。
+# 介面語系的 cookie（SPA 切換語言時寫，見 frontend/src/i18n/index.ts）；登入頁在 SPA 之外，靠它知道使用者選過什麼。
+LOCALE_COOKIE = "tf_locale"
+_LOCALE_COOKIE_MAX_AGE = 365 * 24 * 3600
+# 語言切換連結以該語言自己的名稱顯示（與設定彈窗的選項相同）。
+_LANGUAGE_NAMES = {"zh-Hant": "中文", "en": "English"}
+_PLACEHOLDER = re.compile(r"\{\{(t|tjs):([a-z0-9_]+)\}\}")
 
-    註：route-level 的 FileResponse 不會對 If-None-Match/If-Modified-Since 做 304 短路，
-    每次都回 200 全量 body（HTML 約數十 KB，區網成本可忽略）。/static 下的 css/js 由
-    _NoCacheStatic（StaticFiles）服務，才有條件式 304 重新驗證。
+
+def login_locale(request: Request) -> tuple[str, bool]:
+    """登入頁的語系與要不要寫 cookie。
+
+    依序：`?lang=`（登入頁上的語言切換連結；寫進 cookie，之後 SPA 也沿用）→ `tf_locale` cookie（SPA 寫的使用者偏好）
+    → profile 的 `[locale].default`。不看 `Accept-Language`：SPA 的預設是 profile 預設，登入頁跟著它，才不會登入前是
+    英文、登入後變中文。不在 profile 開放清單裡的值一律忽略。
     """
-    return FileResponse(deps.STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
+    loc = get_profile().locale
+    asked = request.query_params.get("lang")
+    if asked in loc.available:
+        return asked, True
+    stored = request.cookies.get(LOCALE_COOKIE)
+    if stored in loc.available:
+        return stored, False
+    return loc.default, False
+
+
+def _login_messages() -> dict[str, dict[str, str]]:
+    return json.loads((deps.STATIC_DIR / "login.i18n.json").read_text(encoding="utf-8"))["messages"]
+
+
+def _js_string(text: str) -> str:
+    """放進 <script> 的 JS 字串字面值：JSON 跳脫，另把 `<` 換成 \\u003c，字串裡不可能冒出 `</script>`。"""
+    out = json.dumps(text, ensure_ascii=False)
+    return out.replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def _lang_switch(locale: str) -> str:
+    links = []
+    for code in get_profile().locale.available:
+        if code == locale:
+            continue
+        attr_id = ' id="lang-switch"' if not links else ""
+        links.append(f'<a class="lang-switch"{attr_id} href="/login?lang={quote(code)}" hreflang="{html.escape(code)}"'
+                     f' lang="{html.escape(code)}">{html.escape(_LANGUAGE_NAMES.get(code, code))}</a>')
+    return "".join(links)
+
+
+# profile 的強調色鍵（`app/profile.py` 的 `ACCENT_TOKENS`）→ 登入頁 `:root` 的 CSS 變數。登入頁只有亮色、不載入
+# SPA 的 tokens.css，所以只接這四個；login.html 裡半透明的強調色都由它們以 color-mix 算出。
+LOGIN_ACCENT_VARS = {
+    "accent_text": "--tf-gold-text",
+    "accent_hover": "--gold-hover",
+    "accent_strong": "--gold-ink",
+    "accent_tint": "--gold-tint",
+}
+
+
+def _brand_colors_style(colors: dict[str, str]) -> str:
+    """profile 的亮色強調色寫成一段 <style>（排在 login.html 的樣式之後才蓋得過預設）；沒覆寫就是空字串。
+
+    色值在 profile 載入時已嚴格驗證（只收 #hex 與 rgb()/rgba()），這裡不再跳脫：它是 CSS 值，不是 HTML。
+    """
+    decls = [f"{var}: {colors[key]};" for key, var in LOGIN_ACCENT_VARS.items() if key in colors]
+    return f"<style>:root {{ {' '.join(decls)} }}</style>" if decls else ""
+
+
+def _login_page(locale: str = "zh-Hant") -> HTMLResponse:
+    """登入頁：`web/static/login.html` 填上 profile 的品牌後回傳，並標記 no-cache（改版後免強制重整）。
+
+    品牌在伺服器端注入而不是讓頁面自己去抓 `/api/branding`：登入頁是每個人的第一眼，先閃一次中性名稱再換成
+    機構名不像樣，而且這頁刻意不載入任何外部 script。替換的值一律 HTML 跳脫；`{{brand_logo}}` 在 profile 沒有
+    logo 時換成空字串（版面照常，只少一張圖）。每次都回 200 全量 body（約 50 KB，成本可忽略）。
+    `{{sso_mode}}`／`{{login_hint}}`：OIDC 單一登入的模式（`OIDC_ISSUER` 沒設＝off，與沒有這個功能時同一個畫面）。
+    `{{brand_colors}}`：profile 的強調色覆寫（`_brand_colors_style`；沒覆寫時頁面是框架的中性預設）。
+
+    介面字串在 `web/static/login.i18n.json`：`{{t:鍵}}` 換成 HTML 跳脫的字、`{{tjs:鍵}}` 換成 JS 字串字面值，語系由
+    `login_locale` 決定。先換字串再換品牌：標題的字串裡帶 `{{product_name}}`。品牌名稱依語系
+    （`[institution]` 的 `*_en`）。
+    """
+    brand = branding_payload()
+    msgs = _login_messages()
+
+    def text(key: str) -> str:
+        entry = msgs[key]
+        return entry.get(locale) or entry["zh-Hant"]
+
+    name = html.escape(get_profile().institution.localized(locale)[1])
+    oidc = get_settings().oidc
+    sso_mode = ("only" if oidc.sso_only else "on") if oidc.enabled else "off"
+    logo = brand["logo_light_url"]
+    favicon = brand["favicon_url"]
+    page = (deps.STATIC_DIR / "login.html").read_text(encoding="utf-8")
+    page = _PLACEHOLDER.sub(
+        lambda m: html.escape(text(m.group(2))) if m.group(1) == "t" else _js_string(text(m.group(2))), page)
+    page = page.replace(
+        "{{brand_logo}}",
+        f'<img class="glyph" src="{html.escape(logo)}" width="64" height="64" alt="{name}" />' if logo else "",
+    ).replace(
+        "{{favicon_link}}", f'<link rel="icon" href="{html.escape(favicon)}" />' if favicon else "",
+    ).replace("{{product_name}}", name).replace("{{sso_mode}}", sso_mode).replace(
+        "{{login_hint}}", html.escape(text(f"hint_{sso_mode}")),
+    ).replace("{{lang}}", html.escape(locale)).replace("{{lang_switch}}", _lang_switch(locale)).replace(
+        "{{brand_colors}}", _brand_colors_style(brand["colors"]["light"]),
+    )
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 async def _cookie_user(request: Request) -> User | None:
@@ -145,9 +247,15 @@ async def _login_totp_step(request: Request, code: str, nxt: str, err_q: str, no
 @router.get("/login")
 async def login_page(request: Request):
     nxt = _safe_next(request.query_params.get("next"))
+    locale, remember = login_locale(request)
     if await _cookie_user(request) is not None:
-        return RedirectResponse(nxt, status_code=302)
-    return _static_page("login.html")
+        resp = RedirectResponse(nxt, status_code=302)
+    else:
+        resp = _login_page(locale)
+    if remember:
+        # 不設 HttpOnly：SPA 讀它當使用者偏好（src/i18n）。不是祕密，SameSite=Lax 即可。
+        resp.set_cookie(LOCALE_COOKIE, locale, max_age=_LOCALE_COOKIE_MAX_AGE, path="/", samesite="lax")
+    return resp
 
 
 @router.post("/login")
@@ -219,13 +327,18 @@ async def login_submit(
         return resp
     auth.record_failure(ip, now)
     # reason 只會是 unknown_user／bad_password／disabled；user_id 在帳號不存在時是 None（帳號欄打了什麼都不留）。
-    failure_reason = result.reason if result.reason in ("unknown_user", "bad_password", "disabled") else "unknown_user"
+    failure_reason = (result.reason if result.reason in ("unknown_user", "bad_password", "disabled", "sso_only")
+                      else "unknown_user")
     await _event("login.failure", reason=failure_reason,
                  user_id=result.user_id if failure_reason != "unknown_user" else None, ip=ip, user_agent=_ua(request))
     if result.reason == "disabled":
         # 只有密碼正確才會走到這裡，所以告訴對方「已停用」不會洩漏給亂猜的人。
         logger.warning("登入遭拒：帳號已停用 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
         return RedirectResponse(f"/login?error=disabled{err_q}", status_code=303)
+    if result.reason == "sso_only":
+        # 同上：密碼正確才會走到這裡（OIDC_SSO_ONLY 開啟、這個帳號不是緊急管理員）。
+        logger.warning("登入遭拒：只允許公司帳號登入 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
+        return RedirectResponse(f"/login?error=sso_only{err_q}", status_code=303)
     logger.warning(
         "登入失敗 ip=%s 帳號存在=%s 視窗內失敗次數=%s",
         ip,
@@ -259,7 +372,8 @@ async def me(user: User = Depends(authz.current_user)):
     那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。
 
     `mfa_enrollment_required`：管理員 TOTP 強制開啟、而這位管理員還沒開 TOTP（管理端點此時一律 403
-    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。"""
+    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。SSO 登入的管理員改看
+    `sso_mfa_required`（`web/authz.py`）。"""
     return {
         "id": user.id, "username": user.username, "role": user.role,
         "is_super": user.is_super, "scopes": sorted(user.scopes),
@@ -268,4 +382,9 @@ async def me(user: User = Depends(authz.current_user)):
         "mfa_enrollment_required": authz.mfa_enrollment_required(user),
         # 管理員 TOTP 強制政策是否作用在這個帳號上（管理員＋政策開啟）：前端據此不顯示「關閉兩步驟驗證」。
         "mfa_policy_locked": user.id is not None and accounts.admin_mfa_policy_locks(user.role),
+        # 這個 session 的登入方式（password／sso）。SSO 帳號的權限提升改走 GET /login/oidc?intent=elevate。
+        "auth_method": user.auth_method,
+        # 管理員 TOTP 強制開啟、這位是 SSO 登入的管理員，而 IdP 這次沒有表明做過多重驗證（管理端點此時一律 403
+        # `sso_mfa_required`）。前端據此提示以經過多重驗證的公司帳號重新登入。
+        "sso_mfa_required": authz.sso_mfa_required(user),
     }

@@ -6,6 +6,7 @@ import type { AdminUser } from '../useAdmin'
 import type { ConfirmKind } from './userText'
 import c from '../../../components/console/Console.module.css'
 import styles from './Users.module.css'
+import { t } from '@/i18n'
 
 export interface UserRowHandlers {
   /** 要先確認的動作（停用、降級、強制登出、刪除、重設兩步驟驗證）。 */
@@ -30,7 +31,7 @@ interface Props extends UserRowHandlers {
   onToggleAll: (ids: readonly string[], on: boolean) => void
 }
 
-const BUSY_HINT = '上一個操作還在進行'
+const busyHint = () => t('admin.users.usersTable.thePreviousActionIsStill')
 
 /**
  * 帳號表格。每列最多一顆主要按鈕＋「更多」：
@@ -43,7 +44,7 @@ export function UsersTable({
   const selectable = users.filter(u => u.id !== myId).map(u => u.id)
   /** 停用的項目一定帶原因：自己的規則優先，其次是「還在忙」。 */
   const gate = (blocked: string | false | undefined): Pick<RowAction, 'disabled' | 'hint'> => {
-    const hint = blocked || (busy ? BUSY_HINT : undefined)
+    const hint = blocked || (busy ? busyHint() : undefined)
     return hint ? { disabled: true, hint } : {}
   }
 
@@ -53,10 +54,10 @@ export function UsersTable({
         <thead>
           <tr>
             <th className={c.thCheck}>
-              <SelectAllBox ids={selectable} selected={selected} label="全選" onChange={on => onToggleAll(selectable, on)} />
+              <SelectAllBox ids={selectable} selected={selected} label={t('admin.users.usersTable.selectAll')} onChange={on => onToggleAll(selectable, on)} />
             </th>
-            <th>帳號</th><th>角色</th><th>狀態</th><th>最後登入</th><th>最後活動</th>
-            <th className={c.tdRight}>session</th><th className={`${c.tdRight} ${c.stickyRight}`}>操作</th>
+            <th>{t('admin.users.usersTable.username')}</th><th>{t('admin.users.usersTable.role')}</th><th>{t('admin.users.usersTable.status')}</th><th>{t('admin.users.usersTable.lastSignIn')}</th><th>{t('admin.users.usersTable.lastActive')}</th>
+            <th className={c.tdRight}>session</th><th className={`${c.tdRight} ${c.stickyRight}`}>{t('admin.users.usersTable.actions')}</th>
           </tr>
         </thead>
         <tbody>
@@ -69,58 +70,59 @@ export function UsersTable({
             let primary: RowAction
             let more: (RowAction | false)[] = []
             if (deletingAt) {
-              primary = { label: '取消刪除', onClick: () => cancelDeletion(u), ...gate(false) }
+              primary = { label: t('admin.users.usersTable.cancelDeletion'), onClick: () => cancelDeletion(u), ...gate(false) }
             } else {
-              const reset: RowAction = { label: '重設密碼', onClick: () => resetPassword(u), ...gate(false) }
-              primary = u.enabled ? reset : { label: '啟用', onClick: () => enable(u), ...gate(false) }
+              const reset: RowAction = { label: t('admin.users.usersTable.resetPassword'), onClick: () => resetPassword(u), ...gate(false) }
+              primary = u.enabled ? reset : { label: t('admin.users.usersTable.enable'), onClick: () => enable(u), ...gate(false) }
               more = [
                 u.role === 'admin'
-                  ? { label: '改為一般使用者', onClick: () => ask('demote', u), ...gate(isSelf && '不能拿掉自己的管理員權限') }
-                  : { label: '設為管理員', onClick: () => promote(u), ...gate(false) },
+                  ? { label: t('admin.users.usersTable.makeRegularUser'), onClick: () => ask('demote', u), ...gate(isSelf && t('admin.users.usersTable.canTRemoveOneS')) }
+                  : { label: t('admin.users.usersTable.makeAdmin'), onClick: () => promote(u), ...gate(false) },
                 !u.enabled && reset,
                 (u.enabled || sessions > 0) && {
-                  label: `強制登出（${sessions} 個 session）`, onClick: () => ask('logout', u),
-                  ...gate(sessions === 0 && '目前沒有已登入的裝置'),
+                  label: t('admin.users.usersTable.forceSignOutSessions', { sessions }), onClick: () => ask('logout', u),
+                  ...gate(sessions === 0 && t('admin.users.usersTable.noSignedInDevicesRight')),
                 },
-                canGrant && u.role === 'admin' && { label: '調整權限', onClick: () => privileges(u), ...gate(false) },
-                Boolean(u.totp_enabled) && { label: '重設兩步驟驗證', onClick: () => ask('resetTotp', u), ...gate(false) },
-                u.enabled && { label: '停用', danger: true, onClick: () => ask('disable', u), ...gate(isSelf && '不能停用自己') },
-                { label: '刪除帳號', danger: true, onClick: () => ask('delete', u), ...gate(isSelf && '不能刪除自己的帳號') },
+                canGrant && u.role === 'admin' && { label: t('admin.users.usersTable.adjustPermissions'), onClick: () => privileges(u), ...gate(false) },
+                Boolean(u.totp_enabled) && { label: t('admin.users.usersTable.resetTwoStepVerification'), onClick: () => ask('resetTotp', u), ...gate(false) },
+                u.enabled && { label: t('admin.users.usersTable.disable'), danger: true, onClick: () => ask('disable', u), ...gate(isSelf && t('admin.users.usersTable.canTDisableOneS')) },
+                { label: t('admin.users.usersTable.deleteAccount'), danger: true, onClick: () => ask('delete', u), ...gate(isSelf && t('admin.users.usersTable.canTDeleteOneS')) },
               ]
             }
 
             return (
               <tr key={u.id} className={checked ? c.rowSelected : undefined}>
                 <td className={c.tdCheck}>
-                  <input type="checkbox" className={c.check} aria-label={`選取「${u.username}」`} checked={checked}
-                    disabled={isSelf} title={isSelf ? '不能對自己做批次操作' : undefined} onChange={() => onToggle(u.id)} />
+                  <input type="checkbox" className={c.check} aria-label={t('admin.users.usersTable.select', { username: u.username })} checked={checked}
+                    disabled={isSelf} title={isSelf ? t('admin.users.usersTable.batchActionsCanTInclude') : undefined} onChange={() => onToggle(u.id)} />
                 </td>
                 <td>
                   <div className={styles.name}>
                     <span className={`${c.truncate} ${styles.username}`} title={u.username}>{u.username}</span>
-                    {isSelf && <Chip tone="gold" mono>你</Chip>}
+                    {isSelf && <Chip tone="gold" mono>{t('admin.users.usersTable.me')}</Chip>}
                     {u.is_super && <Chip tone="gold" mono>super</Chip>}
-                    {u.totp_enabled && <Chip tone="ok" mono title="已開啟兩步驟驗證">2FA</Chip>}
+                    {u.totp_enabled && <Chip tone="ok" mono title={t('admin.users.usersTable.twoStepVerificationOn')}>2FA</Chip>}
+                    {u.sso_bound && <Chip>{t('admin.users.usersTable.companyAccountSso')}</Chip>}
                   </div>
                 </td>
                 <td className={`${c.t3} ${c.nowrap}`}>{roleLabel(u.role)}</td>
                 <td>
                   {deletingAt ? (
                     <>
-                      <Status tone="bad">排程刪除</Status>
-                      <div className={styles.countdown} title={`預定 ${fmtDateTime(deletingAt)} 執行`}>
+                      <Status tone="bad">{t('admin.users.usersTable.deletionScheduled')}</Status>
+                      <div className={styles.countdown} title={t('admin.users.usersTable.runsAt', { deletingAt: fmtDateTime(deletingAt) })}>
                         {deletionCountdown(deletingAt, now)}
                       </div>
                     </>
                   ) : (
-                    <Status tone={u.enabled ? 'ok' : 'idle'}>{u.enabled ? '啟用' : '停用'}</Status>
+                    <Status tone={u.enabled ? 'ok' : 'idle'}>{u.enabled ? t('admin.users.usersTable.enable') : t('admin.users.usersTable.disable')}</Status>
                   )}
                 </td>
                 <td className={`${c.num} ${c.t3}`}>{fmtDateTime(u.last_login_at)}</td>
                 <td className={`${c.num} ${c.muted}`}>{fmtDateTime(u.last_seen_at)}</td>
-                <td className={`${c.num} ${c.tdRight} ${sessions ? c.t3 : c.muted}`} title="有效 session 數">{sessions}</td>
+                <td className={`${c.num} ${c.tdRight} ${sessions ? c.t3 : c.muted}`} title={t('admin.users.usersTable.activeSessions')}>{sessions}</td>
                 <td className={`${c.tdActions} ${c.stickyRight}`}>
-                  <RowActions primary={primary} more={more} label={`${u.username} 的更多操作`} />
+                  <RowActions primary={primary} more={more} label={t('admin.users.usersTable.moreActionsFor', { username: u.username })} />
                 </td>
               </tr>
             )

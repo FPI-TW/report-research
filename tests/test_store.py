@@ -24,7 +24,7 @@ class BulkInsertTests(unittest.IsolatedAsyncioTestCase):
             file_name="report.pdf",
             file_path="/tmp/report.pdf",
             market="TW",
-            is_research=True,
+            doc_type="research",
             confidence=0.9,
         )
 

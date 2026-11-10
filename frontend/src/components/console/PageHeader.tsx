@@ -3,6 +3,7 @@ import { useLocation } from 'react-router'
 import { ADMIN_IA, locate } from '../shell/adminNav'
 import { Icon } from '../primitives/Icon'
 import c from './Console.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   /** 一句摘要（13px）：講這一頁現在的狀況或用途，不寫說明文。 */
@@ -28,14 +29,14 @@ export function PageHeader({ summary, help, actions, title, kicker }: Props) {
       <header className={c.header}>
         <div className={c.headerMain}>
           {(kicker ?? autoKicker) && <div className={c.kicker}>{kicker ?? autoKicker}</div>}
-          <h1 className={c.h1}>{title ?? here?.page.label ?? '管理後台'}</h1>
+          <h1 className={c.h1}>{title ?? here?.page.label ?? t('admin.console.pageHeader.adminConsole')}</h1>
           {(summary || help) && (
             <p className={c.summary}>
               {summary}
               {help && (
                 <button type="button" className={c.helpToggle} aria-expanded={open} aria-controls={helpId}
                   onClick={() => setOpen(v => !v)}>
-                  說明<Icon name="chevronDown" size={12} />
+                  {t('admin.console.pageHeader.help')}<Icon name="chevronDown" size={12} />
                 </button>
               )}
             </p>

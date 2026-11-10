@@ -8,6 +8,7 @@ import {
 import { REPORTS_KEY } from './useAdminReports'
 import { AUDIT_KEY } from './useAdmin'
 import { fmtBytes, isInFlight, uploadFailure, type UploadFailure, type UploadTab, type UploadTabKey } from './uploadLabels'
+import { t } from '@/i18n'
 
 /**
  * 研報上傳的資料層：收檔（手寫 XHR）、清單／詳情／預覽／原檔的查詢、審核動作。
@@ -34,9 +35,9 @@ export const DEFAULT_MAX_BYTES = 25 * 1024 * 1024
 
 /** 前端預檢：副檔名 .pdf、非空、不超過上限。通過回 null，否則回給人看的原因。 */
 export function precheck(file: { name: string; size: number }, maxBytes: number): string | null {
-  if (!/\.pdf$/i.test(file.name.trim())) return '只接受 PDF 檔（副檔名 .pdf）。'
-  if (file.size <= 0) return '檔案是空的。'
-  if (file.size > maxBytes) return `檔案 ${fmtBytes(file.size)}，超過上限 ${fmtBytes(maxBytes)}。`
+  if (!/\.pdf$/i.test(file.name.trim())) return t('admin.useAdminUploads.onlyPdfFilesAreAccepted')
+  if (file.size <= 0) return t('admin.useAdminUploads.theFileIsEmpty')
+  if (file.size > maxBytes) return t('admin.useAdminUploads.theFileIsOverThe', { size: fmtBytes(file.size), maxBytes: fmtBytes(maxBytes) })
   return null
 }
 
@@ -55,7 +56,7 @@ export class UploadRequestError extends Error {
 
 export class UploadAbortedError extends Error {
   constructor() {
-    super('已取消上傳')
+    super(t('admin.useAdminUploads.uploadCanceled'))
     this.name = 'UploadAbortedError'
   }
 }
@@ -94,13 +95,13 @@ export function uploadPdf(
       const body = parseJson(xhr.responseText)
       if (xhr.status === 401) {
         redirectToLogin()
-        reject(new UploadRequestError(401, undefined, { message: '登入已過期，請重新登入。' }))
+        reject(new UploadRequestError(401, undefined, { message: t('admin.useAdminUploads.theSessionHasExpiredSign') }))
         return
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         const parsed = AdminUploadSchema.safeParse(body)
         if (parsed.success) resolve(parsed.data)
-        else reject(new UploadRequestError(xhr.status, undefined, { message: '伺服器回應格式不符，請重新整理後確認是否已上傳。' }))
+        else reject(new UploadRequestError(xhr.status, undefined, { message: t('admin.useAdminUploads.theServerResponseWasMalformed') }))
         return
       }
       const code = typeof body?.code === 'string' ? body.code : undefined
@@ -166,17 +167,17 @@ export function useUploadQueue(opts: { onUploaded?: (u: AdminUpload) => void } =
             signal: ctl.signal,
             onProgress: (loaded, total) => patch(id, { progress: total > 0 ? loaded / total : 0 }),
           })
-          patch(id, { status: 'done', progress: 1, uploadId: row.upload_id, message: '已送進隔離區，等待掃描。' })
+          patch(id, { status: 'done', progress: 1, uploadId: row.upload_id, message: t('admin.useAdminUploads.sentToQuarantineWaitingFor') })
           onUploadedRef.current?.(row)
         } catch (err) {
           if (err instanceof UploadAbortedError) {
-            patch(id, { status: 'cancelled', message: '已取消上傳。' })
+            patch(id, { status: 'cancelled', message: t('admin.useAdminUploads.uploadCanceled2') })
           } else if (err instanceof UploadRequestError) {
             const learned = err.failure.maxBytes
             if (learned && learned > 0) { maxBytesRef.current = learned; if (aliveRef.current) setMaxBytes(learned) }
             patch(id, { status: 'error', message: err.failure.message, uploadId: err.failure.uploadId })
           } else {
-            patch(id, { status: 'error', message: err instanceof Error ? err.message : '上傳失敗' })
+            patch(id, { status: 'error', message: err instanceof Error ? err.message : t('admin.useAdminUploads.uploadFailed') })
           }
         } finally {
           abortRef.current = null
@@ -204,7 +205,7 @@ export function useUploadQueue(opts: { onUploaded?: (u: AdminUpload) => void } =
     if (abortRef.current?.id === id) { abortRef.current.ctl.abort(); return }
     const before = pendingRef.current.length
     pendingRef.current = pendingRef.current.filter(p => p.id !== id)
-    if (pendingRef.current.length !== before) patch(id, { status: 'cancelled', message: '已取消上傳。' })
+    if (pendingRef.current.length !== before) patch(id, { status: 'cancelled', message: t('admin.useAdminUploads.uploadCanceled2') })
   }, [patch])
 
   /** 清掉已結束（成功、失敗、略過、取消）的列；排隊與上傳中的留著。 */
@@ -267,11 +268,11 @@ export function useUploadTab(tab: UploadTab) {
  */
 export function useUploadTabCounts(tabs: readonly UploadTab[]) {
   return useQuery<Partial<Record<UploadTabKey, number>>>({
-    queryKey: [...UPLOADS_KEY, 'list', 'counts', tabs.map(t => t.key).join(',')],
+    queryKey: [...UPLOADS_KEY, 'list', 'counts', tabs.map(item => item.key).join(',')],
     queryFn: async () => {
-      const entries = await Promise.all(tabs.map(async t => {
-        const pages = await Promise.all(t.states.map(state => adminApi.listUploads({ state, limit: 1 })))
-        return [t.key, pages.reduce((n, p) => n + p.total, 0)] as const
+      const entries = await Promise.all(tabs.map(async item => {
+        const pages = await Promise.all(item.states.map(state => adminApi.listUploads({ state, limit: 1 })))
+        return [item.key, pages.reduce((n, p) => n + p.total, 0)] as const
       }))
       return Object.fromEntries(entries)
     },

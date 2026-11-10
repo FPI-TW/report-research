@@ -4,6 +4,7 @@ import { useRestoreFocus } from '../console/useRestoreFocus'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import { searchPages, type AdminPageEntry } from './adminNav'
 import styles from './AdminPalette.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   open: boolean
@@ -49,7 +50,7 @@ function PalettePanel({ pages, onClose, onGo }: Omit<Props, 'open'>) {
 
   return (
     <div className={styles.scrim} onClick={onClose}>
-      <div ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-label="搜尋頁面"
+      <div ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-label={t('admin.shell.adminPalette.searchPages')}
         onClick={e => e.stopPropagation()}>
         <div className={styles.inputRow}>
           <Icon name="search" size={16} />
@@ -58,9 +59,9 @@ function PalettePanel({ pages, onClose, onGo }: Omit<Props, 'open'>) {
             value={query}
             onChange={e => { setQuery(e.target.value); setIndex(0) }}
             onKeyDown={onKeyDown}
-            placeholder="搜尋頁面"
+            placeholder={t('admin.shell.adminPalette.searchPages')}
             role="combobox"
-            aria-label="搜尋頁面"
+            aria-label={t('admin.shell.adminPalette.searchPages')}
             aria-expanded="true"
             aria-controls={listId}
             aria-activedescendant={results[active] ? optionId(active) : undefined}
@@ -69,7 +70,7 @@ function PalettePanel({ pages, onClose, onGo }: Omit<Props, 'open'>) {
           />
           <kbd className={styles.kbd}>esc</kbd>
         </div>
-        <div id={listId} className={styles.list} role="listbox" aria-label="頁面">
+        <div id={listId} className={styles.list} role="listbox" aria-label={t('admin.shell.adminPalette.pages')}>
           {results.map((r, i) => (
             <div
               key={r.page.key}
@@ -84,7 +85,7 @@ function PalettePanel({ pages, onClose, onGo }: Omit<Props, 'open'>) {
               <span className={styles.optionPath}>{r.path}</span>
             </div>
           ))}
-          {results.length === 0 && <div className={styles.none}>找不到這個頁面</div>}
+          {results.length === 0 && <div className={styles.none}>{t('admin.shell.adminPalette.pageNotFound')}</div>}
         </div>
       </div>
     </div>

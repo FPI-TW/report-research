@@ -1,4 +1,4 @@
-# 廷豐研報 運作流程編排
+# 券商研報平台 運作流程編排
 # 流程：deps/db/schema → sample → extract → worklist → [LLM 標註] → ingest → serve
 # 詳見 docs/WORKFLOW.md
 
@@ -20,6 +20,7 @@ TOL ?= 0.03
 DURATION ?= 3600
 SINCE ?=
 BENCH_ARGS ?= --dry-run
+ESTIMATE_ARGS ?= --source db
 # make clamav-smoke 的「正常 PDF」；空＝用程式內產生的最小 PDF。
 SMOKE_PDF ?=
 # migration 的目標確認（host:port/dbname，逐字）。刻意沒有預設：對已有資料的庫做變更必須由
@@ -38,9 +39,10 @@ COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema schema-check schema-version schema-stamp-baseline setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align boilerplate \
-        serve serve-dev serve-preview search build-web \
+        serve serve-dev serve-preview search build-web build-info \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
-        eval-compare \
+        estimate backfill-status \
+        eval-compare eval-gate \
         up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
         sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
@@ -142,12 +144,25 @@ takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 
 brief:  ## 每日簡報（一天一列；當日已有或未到 --after-hour 即 no-op）→ research.report_brief
 	uv run python scripts/generate_brief.py
 
+# 首次導入的分層回填（docs/WORKFLOW.md「首次導入」）：先估價、客戶簽字，再跑 backfill_tiers.py --tier 2。
+estimate:  ## 首次導入的事前估價（零 LLM；用法：make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"）
+	uv run python scripts/estimate_backfill.py $(ESTIMATE_ARGS)
+
+backfill-status:  ## 分層回填的進度：各層待補數與今天的背景用量（唯讀、零 LLM）
+	uv run python scripts/backfill_tiers.py --status
+
 # ───── 檢索 ─────
 # 刻意**不**讓 serve 相依 build-web：serve 是生產 systemd 的 ExecStart，讓它跑
 # `npm ci` 等於把一次 npm registry 不通變成「站台起不來」。前端改動要生效請自己
 # 先跑 `make build-web`（或 cd frontend && npm run build）再 restart。
 build-web:  ## 建置 SPA → frontend/dist（前端改動後必跑；npm run build 內含 tsc）
 	cd frontend && npm ci && npm run build
+
+# 版本對帳（管理後台診斷頁、/metrics 的 report_mark_build_info；app/services/build_info.py）：從 git 讀 commit、
+# 版本 tag 與工作樹是否乾淨，寫 build_info.json（repo 根、不進版控）。在部署目錄更新程式之後、重啟 web 之前跑。
+# 讀不到 git 時只印說明、不失敗。
+build-info:  ## 寫建置資訊檔 build_info.json（commit／版本 tag／工作樹是否乾淨；部署時重啟 web 之前跑）
+	uv run python scripts/build_info.py write
 
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
 	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
@@ -187,6 +202,14 @@ eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣�
 	  echo "  例：make eval-compare BASE=eval/before.json CAND=eval/after.json"; \
 	  exit 2; }
 	uv run python scripts/eval_compare.py --baseline "$(BASE)" --candidate "$(CAND)" --tolerance $(TOL)
+
+# 上線驗收（docs/WORKFLOW.md「導入驗收」）：RAGAS 結果對 profile 的凍結題集與政策門檻逐項判定，零 LLM。
+eval-gate:  ## 上線驗收（PROFILE=… RESULT=…；0 通過／1 有未豁免的指標沒過／2 結果不完整或不可比）
+	@test -n "$(PROFILE)" && test -n "$(RESULT)" || { \
+	  echo "用法：make eval-gate PROFILE=<profile 名稱> RESULT=<eval/run_ragas.py 的結果檔>"; \
+	  echo "  例：make eval-gate PROFILE=tingfong RESULT=eval/candidate-ragas.json"; \
+	  exit 2; }
+	uv run python scripts/eval_gate.py --profile "$(PROFILE)" --result "$(RESULT)"
 
 # ───── 對外存取（Cloudflare Tunnel + nginx）─────
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）

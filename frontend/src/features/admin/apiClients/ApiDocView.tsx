@@ -4,6 +4,7 @@ import { Icon } from '../../../components/primitives/Icon'
 import { copyText } from '../../../lib/clipboard'
 import { parseInline, parseMarkdown, type Block } from './apiDoc'
 import d from './ApiDoc.module.css'
+import { t } from '@/i18n'
 
 /** 下載給 API 用戶端的檔名。 */
 export const DOC_FILENAME = 'research-external-api-v1.md'
@@ -11,11 +12,11 @@ export const DOC_FILENAME = 'research-external-api-v1.md'
 export function Inline({ text }: { text: string }) {
   return (
     <>
-      {parseInline(text).map((t, i) => {
-        if (t.kind === 'code') return <code key={i}>{t.text}</code>
-        if (t.kind === 'strong') return <strong key={i}>{t.text}</strong>
-        if (t.kind === 'link') return <a key={i} href={t.href} target="_blank" rel="noreferrer">{t.text}</a>
-        return <Fragment key={i}>{t.text}</Fragment>
+      {parseInline(text).map((item, i) => {
+        if (item.kind === 'code') return <code key={i}>{item.text}</code>
+        if (item.kind === 'strong') return <strong key={i}>{item.text}</strong>
+        if (item.kind === 'link') return <a key={i} href={item.href} target="_blank" rel="noreferrer">{item.text}</a>
+        return <Fragment key={i}>{item.text}</Fragment>
       })}
     </>
   )
@@ -80,19 +81,19 @@ export function ApiDocView({ markdown, baseUrl }: { markdown: string; baseUrl: s
   const jump = (index: number) =>
     body.current?.querySelector(`[data-doc-heading="${index}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   const copy = () => copyText(markdown).then(
-    () => toast('已複製 Markdown'),
-    () => toast('複製失敗，請改用下載', { tone: 'bad' }),
+    () => toast(t('admin.apiClients.apiDocView.markdownCopied')),
+    () => toast(t('admin.apiClients.apiDocView.copyFailedDownloadInstead'), { tone: 'bad' }),
   )
 
   return (
-    <Card title="對外 API 說明文件" labelledBy="api-doc-title" hint={`站台網址：${baseUrl}`}
+    <Card title={t('admin.apiClients.apiDocView.externalApiDocumentation')} labelledBy="api-doc-title" hint={t('admin.apiClients.apiDocView.siteUrl', { baseUrl })}
       right={<>
-        <Button size="sm" onClick={copy}><Icon name="copy" size={13} />複製 Markdown</Button>
-        <Button size="sm" onClick={() => saveText(DOC_FILENAME, markdown)}><Icon name="download" size={13} />下載 .md</Button>
+        <Button size="sm" onClick={copy}><Icon name="copy" size={13} />{t('admin.apiClients.apiDocView.copyMarkdown')}</Button>
+        <Button size="sm" onClick={() => saveText(DOC_FILENAME, markdown)}><Icon name="download" size={13} />{t('admin.apiClients.apiDocView.downloadMd')}</Button>
       </>}>
-      <nav className={d.toc} aria-label="文件目錄">
-        {toc.map(t => (
-          <button key={t.index} type="button" className={d.tocItem} onClick={() => jump(t.index)}>{t.text}</button>
+      <nav className={d.toc} aria-label={t('admin.apiClients.apiDocView.contents')}>
+        {toc.map(item => (
+          <button key={item.index} type="button" className={d.tocItem} onClick={() => jump(item.index)}>{item.text}</button>
         ))}
       </nav>
       <div className={d.doc} ref={body}>

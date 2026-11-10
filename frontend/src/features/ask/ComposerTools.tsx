@@ -3,6 +3,7 @@ import { Globe, Plus, X, type LucideIcon } from 'lucide-react'
 import { Popover } from '../../components/primitives/Popover'
 import { setWebSearch, useWebSearch, useWebSearchPaused } from '../../lib/useWebSearch'
 import styles from './ComposerTools.module.css'
+import { t } from '@/i18n'
 
 /** 一項可開關的工具。新增工具＝在 useTools() 的陣列裡多加一筆，其餘不必改。 */
 export interface ComposerTool {
@@ -23,7 +24,7 @@ function useTools(): ComposerTool[] {
   const paused = useWebSearchPaused()
   const tools: ComposerTool[] = []
   if (!paused) {
-    tools.push({ key: 'web', icon: Globe, name: '網路搜尋', on: web, toggle: () => setWebSearch(!web) })
+    tools.push({ key: 'web', icon: Globe, name: t('ask.composerTools.webSearch'), on: web, toggle: () => setWebSearch(!web) })
   }
   return tools
 }
@@ -43,7 +44,7 @@ interface Props {
 export function ComposerTools({ variant = 'bottom' }: Props) {
   const [open, setOpen] = useState(false)
   const tools = useTools()
-  const active = tools.filter((t) => t.on)
+  const active = tools.filter((item) => item.on)
   // 沒有任何工具（網搜暫停中）時不留一顆點開是空選單的「＋」；輸入框的左內距由 CSS 補上。
   if (tools.length === 0) return null
   const size = variant === 'center' ? styles.sm : styles.md
@@ -56,49 +57,49 @@ export function ComposerTools({ variant = 'bottom' }: Props) {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="工具"
-        title="工具"
+        aria-label={t('ask.composerTools.tools')}
+        title={t('ask.composerTools.tools')}
       >
         <Plus size={18} strokeWidth={1.8} aria-hidden />
       </button>
-      {active.map((t) => (
+      {active.map((item) => (
         <button
-          key={t.key}
+          key={item.key}
           type="button"
           className={styles.chip}
-          onClick={t.toggle}
+          onClick={item.toggle}
           aria-pressed
-          aria-label={`關閉${t.name}`}
-          title={`關閉${t.name}`}
+          aria-label={t('ask.composerTools.turnOff', { name: item.name })}
+          title={t('ask.composerTools.turnOff', { name: item.name })}
         >
           {/* 圖示與 ✕ 疊在同一格：hover 時互換而非各佔一欄，膠囊寬度一格都不動。 */}
           <span className={styles.chipIcon} aria-hidden="true">
-            <span className={styles.chipIconDefault}><t.icon size={14} strokeWidth={1.8} /></span>
+            <span className={styles.chipIconDefault}><item.icon size={14} strokeWidth={1.8} /></span>
             <span className={styles.chipIconHover}><X size={13} strokeWidth={2} /></span>
           </span>
-          <span className={styles.chipLabel}>{t.name}</span>
+          <span className={styles.chipLabel}>{item.name}</span>
         </button>
       ))}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
         className={`${styles.pop} ${variant === 'center' ? styles.popDown : styles.popUp}`}
-        ariaLabel="工具"
+        ariaLabel={t('ask.composerTools.tools')}
         openUp={variant !== 'center'}
       >
-        <div className={styles.head}>工具</div>
-        {tools.map((t) => (
+        <div className={styles.head}>{t('ask.composerTools.tools')}</div>
+        {tools.map((entry) => (
           <button
-            key={t.key}
+            key={entry.key}
             type="button"
             role="menuitemcheckbox"
-            aria-checked={t.on}
+            aria-checked={entry.on}
             className={styles.item}
-            onClick={t.toggle}
+            onClick={entry.toggle}
           >
-            <t.icon size={16} strokeWidth={1.8} className={styles.itemIcon} aria-hidden />
-            <span className={styles.itemName}>{t.name}</span>
-            <span className={`${styles.switch} ${t.on ? styles.switchOn : ''}`} aria-hidden="true">
+            <entry.icon size={16} strokeWidth={1.8} className={styles.itemIcon} aria-hidden />
+            <span className={styles.itemName}>{entry.name}</span>
+            <span className={`${styles.switch} ${entry.on ? styles.switchOn : ''}`} aria-hidden="true">
               <span className={styles.knob} />
             </span>
           </button>

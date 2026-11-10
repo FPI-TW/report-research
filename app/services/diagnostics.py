@@ -261,8 +261,16 @@ def package_versions(names: Iterable[str] = PACKAGES) -> dict[str, str | None]:
     return out
 
 
+def build_section() -> dict:
+    """建置資訊（commit、版本 tag、建置時工作樹是否乾淨）；判定在 `app/services/build_info.py`。"""
+    from app.services import build_info
+
+    return build_info.collect(GIT_AT_START["commit"] if GIT_AT_START["available"] else None)
+
+
 def versions_section() -> dict:
     return {
+        "build": build_section(),
         "git": git_section(),
         "frontend": frontend_section(),
         "python": platform.python_version(),
@@ -431,6 +439,7 @@ def config_section() -> dict:
         "models": dict(llm_models.resolve_all(llm_models.ONLINE_TASKS)),
         "extractor": s.extractor,
         "log_level": s.log_level,
+        "log_format": s.log_format,
         "ops_agent_environment": s.ops_agent_environment,
         "ops_agent_socket": s.ops_agent_socket,
         "flags": {
@@ -449,6 +458,7 @@ def config_section() -> dict:
             "edge_secret": _present("REPORT_MARK_EDGE_SECRET"),
             "r2_credentials": _present("R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"),
             "alert_webhook": _present("REPORT_MARK_ALERT_WEBHOOK"),
+            "generic_alert_webhook": _present("ALERT_WEBHOOK_URL"),
         },
         "limits": {
             "db_pool_size": s.db_pool_size,
@@ -620,7 +630,8 @@ async def snapshot(
     result = {
         "generated_at": now.isoformat(timespec="seconds"),
         "versions": _sync_guard(lambda: {**versions_section(), "error": None}, {
-            "git": None, "frontend": None, "python": platform.python_version(), "platform": None, "packages": {},
+            "build": None, "git": None, "frontend": None, "python": platform.python_version(), "platform": None,
+            "packages": {},
         }, "版本"),
         "schema_info": schema,
         "runtime": _sync_guard(lambda: {**runtime_section(), "error": None}, {}, "執行環境"),

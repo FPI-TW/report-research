@@ -34,6 +34,11 @@
   不能當成同一把。後果是明知的：`eval/run_ragas.py` 開始記 `judge_model` 等三個鍵之後，拿新結果
   比任何舊的 RAGAS 基準線（含 `eval/baselines/baseline-2026-09-02.json`）一律回 2，直到用新版
   重跑出新的基準線為止。兩份都沒有記錄（舊檔比舊檔）維持可比。
+- **`judge_lineage` 是唯一可以推得的 META 鍵**（`with_lineage`）。它在宣告模型上線後才進 summary，若照「只有一邊
+  有記錄就回 2」，現行基準線（只在 `config.judge.lineage` 記系譜）跟任何新結果都不可比。所以：summary 沒有時先取
+  `config.judge.lineage`；還是只有一邊有，而那一邊**不是**宣告模型的系譜時，另一邊視為同系譜——沒有這個鍵的結果
+  一律產生於宣告模型上線之前，那時只有內建與歷史系譜，而內建與歷史之間的差異已由 META 鍵 `judge_model` 擋下。
+  有記錄的一邊是 `declared:` 系譜時照舊回 2。
 - **latency 用相對容忍值。** 對 45,387 ms 的均值套絕對 0.03 等於「差 0.03 毫秒就是回歸」，
   那種紅燈只會讓人把工具關掉。[0,1] 尺度的指標與計數用絕對值，非 [0,1] 的用相對值。
 
@@ -119,6 +124,8 @@ METRIC_SPECS: dict[str, Spec] = {
     "judge_model": Spec(META, ABS, "judge 模型不同＝換了尺"),
     "judge_prompt_sha": Spec(META, ABS, "judge 提示模板（含 payload 版型）改了＝換了尺"),
     "judge_schema_version": Spec(META, ABS, "judge 回應的解讀規則改了＝換了尺"),
+    # 宣告模型（`declared:<模型>`）自成一系；較舊的結果沒有這個鍵時由 `with_lineage` 推得（見該函式）。
+    "judge_lineage": Spec(META, ABS, "judge 量尺系譜不同＝換了尺（宣告模型自成一系）"),
     # ── scripts/eval_retrieval.py（檢索）──────────────────────────────────
     "n_cases": Spec(SAMPLE),
     "hit_rate": Spec(HIGHER),
@@ -177,6 +184,39 @@ def detect_shape(summary: dict) -> str:
         if any(m in summary for m in markers):
             return name
     return "unknown"
+
+
+# 宣告模型的系譜前綴，與 app/services/llm_models.py 的 JUDGE_LINEAGE_DECLARED_PREFIX 同值
+# （tests/test_eval_compare.py 釘住；本檔只用標準函式庫，直接以 `python scripts/eval_compare.py` 執行也要能跑）。
+DECLARED_LINEAGE_PREFIX = "declared:"
+
+
+def recorded_lineage(doc: dict) -> str | None:
+    """結果檔記的量尺系譜：summary 的 judge_lineage，沒有就取 config.judge.lineage。"""
+    value = doc.get("summary", {}).get("judge_lineage")
+    if isinstance(value, str) and value:
+        return value
+    cfg = doc.get("config")
+    judge = cfg.get("judge") if isinstance(cfg, dict) else None
+    value = judge.get("lineage") if isinstance(judge, dict) else None
+    return value if isinstance(value, str) and value else None
+
+
+def with_lineage(base_doc: dict, cand_doc: dict) -> tuple[dict, dict]:
+    """兩份 summary 的副本，補上可以推得的 judge_lineage（規則見模組 docstring）。只處理 RAGAS 結果。"""
+    base, cand = dict(base_doc["summary"]), dict(cand_doc["summary"])
+    if detect_shape(base) != "ragas" or detect_shape(cand) != "ragas":
+        return base, cand
+    for summary, doc in ((base, base_doc), (cand, cand_doc)):
+        lineage = recorded_lineage(doc)
+        if lineage is not None:
+            summary["judge_lineage"] = lineage
+    if ("judge_lineage" in base) != ("judge_lineage" in cand):
+        known = base.get("judge_lineage") or cand.get("judge_lineage")
+        if not known.startswith(DECLARED_LINEAGE_PREFIX):
+            base.setdefault("judge_lineage", known)
+            cand.setdefault("judge_lineage", known)
+    return base, cand
 
 
 class CompareError(Exception):
@@ -430,7 +470,7 @@ def build_comparison(
     rel_tolerance: float = 0.25,
 ) -> Comparison:
     """純函式：兩份結果文件 → 逐指標對照與可比性結論。不做 I/O、不印東西。"""
-    base, cand = base_doc["summary"], cand_doc["summary"]
+    base, cand = with_lineage(base_doc, cand_doc)
     cmp_ = Comparison(
         baseline_path=baseline_path,
         candidate_path=candidate_path,

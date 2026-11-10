@@ -1,5 +1,6 @@
 import { ApiError } from '../../lib/api'
 import type { AdminUpload } from '../../lib/generated/adminApi'
+import { t } from '@/i18n'
 
 /**
  * 研報上傳的狀態、分頁籤、失敗類別與錯誤碼 → 中文。
@@ -12,17 +13,17 @@ import type { AdminUpload } from '../../lib/generated/adminApi'
 export type UploadState = AdminUpload['state']
 
 export const STATE_LABEL: Record<UploadState, string> = {
-  quarantined: '隔離中（待掃描）',
-  scanning: '掃描中',
-  clean: '掃描通過（待處理）',
-  processing: '處理中',
-  draft: '待審草稿',
-  failed: '處理失敗',
-  infected: '偵測到惡意程式',
-  blocked: '已攔截（無法完成掃描）',
-  published: '已發布',
-  rejected: '已退回',
-  duplicate: '重複',
+  get quarantined() { return t('admin.uploadLabels.quarantinedAwaitingScan') },
+  get scanning() { return t('admin.uploadLabels.scanning') },
+  get clean() { return t('admin.uploadLabels.scanPassedAwaitingProcessing') },
+  get processing() { return t('admin.uploadLabels.processing') },
+  get draft() { return t('admin.uploadLabels.draftAwaitingReview') },
+  get failed() { return t('admin.uploadLabels.processingFailed') },
+  get infected() { return t('admin.uploadLabels.malwareDetected') },
+  get blocked() { return t('admin.uploadLabels.blockedScanCouldnTComplete') },
+  get published() { return t('admin.uploadLabels.published') },
+  get rejected() { return t('admin.uploadLabels.rejected') },
+  get duplicate() { return t('admin.uploadLabels.duplicate') },
 }
 
 export function stateLabel(state: string | null | undefined): string {
@@ -49,35 +50,35 @@ export interface UploadTab { key: UploadTabKey; label: string; states: readonly 
 
 /** 清單的分頁籤；每個分頁籤對應一組狀態（清單端點一次只收一種 state，分頁籤內逐一查再合併）。 */
 export const UPLOAD_TABS: readonly UploadTab[] = [
-  { key: 'processing', label: '處理中', states: IN_FLIGHT_STATES },
-  { key: 'draft', label: '待審草稿', states: ['draft'] },
-  { key: 'failed', label: '失敗', states: ['failed'] },
-  { key: 'blocked', label: '已攔截', states: ['infected', 'blocked'] },
-  { key: 'published', label: '已發布', states: ['published'] },
-  { key: 'rejected', label: '已退回', states: ['rejected'] },
-  { key: 'duplicate', label: '重複', states: ['duplicate'] },
+  { key: 'processing', get label() { return t('admin.uploadLabels.processing') }, states: IN_FLIGHT_STATES },
+  { key: 'draft', get label() { return t('admin.uploadLabels.draftAwaitingReview') }, states: ['draft'] },
+  { key: 'failed', get label() { return t('admin.uploadLabels.failed') }, states: ['failed'] },
+  { key: 'blocked', get label() { return t('admin.uploadLabels.blocked') }, states: ['infected', 'blocked'] },
+  { key: 'published', get label() { return t('admin.uploadLabels.published') }, states: ['published'] },
+  { key: 'rejected', get label() { return t('admin.uploadLabels.rejected') }, states: ['rejected'] },
+  { key: 'duplicate', get label() { return t('admin.uploadLabels.duplicate') }, states: ['duplicate'] },
 ]
 
 export function tabOf(key: string | null | undefined): UploadTab {
-  return UPLOAD_TABS.find(t => t.key === key) ?? UPLOAD_TABS[0]
+  return UPLOAD_TABS.find(item => item.key === key) ?? UPLOAD_TABS[0]
 }
 
 export const FAILURE_LABEL: Record<string, string> = {
-  extract_error: '抽取文字失敗',
-  extract_timeout: '抽取文字逾時',
-  scanned: '掃描影像 PDF，抽不出文字',
-  admin_file: '檔名判定為行政文件',
-  not_research: '判定不是研究報告或沒有市場',
-  active_content: '含主動內容（JavaScript、嵌入檔等）',
-  encrypted: '加密的 PDF',
-  too_many_pages: '頁數超過上限',
-  tag_failed: '標註失敗',
-  tag_blocked: '標註被內容審查擋下',
-  tag_truncated: '標註回應被截斷',
-  ingest_error: '入庫失敗',
-  hash_mismatch: '檔案內容與紀錄不符',
-  scan_heuristic: '掃毒規則攔截（例如加密或超過掃描上限）',
-  llm_breaker: 'LLM 暫停中，延後處理',
+  get extract_error() { return t('admin.uploadLabels.textExtractionFailed') },
+  get extract_timeout() { return t('admin.uploadLabels.textExtractionTimedOut') },
+  get scanned() { return t('admin.uploadLabels.scannedImagePdfNoText') },
+  get admin_file() { return t('admin.uploadLabels.fileNameIndicatesAnAdministrative') },
+  get not_research() { return t('admin.uploadLabels.judgedNotAResearchReport') },
+  get active_content() { return t('admin.uploadLabels.containsActiveContentJavascriptEmbedded') },
+  get encrypted() { return t('admin.uploadLabels.encryptedPdf') },
+  get too_many_pages() { return t('admin.uploadLabels.tooManyPages') },
+  get tag_failed() { return t('admin.uploadLabels.taggingFailed') },
+  get tag_blocked() { return t('admin.uploadLabels.taggingBlockedByContentModeration') },
+  get tag_truncated() { return t('admin.uploadLabels.taggingResponseTruncated') },
+  get ingest_error() { return t('admin.uploadLabels.ingestionFailed') },
+  get hash_mismatch() { return t('admin.uploadLabels.fileContentDoesnTMatch') },
+  get scan_heuristic() { return t('admin.uploadLabels.blockedByScanningRulesE') },
+  get llm_breaker() { return t('admin.uploadLabels.llmPausedProcessingDeferred') },
 }
 
 export function failureLabel(kind: string | null | undefined): string {
@@ -104,12 +105,12 @@ export function fmtBytes(n: number | null | undefined): string {
 export function fmtDuration(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds)) return '—'
   const s = Math.max(0, Math.round(seconds))
-  if (s < 60) return `${s} 秒`
+  if (s < 60) return t('admin.uploadLabels.s', { s })
   const mins = Math.floor(s / 60)
-  if (mins < 60) return `${mins} 分鐘`
+  if (mins < 60) return t('admin.uploadLabels.min', { mins })
   const h = Math.floor(mins / 60)
-  if (h < 24) return `${h} 小時 ${mins % 60} 分`
-  return `${Math.floor(h / 24)} 天 ${h % 24} 小時`
+  if (h < 24) return t('admin.uploadLabels.hMin', { h, v: mins % 60 })
+  return t('admin.uploadLabels.daysH', { floor: Math.floor(h / 24), v: h % 24 })
 }
 
 /** 退回寬限期的剩餘時間；已過期回 null。 */
@@ -119,15 +120,15 @@ export function graceRemaining(purgeAfter: string | null | undefined, now: numbe
   if (Number.isNaN(ms) || ms <= 0) return null
   const mins = Math.ceil(ms / 60_000)
   const h = Math.floor(mins / 60)
-  return h > 0 ? `${h} 小時 ${mins % 60} 分` : `${mins} 分`
+  return h > 0 ? t('admin.uploadLabels.hMin', { h, v: mins % 60 }) : t('admin.uploadLabels.min2', { mins })
 }
 
 // ── 收檔錯誤（POST /api/admin/uploads）──────────────────────────────────
 
 const CORPUS_STATUS: Record<string, string> = {
-  hidden: '目前已隱藏',
-  draft: '是待審草稿',
-  published: '已發布',
+  get hidden() { return t('admin.uploadLabels.currentlyHidden') },
+  get draft() { return t('admin.uploadLabels.aDraftAwaitingReview') },
+  get published() { return t('admin.uploadLabels.published') },
 }
 
 export interface UploadFailure {
@@ -149,69 +150,69 @@ export function uploadFailure(status: number, body: ErrorBody | null): UploadFai
   const detail = str(body?.detail)
   switch (code) {
     case 'uploads_disabled':
-      return { message: '上傳功能尚未開啟，請聯絡系統管理員。' }
+      return { message: t('admin.uploadLabels.uploadingIsnTEnabledYet') }
     case 'upload_too_large': {
       const maxBytes = num(body?.max_bytes)
-      return { message: `檔案超過上限 ${maxBytes ? fmtBytes(maxBytes) : ''}`.trim() + '。', maxBytes }
+      return { message: t('admin.uploadLabels.fileExceedsTheLimit', { v: maxBytes ? fmtBytes(maxBytes) : '' }).trim() + t('admin.uploadLabels.text'), maxBytes }
     }
     case 'upload_not_pdf':
-      return { message: `不是有效的 PDF：${detail ?? '伺服器檢查檔案內容未通過'}。請確認檔案完整、沒有損毀。` }
+      return { message: t('admin.uploadLabels.notAValidPdfCheck', { v: detail ?? t('admin.uploadLabels.theServerSContentCheck') }) }
     case 'invalid_filename':
-      return { message: `檔名不合法：${detail ?? '請改用一般檔名後再上傳'}` }
+      return { message: t('admin.uploadLabels.invalidFileName', { v: detail ?? t('admin.uploadLabels.useARegularFileName') }) }
     case 'upload_duplicate': {
       const status_ = str(body?.status)
       if (body?.existing === 'upload') {
         return {
-          message: `這份檔案已在上傳流程中（${stateLabel(status_)}），不需要重新上傳。`,
+          message: t('admin.uploadLabels.thisFileIsAlreadyIn', { status_: stateLabel(status_) }),
           uploadId: str(body?.upload_id),
         }
       }
       const where = status_ ? CORPUS_STATUS[status_] : undefined
-      return { message: `語料庫已有這份研報${where ? `（${where}）` : ''}，不需要重新上傳。` }
+      return { message: t('admin.uploadLabels.theCorpusAlreadyHasThis', { v: where ? t('admin.uploadLabels.text2', { where }) : '' }) }
     }
     case 'upload_known_infected':
-      return { message: '這份檔案先前已被判定含有惡意程式，拒收。' }
+      return { message: t('admin.uploadLabels.thisFileWasPreviouslyFound') }
     case 'upload_quota_exceeded': {
       const limit = num(body?.limit)
       const used = num(body?.used)
       if (body?.quota === 'in_flight') {
-        return { message: `全站處理中的上傳已達上限${limit != null ? `（${limit} 份）` : ''}，請等處理完再試。` }
+        return { message: t('admin.uploadLabels.siteWideInProgressUploads', { v: limit != null ? t('admin.uploadLabels.files', { limit }) : '' }) }
       }
       return {
-        message: `已達每人每日上傳上限${limit != null ? `（${used ?? limit}／${limit} 份）` : ''}，請明天再上傳。`,
+        message: t('admin.uploadLabels.thePerUserDailyUpload', { v: limit != null ? t('admin.uploadLabels.files2', { v: used ?? limit, limit }) : '' }),
       }
     }
     case 'quarantine_unavailable':
-      return { message: '隔離區暫時無法使用（磁碟空間不足或目錄異常），檔案沒有保留，請稍後再試或聯絡系統管理員。' }
+      return { message: t('admin.uploadLabels.theQuarantineIsTemporarilyUnavailable') }
   }
-  if (status === 413) return { message: '檔案超過伺服器允許的大小。' } // 代理層（nginx）回的 413 不是 JSON
-  if (status === 403) return { message: detail ?? '需要「研報管理」權限。' }
-  if (status === 0) return { message: '網路連線中斷，上傳沒有完成，請重試。' }
+  if (status === 413) return { message: t('admin.uploadLabels.theFileExceedsTheSize') } // 代理層（nginx）回的 413 不是 JSON
+  if (status === 403) return { message: detail ?? t('admin.uploadLabels.requiresTheReportsPermission') }
+  if (status === 0) return { message: t('admin.uploadLabels.theNetworkConnectionDroppedAnd') }
   if (detail) return { message: detail }
-  return { message: status >= 500 ? `伺服器暫時無法處理（HTTP ${status}），請稍後再試。` : `上傳失敗（HTTP ${status}）` }
+  return { message: status >= 500 ? t('admin.uploadLabels.theServerCanTHandle', { status }) : t('admin.uploadLabels.uploadFailedHttp', { status }) }
 }
 
 // ── 審核動作錯誤（publish／reject／unreject／retry）────────────────────
 
 const REVIEW_CODE_MESSAGE: Record<string, string> = {
-  upload_state_conflict: '這筆上傳的狀態已經改變，這個動作目前不適用；畫面已重新整理。',
-  upload_busy: '系統正在掃描或處理這份檔案，請等處理完再退回。',
-  upload_published_use_hide: '已發布的研報不能退回；如需下架，請到「研報管理」隱藏。',
-  upload_reject_expired: '寬限期已過或檔案已清除，無法撤銷退回。',
-  upload_not_retryable: '這類失敗重試也不會成功，不能重試。',
-  upload_active_conflict: '同一份檔案已有另一筆進行中的上傳，請先處理那一筆。',
-  upload_report_missing: '語料裡找不到這份研報（資料不一致），請聯絡系統管理員。',
-  invalid_reason: '退回必須填寫原因，最多 500 字。',
-  validation_error: '退回必須填寫原因，最多 500 字。',
-  not_found: '找不到這筆上傳紀錄（可能已被清除）。',
+  get upload_state_conflict() { return t('admin.uploadLabels.thisUploadSStateHas') },
+  get upload_busy() { return t('admin.uploadLabels.theSystemIsScanningOr') },
+  get upload_published_use_hide() { return t('admin.uploadLabels.publishedReportsCanTBe') },
+  get upload_reject_expired() { return t('admin.uploadLabels.theGracePeriodHasPassed') },
+  get upload_not_retryable() { return t('admin.uploadLabels.retryingWonTFixThis') },
+  get upload_active_conflict() { return t('admin.uploadLabels.anotherUploadOfTheSame') },
+  get upload_report_missing() { return t('admin.uploadLabels.thisReportIsnTIn') },
+  get invalid_reason() { return t('admin.uploadLabels.rejectingRequiresAReasonOf') },
+  get validation_error() { return t('admin.uploadLabels.rejectingRequiresAReasonOf') },
+  get not_found() { return t('admin.uploadLabels.uploadRecordNotFoundIt') },
 }
 
 /** 審核動作的錯誤 → 中文說明。認得的錯誤碼用固定說法，其餘顯示後端的 detail。 */
 export function reviewErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code && REVIEW_CODE_MESSAGE[err.code]) return REVIEW_CODE_MESSAGE[err.code]
-    if (err.status === 403) return '需要「研報管理」權限。'
-    return err.message || `操作失敗（HTTP ${err.status}）`
+    if (err.status === 403) return t('admin.uploadLabels.requiresTheReportsPermission')
+    return err.message || t('admin.uploadLabels.actionFailedHttp', { status: err.status })
   }
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.uploadLabels.actionFailedTryAgain')
 }

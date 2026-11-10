@@ -1,5 +1,7 @@
 # 維運手冊：重啟策略、健康探針、告警、備份還原與各元件的安裝停用
 
+本文件描述廷豐 profile 的主機部署（正式環境 EC2 與測試環境辦公室主機的 systemd 部署、維運與備份還原）；框架的容器部署見 `docs/CONTAINER_DEPLOYMENT.md`，檔案的歸屬見 `deploy/OWNERSHIP.toml`。
+
 > **用語**：正式環境＝EC2（`research.tingfong.com`，DB 是 RDS）；測試環境＝辦公室主機（`research.kashionzarchive.com`，DB 是容器 `report-mark-postgres`），見 `AGENTS.md`「環境角色與資料安全」。資源名、catalog、unit、使用者名稱與環境變數值裡的 `staging`、`prod`、`production` 是歷史命名，不代表角色。各主機實際裝了哪些元件、版本與開關記在 `docs/DEPLOYMENT_STATUS.md`；本文只寫程序、退出碼契約與刻意設計的理由。
 >
 > **安裝指令的寫法**：沒有另外註明時是辦公室主機的寫法（`sudo cp`／`sudo install` 到 `/etc/systemd/system/`，repo 根是 `/home/kashionz/projects/report-mark`）。EC2 的 unit 一律改用 `sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark <unit…>`（安裝時代換使用者、HOME 與 repo 路徑；給 `.timer` 會連同名的 `.service` 一起裝；只複製與 `daemon-reload`，不 enable），其餘步驟相同。
@@ -125,9 +127,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 本節適用 DB 在容器裡的辦公室主機。EC2 沒有應用層備份（只有 RDS 自動備份，見 `deploy/aws/README.md`）與稽核錨點；帳號刪除的 tombstone 在 EC2 寫本機磁碟（見「還原後重放帳號刪除」）。
 
-### 為什麼只備這二十張表
+### 為什麼只備這二十一張表
 
-`scripts/db_backup.sh` 的 `BACKUP_TABLES` 是不可重建的表，共二十張。`user_session` 刻意不備（遺失只是全員重新登入）；`api_client_usage` 不備（每日額度的計數器，遺失只是當天額度重新起算）；監控觀測（`service_observation*`、`job_execution`、`db_stat_snapshot`）不備（遺失只少了歷史）。
+`scripts/db_backup.sh` 的 `BACKUP_TABLES` 是不可重建的表，共二十一張。`user_session` 刻意不備（遺失只是全員重新登入）；`api_client_usage` 不備（每日額度的計數器，遺失只是當天額度重新起算）；監控觀測（`service_observation*`、`job_execution`、`db_stat_snapshot`）不備（遺失只少了歷史）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -150,6 +152,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.auth_event` | 登入與安全事件，保留至少 365 天。刪帳時刻意保留（只有 UUID、IP、UA，從不存帳號名稱） |
 | `research.api_client` | 對外 API 用戶端：名稱、啟用狀態、key scopes、限流與每日額度、建立人。只存金鑰的 sha256 與 prefix（還原後既有金鑰照常可用）；遺失＝所有用戶端要重建並重新發金鑰 |
 | `research.api_client_entitlement` | API 用戶端的授權範圍；遺失＝每個用戶端能看到哪些研報的設定全部消失 |
+| `research.report_metadata` | 連接器帶進來的 metadata 側檔（以 `file_hash` 為鍵；評等、目標價、分析師只存在這裡）。來源端的側檔可能已刪，重建語料不會重建它 |
 
 沒備的是語料層（`research_report`、`report_chunk`）：它確定重建得回來——研報原檔在 NAS／R2，`extract → tag → ingest` 全程可續；代價是 CPU 時間（BGE-M3 約 3 篇／分），不是資料消失。
 
@@ -714,7 +717,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 ### 兩個刻意的預設
 
-- **語料閘（`corpus`）抑制連鎖假警報。** 派生批次都只吃「本輪新入庫」的研報，沒有新研報時它們一行都不會產出——那是正確行為。所以語料自己在同窗期內沒前進時，派生資產的過期一律判 `suppressed`；少了這一層，一個連假就讓幾個資產同時亮紅。語料閘的母體刻意與批次一致（`full_text IS NOT NULL AND is_research IS NOT FALSE`）——用全表 `max()` 會被行政／活動檔拉新，抑制就失效了。`corpus` 本身的門檻預設 0：語料停更由 sync unit 的 `OnFailure` 覆蓋，而 NAS 供稿有連假空窗。
+- **語料閘（`corpus`）抑制連鎖假警報。** 派生批次都只吃「本輪新入庫」的研報，沒有新研報時它們一行都不會產出——那是正確行為。所以語料自己在同窗期內沒前進時，派生資產的過期一律判 `suppressed`；少了這一層，一個連假就讓幾個資產同時亮紅。語料閘的母體刻意與批次一致（`full_text IS NOT NULL`＋類型開了摘要，`doc_types.doc_type_enabled_sql`；廷豐 profile 下即研報）——用全表 `max()` 會被行政／活動檔拉新，抑制就失效了。`corpus` 本身的門檻預設 0：語料停更由 sync unit 的 `OnFailure` 覆蓋，而 NAS 供稿有連假空窗。
 - **`signal` 預設門檻 0（不告警）。** 訊號只來自高覆蓋的少數研報，排程把積壓跑完之後 `max(created_at)` 就不再前進，與「這段時間沒有合格研報」無法區分——設任何門檻都會在積壓耗盡那天開始每日假警報。「訊號排程壞了」走另一條路：sync 殼對 `extract_signals` 非零退出會記進 `data/unit_failures.log`（測試釘住那個呼叫）。要開＝`--signal-days 14`。
 
 ### 排程健康：`unit_failures.log` 的讀取端
@@ -818,12 +821,31 @@ systemctl list-timers report-mark-audit.timer                   # 應排在每�
 
 ### LLM 供應商與金鑰
 
-`LLM_PROVIDER` 只決定**送達路徑**，不決定模型：白名單、預設表、judge 系譜兩條路徑一律相同（`app/services/llm_models.py`），實作差異全在 `app/services/llm_http.py`。兩台主機**不共用金鑰**。
+`LLM_PROVIDER` 決定**送達路徑**，是每台主機固定的設定：**沒有備援後端、不做 failover**，加了其他 provider 之後這條不變量照舊成立——一台主機任何時刻只走一條路徑，那條路徑壞了就是壞了（處置見「LLM 帳號告警與處置」）。實作差異全在 `app/services/llm_http.py`（模組 docstring「各 provider 的對應規則」），重試、逾時、截斷與錯誤分類的語意各 provider 共用同一份；設定的解析與白名單在 `app/services/llm_models.py`。廷豐兩台主機**不共用金鑰**：
 
 | 主機 | `LLM_PROVIDER` | 金鑰 | 端點 |
 |---|---|---|---|
 | 正式（EC2） | `openai`（預設；未設、空值都是） | `OPENAI_API_KEY` | `https://api.openai.com/v1`；`OPENAI_BASE_URL` 可覆寫 |
 | 測試（辦公室主機） | `opencode_go` | `OPENCODE_GO_API_KEY` | `https://opencode.ai/inference/go/v1`；`OPENCODE_GO_BASE_URL` 可覆寫 |
+
+兩條路徑是同一顆模型：白名單（內建 `gpt-6-luna`）、預設表、judge 系譜一律相同，兩個環境的產出與量尺可以互相代表。
+
+框架另支援三條路徑，給其他部署用（廷豐不用）。端點、金鑰與模型名都是部署層設定，跟金鑰一樣放 repo 根 `.env` 與 `/etc/default/report-mark-llm` 兩份、逐字相同，不進 profile：
+
+| `LLM_PROVIDER` | 金鑰 | 端點與其他必填 | 可送的模型（白名單） |
+|---|---|---|---|
+| `azure_openai` | `AZURE_OPENAI_API_KEY`（`api-key` header） | `AZURE_OPENAI_ENDPOINT`（資源網址，如 `https://<資源>.openai.azure.com`）、`AZURE_OPENAI_API_VERSION`（沒有預設值；要選支援 `reasoning_effort` 與 `max_completion_tokens` 的版本） | `AZURE_OPENAI_DEPLOYMENTS`：`模型名=deployment名`，逗號分隔（請求路徑是 deployment） |
+| `anthropic` | `ANTHROPIC_API_KEY`（`x-api-key`＋`anthropic-version: 2023-06-01`） | `ANTHROPIC_BASE_URL` 選填，預設 `https://api.anthropic.com`（不含 `/v1`） | `ANTHROPIC_MODELS`：逗號分隔 |
+| `openai_compatible` | `OPENAI_COMPATIBLE_API_KEY`（Bearer；伺服器沒開認證時填任意非空值） | `OPENAI_COMPATIBLE_BASE_URL`（含 `/v1`，如 `http://vllm:8000/v1`） | `OPENAI_COMPATIBLE_MODELS`：逗號分隔，要與伺服器載入的名稱逐字相同 |
+
+- **白名單是安全閘門，沒有旋鈕可以關**：這三個 provider 沒有內建名稱，只認**目前** provider 的宣告旋鈕；宣告格式錯的那一筆不放行。不在白名單的名稱在送出前就失敗（線上 `config`、批次 rc=2），不會送到付費端點。
+- 預設表的名稱是 `gpt-6-luna`；部署沒有這顆模型時設 `LLM_DEFAULT_MODEL=<宣告過的名稱>`，就不必逐一設 13 個任務旋鈕（網搜那列照舊沒有模型）。任務旋鈕仍優先。
+- 能力旋鈕：`AZURE_OPENAI_SUPPORTS_REASONING_EFFORT`（預設 1）、`OPENAI_COMPATIBLE_SUPPORTS_REASONING_EFFORT`（預設 0）。設 0 時不送 `reasoning_effort`、交給伺服器預設——給不認這個欄位的 deployment 或自架伺服器用（否則每個請求 400）。推理本身一律關（`llm_http.REASONING_EFFORT` 是常數，不是旋鈕：開推理＝換量尺，要發 PR 並重新評測）；預設就會推理的自架模型，關推理要在伺服器端設定。
+- Anthropic 沒有 JSON 模式：judge 改以提示約束（系統提示本來就要求只輸出 JSON）＋嚴格解析，只容許一層包住全文的 markdown 圍欄；不是 JSON 就是 `invalid_json`。
+- 設定錯誤（缺必填旋鈕、宣告格式錯、能力旋鈕看不懂）在三處用同一份判準說出旋鈕名：web 啟動日誌記 ERROR（不擋啟動）、`/healthz/llm` 回 503 `misconfigured`（不探端點）、批次預檢 **rc=2**。
+- `/healthz/llm` 打各自的模型清單端點（不計費）：Azure `GET {endpoint}/openai/models?api-version=…`、Anthropic `GET {base}/v1/models`、自架 `GET {base}/models`。四家都沒有餘額 API，沒有用完前的預警；預算告警在各家後台設定。
+- 換 provider 等於換模型：與廷豐的評測基準線不可比，judge 自成量尺系譜（`declared:<模型名>`，`llm_models.judge_lineage`），要先為該部署建立自己的基準線。
+- 核對兩份環境檔（下面第 4 步的指令）時，這三個 provider 另逐份比對非祕密的端點與宣告旋鈕；廷豐兩條路徑只比金鑰與 `LLM_PROVIDER`（行為不變）。
 
 OpenAI 金鑰可以是限制權限的金鑰：Model capabilities 要能寫（Chat Completions），Models 讀取權限非必要。沒有它時 `/healthz/llm` 以 403 判斷金鑰已通過認證，少驗的只有模型清單。
 
@@ -842,7 +864,7 @@ OpenAI 金鑰可以是限制權限的金鑰：Model capabilities 要能寫（Cha
 
 **只有白名單上的 unit 載入 llm 檔**（sync 與上傳 worker），其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好（`tests/test_deploy_units.py` 釘住白名單）。批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）也放這份檔，讓手動與排程用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（同一支測試釘住）。web 讀的是 `.env` 的同名鍵。
 
-批次經 `scripts/_claude_cli.run_claude`（名稱是歷史值；`generate_brief` 也交給它）送出：模型名只接受白名單（`gpt-6-luna`），其他名稱（含 `claude-*`、舊模型名）在預檢與呼叫層都以整批 **rc=2** 中止、不送出。帳號層級的失敗（`auth`、`quota`、模型不存在）一律整批 **rc=2** 中止（不記跳過名單），處置見「LLM 帳號告警與處置」與「整批中止後的重放」。
+批次經 `scripts/_claude_cli.run_claude`（名稱是歷史值；`generate_brief` 也交給它）送出：模型名只接受白名單（廷豐是 `gpt-6-luna`；其他 provider 是宣告的名稱，見上表），其他名稱（含 `claude-*`、舊模型名）在預檢與呼叫層都以整批 **rc=2** 中止、不送出。帳號層級的失敗（`auth`、`quota`、模型不存在）一律整批 **rc=2** 中止（不記跳過名單），處置見「LLM 帳號告警與處置」與「整批中止後的重放」。
 
 安裝（範例檔檔頭有同樣的指令）：
 
@@ -854,7 +876,8 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的鍵），並在取批次鎖之前預檢。下列情況一律 **rc=2** 並說出原因，sync 殼把 rc=2 當帳號／環境型中止告警：
 
 - 有白名單模型卻沒有目前 `LLM_PROVIDER` 的金鑰（環境裡有空值要先 `unset` 那個鍵；PermissionError 要以有該群組權限的使用者執行）。這份檔不存在時也是這一條：批次不讀 repo 根 `.env`，拿不到金鑰。
-- 有不在白名單的模型名（含 `claude-*`）。
+- 有不在白名單的模型名（含 `claude-*`；`azure_openai`、`anthropic`、`openai_compatible` 是沒有宣告的名稱），訊息列出目前接受的名稱與模型名的來源旋鈕。
+- 目前 provider 的端點設定有誤（缺 `AZURE_OPENAI_ENDPOINT`、`AZURE_OPENAI_API_VERSION`、`OPENAI_COMPATIBLE_BASE_URL`，宣告格式錯等），訊息說出是哪個旋鈕。
 - `LLM_PROVIDER` 非空卻不是合法值（退役值或拼錯），訊息印出原始值。
 - 檔內有重複的鍵。**重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用不同的金鑰。
 
@@ -862,7 +885,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 變更或輪替金鑰、改 `LLM_PROVIDER`（不需要 `daemon-reload`，`EnvironmentFile` 每次啟動重讀；批次每輪重新讀檔）：
 
-1. 在 OpenAI 或 OpenCode 的主控台發一把新金鑰（舊的先別撤）。
+1. 在該 provider 的主控台（OpenAI、OpenCode、Azure 入口網站、Anthropic Console 或自架伺服器）發一把新金鑰（舊的先別撤）。
 2. 改兩份檔（repo 根 `.env` 與 `/etc/default/report-mark-llm`，後者用 `sudoedit`）的金鑰或 `LLM_PROVIDER`：**直接改那一行**，不要新增一行。
 3. 重啟 web：`sudo systemctl restart report-mark-web.service`。啟動日誌那行「LLM 模型：provider=…」說出生效的路徑。
 4. 核對兩份一致（只印雜湊前 8 碼，不印金鑰）。在 repo 根以讀得到 `/etc/default/report-mark-llm` 的使用者執行：
@@ -880,7 +903,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 | 類別 | kind | 批次行為 |
 |---|---|---|
-| 帳號層級 | `auth`（401）、`quota`（402、429 `insufficient_quota`、OpenCode Go 的用量上限）、`config`（404、模型不存在；白名單外的名稱在送出前就歸這類） | 整批 **rc=2** 中止；不記跳過名單（處置見「LLM 帳號告警與處置」） |
+| 帳號層級 | `auth`（401、403）、`quota`（402、429 `insufficient_quota`、OpenCode Go 的用量上限、Anthropic 的 `billing_error` 與 credit balance 不足）、`config`（404、模型不存在；白名單外的名稱在送出前就歸這類） | 整批 **rc=2** 中止；不記跳過名單（處置見「LLM 帳號告警與處置」） |
 | 暫時性 | `overloaded`（429、5xx）、`network` | 還沒吐字時傳輸層依 `Retry-After` 退避重試 ≤2 次（受總期限限制）；**已吐字（已計費）就不重試**，直接當單篇失敗；腳本層不再重試；計入斷路器 |
 | 單篇 | `content_filter`、`truncated`、`empty`、`bad_request`、`timeout_streamed`、`timeout`、`other` | 這篇這輪只打 1 次；前五種記入 `research.llm_task_failure`（審查與 `truncated` 1 次就跳過，其餘連續 3 輪）；`timeout_streamed` 與 `timeout` 計入斷路器 |
 
@@ -907,7 +930,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 **負責人**：LLM 帳號持有、預算與金鑰輪替都由 **Kashionz 一人**負責，不設代理人。
 
-**沒有用完前的預警**：OpenAI 與 OpenCode Go 都沒有查餘額的 API，`/healthz/llm` 只打 `GET /models`，判斷端點與金鑰能不能用；額度用完要等真實請求碰到才知道。OpenAI 的預算告警在 OpenAI 後台設定，這裡沒有對應的旋鈕或探針。
+**沒有用完前的預警**：OpenAI、OpenCode Go、Azure、Anthropic 都沒有查餘額的 API，`/healthz/llm` 只打模型清單端點（OpenAI 族 `GET /models`，各 provider 的路徑見「LLM 供應商與金鑰」），判斷端點與金鑰能不能用；額度用完要等真實請求碰到才知道。預算告警在各供應商後台設定，這裡沒有對應的旋鈕或探針。
 
 `/healthz/llm` 回 503 時問答就是停擺的。
 
@@ -922,7 +945,7 @@ sudoedit /etc/default/report-mark-llm      # 填該主機的 LLM_PROVIDER 與金
 
 要停，照對象分開做：
 
-- **停問答主答**：repo 根 `.env` 設 `ASK_ANSWER_MODEL=off`（任何白名單外的名稱都行）並重啟 web。每題回「問答服務暫時無法使用（模型設定有誤）」、不送出主答請求；`/healthz/llm` 回 503 `misconfigured` → 探針退出碼 8 → **CRITICAL 事件（reason 是 `llm_misconfigured`）——刻意停用期間這是預期的**，恢復設定後送 RESOLVED。其餘 fail-open 的線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）各自解析模型、照常呼叫；要一個都不送，把它們的旋鈕（`ASK_INTENT_MODEL`、`ASK_CONDENSE_MODEL`、`QA_PLANNER_MODEL`、`ASK_FOLLOWUP_MODEL`、`FAITHFULNESS_MODEL`）也設成白名單外名稱（忠實度也可以 `ASK_FAITHFULNESS_ENABLED=0`），或直接把 `.env` 的 `OPENAI_API_KEY=`（測試環境是 `OPENCODE_GO_API_KEY=`）清空——所有線上呼叫在送出前就以 auth 失敗，`/healthz/llm` 回 503 `auth_failed`（同樣是退出碼 8、預期的）。
+- **停問答主答**：repo 根 `.env` 設 `ASK_ANSWER_MODEL=off`（任何白名單外的名稱都行）並重啟 web。每題回「問答服務暫時無法使用（模型設定有誤）」、不送出主答請求；`/healthz/llm` 回 503 `misconfigured` → 探針退出碼 8 → **CRITICAL 事件（reason 是 `llm_misconfigured`）——刻意停用期間這是預期的**，恢復設定後送 RESOLVED。其餘 fail-open 的線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）各自解析模型、照常呼叫；要一個都不送，把它們的旋鈕（`ASK_INTENT_MODEL`、`ASK_CONDENSE_MODEL`、`QA_PLANNER_MODEL`、`ASK_FOLLOWUP_MODEL`、`FAITHFULNESS_MODEL`）也設成白名單外名稱（忠實度也可以 `ASK_FAITHFULNESS_ENABLED=0`），或直接把 `.env` 的 `OPENAI_API_KEY=`（測試環境是 `OPENCODE_GO_API_KEY=`；其他 provider 是該 provider 的金鑰）清空——所有線上呼叫在送出前就以 auth 失敗，`/healthz/llm` 回 503 `auth_failed`（同樣是退出碼 8、預期的）。
 - **停批次**：`sudo systemctl stop report-mark-sync.timer`（要跨重開機再 `disable`）；排程批次裡會呼叫 LLM 的只有 sync 鏈，以及有裝的話上傳 worker（`report-mark-upload.timer`，同樣停掉）。停著期間 `make freshness` 會陸續報各段過期，這也是預期的。恢復時 `start`（或 `enable --now`）。
 
 #### 訊號從哪裡來
@@ -1792,6 +1815,89 @@ sudo systemctl disable --now report-mark-security-retention.timer
 持續性的撞庫（大量不同 IP、低頻）不適合逐條封：改在 Cloudflare 對 `/login` 的 POST 加 **Rate limiting rule**（例如同一 IP
 10 分鐘 20 次 → Managed Challenge），並請同事開 TOTP。區網直連（不經 Cloudflare）不受這些規則影響，本來就被視為可信。
 
+## OIDC 單一登入（公司帳號登入＋本地緊急帳號）
+
+員工以公司 IdP（Entra ID、ADFS 2016 以上、Keycloak、Okta）登入，流程是 Authorization Code＋PKCE（S256）。IdP 只負責
+「這個人是誰」；**管理員與 scope 一律在管理後台授予**，IdP 的群組、角色 claim 不讀。設定全在 repo 根 `.env`
+（`OIDC_*`，各鍵語意見 `.env.example` 與 README 的環境變數表），`OIDC_ISSUER` 沒設時登入行為與沒有這個功能時完全一樣。
+改了要重啟 web。
+
+### 帳號規則
+
+- 帳號以 `(issuer, subject)` 綁定（`research.app_user.oidc_issuer`／`oidc_subject`，revision 0013）。第一次登入沒有綁定時
+  JIT 建成**一般使用者**（名稱取 `OIDC_USERNAME_CLAIM`，之後 IdP 端改名不影響），稽核 `user.create`（操作者為系統、
+  `via: sso_jit`）。要給管理員，在帳號頁照常升級並授予 scope。
+- 同名的既有帳號：預設拒絕（登入頁「這個公司帳號無法登入本系統」，事件 `login.sso_failure`／`username_conflict`）。要把
+  既有的本地帳號移轉成公司帳號登入，暫時開 `OIDC_LINK_BY_USERNAME=1`、請當事人以公司帳號登入一次（稽核 `user.sso_link`），
+  移轉完再關掉。
+- 擋掉一個公司帳號：在帳號頁**停用**（綁定留著，IdP 怎麼放行都登不進來）。**刪除**會清掉綁定，同一個人之後再從 IdP 登入
+  會 JIT 成一個全新的一般帳號——要永久擋人，同時請 IdP 管理者把他從這個應用程式的指派移除。
+- SSO 帳號沒有本地密碼（`password_hash` 是 `!sso`）。權限提升改成回 IdP 重新登入（`prompt=login`、`max_age=0`，回來的
+  `auth_time` 要在 5 分鐘＋時鐘誤差內）；IdP 不回 `auth_time` 時權限提升會一直失敗（事件 `elevate.failure`／`sso_stale_auth`）。
+
+### 只允許 SSO 與緊急管理員
+
+`OIDC_SSO_ONLY=1` 時本地帳密只收 `OIDC_BREAK_GLASS_USERS` 列出、而且是管理員的帳號（登入頁的帳密表單收在「緊急管理員登入」
+之下）；其他帳號密碼正確也回「請改以公司帳號登入」，既有的密碼 session 下一個請求就失效。緊急管理員帳號永遠不與 IdP 綁定，
+IdP 掛掉或設定壞掉時用它進來修。建議：
+
+1. 先在 IdP 那端與 `OIDC_SSO_ONLY=0` 跑過一輪，確認同事都登得進來、該升級的管理員都升級了。
+2. 至少準備兩個緊急管理員（`scripts/create_admin.py` 建立），都開 TOTP，帳密分開保管。
+3. 再設 `OIDC_SSO_ONLY=1`、`OIDC_BREAK_GLASS_USERS=<名稱>,<名稱>` 並重啟 web；以緊急管理員實際登入一次確認。
+
+### `ADMIN_MFA_REQUIRED` 對 SSO 管理員
+
+SSO 管理員**不用本系統的 TOTP**（在 SSO session 裡另外開 TOTP 也不算數）。政策開啟時看那次登入的 ID token：`amr` 含
+`OIDC_MFA_AMR`（預設 `mfa`、`mca`、ADFS 的 `http://schemas.microsoft.com/claims/multipleauthn`）任一值、或 `acr` 是
+`OIDC_MFA_ACR` 之一、或設了 `OIDC_ASSUME_IDP_MFA=1`（IdP 端的條件式存取已對這個應用程式強制 MFA）。都不成立時管理端點一律
+403 `sso_mfa_required`，管理後台改顯示「需要經過多重驗證的公司帳號登入」。判斷結果在登入當下記在 session（`idp_mfa`），
+改設定後要重新登入才會重新判斷。
+
+### 對接 Entra ID（Microsoft Entra）
+
+1. Entra 系統管理中心 → **應用程式註冊 → 新增註冊**：名稱自訂；支援的帳戶類型選「僅此組織目錄中的帳戶」（單一租戶；
+   多租戶的 `{tenantid}` issuer 不支援）；重新導向 URI 選 **Web**，填 `https://<站台>/login/oidc/callback`。
+2. **憑證與祕密 → 新增用戶端密碼**，把「值」放進 `.env` 的 `OIDC_CLIENT_SECRET`（只在這時候看得到；記下到期日，到期前要換）。
+3. **權杖設定**（選用）：要在 ID token 帶 email 時加選用宣告 `email`。帳號名稱預設用 `preferred_username`（UPN）。
+4. `.env`：
+   - `OIDC_ISSUER=https://login.microsoftonline.com/<目錄（租用戶）識別碼>/v2.0`
+   - `OIDC_CLIENT_ID=<應用程式（用戶端）識別碼>`
+   - `OIDC_REDIRECT_URI=https://<站台>/login/oidc/callback`
+   - `OIDC_ALLOWED_DOMAINS=<公司網域>`（UPN 的網域）
+5. 只讓特定人登入：**企業應用程式 → 該應用程式 → 內容 → 需要指派＝是**，再到「使用者和群組」指派。MFA 用條件式存取對這個
+   應用程式要求；Entra 的 ID token 在做過 MFA 時 `amr` 會帶 `mfa`，預設設定就認得。
+
+### 對接 Keycloak
+
+1. 該 realm → **Clients → Create client**：Client type `OpenID Connect`、Client ID 自訂；**Client authentication 開啟**
+   （confidential）、Authentication flow 只勾 **Standard flow**。
+2. **Valid redirect URIs** 填 `https://<站台>/login/oidc/callback`（逐字，不用萬用字元）；Web origins 可留空。
+3. **Advanced → Proof Key for Code Exchange Code Challenge Method** 設 `S256`（強制 PKCE）。
+4. **Credentials** 分頁的 Client secret 放進 `OIDC_CLIENT_SECRET`。
+5. `.env`：`OIDC_ISSUER=https://<主機>/realms/<realm>`、`OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI`；帳號名稱用預設的
+   `preferred_username`（或 `OIDC_USERNAME_CLAIM=email`）。
+6. MFA：Keycloak 預設不送 `amr`。在 realm 用 Authentication flow 的 step-up 設定 LoA，`OIDC_MFA_ACR` 設成代表 OTP 的那個
+   `acr` 值；或在 client scope 加 `amr` 的 mapper；或整個 realm 強制 OTP 時設 `OIDC_ASSUME_IDP_MFA=1`。
+
+ADFS（2016 以上）與 Okta 同理：在 IdP 建一個使用授權碼流程的 confidential 應用程式、redirect URI 填同一個網址；ADFS 的 issuer
+是 `https://<主機>/adfs`、帳號名稱常用 `upn`（`OIDC_USERNAME_CLAIM=upn`），Okta 是 `https://<組織>.okta.com`（或
+`/oauth2/<授權伺服器>`）。
+
+### 驗證與排查
+
+1. 重啟 web 後打開登入頁，應出現「以公司帳號登入」；按下去應導到 IdP。啟動時 `.env` 設了一半（有 issuer 沒 client id 或
+   redirect URI、或不是 https）會直接拒絕啟動。
+2. 登入後管理後台 **安全 → 登入事件** 應有一列 `登入成功（公司帳號）`，帳號頁多一個一般使用者。
+3. 失敗時看 web 日誌（`journalctl -u report-mark-web`）的 `SSO 登入失敗`／`SSO 無法開始` 那一行與安全頁的 `公司帳號登入失敗` 事件：
+   - `sso_unavailable`／`SSO 無法開始`：discovery 抓不到、或 discovery 回的 `issuer` 與 `OIDC_ISSUER` 不是逐字相同
+     （常見是結尾多一個 `/`）。主機要連得到 IdP 的 discovery、token 與 JWKS 端點（這是除了 LLM 端點以外唯一的對外連線）。
+   - `token`：token 端點回錯（`error=invalid_client`＝secret 錯或過期；`invalid_grant`＝redirect URI 不一致或授權碼過期）、
+     或 ID token 驗不過（簽章、`aud`、過期——主機時鐘要校時，誤差容忍見 `OIDC_CLOCK_SKEW_SECONDS`）。
+   - `state`：登入流程超過 10 分鐘、在另一個分頁又開了一次、或瀏覽器擋了 cookie。重新登入即可。
+   - `domain`、`username_conflict`、`invalid_username`、`break_glass`：見上面的帳號規則。
+4. IdP 換簽章金鑰不需要任何動作：遇到不認得的 `kid` 會重抓 JWKS（同一個行程至少隔 10 秒）。
+5. 日誌與事件**不含任何 token、授權碼、client secret 或 IdP 給的帳號名稱**；成功那一行只記本系統的帳號名稱。
+
 ## 使用分析每晚彙總（report-mark-analytics-rollup）
 
 管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，
@@ -2005,7 +2111,9 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
      不適用 RDS）。套完 `make schema-version` 回 0、再做一次零 drift 比對。
    - 每日 schema 檢查（`report-mark-schema-check`）已啟用的主機，套 schema 與換程式要在同一個維護窗口內做完，
      否則當天的檢查會以版本不一致告警。
-2. **換程式**：`make build-web`，緊接著重啟 web（部署目錄的 `frontend/dist` 不存在時 SPA 回 503）。驗收：
+2. **換程式**：`make build-web` 與 `make build-info`（寫 build_info.json：commit、版本 tag、工作樹是否乾淨，管理後台
+   診斷頁與 `/metrics` 的版本對帳讀它；讀不到 git 只印說明、不失敗），緊接著重啟 web（部署目錄的 `frontend/dist` 不存在時
+   SPA 回 503）。驗收：
    `curl -s http://127.0.0.1:8097/healthz` 回 `{"status":"ok"}`、`/healthz/security` 回 `{"security":"ok"}` 或 `unknown`。
    備份清單的變動由部署目錄裡的 `scripts/db_backup.sh` 直接生效，備份 unit 不用重裝。
 3. **安裝或更新 unit**（辦公室主機直接 `install` 到 `/etc/systemd/system/`；EC2 用 `deploy/install_units.sh --user ubuntu

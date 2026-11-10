@@ -8,6 +8,7 @@ import { componentLabel, fmtDuration, needsAttention } from './ops/opsLabels'
 import { attentionLevel, pipelineAttention } from './ops/pipeline/attention'
 import { REMOTE_STATE_LABELS } from './ops/remoteHostLabels'
 import { STATE_LABELS } from './security/securityLabels'
+import { t } from '@/i18n'
 
 /**
  * 導覽的燈號與數字。**只用各頁既有的判準，不另外發明門檻**：
@@ -62,12 +63,12 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
     if (problems.length > 0) {
       out.services = {
         lamp: 'bad',
-        reason: `${problems.length} 個服務需要處理`,
-        detail: problems.map(s => s.name).join('、'),
+        reason: t('admin.adminSignals.servicesNeedAttention', { length: problems.length }),
+        detail: problems.map(s => s.name).join(t('admin.adminSignals.text')),
       }
     }
   } else if (input.agentUnavailable) {
-    out.services = { lamp: 'warn', reason: '維運代理連不上', detail: '服務狀態、依賴圖與日誌暫時讀不到' }
+    out.services = { lamp: 'warn', reason: t('admin.adminSignals.opsAgentUnreachable'), detail: t('admin.adminSignals.serviceStatusDependencyGraphAnd') }
   }
 
   if (input.dependencies) {
@@ -77,14 +78,14 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
     if (down.length > 0) {
       out.dependencies = {
         lamp: 'bad',
-        reason: `${down.length} 個外部依賴故障`,
-        detail: down.map(n => (n.health_reason ? `${n.name}（${n.health_reason}）` : n.name)).join('、'),
+        reason: t('admin.adminSignals.externalDependenciesDown', { length: down.length }),
+        detail: down.map(n => (n.health_reason ? t('admin.adminSignals.text2', { name: n.name, health_reason: n.health_reason }) : n.name)).join(t('admin.adminSignals.text')),
       }
     } else if (degraded.length > 0) {
       out.dependencies = {
         lamp: 'warn',
-        reason: `${degraded.length} 個外部依賴降級`,
-        detail: degraded.map(n => (n.health_reason ? `${n.name}（${n.health_reason}）` : n.name)).join('、'),
+        reason: t('admin.adminSignals.externalDependenciesDegraded', { length: degraded.length }),
+        detail: degraded.map(n => (n.health_reason ? t('admin.adminSignals.text2', { name: n.name, health_reason: n.health_reason }) : n.name)).join(t('admin.adminSignals.text')),
       }
     }
   }
@@ -93,8 +94,8 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
   if (troubled.length > 0) {
     out.remoteHosts = {
       lamp: 'bad',
-      reason: `來源主機異常：${troubled.map(h => h.name).join('、')}`,
-      detail: troubled.flatMap(h => h.reasons.map(r => REMOTE_STATE_LABELS[r])).join('、'),
+      reason: t('admin.adminSignals.sourceHostIssue', { map: troubled.map(h => h.name).join(t('admin.adminSignals.text')) }),
+      detail: troubled.flatMap(h => h.reasons.map(r => REMOTE_STATE_LABELS[r])).join(t('admin.adminSignals.text')),
     }
   }
 
@@ -106,7 +107,7 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
       out.pipeline = {
         lamp: level,
         reason: first.text,
-        detail: items.length > 1 ? `另有 ${items.length - 1} 項` : undefined,
+        detail: items.length > 1 ? t('admin.adminSignals.more', { v: items.length - 1 }) : undefined,
       }
     }
   }
@@ -117,34 +118,34 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
     out.incidents = {
       lamp: 'warn',
       count: total,
-      reason: `${total} 個事件進行中`,
+      reason: t('admin.adminSignals.incidentsOpen', { total }),
       detail: first
-        ? `${componentLabel(first.component)}・${first.summary || first.reason}・已 ${fmtDuration(elapsedSeconds(first.opened_at))}`
+        ? t('admin.adminSignals.for', { component: componentLabel(first.component), v: first.summary || first.reason, fmtDuration: fmtDuration(elapsedSeconds(first.opened_at)) })
         : undefined,
     }
     const host = items.find(i => i.component === 'host')
-    if (host) out.host = { lamp: 'warn', reason: '主機資源事件進行中', detail: host.summary || host.reason }
+    if (host) out.host = { lamp: 'warn', reason: t('admin.adminSignals.hostResourceIncidentOpen'), detail: host.summary || host.reason }
   }
 
   if (input.dataHealth && (input.dataHealth.overall === 'fail' || input.dataHealth.overall === 'warn')) {
     const d = input.dataHealth
-    const parts = ([['批次新鮮度', d.freshness.status], ['資料稽核', d.db_audit.status], ['R2 對帳', d.r2_reconcile.status]] as const)
+    const parts = ([[t('admin.adminSignals.batchFreshness'), d.freshness.status], [t('admin.adminSignals.dataAudit'), d.db_audit.status], [t('admin.adminSignals.r2Reconciliation'), d.r2_reconcile.status]] as const)
       .filter(([, status]) => status === 'fail' || status === 'warn')
       .map(([label]) => label)
     out.dataHealth = {
       lamp: d.overall === 'fail' ? 'bad' : 'warn',
-      reason: d.overall === 'fail' ? '資料健康異常' : '資料健康需要注意',
-      detail: parts.join('、') || undefined,
+      reason: d.overall === 'fail' ? t('admin.adminSignals.dataHealthErrors') : t('admin.adminSignals.dataHealthNeedsAttention'),
+      detail: parts.join(t('admin.adminSignals.text')) || undefined,
     }
   }
 
   const sec = input.securityAlerts
   if (sec && sec.state !== 'ok' && sec.state !== 'unknown') {
-    const triggered = sec.triggered.filter(t => t !== 'ok' && t !== 'unknown')
+    const triggered = sec.triggered.filter(item => item !== 'ok' && item !== 'unknown')
     out.security = {
       lamp: 'bad',
       reason: alertLabel(sec.state),
-      detail: triggered.length > 1 ? triggered.map(alertLabel).join('、') : undefined,
+      detail: triggered.length > 1 ? triggered.map(alertLabel).join(t('admin.adminSignals.text')) : undefined,
     }
   }
 
@@ -155,7 +156,7 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
       const total = counts.reduce<number>((sum, n) => sum + (n ?? 0), 0)
       out.reviews = {
         count: total,
-        detail: `忠實度低分 ${rv.faithfulness ?? '—'}・倒讚 ${rv.feedback ?? '—'}・抽取品質 ${rv.extraction ?? '—'}`,
+        detail: t('admin.adminSignals.lowFaithfulnessThumbsDownExtraction', { v: rv.faithfulness ?? '—', v2: rv.feedback ?? '—', v3: rv.extraction ?? '—' }),
       }
     }
   }
@@ -168,8 +169,8 @@ export function deriveSignals(input: SignalInputs): AdminSignals {
 const alertLabel = (state: string): string => STATE_LABELS[state] ?? state
 
 function elapsedSeconds(since: string): number | null {
-  const t = Date.parse(since)
-  return Number.isNaN(t) ? null : Math.max(0, (Date.now() - t) / 1000)
+  const item = Date.parse(since)
+  return Number.isNaN(item) ? null : Math.max(0, (Date.now() - item) / 1000)
 }
 
 /** 一組頁面裡最嚴重的燈：有 bad 就是 bad，否則有 warn 就是 warn。圖示軌的紅點／橘點用。 */

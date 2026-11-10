@@ -11,24 +11,25 @@ import { peak, trendAxis, trendSeries, trendSlotSpan } from './exec/hostSeries'
 import { OpsQueryError } from './OpsShared'
 import { useHostObservations, useHostTrends, type HostSeriesKey, type HostTrendRange } from './useOps'
 import styles from './exec/Exec.module.css'
+import { t } from '@/i18n'
 
 type Latest = Map<string, Map<string, ObservationItem>>
 
 /** 後端依查詢區間選的粒度（24 小時內逐筆，更早的是 5 分鐘／1 小時聚合，見 revision 0007）。 */
 const RESOLUTION_LABEL: Record<ObservationListResponse['resolution'], string> = {
-  raw: '原始觀測（每 60 秒）',
-  '5m': '5 分鐘聚合',
-  '1h': '1 小時聚合',
+  get raw() { return t('admin.ops.opsHostPage.rawObservationsEvery60S') },
+  get '5m'() { return t('admin.ops.opsHostPage.5MinuteAggregates') },
+  get '1h'() { return t('admin.ops.opsHostPage.1HourAggregates') },
 }
 
 type HostRange = '1h' | HostTrendRange
 
 const RANGE_OPTIONS: readonly SegOption<HostRange>[] = [
-  { value: '1h', label: '1 小時' },
-  { value: '24h', label: '24 小時' },
-  { value: '7d', label: '7 天' },
+  { value: '1h', get label() { return t('admin.ops.opsHostPage.1Hour') } },
+  { value: '24h', get label() { return t('admin.ops.opsHostPage.24Hours') } },
+  { value: '7d', get label() { return t('admin.ops.opsHostPage.7Days') } },
 ]
-const RANGE_LABEL: Record<HostRange, string> = { '1h': '最近 1 小時', '24h': '最近 24 小時', '7d': '最近 7 天' }
+const RANGE_LABEL: Record<HostRange, string> = { get '1h'() { return t('admin.ops.opsHostPage.last1Hour') }, get '24h'() { return t('admin.ops.opsHostPage.last24Hours') }, get '7d'() { return t('admin.ops.opsHostPage.last7Days') } }
 const DEFAULT_RANGE: HostRange = '1h'
 
 /** 網址的 `range` 不在選項內就退回預設值。 */
@@ -80,10 +81,10 @@ interface Chart { title: string; metric: string; format: (v: number) => string; 
 
 /** 趨勢圖：沒有門檻虛線也沒有 warn 色——觀測資料本身不帶門檻，這裡不自己發明數字。 */
 const CHARTS: readonly Chart[] = [
-  { title: 'CPU 使用率', metric: 'cpu_pct', format: fmtPct, max: 100 },
-  { title: '記憶體使用率', metric: 'mem_used_pct', format: fmtPct, max: 100 },
-  { title: 'Load（1 分鐘）', metric: 'load1', format: v => fmtNum(v) },
-  { title: 'I/O 壓力（PSI some，60 秒）', metric: 'psi_io_some_avg60', format: fmtPct },
+  { get title() { return t('admin.ops.opsHostPage.cpuUsage') }, metric: 'cpu_pct', format: fmtPct, max: 100 },
+  { get title() { return t('admin.ops.opsHostPage.memoryUsage') }, metric: 'mem_used_pct', format: fmtPct, max: 100 },
+  { get title() { return t('admin.ops.opsHostPage.load1Min') }, metric: 'load1', format: v => fmtNum(v) },
+  { get title() { return t('admin.ops.opsHostPage.iOPressurePsiSome') }, metric: 'psi_io_some_avg60', format: fmtPct },
 ]
 const HOST_SERIES: readonly HostSeriesKey[] = CHARTS.map(ch => ({ subject: 'host', metric: ch.metric }))
 /** 檔案系統的使用率（收集器對每個掛載點寫一個 `fs:<路徑>` 的 subject）。 */
@@ -119,18 +120,18 @@ function fmtSeriesPeak({ src, series, format }: TrendView): string {
 /** 卡片標題旁的說明：範圍，資料到了再補上一根柱子涵蓋多久。 */
 function trendHint(range: HostRange, src: TrendSource | undefined): string {
   const span = src?.data ? trendSlotSpan(src.data) : null
-  return span ? `${RANGE_LABEL[range]}・每根 ${span}` : RANGE_LABEL[range]
+  return span ? t('admin.ops.opsHostPage.perBar', { RANGE_LABEL: RANGE_LABEL[range], span }) : RANGE_LABEL[range]
 }
 
 /** 一條序列的趨勢圖本體（卡片內容）：載入中、載入失敗、圖；該序列自己的查詢被截斷時講明。 */
 function TrendPlot({ view, label, max, ownQuery }: { view: TrendView; label: string; max?: number; ownQuery: boolean }) {
   const { src, bars } = view
-  if (src.isPending) return <p className={c.empty}>載入中…</p>
+  if (src.isPending) return <p className={c.empty}>{t('admin.ops.opsHostPage.loading')}</p>
   if (!src.data || !bars) return <div className={styles.chartBody}><OpsQueryError error={src.error} what={label} /></div>
   return (
     <div className={styles.chartBody}>
       <TrendBars bars={bars} label={label} format={view.format} max={max} axis={trendAxis(src.data)} />
-      {ownQuery && src.data.truncated && <p className={styles.truncated}>資料超過上限，較早的部分沒有畫出來</p>}
+      {ownQuery && src.data.truncated && <p className={styles.truncated}>{t('admin.ops.opsHostPage.dataExceedsTheLimitEarlier')}</p>}
     </div>
   )
 }
@@ -164,19 +165,17 @@ export default function OpsHostPage() {
 
   const header = (
     <PageHeader
-      summary="主機與檔案系統的資源用量：數字取最近一小時的觀測，趨勢可看 1 小時、24 小時、7 天；每 5 分鐘匯入，最多晚一輪。"
+      summary={t('admin.ops.opsHostPage.resourceUsageOfTheHost')}
       help={(
         <>
-          數字磚是最新一筆觀測，CPU 與 I/O 壓力另附這一小時的最高值，不隨時間範圍改變；趨勢圖每根柱子是一段時間內的最高值，
-          沒有觀測的區間留空。24 小時內畫的是每 60 秒一筆的原始觀測，更早的是 5 分鐘聚合；7 天另附各檔案系統的使用率。
-          資料來自 DB 投影（主機上的收集器每 60 秒寫 spool、匯入器每 5 分鐘匯入一次），不經維運代理，所以代理停掉時這頁照常。
+          {t('admin.ops.opsHostPage.tilesShowTheLatestObservation')}
         </>
       )}
-      actions={<Segmented label="時間範圍" options={RANGE_OPTIONS} value={range} onChange={setRange} />}
+      actions={<Segmented label={t('admin.ops.opsHostPage.timeRange')} options={RANGE_OPTIONS} value={range} onChange={setRange} />}
     />
   )
-  if (q.isPending) return <>{header}<p className={c.empty}>載入中…</p></>
-  if (q.isError) return <>{header}<OpsQueryError error={q.error} what="主機觀測" /></>
+  if (q.isPending) return <>{header}<p className={c.empty}>{t('admin.ops.opsHostPage.loading')}</p></>
+  if (q.isError) return <>{header}<OpsQueryError error={q.error} what={t('admin.ops.opsHostPage.hostObservations')} /></>
 
   const items = q.data.items
   const latest = latestBySubject(items)
@@ -189,8 +188,8 @@ export default function OpsHostPage() {
   const bySeries = new Map(wanted.map((s, i) => [seriesId(s), trends[i]]))
   const source = (s: HostSeriesKey): TrendSource => {
     if (!ownQuery) return { data: q.data, isPending: false, error: null }
-    const t = bySeries.get(seriesId(s))
-    return { data: t?.data, isPending: t?.isPending ?? true, error: t?.error ?? null }
+    const item = bySeries.get(seriesId(s))
+    return { data: item?.data, isPending: item?.isPending ?? true, error: item?.error ?? null }
   }
   const charts = CHARTS.map(ch => {
     const series: HostSeriesKey = { subject: 'host', metric: ch.metric }
@@ -203,17 +202,17 @@ export default function OpsHostPage() {
     ? [...charts.map(ch => ch.view), ...fsCharts].find(view => view.src.data)?.src.data?.resolution
     : q.data.resolution
   const tiles: { name: string; value: string; unit?: string; hint: string }[] = [
-    { name: 'CPU 使用率', ...pct(v('cpu_pct')),
-      hint: `1 小時最高 ${fmtPct(peak(items, 'host', 'cpu_pct'))}・等待 I/O ${fmtPct(v('iowait_pct'))}` },
-    { name: '記憶體使用率', ...pct(v('mem_used_pct')),
-      hint: `可用 ${fmtBytes(v('mem_avail_bytes'))}・Swap ${fmtBytes(v('swap_used_bytes'))}` },
-    { name: 'Load', value: fmtNum(v('load1')), hint: `5 分 ${fmtNum(v('load5'))}・15 分 ${fmtNum(v('load15'))}` },
-    { name: 'I/O 壓力（PSI some，60 秒）', ...pct(v('psi_io_some_avg60')),
-      hint: `full ${fmtPct(v('psi_io_full_avg60'))}・1 小時最高 ${fmtPct(peak(items, 'host', 'psi_io_some_avg60'))}` },
-    { name: '磁碟讀寫', ...rate(v('disk_read_bps')),
-      hint: `寫 ${fmtBytes(v('disk_write_bps'))}/s・${fmtNum(v('disk_iops'), 0)} IOPS` },
-    { name: 'CPU／記憶體壓力（PSI，60 秒）', ...pct(v('psi_cpu_some_avg60')),
-      hint: `記憶體 some ${fmtPct(v('psi_memory_some_avg60'))}・full ${fmtPct(v('psi_memory_full_avg60'))}` },
+    { name: t('admin.ops.opsHostPage.cpuUsage'), ...pct(v('cpu_pct')),
+      hint: t('admin.ops.opsHostPage.1HourPeakIO', { fmtPct: fmtPct(peak(items, 'host', 'cpu_pct')), fmtPct2: fmtPct(v('iowait_pct')) }) },
+    { name: t('admin.ops.opsHostPage.memoryUsage'), ...pct(v('mem_used_pct')),
+      hint: t('admin.ops.opsHostPage.availableSwap', { fmtBytes: fmtBytes(v('mem_avail_bytes')), fmtBytes2: fmtBytes(v('swap_used_bytes')) }) },
+    { name: 'Load', value: fmtNum(v('load1')), hint: t('admin.ops.opsHostPage.5Min15Min', { fmtNum: fmtNum(v('load5')), fmtNum2: fmtNum(v('load15')) }) },
+    { name: t('admin.ops.opsHostPage.iOPressurePsiSome'), ...pct(v('psi_io_some_avg60')),
+      hint: t('admin.ops.opsHostPage.full1HourPeak', { fmtPct: fmtPct(v('psi_io_full_avg60')), fmtPct2: fmtPct(peak(items, 'host', 'psi_io_some_avg60')) }) },
+    { name: t('admin.ops.opsHostPage.diskIO'), ...rate(v('disk_read_bps')),
+      hint: t('admin.ops.opsHostPage.writeSIops', { fmtBytes: fmtBytes(v('disk_write_bps')), fmtNum: fmtNum(v('disk_iops'), 0) }) },
+    { name: t('admin.ops.opsHostPage.cpuMemoryPressurePsi60'), ...pct(v('psi_cpu_some_avg60')),
+      hint: t('admin.ops.opsHostPage.memorySomeFull', { fmtPct: fmtPct(v('psi_memory_some_avg60')), fmtPct2: fmtPct(v('psi_memory_full_avg60')) }) },
   ]
 
   return (
@@ -223,25 +222,24 @@ export default function OpsHostPage() {
         <>
           <p className={c.meta}>
             <Chip mono>{newest.host}</Chip>
-            <span>最新觀測 <b>{fmtDateTime(newest.observed_at)}</b>（每 5 分鐘匯入，最多晚一輪）</span>
-            {resolution && <span>粒度 <strong className={styles.metaStrong}>{RESOLUTION_LABEL[resolution]}</strong></span>}
-            {q.data.truncated && <span>資料超過上限，只顯示最近的部分</span>}
+            <span>{t('admin.ops.opsHostPage.latestObservation')}{' '}<b>{fmtDateTime(newest.observed_at)}</b>{t('admin.ops.opsHostPage.importedEvery5MinutesAt')}</span>
+            {resolution && <span>{t('admin.ops.opsHostPage.granularity')}{' '}<strong className={styles.metaStrong}>{RESOLUTION_LABEL[resolution]}</strong></span>}
+            {q.data.truncated && <span>{t('admin.ops.opsHostPage.dataExceedsTheLimitOnly')}</span>}
           </p>
           <div className={`${c.tiles} ${styles.hostTiles}`}>
-            {tiles.map(t => (
-              <StatTile key={t.name} name={t.name} label={t.name} value={t.value} unit={t.unit} sub={t.hint} subTitle={t.hint} />
+            {tiles.map(item => (
+              <StatTile key={item.name} name={item.name} label={item.name} value={item.value} unit={item.unit} sub={item.hint} subTitle={item.hint} />
             ))}
           </div>
         </>
       ) : (
         notInstalled ? (
           <p className={c.empty}>
-            這台主機沒有安裝監控匯入器（report-mark-load-observations），所以沒有主機觀測。
+            {t('admin.ops.opsHostPage.thisHostDoesnTHave')}
           </p>
         ) : (
           <p className={c.empty}>
-            最近一小時沒有主機觀測。確認主機上的收集器（report-mark-metrics）與匯入器
-            （report-mark-load-observations.timer）都在跑；資料每 5 分鐘匯入一次。
+            {t('admin.ops.opsHostPage.noHostObservationsInThe')}
           </p>
         )
       )}
@@ -249,14 +247,14 @@ export default function OpsHostPage() {
         <div className={styles.charts}>
           {charts.map(ch => (
             <Card key={ch.metric} title={ch.title} hint={trendHint(range, ch.view.src)}
-              right={<span>最高 <span className={c.num}>{fmtSeriesPeak(ch.view)}</span></span>}>
-              <TrendPlot view={ch.view} label={`${ch.title}趨勢`} max={ch.max} ownQuery={ownQuery} />
+              right={<span>{t('admin.ops.opsHostPage.peak')}{' '}<span className={c.num}>{fmtSeriesPeak(ch.view)}</span></span>}>
+              <TrendPlot view={ch.view} label={t('admin.ops.opsHostPage.trend', { title: ch.title })} max={ch.max} ownQuery={ownQuery} />
             </Card>
           ))}
         </div>
       )}
       {fsCharts.length > 0 && (
-        <Card title="檔案系統使用率" hint={trendHint(range, fsCharts.find(f => f.src.data)?.src)}
+        <Card title={t('admin.ops.opsHostPage.fileSystemUsage')} hint={trendHint(range, fsCharts.find(f => f.src.data)?.src)}
           labelledBy="ops-host-fs-trend-title">
           {fsCharts.map(f => {
             const path = f.series.subject.slice(3)
@@ -264,20 +262,20 @@ export default function OpsHostPage() {
               <div key={f.series.subject} className={styles.fsTrend}>
                 <div className={styles.fsTrendHead}>
                   <span className={c.mono}>{path}</span>
-                  <span>最高 <span className={c.num}>{fmtSeriesPeak(f)}</span></span>
+                  <span>{t('admin.ops.opsHostPage.peak')}{' '}<span className={c.num}>{fmtSeriesPeak(f)}</span></span>
                 </div>
-                <TrendPlot view={f} label={`${path} 使用率趨勢`} max={100} ownQuery />
+                <TrendPlot view={f} label={t('admin.ops.opsHostPage.usageTrend', { path })} max={100} ownQuery />
               </div>
             )
           })}
         </Card>
       )}
       {filesystems.length > 0 && (
-        <Card title="檔案系統" labelledBy="ops-host-fs-title">
+        <Card title={t('admin.ops.opsHostPage.fileSystem')} labelledBy="ops-host-fs-title">
           <div className={c.tableWrap}>
-            <table className={c.table} aria-label="檔案系統">
+            <table className={c.table} aria-label={t('admin.ops.opsHostPage.fileSystem')}>
               <thead>
-                <tr><th>檔案系統</th><th className={c.tdRight}>使用率</th><th className={c.tdRight}>可用</th><th className={c.tdRight}>總量</th></tr>
+                <tr><th>{t('admin.ops.opsHostPage.fileSystem')}</th><th className={c.tdRight}>{t('admin.ops.opsHostPage.usage')}</th><th className={c.tdRight}>{t('admin.ops.opsHostPage.available')}</th><th className={c.tdRight}>{t('admin.ops.opsHostPage.total')}</th></tr>
               </thead>
               <tbody>
                 {filesystems.map(([subject, m]) => (

@@ -23,6 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.profile import CodeFormat, Instruments, load_profile  # noqa: E402
 from app.services.tagging import (  # noqa: E402
     LEGACY_TO_FINDB,
     MARKET_DISPLAY,
@@ -35,6 +36,10 @@ from app.services.tagging import (  # noqa: E402
     normalize_stock_targets,
     parse_tags,
 )
+
+# 廷豐 profile 的代號規則（golden：框架化之前寫死的「正好 4 碼數字」）。直接讀 repo 的 profile 目錄、不經
+# PROFILE_DIR，這組斷言才永遠是廷豐的。
+TF = load_profile(REPO_ROOT / "profiles" / "tingfong").instruments.normalize_code
 
 
 class MarketVocabularyTests(unittest.TestCase):
@@ -106,27 +111,67 @@ class NormalizeInstrumentsTests(unittest.TestCase):
 
 
 class NormalizeStockTargetsTests(unittest.TestCase):
-    """「正好 4 碼數字」是防呆，擋日期與頁碼被誤當股票代碼。"""
+    """廷豐：「正好 4 碼數字」是防呆，擋日期與頁碼被誤當股票代碼。"""
 
     def test_keeps_four_digit_codes_only(self):
         self.assertEqual(
-            normalize_stock_targets(["2330", "0050", "233", "23300", "2330A"]),
+            normalize_stock_targets(["2330", "0050", "233", "23300", "2330A"], normalize_code=TF),
             ["2330", "0050"],
         )
 
     def test_dedups_preserving_order(self):
-        self.assertEqual(normalize_stock_targets(["2330", "2303", "2330"]), ["2330", "2303"])
+        self.assertEqual(normalize_stock_targets(["2330", "2303", "2330"], normalize_code=TF), ["2330", "2303"])
 
     def test_accepts_non_string_items_by_coercion(self):
         """LLM 有時回數字而非字串——`2330` 與 `"2330"` 必須等價。"""
-        self.assertEqual(normalize_stock_targets([2330]), ["2330"])
+        self.assertEqual(normalize_stock_targets([2330], normalize_code=TF), ["2330"])
 
     def test_truncates_to_max(self):
         many = [f"{i:04d}" for i in range(1, STOCK_TARGETS_MAX + 10)]
-        self.assertEqual(len(normalize_stock_targets(many)), STOCK_TARGETS_MAX)
+        self.assertEqual(len(normalize_stock_targets(many, normalize_code=TF)), STOCK_TARGETS_MAX)
 
     def test_non_list_returns_empty(self):
-        self.assertEqual(normalize_stock_targets("2330"), [])
+        self.assertEqual(normalize_stock_targets("2330", normalize_code=TF), [])
+
+    def test_tingfong_drops_tickers_exactly_as_before(self):
+        """廷豐的結果與框架化之前逐字相同：字母 ticker、5 碼港股、全形以外的雜訊一律丟掉。"""
+        raw = ["2330", "NVDA", "nvda", "00700", "0700", "BRK.B", " 2317 ", "2330.TW", "", None, "0209"]
+        self.assertEqual(normalize_stock_targets(raw, normalize_code=TF), ["2330", "0700", "2317", "0209"])
+
+    def test_rule_is_required(self):
+        """漏傳規則是 TypeError（不會靜默退回某一套規則）。"""
+        with self.assertRaises(TypeError):
+            normalize_stock_targets(["2330"])  # type: ignore[call-arg]
+        with self.assertRaises(TypeError):
+            parse_tags('{"market": "TW"}')  # type: ignore[call-arg]
+
+
+class ProfileCodeFormatTests(unittest.TestCase):
+    """profile 宣告其他市場的代號格式（示範券商開 US）：美股 ticker 進得了 stock_targets。"""
+
+    RULE = Instruments(code_formats=(
+        CodeFormat(market="TW", kind="digits", min_length=4, max_length=6),
+        CodeFormat(market="US", kind="letters", min_length=1, max_length=5, share_class=True),
+    )).normalize_code
+
+    def test_us_tickers_kept_and_uppercased(self):
+        raw = ["2330", "NVDA", "aapl", "BRK.B", "00878", "NVIDIA", "BRK.BB", "A1", "2330.TW", "0209"]
+        self.assertEqual(normalize_stock_targets(raw, normalize_code=self.RULE),
+                         ["2330", "NVDA", "AAPL", "BRK.B", "00878", "0209"])
+
+    def test_dedup_after_uppercasing(self):
+        self.assertEqual(normalize_stock_targets(["nvda", "NVDA"], normalize_code=self.RULE), ["NVDA"])
+
+    def test_parse_tags_uses_the_rule(self):
+        raw = json.dumps({"market": "US", "is_research": True, "stock_targets": ["NVDA", "AMD", "頁 6"]})
+        self.assertEqual(parse_tags(raw, normalize_code=self.RULE).stock_targets, ["NVDA", "AMD"])
+        self.assertEqual(parse_tags(raw, normalize_code=TF).stock_targets, [])
+
+    def test_hk_digits_without_letters(self):
+        rule = Instruments(code_formats=(CodeFormat(market="HK", kind="digits", min_length=4, max_length=5),)
+                           ).normalize_code
+        self.assertEqual(normalize_stock_targets(["0700", "00700", "700", "NVDA"], normalize_code=rule),
+                         ["0700", "00700"])
 
 
 class NormalizeFuturesTargetsTests(unittest.TestCase):
@@ -150,26 +195,26 @@ class ParseTagsTests(unittest.TestCase):
         return json.dumps(base, ensure_ascii=False)
 
     def test_plain_json(self):
-        tag = parse_tags(self._obj())
+        tag = parse_tags(self._obj(), normalize_code=TF)
         self.assertEqual((tag.market, tag.is_research, tag.confidence), ("TW", True, 0.9))
 
     def test_fenced_json(self):
-        tag = parse_tags("```json\n" + self._obj() + "\n```")
+        tag = parse_tags("```json\n" + self._obj() + "\n```", normalize_code=TF)
         self.assertEqual(tag.market, "TW")
 
     def test_prose_around_json(self):
         """CLI 有時在 JSON 前後加說明文字。"""
-        tag = parse_tags("我讀完了，結果如下：\n" + self._obj() + "\n以上。")
+        tag = parse_tags("我讀完了，結果如下：\n" + self._obj() + "\n以上。", normalize_code=TF)
         self.assertEqual(tag.market, "TW")
 
     def test_malformed_returns_none(self):
         for raw in ("", "沒有 JSON", "{不是合法 json}", "{", "}"):
             with self.subTest(raw=raw):
-                self.assertIsNone(parse_tags(raw))
+                self.assertIsNone(parse_tags(raw, normalize_code=TF))
 
     def test_market_is_normalized_not_passed_through(self):
         """中文標籤要在這裡就轉成代碼，否則會原樣寫進 DB。"""
-        self.assertEqual(parse_tags(self._obj(market="台股")).market, "TW")
+        self.assertEqual(parse_tags(self._obj(market="台股"), normalize_code=TF).market, "TW")
 
     def test_is_research_defaults_to_whether_market_resolved(self):
         """沒帶 `is_research` 時以「市場認得出來嗎」推定——這是既有的預設語意。
@@ -178,29 +223,29 @@ class ParseTagsTests(unittest.TestCase):
         沒帶該欄位的整批研報全部被丟掉。兩個方向都是靜默的。
         """
         with_market = json.dumps({"market": "TW", "confidence": 0.5})
-        self.assertTrue(parse_tags(with_market).is_research)
+        self.assertTrue(parse_tags(with_market, normalize_code=TF).is_research)
         no_market = json.dumps({"market": "日股", "confidence": 0.5})
-        self.assertFalse(parse_tags(no_market).is_research)
+        self.assertFalse(parse_tags(no_market, normalize_code=TF).is_research)
 
     def test_bad_confidence_falls_back_to_zero(self):
         for bad in ("很高", None, [], {}):
             with self.subTest(bad=bad):
-                self.assertEqual(parse_tags(self._obj(confidence=bad)).confidence, 0.0)
+                self.assertEqual(parse_tags(self._obj(confidence=bad), normalize_code=TF).confidence, 0.0)
 
     def test_relates_flags_distinguish_absent_from_false(self):
         """缺欄位是 `None`（未判定），明確的 false 是 `False`——DB 欄位可 NULL。
 
         兩者混用會讓「標註器沒說」與「標註器說沒有」在資料層無法區分。
         """
-        absent = parse_tags(json.dumps({"market": "TW"}))
+        absent = parse_tags(json.dumps({"market": "TW"}), normalize_code=TF)
         self.assertIsNone(absent.relates_stock)
         self.assertIsNone(absent.relates_futures)
-        explicit = parse_tags(self._obj(relates_stock=False, relates_futures=True))
+        explicit = parse_tags(self._obj(relates_stock=False, relates_futures=True), normalize_code=TF)
         self.assertIs(explicit.relates_stock, False)
         self.assertIs(explicit.relates_futures, True)
 
     def test_targets_are_normalized_through_parse(self):
-        tag = parse_tags(self._obj(stock_targets=["2330", "頁 6"], instrument_types=["Equity"]))
+        tag = parse_tags(self._obj(stock_targets=["2330", "頁 6"], instrument_types=["Equity"]), normalize_code=TF)
         self.assertEqual(tag.stock_targets, ["2330"])
         self.assertEqual(tag.instrument_types, ["equity"])
 
@@ -208,7 +253,7 @@ class ParseTagsTests(unittest.TestCase):
 class LoadTagTests(unittest.TestCase):
     def test_missing_file_returns_none(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertIsNone(load_tag(Path(d), "a" * 64))
+            self.assertIsNone(load_tag(Path(d), "a" * 64, normalize_code=TF))
 
     def test_reads_and_parses(self):
         with tempfile.TemporaryDirectory() as d:
@@ -216,14 +261,14 @@ class LoadTagTests(unittest.TestCase):
             (Path(d) / f"{h}.json").write_text(
                 json.dumps({"market": "美股", "is_research": True}), encoding="utf-8"
             )
-            self.assertEqual(load_tag(Path(d), h).market, "US")
+            self.assertEqual(load_tag(Path(d), h, normalize_code=TF).market, "US")
 
     def test_corrupt_file_returns_none_not_raises(self):
         """壞掉的 tag 檔不該讓整批 ingest 中斷——那批有 1.4 萬個檔。"""
         with tempfile.TemporaryDirectory() as d:
             h = "c" * 64
             (Path(d) / f"{h}.json").write_text("{壞", encoding="utf-8")
-            self.assertIsNone(load_tag(Path(d), h))
+            self.assertIsNone(load_tag(Path(d), h, normalize_code=TF))
 
 
 class IngestGateContractTests(unittest.TestCase):
@@ -235,17 +280,17 @@ class IngestGateContractTests(unittest.TestCase):
     """
 
     def test_research_without_market_is_gated_out(self):
-        tag = parse_tags(json.dumps({"market": "日股", "is_research": True}))
+        tag = parse_tags(json.dumps({"market": "日股", "is_research": True}), normalize_code=TF)
         self.assertTrue(tag.is_research)
         self.assertIsNone(tag.market)
         self.assertTrue(not tag.is_research or not tag.market, "應被閘門擋下")
 
     def test_market_without_research_is_gated_out(self):
-        tag = parse_tags(json.dumps({"market": "TW", "is_research": False}))
+        tag = parse_tags(json.dumps({"market": "TW", "is_research": False}), normalize_code=TF)
         self.assertTrue(not tag.is_research or not tag.market, "應被閘門擋下")
 
     def test_both_present_passes(self):
-        tag = parse_tags(json.dumps({"market": "TW", "is_research": True}))
+        tag = parse_tags(json.dumps({"market": "TW", "is_research": True}), normalize_code=TF)
         self.assertFalse(not tag.is_research or not tag.market)
 
 

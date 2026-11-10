@@ -7,9 +7,11 @@
  * `title` 是漸進補上的：任何時點都會有一部分報告還沒有標題（批次還沒跑到、或內文
  * 抽字損毀而刻意不猜），**缺值是常態不是錯誤** → 回退檔名，畫面照常。
  */
+import { t } from '@/i18n'
+
 export function displayTitle(
   row: { title?: string | null; file_name?: string | null } | null | undefined,
-  fallback = '報告',
+  fallback = t('lib.displayTitle.report'),
 ): string {
   const title = row?.title?.trim()
   if (title) return title

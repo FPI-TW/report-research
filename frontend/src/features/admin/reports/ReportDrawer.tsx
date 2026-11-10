@@ -6,6 +6,7 @@ import type { AdminReportItem } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
 import { DRAFT_REVIEW_PATH, STATUS_LABEL, STATUS_TONE, statusOf } from './reportStatus'
 import s from './Reports.module.css'
+import { t } from '@/i18n'
 
 /** 抽屜拿不到那一篇時的狀態：還在找、確定沒有，或取不到（說出原因）。 */
 export type ReportMissing = { kind: 'loading' } | { kind: 'not_found' } | { kind: 'error'; message: string }
@@ -26,7 +27,7 @@ interface Props {
 const dash = (v: string | null | undefined) => (v == null || v === '' ? '—' : v)
 
 const MISSING_TITLE: Record<ReportMissing['kind'], string> = {
-  loading: '載入中…', not_found: '找不到這份研報', error: '無法載入這份研報',
+  get loading() { return t('admin.reports.reportDrawer.loading') }, get not_found() { return t('admin.reports.reportDrawer.reportNotFound') }, get error() { return t('admin.reports.reportDrawer.couldnTLoadThisReport') },
 }
 
 /**
@@ -39,11 +40,11 @@ export function ReportDrawer({ fileHash, report, missing, busy, onClose, onHide,
     return (
       <Drawer open onClose={onClose} title={MISSING_TITLE[missing.kind]} width={520}>
         <DrawerSection>
-          {missing.kind === 'loading' && <p className={s.note}>載入中…</p>}
+          {missing.kind === 'loading' && <p className={s.note}>{t('admin.reports.reportDrawer.loading')}</p>}
           {missing.kind === 'not_found' && (
-            <p className={s.note} role="status">沒有這個 file_hash 的研報。確認連結是否完整，或用標題、檔名、券商搜尋。</p>
+            <p className={s.note} role="status">{t('admin.reports.reportDrawer.thereSNoReportWith')}</p>
           )}
-          {missing.kind === 'error' && <p className={c.error} role="alert">載入失敗：{missing.message}</p>}
+          {missing.kind === 'error' && <p className={c.error} role="alert">{t('admin.reports.reportDrawer.couldnTLoad', { message: missing.message })}</p>}
           <dl className={c.kv}><dt>file_hash</dt><dd className={s.hash}>{fileHash}</dd></dl>
         </DrawerSection>
       </Drawer>
@@ -52,41 +53,41 @@ export function ReportDrawer({ fileHash, report, missing, busy, onClose, onHide,
   const status = statusOf(report)
   const footer = status === 'draft' ? (
     <>
-      <DrawerFootNote>草稿不能隱藏或恢復，到上傳審核發布或退回。</DrawerFootNote>
-      <Link to={DRAFT_REVIEW_PATH} className={`${c.btn} ${c.btnPrimary}`}>前往審核</Link>
+      <DrawerFootNote>{t('admin.reports.reportDrawer.draftsCanTBeHidden')}</DrawerFootNote>
+      <Link to={DRAFT_REVIEW_PATH} className={`${c.btn} ${c.btnPrimary}`}>{t('admin.reports.reportDrawer.goToReview')}</Link>
     </>
   ) : status === 'hidden' ? (
     <>
-      <DrawerFootNote>恢復後立即重新出現在檢索、問答與閱讀頁。</DrawerFootNote>
-      <Button variant="primary" disabled={busy} onClick={() => onRestore(report)}>恢復</Button>
+      <DrawerFootNote>{t('admin.reports.reportDrawer.onceRestoredItReappearsIn')}</DrawerFootNote>
+      <Button variant="primary" disabled={busy} onClick={() => onRestore(report)}>{t('admin.reports.reportDrawer.restore')}</Button>
     </>
   ) : (
     <>
-      <Link to={`/report/${report.file_hash}`} className={c.btn}>開啟閱讀頁</Link>
+      <Link to={`/report/${report.file_hash}`} className={c.btn}>{t('admin.reports.reportDrawer.openReadingPage')}</Link>
       {/* 這一步只是開原因表單：紅字不填色，實心紅留給表單的最後一步。 */}
-      <Button variant="dangerText" disabled={busy} onClick={() => onHide(report)}>隱藏</Button>
+      <Button variant="dangerText" disabled={busy} onClick={() => onHide(report)}>{t('admin.reports.reportDrawer.hide')}</Button>
     </>
   )
   return (
     <Drawer open onClose={onClose} title={displayTitle(report)} width={520}
       status={<Status tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Status>}
       subtitle={report.title ? report.file_name : undefined} footer={footer}>
-      <DrawerSection title="研報">
+      <DrawerSection title={t('admin.reports.reportDrawer.report')}>
         <dl className={c.kv}>
-          <dt>檔名</dt><dd>{report.file_name}</dd>
-          <dt>券商</dt><dd>{dash(report.source)}</dd>
-          <dt>市場</dt><dd>{dash(report.market)}</dd>
-          <dt>報告日</dt><dd>{report.report_date ? report.report_date.slice(0, 10) : '—'}</dd>
-          <dt>入庫</dt><dd>{fmtDateTime(report.created_at)}</dd>
+          <dt>{t('admin.reports.reportDrawer.fileName')}</dt><dd>{report.file_name}</dd>
+          <dt>{t('admin.reports.reportDrawer.broker')}</dt><dd>{dash(report.source)}</dd>
+          <dt>{t('admin.reports.reportDrawer.market')}</dt><dd>{dash(report.market)}</dd>
+          <dt>{t('admin.reports.reportDrawer.reportDate')}</dt><dd>{report.report_date ? report.report_date.slice(0, 10) : '—'}</dd>
+          <dt>{t('admin.reports.reportDrawer.ingested')}</dt><dd>{fmtDateTime(report.created_at)}</dd>
           <dt>file_hash</dt><dd className={s.hash}>{report.file_hash}</dd>
         </dl>
       </DrawerSection>
       {(status === 'hidden' || report.visibility_updated_at) && (
-        <DrawerSection title="可見性">
+        <DrawerSection title={t('admin.reports.reportDrawer.visibility')}>
           <dl className={c.kv}>
-            {status === 'hidden' && <><dt>隱藏原因</dt><dd className={s.prose}>{dash(report.hidden_reason)}</dd></>}
-            <dt>最後變更</dt><dd>{dash(report.visibility_updated_by)}</dd>
-            <dt>變更時間</dt><dd>{fmtDateTime(report.visibility_updated_at)}</dd>
+            {status === 'hidden' && <><dt>{t('admin.reports.reportDrawer.reasonForHiding')}</dt><dd className={s.prose}>{dash(report.hidden_reason)}</dd></>}
+            <dt>{t('admin.reports.reportDrawer.lastChange')}</dt><dd>{dash(report.visibility_updated_by)}</dd>
+            <dt>{t('admin.reports.reportDrawer.changedAt')}</dt><dd>{fmtDateTime(report.visibility_updated_at)}</dd>
           </dl>
         </DrawerSection>
       )}

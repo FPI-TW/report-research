@@ -3,7 +3,7 @@ import asyncio
 import json
 import sys
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -483,8 +483,15 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
 
         captured = {}
 
+        # 20 篇夠新、夠相關的研報：rerank 名額是「選篇會接納的研報的 chunk 數」，上限才是
+        # ASK_RERANK_TOP_M（retrieval_pipeline.rerank_head_first），候選要多於上限才量得到它。
+        recent = date.today() - timedelta(days=10)
+
         async def recording_search(session, q, qvec, **k):
-            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+            return [
+                (0, 0.80, make_row(f"r{i}", f"x{i}.pdf", "TW", f"內容{i}。", recent))
+                for i in range(20)
+            ]
 
         def recording_rerank(question, scored, *, top_m, timer=None, deadline=None):
             captured["top_m"] = top_m

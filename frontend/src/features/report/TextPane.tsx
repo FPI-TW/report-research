@@ -3,6 +3,7 @@ import type { ReadingText } from '../../lib/readingSchemas'
 import { StateBox } from './ReportStates'
 import stateStyles from './ReportStates.module.css'
 import styles from './TextPane.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   text: ReadingText | undefined
@@ -31,10 +32,10 @@ export function TextPane({ text, isLoading, isError, onRetry, hasFile }: Props) 
           role="status"
           onCanvas
           icon={<AlertCircle size={18} strokeWidth={1.8} />}
-          title="全文載入失敗"
-          desc="連線逾時，請稍後再試。"
+          title={t('report.textPane.couldnTLoadTheFull')}
+          desc={t('report.textPane.theConnectionTimedOutTry')}
         >
-          <button type="button" className={stateStyles.btn} onClick={onRetry}>重試</button>
+          <button type="button" className={stateStyles.btn} onClick={onRetry}>{t('report.textPane.retry')}</button>
         </StateBox>
       </div>
     )
@@ -56,12 +57,12 @@ export function TextPane({ text, isLoading, isError, onRetry, hasFile }: Props) 
     <div className={styles.stage}>
       <article className={styles.reader}>
         <div className={styles.note}>
-          此為原始檔的文字抽取結果，圖表與表格排版不會保留{hasFile ? '；需要原始版面請下載原始檔' : ''}。
+          {t('report.textPane.thisIsTheTextExtracted')}{hasFile ? t('report.textPane.downloadTheOriginalForThe') : ''}{t('report.textPane.text')}
         </div>
         <div className={styles.body}>{text.text}</div>
         {text.truncated && (
           <p className={styles.truncated}>
-            全文過長，此處僅顯示前段{hasFile ? '；需要完整內容請下載原始檔' : ''}。
+            {t('report.textPane.theFullTextIsToo')}{hasFile ? t('report.textPane.downloadTheOriginalForThe2') : ''}{t('report.textPane.text')}
           </p>
         )}
       </article>

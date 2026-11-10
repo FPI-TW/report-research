@@ -123,7 +123,7 @@ class ExtractionLogRoundTripTests(unittest.TestCase):
 
         async def fn(session):
             report = store.ReportRow(
-                file_hash=h, file_name="t.pdf", file_path="/tmp/t.pdf", market="TW", is_research=True,
+                file_hash=h, file_name="t.pdf", file_path="/tmp/t.pdf", market="TW", doc_type="research",
                 confidence=0.9, full_text="x", extractor="pdfplumber", extraction_version="ext-v",
                 quality_score=0.5, quality_flags={"fallback_from": None, "garbled_ratio": 0.0},
                 page_count=4, pages_failed=[1, 3], needs_review=True,
@@ -160,7 +160,7 @@ class BackfillRoundTripTests(ExtractionLogRoundTripTests):
 
         async def fn(session):
             report = store.ReportRow(
-                file_hash=h, file_name="t.pdf", file_path="/tmp/t.pdf", market="TW", is_research=True,
+                file_hash=h, file_name="t.pdf", file_path="/tmp/t.pdf", market="TW", doc_type="research",
                 confidence=0.9, full_text="舊 文 字", extractor="pypdf", extraction_version="pypdf-legacy",
             )
             rid = await store.upsert_report(session, report, ["舊文字"], [[0.0] * 1024])

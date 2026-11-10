@@ -1,6 +1,6 @@
 # web/routers/search.py
 """檢索 / 瀏覽 API：/api/search（混合檢索）、/api/reports（無關鍵字瀏覽）、
-/api/markets（市場清單，前端篩選器資料源）。
+/api/markets（profile 啟用的市場子集與顯示名稱，前端篩選器資料源）。
 
 從 web/server.py 拆出（第三步）。回應模型（Passage/ReportResult/MarketFacet/
 SearchResponse/ReportListItem/ReportListResponse）只有這組用，故一併移入。
@@ -20,9 +20,9 @@ from pydantic import BaseModel
 from app.services.filename import source_display
 from app.services.retrieval import DENSE_SCAN_SEARCH, LEX_CAP_SEARCH
 from app.services.store import list_reports
-from app.services.tagging import MARKETS
 from app.services.textnorm import clean_text
 from web import deps
+from web.market_scope import check_market_filter, markets_payload
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,8 @@ class ReportListResponse(BaseModel):
 
 @router.get("/api/markets")
 async def markets():
-    return {"markets": MARKETS}
+    # 啟用的市場子集與顯示名稱（app/profile.py 的 [markets]）；前端選單與標籤的資料源。
+    return markets_payload()
 
 
 @router.get("/api/reports", response_model=ReportListResponse)
@@ -121,6 +122,7 @@ async def reports(
 ):
     """無關鍵字的瀏覽模式：依 sort 列出已導入報告。"""
     mkt = market if market and market != "全部" else None
+    check_market_filter(mkt)
     instr = instrument_type if instrument_type and instrument_type != "全部" else None
     rtype = report_type if report_type and report_type != "全部" else None
     async with deps.SessionFactory() as session:
@@ -175,6 +177,7 @@ async def search(
 ):
     t0 = time.monotonic()
     mkt = market if market and market != "全部" else None
+    check_market_filter(mkt)
     instr = instrument_type if instrument_type and instrument_type != "全部" else None
     rtype = report_type if report_type and report_type != "全部" else None
     qvec = await asyncio.to_thread(deps.embed_query_cached, q)

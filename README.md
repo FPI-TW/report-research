@@ -1,15 +1,15 @@
-# 廷豐智能研報（report-mark）
+# 券商研報平台（report-mark）
 
-券商研報平台：把 `研報自動匯入/` 的 PDF／docx 抽字、以 LLM（`gpt-6-luna`）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達、每日簡報與管理後台。個別帳號登入（管理員／一般使用者兩種角色）。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
+券商研報平台是給券商**單租戶、部署在自己環境**的研報框架：把研報 PDF／docx 抽字、以 LLM（`gpt-6-luna`）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達、每日簡報與管理後台。個別帳號登入（管理員／一般使用者兩種角色），對外另有 API 用戶端（`/external/v1/*`）。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
 
-兩個環境都是單機、單一 uvicorn worker：
+同一份程式服務每一家券商：機構專屬的東西放在 **profile**（`profiles/<名稱>/`），祕密與部署層設定（金鑰、DB URL、LLM 端點）走環境變數。
 
-| 角色 | 主機 | DB | 對外 |
-|---|---|---|---|
-| 正式 | EC2（`research.tingfong.com`） | RDS PostgreSQL | Cloudflare 橘雲直連 apt 的 nginx |
-| 測試（也是開發機） | 辦公室主機（`research.kashionzarchive.com`，WSL2） | 容器 `report-mark-postgres`（`localhost:5436`，有真實資料） | Cloudflare Tunnel ＋ 容器 nginx |
+- **profile**：`profile.toml`（機構名、品牌與強調色、prompt 注入的稱謂、啟用的標準市場子集、文件類型與功能、資料來源連接器、語系、個股代號格式、發行機構名單、簡報作息；啟動時嚴格驗證，錯了拒起）、`assets/`（logo、favicon）、`plugins/`（插件連接器）、`eval/`（凍結題集與上線驗收設定）。以 `PROFILE_DIR` 指定，預設 `profiles/tingfong`。格式見 `app/profile.py` 的模組 docstring。
+- **導入**：寫好 profile → 首次導入（先估價，再分層回填，見[首次導入](#首次導入分層回填)）→ 草擬並凍結 profile 的評測題集、跑上線驗收（`make eval-gate`，`docs/WORKFLOW.md`「導入驗收」）。
+- **部署**：一份容器映像＋docker compose，除了 LLM 端點以外零外連，見[容器部署](#容器部署docker-compose)與 `docs/CONTAINER_DEPLOYMENT.md`。`profiles/demo/`（虛構的示範券商）是可以直接起的示範環境。
+- **框架與主機層**：`deploy/`、`scripts/`、`ops_agent/` 每個檔案的歸屬（框架、廷豐主機層）列在 `deploy/OWNERSHIP.toml`。
 
-資源名、檔名與環境變數值裡的 `staging`（指 EC2）與 `prod`／`production`（指辦公室主機）是歷史命名，不代表角色；規則見 `AGENTS.md`「環境角色與資料安全」，各主機實際裝了什麼見 `docs/DEPLOYMENT_STATUS.md`。
+廷豐是第一個 profile（`profiles/tingfong/`），也是現行的兩台主機部署，見[廷豐 profile 與現行部署](#廷豐-profile-與現行部署)。
 
 ## 目錄
 
@@ -21,6 +21,7 @@
 - [設定（環境變數）](#設定環境變數)
 - [開發與測試](#開發與測試)
 - [部署與維運](#部署與維運)
+- [廷豐 profile 與現行部署](#廷豐-profile-與現行部署)
 - [延伸文件](#延伸文件)
 
 ## 功能總覽
@@ -53,7 +54,7 @@
                      R2（研報原檔 originals/、跨主機送檔 inbox/、主機信標 beacons/）
 ```
 
-新研報的來源只有辦公室主機碰得到（NAS）：它每輪 sync 把新檔推到 R2 `inbox/`，EC2 的 sync 從那裡拉（`docs/WORKFLOW.md`「生產同步鏈」）。
+上圖是廷豐的現行部署（systemd timer、Cloudflare＋nginx）；容器部署的角色與排程見 `docs/CONTAINER_DEPLOYMENT.md`。廷豐的新研報來源只有辦公室主機碰得到（NAS）：它每輪 sync 把新檔推到 R2 `inbox/`，EC2 的 sync 從那裡拉（`docs/WORKFLOW.md`「生產同步鏈」）。
 
 分工鐵律：Python 做所有決定性的事，LLM（`gpt-6-luna`）只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
 
@@ -81,17 +82,18 @@ make serve-preview            # DEV_NO_AUTH=1 免登入看版面，另開 8098
 make search Q="AI 伺服器散熱" MARKET=TW   # CLI 檢索
 ```
 
-LLM 金鑰依 `LLM_PROVIDER` 而定：`openai`（預設，正式環境）用 `OPENAI_API_KEY`（選填 `OPENAI_BASE_URL`），`opencode_go`（測試環境）用 `OPENCODE_GO_API_KEY`（選填 `OPENCODE_GO_BASE_URL`）。兩條路徑是同一顆模型，兩台主機不共用金鑰。金鑰與 `LLM_PROVIDER` 都放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`）；步驟見 `docs/production_resilience.md`「LLM 供應商與金鑰」。沒設 `REPORT_MARK_DB_URL` 時連的是 `localhost:5436/research`——在辦公室主機上那是有真實資料的庫，worktree 開發請指到別的庫。
+LLM 金鑰依 `LLM_PROVIDER` 而定：`openai`（預設，正式環境）用 `OPENAI_API_KEY`（選填 `OPENAI_BASE_URL`），`opencode_go`（測試環境）用 `OPENCODE_GO_API_KEY`（選填 `OPENCODE_GO_BASE_URL`）。兩條路徑是同一顆模型，兩台主機不共用金鑰。框架另支援 `azure_openai`、`anthropic`、`openai_compatible`（自架 vLLM 等）三條路徑，端點、金鑰與宣告的模型名見下方環境變數表；每台主機固定一條路徑，沒有備援。金鑰與 `LLM_PROVIDER` 都放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同（核對：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`）；步驟見 `docs/production_resilience.md`「LLM 供應商與金鑰」。沒設 `REPORT_MARK_DB_URL` 時連的是 `localhost:5436/research`——在辦公室主機上那是有真實資料的庫，worktree 開發請指到別的庫。
 
 ## 專案結構
 
 ```
 app/
   config.py               環境變數 → frozen Settings（新旋鈕放這裡）
+  profile.py              部署 profile（機構、品牌、prompt 參數、市場子集）：讀 PROFILE_DIR 的 profile.toml、嚴格驗證
   logging_setup.py        只在 web/server.py 初始化
   services/
     extract.py, extraction/   抽取門面、版面層、品質、per-hash 快取（docs/EXTRACTION.md）
-    filename.py, tagging.py   檔名解析、標籤詞表（市場代碼對齊 findb）
+    filename.py, tagging.py   檔名解析、標籤詞表（標準市場代碼；廷豐 profile 與 findb 對齊）
     chunk.py, embed.py, store.py, rows.py, textnorm.py, db.py
     retrieval.py, retrieval_pipeline.py, rerank.py      混合檢索唯一入口
     answer.py, agentic_qa.py, scope_router.py, overview.py, query_planner.py,
@@ -101,6 +103,7 @@ app/
     accounts.py, visibility.py, uploads.py, upload_*.py, quota.py, feature_flags.py,
     analytics.py, security_ops.py, api_clients.py, ops_*.py, host_beacon.py   帳號與管理後台
     object_storage.py     R2（local / hybrid / r2）
+    connectors/           資料來源連接器（folder／s3／plugin）與 metadata 側檔：落地新檔，入庫共用 _ingest_core
 web/
   server.py               組合層：env → logging → auth middleware → lifespan → routers
   routers/                每個領域一支 APIRouter，不帶 prefix
@@ -111,13 +114,15 @@ frontend/src/
   lib/                    API 邊界：zod schema、readSSE、askReducer、hooks；generated/adminApi.ts 由 OpenAPI 產生
   components/{shell,console,primitives,animate-ui}       shell＝兩組外框（研報平台、管理後台），console＝管理頁共用元件
 scripts/                  批次與維運；呼叫 LLM 的批次取 _claude_lock.py 的 flock
-db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision，head 0011、0009 留空不用）、
+db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision，head 0014、0009 留空不用）、
                           db/expected_constraints.txt（約束 golden）
-deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
+deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署；其餘是廷豐主機層
+                          （systemd unit、nginx、edge 的 docker-compose…），逐檔歸屬見 OWNERSHIP.toml
                           deploy/ops/：維運代理的 Service Catalog（services.prod.toml＝辦公室主機、
                                        services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
                           deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
                           deploy/aws/：EC2／RDS 的 CloudFormation
+profiles/<name>/          部署 profile：profile.toml（非祕密的產品設定）＋ sources.toml（發行機構名單，[sources] 引用）＋ assets/（logo、favicon）＋ plugins/（插件連接器）；預設 profiles/tingfong
 ops_agent/                維運代理（標準庫、不 import app.*；部署時安裝到 /opt/report-mark-ops）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
@@ -129,19 +134,25 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 
 ## Web 介面與 API
 
-所有路徑除 `/login`、`/healthz`、`/app/assets/` 外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*`、`/api/admin/*` 與 `/api/progress` 限管理員（一般使用者回 403），每條另要求一個 scope（管理員預設有 `admin`、`accounts.manage`、`audit.read`、`review.manage`、`ops.read`、`reports.manage`、`analytics.read`；`qa_content.read`、`ops.operate`、`api_clients.manage` 要另外授予；super admin 全部都有）。表中寫「已提升」指近 10 分鐘內在同一個 session 重新驗證過密碼（`POST /api/me/elevate`），否則 403 `elevation_required`。會改變狀態的請求（POST／PUT／PATCH／DELETE）帶了 `Origin` 就必須與 `Host` 相同，跨站一律 403 `csrf_rejected`。JSON 錯誤一律是 `{detail, code, request_id}`：`detail` 維持原意（多半是中文訊息，422 是欄位錯誤清單），`code` 是穩定字串，`request_id` 對得上 journal 那一行。SSE 端點每 20 秒送一行心跳註解。
+所有路徑除 `/login`、`/login/oidc`、`/login/oidc/callback`、`/healthz`、`/readyz`、`/metrics`、`/app/assets/`、`/api/branding`（與 `/api/branding/assets/` 底下）外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*`、`/api/admin/*` 與 `/api/progress` 限管理員（一般使用者回 403），每條另要求一個 scope（管理員預設有 `admin`、`accounts.manage`、`audit.read`、`review.manage`、`ops.read`、`reports.manage`、`analytics.read`；`qa_content.read`、`ops.operate`、`api_clients.manage` 要另外授予；super admin 全部都有）。表中寫「已提升」指近 10 分鐘內在同一個 session 重新驗證過身分（本地帳號是密碼，`POST /api/me/elevate`；公司帳號登入的 session 是回 IdP 重新登入，`GET /login/oidc?intent=elevate`），否則 403 `elevation_required`。會改變狀態的請求（POST／PUT／PATCH／DELETE）帶了 `Origin` 就必須與 `Host` 相同，跨站一律 403 `csrf_rejected`。JSON 錯誤一律是 `{detail, code, request_id}`：`detail` 維持原意（多半是中文訊息，422 是欄位錯誤清單），`code` 是穩定字串，`request_id` 對得上 journal 那一行。SSE 端點每 20 秒送一行心跳註解。
 
 對外 API（`/external/v1/*`）不走登入與 session：每個 API 用戶端一把金鑰，以 `Authorization: Bearer <api_key>` 認證，不查也不發 session cookie；反過來，站內 `/api/*` 一律不認 Bearer。缺金鑰 401 `api_key_missing`、金鑰無效／停用／已輪替 401 `api_key_invalid`（帶 `WWW-Authenticate: Bearer`）、scope 不足 403 `api_scope_missing`、每分鐘限流 429 `api_rate_limited`、每日額度用完 429 `api_quota_exceeded`（每日額度以台北時間日曆日計，台北 0 點＝UTC 16:00 重置；429 都帶 `Retry-After`）。認證、錯誤碼與授權範圍語意見 `docs/WORKFLOW.md` 的「對外 API」；交給 API 用戶端的說明是 `docs/EXTERNAL_API.md`（後台「API 用戶端」頁可檢視、下載與試打）。
 
 | 方法 | 路徑 | 參數 | 回應 | 備註 |
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
+| GET | `/readyz` | — | `{"status":"ok"}`；任一項未就緒回 503 `{"status":"not_ready"}` | 免登入；就緒探測（容器部署的 compose healthcheck 與負載平衡器用）：DB 可用（與 `/healthz` 共用探測）、嵌入模型已載入或權重在本機快取、profile 驗證通過、LLM 設定有效（金鑰、白名單模型、送達路徑；**不呼叫 LLM**）。哪一項沒過只進日誌，回應只有 `status` 一鍵；結論快取 5 秒。判斷在 `app/services/readiness.py` |
+| GET | `/metrics` | — | Prometheus 文字格式（`text/plain; version=0.0.4`）：HTTP 請求數與耗時（`route` 是路由模板）、問答結局與 LLM 失敗類別、web 行程的 LLM 呼叫數／耗時／失敗類別／token（依 task、provider）、批次新鮮度、上傳佇列、DB 連線池、併發閘、LLM 批次斷路器、建置資訊 | 免登入但**只回答允許的對端**：對端在 `METRICS_ALLOWED_CIDRS`（預設只有 loopback）且沒有任何代理 header，其餘 404；`METRICS_ENABLED=0` 關。標籤沒有查詢字串、路徑參數、帳號或 IP。從 DB 算的值快取 15 秒、查不到時 `report_mark_signal_source_up=0` 照樣 200。web 單一行程，計數器是行程內狀態。指標清單與告警規則範例見 `docs/CONTAINER_DEPLOYMENT.md`「監控對接」 |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
-| GET | `/healthz/llm` | — | `{"llm":"unknown"\|"ok"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"\|"misconfigured"}`；後五種回 503（`misconfigured`＝問答主答 `ASK_ANSWER_MODEL` 解析到白名單外的名稱，不探端點） | **只回答本機直連**，其餘 404；打目前 `LLM_PROVIDER` 端點的 `GET /models`（只判斷端點與金鑰；兩條路徑都沒有餘額 API，沒有用完前的預警），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（503 一律退出碼 8）。各狀態的條件見 `docs/WORKFLOW.md`「健康端點」 |
+| GET | `/healthz/llm` | — | `{"llm":"unknown"\|"ok"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"\|"misconfigured"}`；後五種回 503（`misconfigured`＝問答主答 `ASK_ANSWER_MODEL` 解析到白名單外的名稱，或目前 provider 的端點設定有誤，不探端點） | **只回答本機直連**，其餘 404；打目前 `LLM_PROVIDER` 的模型清單端點（OpenAI 族 `GET /models`、Azure `GET /openai/models`、Anthropic `GET /v1/models`；只判斷端點與金鑰，各家都沒有餘額 API，沒有用完前的預警），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（503 一律退出碼 8）。各狀態的條件見 `docs/WORKFLOW.md`「健康端點」 |
 | GET | `/healthz/security` | — | `{"security":"ok"\|"unknown"\|"audit_chain_broken"\|"elevate_failures"\|"account_failures"\|"login_failures"}`；後四種回 503（多項同時成立回最前面那一個），`unknown`（判不出來）回 200。**不回任何計數、IP 或帳號** | 安全事件的狀態型告警，**免登入但只回答本機直連**（其餘 404）。判斷是 `security_ops.evaluate_alerts`：`SECURITY_WINDOW_MINUTES`（15）分鐘內全站登入失敗（含被限流擋下的請求）達 `SECURITY_LOGIN_FAILURE_THRESHOLD`（20）、同一帳號「上次登入成功之後」連續失敗達 `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5）、權限提升失敗達 `SECURITY_ELEVATE_FAILURE_THRESHOLD`（3）、稽核鏈驗證失敗（快取 `AUDIT_VERIFY_CACHE_SECONDS`）。結論快取 30 秒、最多等 8 秒（逾時＝unknown）。給 `scripts/check_security_health.sh` 用（`audit_chain_broken` 為退出碼 1、其餘告警 2、判不出來 3），接 P5 instance `report-mark-security-incident`；明細在 `/api/admin/security/alerts` |
 | GET | `/healthz/feed` | — | `{"feed": state}`：`ok`、`disabled`（沒設定要監看）、`unknown`（R2 讀不到或逾時）回 200；`missing`／`invalid`／`stale`／`timer_inactive`／`sync_stalled`／`source_failed`／`push_disabled`／`push_failed`／`round_aborted` 回 503（多項同時成立回最前面那一個）。**不回任何細節** | 新檔來源主機的信標，**免登入但只回答本機直連**（其餘 404）。這台的新研報若來自另一台主機推到 R2 `inbox/` 的檔（EC2），來源那台每 10 分鐘把服務狀態與 sync 來源段結果發布到 `beacons/<名稱>.json`（`scripts/publish_host_beacon.py`），這裡讀 `HOST_BEACON_WATCH` 指定的那一個並判讀（`app/services/host_beacon.py`）：信標超過 `HOST_BEACON_STALE_MINUTES`（45）沒更新＝那台失聯；來源段超過 `HOST_BEACON_FEED_STALE_HOURS`（7）沒有新結果、sync 的 timer 停了、NAS 掛載或 rsync 失敗、inbox 推送沒開或失敗（含還沒補傳的 delta）、最近一輪被中止。信標的年齡以 R2 的 `LastModified` 計，不信任發布端的時鐘。結論快取 60 秒、最多等 8 秒（逾時＝unknown）。給 `scripts/check_feed_health.sh` 用（`missing`／`stale` 為退出碼 1、其餘告警 2、判不出來 3、`disabled` 4），接 P5 instance `report-mark-feed-incident`；明細在 `/api/admin/ops/remote-hosts` |
-| GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next`；第二步 form `step=totp`、`code`、`next` | 302／303 | 登入頁免登入；帳號不分大小寫。失敗回 `/login?error=1|locked|insecure|disabled|unavailable`（`disabled` 只在密碼正確時出現）。帳號開了兩步驟驗證時，密碼正確只發 5 分鐘、`Path=/login` 的簽章暫時憑證 `tf_mfa` 並導向 `/login?step=totp`，第二步驗證碼正確才發 session；錯誤回 `?step=totp&error=totp`（計入每 IP 失敗限流）、暫時憑證缺漏或逾時回 `?error=expired`。暫時憑證不可重放。登出只撤銷這一個 session |
-| GET | `/api/me` | — | `{id, username, role, is_super, scopes, elevated_until, totp_enabled, mfa_enrollment_required, mfa_policy_locked}` | 目前登入身分；`role` 為 `admin`／`user`，`scopes` 是實際生效的 scope，`elevated_until` 是本 session 權限提升的到期時刻（未提升為 null）。`mfa_enrollment_required`＝管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟而本人還沒開 TOTP，此時 `/api/admin/*`、`/api/review/*`、`/api/progress` 一律 403 `mfa_enrollment_required`，前端管理後台改顯示 TOTP 設定；`mfa_policy_locked`＝政策開啟且本人是管理員，不能自行關閉 TOTP。免登入開發模式回 `id: null`、`username: "dev"`、super admin 全部 scope（不受 TOTP 強制） |
+| GET | `/api/branding` | — | `{institution_name, product_name, short_name, institution_name_en, product_name_en, short_name_en, locale: {default, available}, logo_light_url, logo_dark_url, favicon_url, colors: {light, dark}}` | **免登入**。profile（`app/profile.py`）的顯示用品牌：名稱、英文介面用的名稱（`*_en`，profile 沒給就與原名相同）、介面語系（`[locale]`）、asset URL（沒設為 null）、強調色覆寫（鍵見 `app/profile.py` 的 `ACCENT_TOKENS`，沒覆寫為空物件）。刻意不含 prompt 參數、市場子集等其他設定。`Cache-Control: no-cache` |
+| GET | `/api/branding/assets/{name}` | query `v`（內容雜湊前 16 碼） | asset 原檔 | **免登入**。只交 profile 引用的檔（logo、favicon），其餘 404 `asset_not_found`；`v` 與內容雜湊相符時 `Cache-Control: public, max-age=31536000, immutable`，否則 `no-cache`；帶 `ETag`（`If-None-Match` 相符回 304）、`X-Content-Type-Options: nosniff` 與 CSP `sandbox` |
+| GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next`；第二步 form `step=totp`、`code`、`next` | 302／303 | 登入頁免登入；帳號不分大小寫。失敗回 `/login?error=1|locked|insecure|disabled|unavailable|sso_only`（`disabled`、`sso_only` 只在密碼正確時出現；`sso_only`＝`OIDC_SSO_ONLY` 開啟而這個帳號不是緊急管理員）。設定了 OIDC 時登入頁多一顆「以公司帳號登入」（連到 `/login/oidc`），只允許 SSO 時帳密表單收在「緊急管理員登入」之下。帳號開了兩步驟驗證時，密碼正確只發 5 分鐘、`Path=/login` 的簽章暫時憑證 `tf_mfa` 並導向 `/login?step=totp`，第二步驗證碼正確才發 session；錯誤回 `?step=totp&error=totp`（計入每 IP 失敗限流）、暫時憑證缺漏或逾時回 `?error=expired`。暫時憑證不可重放。登出只撤銷這一個 session |
+| GET | `/login/oidc` | query `next`、`intent`（`login` 預設／`elevate`） | 302 到 IdP；失敗 303 `/login?error=insecure|sso_unavailable` | OIDC 單一登入的起點，免登入。`OIDC_ISSUER` 沒設時 404。產生 state、nonce 與 PKCE（S256），簽進 10 分鐘、`Path=/login/oidc` 的 HttpOnly cookie `tf_oidc`，導去 discovery 的授權端點。`intent=elevate` 是 SSO 帳號的權限提升：要已有 SSO 登入的 session（沒有則導回 `/login`，密碼 session 直接導回 `next`），並要求 IdP 重新驗證（`prompt=login`、`max_age=0`） |
+| GET | `/login/oidc/callback` | query `code`、`state`（或 IdP 的 `error`） | 303 到 `next`；失敗 303 `/login?error=sso|sso_unavailable|sso_account|disabled|unavailable|insecure` | IdP 導回點（要登錄成 IdP 的 redirect URI，與 `OIDC_REDIRECT_URI` 逐字相同），免登入，`OIDC_ISSUER` 沒設時 404。state 對不上、cookie 缺漏或逾時、IdP 回 error＝`sso`（只在記憶體計數）；換 token、驗 ID token（JWKS 簽章、`iss`／`aud`／`azp`／`exp`／`iat`／`nonce`）失敗＝`sso`；網域不允許、缺 claim＝`sso`；帳號名稱衝突、不合規、撞到緊急管理員＝`sso_account`；帳號停用＝`disabled`；IdP 連不上＝`sso_unavailable`。成功時以 `(issuer, subject)` 找帳號，沒有就 JIT 建成一般使用者（稽核 `user.create`，操作者為系統），發一般的 session（`auth_method=sso`）。`intent=elevate` 時不發新 session：`auth_time` 夠新、同一個 IdP 身分、同一個瀏覽器 session 才延長本 session 的權限提升，不論成敗都導回 `next` |
+| GET | `/api/me` | — | `{id, username, role, is_super, scopes, elevated_until, totp_enabled, mfa_enrollment_required, mfa_policy_locked, auth_method, sso_mfa_required}` | 目前登入身分；`role` 為 `admin`／`user`，`scopes` 是實際生效的 scope，`elevated_until` 是本 session 權限提升的到期時刻（未提升為 null）。`mfa_enrollment_required`＝管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟而本人還沒開 TOTP，此時 `/api/admin/*`、`/api/review/*`、`/api/progress` 一律 403 `mfa_enrollment_required`，前端管理後台改顯示 TOTP 設定；`mfa_policy_locked`＝政策開啟且本人是管理員，不能自行關閉 TOTP。`auth_method` 是這個 session 的登入方式（`password`／`sso`）；`sso_mfa_required`＝政策開啟、本人是公司帳號登入的管理員，而這次登入 IdP 沒有表明做過多重驗證，此時管理端點一律 403 `sso_mfa_required`（本系統的 TOTP 對 SSO session 不算數）。免登入開發模式回 `id: null`、`username: "dev"`、super admin 全部 scope（不受 TOTP 強制） |
 | GET | `/api/status` | — | `{status, message}`；`status` 為 `ok`／`degraded`／`unknown`，`message` 是一句中文 | 任何登入的使用者（主平台帳號選單的小燈號）。刻意不含服務清單、主機、環境或錯誤細節（那些在 `/api/admin/ops/*`）。DB 探測（與 `/healthz` 共用 5 秒快取）失敗 → `degraded`；再問維運代理（逾時 3 秒、結論快取 30 秒），只看 critical 層：任一 `failed`／`not_found`／`idle` → `degraded`，否則有 `unknown` → `unknown`，其餘 `ok`；代理不可用 fail-open 回 200 `unknown`。一律 200 |
 | POST | `/api/me/elevate` | JSON `password`、`code`（開了兩步驟驗證時必填） | `{elevated_until}` | 任何登入的使用者。與 `/api/admin/elevate` 同一套實作：10 分鐘、綁本 session；密碼正確但缺驗證碼 403 `totp_required`（不計失敗），密碼或驗證碼錯 403 `bad_password`，共用每 IP 失敗限流 |
 | GET | `/api/me/totp` | — | `{enabled, pending}` | 自己的兩步驟驗證狀態；`pending`＝已產生 secret、尚未確認 |
@@ -154,7 +165,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 任何登入者可用。與 `/api/progress`、`/api/review/judge-scale` 共用 15 秒 DB 快取（`web/stats_snapshot.py`）；`username` 是目前登入者 |
 | GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 限管理員並要 `ops.read`（一般使用者 403；缺 scope 403 `missing_scope`）。管理後台管線分頁每 15 秒輪詢；待複核頁的判定尺走 `/api/review/judge-scale`。`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `total`／`checked`／`latest` 計所有 judge（覆蓋率語意，換 judge 不會驟降）；分數類 `judge_checked`／`degraded`／`below_min`／`avg_score`／`avg_n`（平均的樣本數，不含 degraded）只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |
-| GET | `/api/markets` | — | `{"markets": [...]}` | 市場代碼清單 |
+| GET | `/api/markets` | — | `{markets: [...], items: [{code, label}], labels: {<code>: <名稱>}}` | profile 啟用的市場子集（`[markets].enabled`）：`markets` 是啟用的標準市場代碼（標準順序），`items` 依 profile 的顯示順序附顯示名稱，`labels` 是全部標準代碼的顯示名稱（研報可能標到未啟用的市場）。`/api/search`、`/api/reports`、`/api/ask`、`/api/radar/instruments` 的 `market` 篩選帶未啟用的標準代碼時回 422 `market_disabled` |
 | GET | `/api/reports` | `market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`date_desc`）、`limit`（1–100，50）、`offset` | `{total, offset, items[]}` | 瀏覽（無查詢詞） |
 | GET | `/api/search` | `q`（1–500 必填）、同上篩選、`sort`（`relevance`）、`limit`、`offset`、`passages`（1–6，3） | `{query, market, total, market_facets, lexical_truncated, results[]}` | 混合檢索 ＋ `rank_reports` |
 | POST | `/api/ask` | JSON `question`（≤2000）、`conversation_id`、篩選欄位、`k`（1–20，8）、`regenerate_of`、`edit_of`、`request_id`、`locale`、`web` | SSE：`queued`→`status`→`sources`→`ext_sources`→`token`…→`followups`→`done`；婉拒走 `notice` | 併發上限 3、佇列 20（滿載 429 ＋ `Retry-After: 30`）。寫入的擁有者是目前登入者；帶別人的 `conversation_id`／`regenerate_of`／`edit_of`（含共用歷史）在開始串流前回 404，擁有權檢查失敗回 503，`conversation_id` 格式錯誤回 400；找不到的參照照舊當新題／新串。每人每日配額 `ask`（預設 100，台北時間切日；重新生成、編輯重問都算，排隊滿額被拒與 `/api/ask/stop` 不算）：影子模式照常回答，正式阻擋（`QUOTA_ENFORCE` 與旗標 `quota.enforce` 都開）時開始串流前 429 `quota_exceeded`（另帶 `kind`、`limit`，`Retry-After`＝距台北午夜秒數）；計數寫不進 DB 時放行 |
@@ -170,6 +181,8 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/report/{report_id}/file` | — | 原檔（PDF inline）或 302 到 presigned URL | `r2` 模式缺 key 回 503；被隱藏或未發布的研報回 404 |
 | GET | `/external/v1/search` | `q`（1–500 必填）、`limit`（每頁篇數 1–20，10）、`page`（從 1 起算，1）、`sort`（`relevance`／`date_desc`／`date_asc`）、選填 `market`／`source`／`report_type`／`instrument_type`（各一個值） | `{query, total, page, limit, results: [{report_id, title, file_name, market, source, source_name, report_date, report_type, instrument_types, summary, score}]}`（不回命中段落；超過最後一頁回空的 `results`）；金鑰有 `report.file` 時每筆另附 `file_url`、`file_url_expires_at`（ISO 8601 UTC，產生失敗的那筆為 null） | **對外 API**，`Authorization: Bearer <api_key>`、需 `search` scope。檢索與排序同 `/api/search`，結果限於該 API 用戶端的授權範圍；請求的過濾只能縮小、與授權範圍交集為空直接回空結果。不回目標價等雷達欄位 |
 | GET | `/external/v1/reports/{report_id}/file-url` | `report_id`（UUID） | `{report_id, file_url, expires_at}`（`Cache-Control: no-store`） | **對外 API**，需 `report.file` scope。每次重新查研報（可見性＋授權範圍）：查無、隱藏、草稿、授權外一律 404 `report_not_found`；HEAD 驗 sha256 後才簽，有效期 `EXTERNAL_FILE_URL_TTL_SECONDS`；沒有原檔 404 `original_not_found`、儲存或完整性錯誤 503 `original_unavailable` |
+| POST | `/external/v1/uploads` | `filename`（必填，`.pdf`）、`last_modified`（選填，毫秒）；raw body、`Content-Type: application/pdf` | 202 `{upload_id, file_hash, file_name, size_bytes, status, uploaded_at, updated_at}`（`status` 是對外的四種：`processing`／`pending_review`／`published`／`rejected`） | **對外 API**，需 `report.upload` scope。檔案進現有上傳流程（隔離區 → 預檢與 ClamAV → worker 入庫成草稿 → 管理員發布），不直接入庫；`UPLOAD_ENABLED` 與功能旗標 `uploads.intake` 任一關閉回 503 `upload_unavailable`。上傳者記成 API 用戶端（`report_upload.api_client_id`），每日份數依用戶端計（`UPLOAD_DAILY_QUOTA`）；重複一律 409 `upload_duplicate`（不洩漏語料裡的狀態） |
+| GET | `/external/v1/uploads/{upload_id}` | `upload_id`（UUID） | 同上傳回應（`Cache-Control: no-store`） | **對外 API**，需 `report.upload` scope。只查得到同一個 API 用戶端收進來的上傳，其餘一律 404 `upload_not_found`；不回掃描特徵、失敗細節與決策原因 |
 | GET | `/api/reading/{file_hash}` | — | `ReadingDoc`（metadata ＋ 重點摘錄 ＋ 訊號，不含全文） | `file_hash` 須 64 hex |
 | GET | `/api/reading/{file_hash}/text` | `chunk`（選填） | `ReadingText`（正典文字，超過 `READING_TEXT_MAX_CHARS` 截斷並標 `truncated`） | `text_sha256` 一律對完整文字算 |
 | GET | `/api/reading/{file_hash}/similar` | `limit`（1–20，6） | 相似研報清單 | dense 近鄰 |
@@ -249,7 +262,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/admin/analytics/routes` | `since`／`until`（同 overview） | `{range, questions, stopped, llm_truncated, invalid_citation_rows, invalid_citations, distributions: [{name, suppressible, cells: [{key, label, value, users, suppressed, suppression_reason}], suppressed_count, complementary_count}]}`，`name` 是 `path`／`decided_by`／`llm_model`／`llm_error` | `analytics.read`。共同規則（只出彙總、即時段與彙總段、快取、錯誤碼）同 `/api/admin/analytics/overview`。分布來自 `qa_log.filters`；只有 `path`（路由類別）受 k 門檻與互補抑制約束（問答總數在同一份回應裡），其餘是系統詞彙 |
 | GET | `/api/admin/analytics/quality` | `since`／`until`（同 overview） | `{range, judge_model, faithfulness_min, other_judge_checked, weeks: [{week_start, partial, questions, checked_all, judge_checked, degraded, below_min, avg_score, score_n, likes, dislikes}]}` | `analytics.read`。共同規則（只出彙總、即時段與彙總段、快取、錯誤碼）同 `/api/admin/analytics/overview`。週一起算；分數類只計現行 judge（`app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`，彙總段以 dim 記當時的 judge、換 judge 後不混入），`checked_all` 計所有 judge |
 | GET | `/api/admin/analytics/operations` | `since`／`until`（同 overview） | `{range, weeks: [{week_start, partial, uploads_received, uploads_published, uploads_rejected, uploads_infected, uploads_failed, reviews, qa_content_reads}], audit_actions: [{action, count}]}` | `analytics.read`。上傳（`report_upload`）與審核（`admin_audit_log` 的 `review.update`、`qa_content.read` 等）的週量，兩表永久保存、整段即時查；只有次數 |
-| GET | `/api/admin/diagnostics` | — | `{generated_at, cache_ttl_s, versions: {git: {available, reason, commit_at_start, branch_at_start, commit_on_disk, branch_on_disk, restart_pending}, frontend: {available, built_at, entry_assets}, python, platform, packages}, schema_info: {status, db_revisions, code_heads, pending, error, daily_check: {available, unavailable_reason, checked_at, age_hours, stale, mode, exit_code, alert, problems, message, version_status, drift_status, drift_count}}, runtime: {pid, hostname, started_at, uptime_s, rss_bytes, peak_rss_bytes, threads, timezone, python_executable}, config: {db_target, object_storage_mode, llm_provider, models, extractor, log_level, ops_agent_environment, ops_agent_socket, flags, secrets_present, limits}, models: {embed_model, embed_loaded, rerank_loaded, rerank_load_failed, warmup, warmup_error}, db_pool: {pool_class, size, max_overflow, checked_out, checked_in, open_connections}, gates: [{name, capacity, in_use, waiting, max_queue}], gates_error, checks: {db: {ok, latency_ms, server_version}, storage: {state, consecutive_failures, last_probe_age_s, last_probe_ok}, llm: {state, key_configured, ask_uses_http, consecutive_failures, last_check_age_s, quota_latched}, ops_agent: {ok, latency_ms, services}}}`；每段另有 `error` | `ops.read`。唯讀，整份快取 30 秒（`app/services/diagnostics.py`）。版本讀 `.git` 檔（不跑 git），`commit_at_start` 是行程啟動時、`commit_on_disk` 是此刻，兩者不同 `restart_pending=true`（程式更新了但 web 還沒重啟）；前端 build 看 `frontend/dist/index.html` 的修改時間與入口 bundle 檔名。`schema_info.status` 是 DB 的 `alembic_version` 對程式 head：`ok`／`behind`／`ahead`／`unversioned`／`ambiguous`／`error`（與 `scripts/schema_baseline.py` 同一判定），`daily_check` 是 `data/schema_check.json` 的摘要（36 小時沒更新 `stale=true`）。連通性只做便宜的：DB `SELECT 1` 延遲；R2 與 LLM **只被動讀** `/healthz/storage`、`/healthz/llm` 上一次的結論，不另打計費 API；維運代理問一次 `list`（逾時 3 秒）。**不含祕密**：設定只列白名單，祕密只回有沒有設（`secrets_present`），DB 只留 `host:port/db`，整份再以名稱像祕密的環境變數之值、DB 密碼與 URL 帳密遮蔽成 `[redacted]`。某段失敗只讓該段 `error` 帶例外型別（不含訊息），整頁仍 200 |
+| GET | `/api/admin/diagnostics` | — | `{generated_at, cache_ttl_s, versions: {build: {available, source, commit, version, tree_clean, built_at, stale_file}, git: {available, reason, commit_at_start, branch_at_start, commit_on_disk, branch_on_disk, restart_pending}, frontend: {available, built_at, entry_assets}, python, platform, packages}, schema_info: {status, db_revisions, code_heads, pending, error, daily_check: {available, unavailable_reason, checked_at, age_hours, stale, mode, exit_code, alert, problems, message, version_status, drift_status, drift_count}}, runtime: {pid, hostname, started_at, uptime_s, rss_bytes, peak_rss_bytes, threads, timezone, python_executable}, config: {db_target, object_storage_mode, llm_provider, models, extractor, log_level, log_format, ops_agent_environment, ops_agent_socket, flags, secrets_present, limits}, models: {embed_model, embed_loaded, rerank_loaded, rerank_load_failed, warmup, warmup_error}, db_pool: {pool_class, size, max_overflow, checked_out, checked_in, open_connections}, gates: [{name, capacity, in_use, waiting, max_queue}], gates_error, checks: {db: {ok, latency_ms, server_version}, storage: {state, consecutive_failures, last_probe_age_s, last_probe_ok}, llm: {state, key_configured, ask_uses_http, consecutive_failures, last_check_age_s, quota_latched}, ops_agent: {ok, latency_ms, services}}}`；每段另有 `error` | `ops.read`。唯讀，整份快取 30 秒（`app/services/diagnostics.py`）。`versions.build` 是版本對帳（`app/services/build_info.py`）：建置 commit、版本 tag、建置時工作樹是否乾淨（`tree_clean`，不知道為 null）與來源（`image`＝映像建置時以 build arg 寫入、`host`＝主機 `make build-info` 寫入的 build_info.json、`git`＝只讀到 `.git` 的 commit）；主機的檔與正在跑的 commit 不同時作廢、`stale_file=true`。唯讀、不擋任何操作。版本讀 `.git` 檔（不跑 git），`commit_at_start` 是行程啟動時、`commit_on_disk` 是此刻，兩者不同 `restart_pending=true`（程式更新了但 web 還沒重啟）；前端 build 看 `frontend/dist/index.html` 的修改時間與入口 bundle 檔名。`schema_info.status` 是 DB 的 `alembic_version` 對程式 head：`ok`／`behind`／`ahead`／`unversioned`／`ambiguous`／`error`（與 `scripts/schema_baseline.py` 同一判定），`daily_check` 是 `data/schema_check.json` 的摘要（36 小時沒更新 `stale=true`）。連通性只做便宜的：DB `SELECT 1` 延遲；R2 與 LLM **只被動讀** `/healthz/storage`、`/healthz/llm` 上一次的結論，不另打計費 API；維運代理問一次 `list`（逾時 3 秒）。**不含祕密**：設定只列白名單，祕密只回有沒有設（`secrets_present`），DB 只留 `host:port/db`，整份再以名稱像祕密的環境變數之值、DB 密碼與 URL 帳密遮蔽成 `[redacted]`。某段失敗只讓該段 `error` 帶例外型別（不含訊息），整頁仍 200 |
 | GET | `/api/admin/retrieval-regression` | — | `{status, available, unavailable_reason, finished_at, age_hours, stale, exit_code, outcome, reason, message, comparison: {finished_at, duration_s, baseline: {captured_at, corpus_cutoff, corpus_reports, simulated_as_of, k, dense_scan, dataset_sha256}, dense_scan, params_changed, thresholds: {min_mean_recall, min_question_recall, max_degraded_questions}, summary: {verdict, questions, comparable, mean_report_recall, mean_raw_report_recall, mean_chunk_recall, mean_rbo, degraded_questions, hidden_reports, removed_reports, excluded_new_reports, lex_truncated_questions}, questions: [{id, question, comparable, degraded, lex_truncated, report_recall, raw_report_recall, chunk_recall, rbo, baseline_reports, eligible_reports, current_reports, hidden_reports, removed_reports, excluded_new_reports, lost_total, gained_total, lost: [{file_hash, label}], gained: [{file_hash, label}]}]}}` | `ops.read`。唯讀，**不在 web 裡跑檢索**：讀 `scripts/retrieval_regression.py check`（`report-mark-retrieval-regression.timer` 每日 07:40）最後一次寫的結果檔 `data/health/retrieval_regression.json`（`app/services/retrieval_regression.py`）。`outcome`：`ok`／`degraded`（劣化，告警）／`skipped`（DB 連不上、記憶體不足、sync 在跑；不告警）／`error`（沒有基準、不可比等，告警），`reason` 是對應代碼。略過或錯誤的那次不蓋掉上一次的比對（`comparison.finished_at`）。`status`：ok → `ok`、劣化或錯誤 → `fail`、略過 → `unknown`；問答的 `dense_scan` 與基準不同（`params_changed`）或最後一次比對超過 48 小時（`stale`）至少 `warn`。研報召回以 `file_hash` 比、先排除基準之後才入庫的研報；隱藏與下架的基準研報分開計數、不算劣化。`lex_truncated`＝這次字面路候選被 cap 截斷（同一題前後兩次的 top-k 可能不同，是檢索本身的不確定性）。還沒有結果檔 `available=false`（`unavailable_reason: missing`），格式不符 `corrupt:schema`，都不是錯誤 |
 | GET | `/api/admin/flags` | — | `{registry_version, items: [{key, description, ceiling_env, ceiling, default, override: {enabled, allow_roles, allow_users: [{id, username}], note, updated_by, updated_at}\|null, effective, effective_for_me}], ignored_keys}` | `ops.read`。功能旗標（`app/services/feature_flags.py`）：實際值＝環境變數上限（`ceiling`）AND DB 覆寫（沒有覆寫＝registry 預設 `default`）。`effective`：`on`（對所有人開）／`off`／`scoped`（只對 `allow_roles`、`allow_users` 開）；`effective_for_me` 是對目前管理員的值。DB 裡 registry 沒登記的 key 不生效，列在 `ignored_keys`。直接讀 DB（不走 5 秒快取）；DB 不可用 503 `flags_unavailable` |
 | PUT | `/api/admin/flags/{key}` | JSON `enabled`、`allow_roles`（`admin`／`user` 清單，null＝不限）、`allow_users`（帳號 UUID 清單，最多 200，null＝不限）、`note`（最多 500 字） | 同清單的單一項目 | `ops.operate`＋已提升（403 `missing_scope`／`elevation_required`）。兩個作用域都 null＝全站；空清單 422 `invalid_input`（不會把「誰都不開」變成全站）。與目前相同就不寫；有變更時同交易寫稽核 `flag.update`（detail：key、前後值、作用域摘要、`via: api`，使用者以帳號名稱表示，註記只記 `note_changed`），commit 後本行程立即生效。上限關閉時照樣寫入但實際值仍關。未登記的 key 404 `flag_not_found`；不存在或已刪除的使用者 422 |
@@ -279,13 +292,22 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | `127.0.0.1/32,::1/128` | 可信代理網段；走 Cloudflare Tunnel 時必填（WSL 的 docker 網段） |
 | `REPORT_MARK_EDGE_SECRET` | 空（停用） | 邊緣共享祕密，與 `deploy/.env` 的 `EDGE_SECRET` 逐字相同；與 CIDR 是 OR |
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | 唯一留在 `app/services/db.py` 的 getenv |
+| `PROFILE_DIR` | `profiles/tingfong` | 部署 profile 的目錄（相對路徑以 repo 根為基準）：機構名（含英文介面用的名稱）、品牌（logo、favicon、強調色）、介面語系（預設與可選的語系）、prompt 注入的稱謂、使用者端啟用的市場子集與顯示名稱、TOTP 發行者、個股代號格式、發行機構名單、每日簡報的作息。web 在 lifespan 第一步載入並嚴格驗證（未知 section 或鍵、型別錯、引用不存在的 asset、非標準市場代碼、目錄不存在都拒絕啟動）；改了要重啟 web。格式見 `app/profile.py` 的 docstring 與 `profiles/tingfong/profile.toml`。換稱謂會讓系統提示與評測基準線不同，也會讓舊稱謂的婉拒列在歷史重播時認不得 |
 | `LOG_LEVEL` | `INFO` | 調到 WARNING 會失去登入成功稽核、`qa_timing`、`/api/*` 請求耗時與檢索遙測。每行帶 `rid=`，與回應的 `X-Request-Id` 相同 |
+| `LOG_FORMAT` | `text`（容器映像為 `json`） | `json`＝web 每行一個 JSON 物件到 stdout（`ts`、`level`、`logger`、`request_id`、`message`，有例外另加 `exc_type`、`exc`），祕密、URL 查詢字串與 SQL bind 參數遮成 `[redacted]`，uvicorn access log 去掉查詢字串與對端位址（`app/logging_setup.py`）；`text` 是現行格式。未知值退回 `text` |
+| `METRICS_ENABLED`、`METRICS_ALLOWED_CIDRS` | `1`、`127.0.0.1/32,::1/128` | `/metrics` 的總開關與允許的對端（逗號分隔 CIDR；無效項目略過，全部無效＝誰都不收）。帶代理 header 的請求一律不收（`web/metrics.py`） |
+| `ALERT_WEBHOOK_URL`、`ALERT_WEBHOOK_COOLDOWN_MINUTES`、`ALERT_UPLOAD_BACKLOG_MINUTES`、`ALERT_CHECK_INTERVAL_SECONDS` | 空（關）、60、120、300 | 選配的通用 webhook 告警（`app/services/alert_webhook.py`）：容器排程工作失敗、LLM 批次斷路器跳脫、上傳積壓（最舊一筆處理中的上傳超過門檻分鐘；0＝不檢查，web 每隔檢查秒數查一次）。`POST` JSON（含 Slack／Teams 認得的 `text`），同一事件冷卻期內只送一次；URL 只讀環境變數、不進 argv 與日誌。與 `REPORT_MARK_ALERT_WEBHOOK`（廷豐的 Slack）並存。冷卻狀態在 `data/.alert_webhook_state.json`（`ALERT_WEBHOOK_STATE_FILE` 可改） |
+| `BUILD_INFO_FILE` | repo 根 build_info.json | 建置資訊檔的位置（`make build-info` 或映像建置時寫；`app/services/build_info.py`） |
 | `DB_POOL_SIZE`、`DB_MAX_OVERFLOW`、`DB_POOL_TIMEOUT`、`DB_POOL_RECYCLE` | 5、15、10、1800 | per-process 上限 20；改併發前依 `.env.example` 算式重算 |
 | `DB_STATEMENT_TIMEOUT_MS`、`DB_IDLE_TX_TIMEOUT_MS`、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS` | 60000、0、0 | idle 預設 0 是刻意的（sync 在交易內呼叫 LLM 與嵌入）；維運長查詢走 `relax_statement_timeout()` |
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
 | `LLM_HTTP_TOTAL_TIMEOUT` | `600` | LLM 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註 |
 | `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENCODE_GO_API_KEY`、`OPENCODE_GO_BASE_URL` | 空、`https://api.openai.com/v1`、空、`https://opencode.ai/inference/go/v1` | 目前 `LLM_PROVIDER` 的金鑰與端點；repo 根 `.env` 與 `/etc/default/report-mark-llm` 兩份逐字相同。OpenAI 的預算告警在 OpenAI 後台設定，這裡沒有對應的旋鈕 |
-| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `openai`、查表 | 任務旋鈕非空就用，否則查預設表（`app/services/llm_models.py`）：除網搜外都是 `gpt-6-luna`（含兩個 judge），網搜沒有模型（空字串）。`LLM_PROVIDER` 只決定送達路徑：`openai`（未設、空值同；正式環境）或 `opencode_go`（測試環境）。退役值（`deepseek`、`claude_cli`、`claude_only`）與拼錯的值，線上記 ERROR 並當成 `openai`，批次與評測預檢 rc=2 並印原始值（它不是停止開關）。模型名只接受白名單（`gpt-6-luna`），其他名稱線上以設定錯誤失敗、批次 rc=2。清單與語意見 `.env.example` |
+| `AZURE_OPENAI_API_KEY`、`AZURE_OPENAI_ENDPOINT`、`AZURE_OPENAI_API_VERSION`、`AZURE_OPENAI_DEPLOYMENTS`、`AZURE_OPENAI_SUPPORTS_REASONING_EFFORT` | 空、空（必填）、空（必填）、空、`1` | `LLM_PROVIDER=azure_openai`：`api-key` header；請求路徑是 deployment，`AZURE_OPENAI_DEPLOYMENTS` 寫 `模型名=deployment名`（逗號分隔），也是這個 provider 的白名單；deployment 不認 `reasoning_effort` 時把能力旋鈕設 `0` |
+| `ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODELS` | 空、`https://api.anthropic.com`、空 | `LLM_PROVIDER=anthropic`：原生 Messages API（`x-api-key`＋`anthropic-version`）；`ANTHROPIC_MODELS`（逗號分隔）是這個 provider 的白名單 |
+| `OPENAI_COMPATIBLE_API_KEY`、`OPENAI_COMPATIBLE_BASE_URL`、`OPENAI_COMPATIBLE_MODELS`、`OPENAI_COMPATIBLE_SUPPORTS_REASONING_EFFORT` | 空、空（必填，含 `/v1`）、空、`0` | `LLM_PROVIDER=openai_compatible`（vLLM 等自架端點）：Bearer 認證（伺服器沒開認證時填任意非空值）；`OPENAI_COMPATIBLE_MODELS`（逗號分隔，與伺服器載入的名稱相同）是這個 provider 的白名單；伺服器認 `reasoning_effort` 才把能力旋鈕設 `1` |
+| `LLM_DEFAULT_MODEL` | 空 | 非空時取代預設表的模型名（網搜除外），給沒有 `gpt-6-luna` 的部署用；任務旋鈕仍優先，名稱一樣要在白名單內 |
+| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `openai`、查表 | 任務旋鈕非空就用，否則查預設表（`app/services/llm_models.py`）：除網搜外都是 `gpt-6-luna`（含兩個 judge），網搜沒有模型（空字串）。`LLM_PROVIDER` 只決定送達路徑：`openai`（未設、空值同；正式環境）或 `opencode_go`（測試環境）；框架另支援 `azure_openai`、`anthropic`、`openai_compatible`（見上三列）。退役值（`deepseek`、`claude_cli`、`claude_only`）與拼錯的值，線上記 ERROR 並當成 `openai`，批次與評測預檢 rc=2 並印原始值（它不是停止開關）。模型名只接受白名單（`openai`／`opencode_go` 是內建的 `gpt-6-luna`，其他 provider 是宣告的名稱；安全閘門，沒有旋鈕可關），其他名稱線上以設定錯誤失敗、批次 rc=2。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` §9 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、16 候選 | rerank fail-open；候選數是量出來的（50 候選三併發易逾時，`docs/CAPACITY.md`） |
 | `ASK_FAITHFULNESS_ENABLED`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`ASK_FAITHFULNESS_TIMEOUT`、`ASK_FAITHFULNESS_SAMPLE_RATE`、`ASK_FAITHFULNESS_MAX_INFLIGHT` | 開、0.9、`gpt-6-luna`、90、1.0、2 | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 刻意不跟隨 `ASK_INTENT_MODEL`：換掉等於換尺，管線分頁、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`，歸「其他 judge」）。`ASK_FAITHFULNESS_TIMEOUT` 是每次 judge 呼叫的總期限（依據在 `app/config.py` 註解）；`FAITHFULNESS_TIMEOUT`（60）目前沒有呼叫端 |
@@ -300,8 +322,15 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `UPLOAD_ENABLED`、`UPLOAD_MAX_BYTES`、`UPLOAD_QUARANTINE_DIR`、`UPLOAD_DAILY_QUOTA`、`UPLOAD_MAX_IN_FLIGHT`、`UPLOAD_MIN_FREE_MB` | 0、26214400（25 MiB）、空（＝`data/quarantine/`）、30、50、1024 | 研報上傳的收檔（`POST /api/admin/uploads`；設在 repo 根 `.env`，`UPLOAD_QUARANTINE_DIR` worker 也讀）。該主機裝好 ClamAV 與上傳 worker 之前 `UPLOAD_ENABLED` 保持 0（正式環境兩者都沒裝）。每日配額以台北時間的日曆日計、所有狀態都算；全站上限數 quarantined／scanning／clean／processing；隔離區剩餘空間（MiB）扣掉這次的大小後低於門檻就回 503。`deploy/nginx.conf` 那條 location 的 `client_max_body_size` 是 30m，`UPLOAD_MAX_BYTES` 要比它小，超限才會由 App 回統一格式的 413。打錯的值退回預設並警告 |
 | `UPLOAD_REJECT_GRACE_HOURS` | 24 | 研報上傳退回後的清除寬限期（小時，≥ 1；`POST /api/admin/uploads/{upload_id}/reject` 寫進 `purge_after`）。期間內可撤銷退回，過期後由上傳 worker 清除。只有 web 讀；打錯的值退回預設並警告 |
 | `UPLOAD_WORKER_LOCK_FILE`、`UPLOAD_CLEAN_DIR`、`UPLOAD_PREFLIGHT_MEMORY_MB` | 空（＝`data/.upload_worker.lock`）、空（＝`data/uploads/clean/`）、2048 | 上傳 worker（`scripts/process_uploads.py`；設在 `/etc/default/report-mark-sync`）：整輪鎖檔（殼與子命令共用）、掃描通過後的乾淨檔目錄（`<目錄>/<hash>/<原始檔名>`，即 `research_report.file_path`；要與隔離區同一個檔案系統）、入庫前檢查子行程的虛擬記憶體上限（MiB，≥ 256；300 頁的密集文字 PDF 以 pdfplumber 試抽實測 1.68 GB）。`UPLOAD_QUARANTINE_DIR`、`UPLOAD_CLEAN_DIR` 若不用預設，web 的 `.env` 與 worker 的環境檔要設成一樣 |
-| `ADMIN_MFA_REQUIRED` | 0（關） | 管理員 TOTP 強制（`web/authz.py` 的 `require_admin`）：開啟時沒開 TOTP 的管理員打 `/api/admin/*`、`/api/review/*`、`/api/progress` 一律 403 `mfa_enrollment_required`，`/api/me*`、登出不受影響。預設關閉（TOTP 依個人設定開關）；只有明確的 `1`／`true`／`yes`／`on` 才開啟，其他值都當關閉。安全閘門刻意不做成 DB 功能旗標（DB 遺失時不可放寬）。救援：`scripts/create_admin.py --reset-totp` 後該管理員會被要求重新設定 |
+| `ADMIN_MFA_REQUIRED` | 0（關） | 管理員 TOTP 強制（`web/authz.py` 的 `require_admin`）：開啟時沒開 TOTP 的管理員打 `/api/admin/*`、`/api/review/*`、`/api/progress` 一律 403 `mfa_enrollment_required`，`/api/me*`、登出不受影響。公司帳號（SSO）登入的管理員不用本系統 TOTP，改看那次登入 IdP 是否做過多重驗證（`OIDC_MFA_*`），沒有就 403 `sso_mfa_required`。預設關閉（TOTP 依個人設定開關）；只有明確的 `1`／`true`／`yes`／`on` 才開啟，其他值都當關閉。安全閘門刻意不做成 DB 功能旗標（DB 遺失時不可放寬）。救援：`scripts/create_admin.py --reset-totp` 後該管理員會被要求重新設定 |
+| `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`OIDC_REDIRECT_URI` | 空（停用） | OIDC 單一登入（`app/services/oidc.py`、`web/routers/oidc_login.py`）。`OIDC_ISSUER` 空＝停用，登入行為與沒有這個功能時完全一樣；有設時 `OIDC_CLIENT_ID`、`OIDC_REDIRECT_URI` 缺一就拒絕啟動，issuer 與 redirect URI 必須是 https（本機開發的 localhost 例外）。issuer 要與 IdP discovery 回的 `issuer` 逐字相同（不支援多租戶的 `{tenantid}` 樣板）。`OIDC_CLIENT_SECRET` 是祕密（只放環境檔、不進 log；空＝public client，只靠 PKCE）。redirect URI 是 `https://<站台>/login/oidc/callback`。對接步驟見 `docs/production_resilience.md`「OIDC 單一登入」 |
+| `OIDC_SCOPES`、`OIDC_USERNAME_CLAIM`、`OIDC_ALLOWED_DOMAINS` | `openid email profile`、`preferred_username`、空（不限） | 要求的 scope（一定含 `openid`）；當成帳號名稱的 ID token claim（JIT 建帳的名稱，之後以 `(issuer, subject)` 綁定、不跟著改）；允許的網域（逗號分隔，比對帳號名稱 `@` 之後的部分，不分大小寫；有設而名稱沒有 `@` 一律拒絕） |
+| `OIDC_LINK_BY_USERNAME` | 0（關） | 開啟時，第一次以 SSO 登入、IdP 給的名稱與一個尚未綁定的既有帳號相同，就綁到那個帳號（稽核 `user.sso_link`）；關閉時同名一律拒絕（`sso_account`）。只有明確的 `1`／`true`／`yes`／`on` 才開 |
+| `OIDC_SSO_ONLY`、`OIDC_BREAK_GLASS_USERS` | 0（關）、空 | 只允許 SSO：本地帳密只收 `OIDC_BREAK_GLASS_USERS`（逗號分隔的帳號名稱，不分大小寫）列出、而且是管理員的帳號；其他帳號密碼正確也回 `?error=sso_only`，既有的密碼 session 下一個請求就失效。緊急管理員帳號永遠不與 IdP 綁定。沒設 `OIDC_ISSUER` 卻開了 `OIDC_SSO_ONLY` 時照樣生效（啟動記 ERROR）：寧可只剩緊急管理員能登入，也不因 issuer 打錯就放回所有本地帳號 |
+| `OIDC_MFA_AMR`、`OIDC_MFA_ACR`、`OIDC_ASSUME_IDP_MFA` | `mfa,mca,http://schemas.microsoft.com/claims/multipleauthn`、空、0 | `ADMIN_MFA_REQUIRED` 對公司帳號登入的管理員怎麼判定：ID token 的 `amr` 含 `OIDC_MFA_AMR` 任一值、或 `acr` 是 `OIDC_MFA_ACR` 之一、或 `OIDC_ASSUME_IDP_MFA` 開啟（IdP 端已對這個應用程式強制 MFA）就算做過多重驗證。Entra ID、Okta 會在 `amr` 帶 `mfa`，ADFS 帶 multipleauthn 那個 URI；Keycloak 預設不送 `amr`，改設 `OIDC_MFA_ACR` 為它的 LoA 值 |
+| `OIDC_CLOCK_SKEW_SECONDS` | 120 | ID token `exp`／`iat`／`nbf` 與權限提升 `auth_time`（5 分鐘內）的時鐘誤差容忍（上限 600） |
 | `USAGE_EVENTS_ENABLED`、`USAGE_EVENTS_FLUSH_SECONDS`、`USAGE_EVENTS_MAX_KEYS` | 1、60、50000 | 用量收集（`app/services/usage_events.py`）：閱讀頁、原檔、搜尋、問答的每日主題計數與每人每日次數，以及線上 LLM 用量歸因，每 60 秒與關機時寫 DB。0＝不寫庫、不註冊 LLM observer（測試如此）。搜尋字串永不記錄 |
+| `CONNECTOR_DATA_DIR` | 空（＝`data/connectors/`） | 資料來源連接器（`scripts/ingest_connectors.py`）的處理紀錄（`state/<名稱>.json`）、失敗清單、本輪 hashes 與計數。s3 連接器的連線與憑證是 `<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`（選填 `<env>_ENDPOINT`、`<env>_REGION`），`<env>` 是 profile `[connectors.sources.<名稱>]` 的 `env`；設定見 `docs/WORKFLOW.md`「資料來源連接器」 |
 | `QUOTA_ASK_DAILY`、`QUOTA_EXPORT_DAILY`、`QUOTA_ENFORCE` | 100、20、0 | 每人每日配額（上傳沿用 `UPLOAD_DAILY_QUOTA`）。`QUOTA_ENFORCE` 是正式阻擋的環境上限，預設 0＝影子模式；即使設 1 還要 DB 旗標 `quota.enforce` 開啟。影子模式照常計數、超額只記 `<kind>_over` 與一行 `quota_over` log；個人覆寫在管理後台「配額」頁（`user_quota`）。打錯的值退回預設並警告 |
 | `AUTH_EVENT_RETENTION_DAYS`、`USAGE_COUNTER_RETENTION_DAYS`、`LLM_USAGE_DAILY_RETENTION_DAYS`、`SESSION_EXPIRED_RETENTION_DAYS`、`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`、`DB_SNAPSHOT_DAILY_RETENTION_DAYS` | 365、400、400、90、30、400 | 各表的保留期（天）。`auth_event`（至少 365，設更小會被拉回 365）與已結束的 `user_session` 由 `scripts/security_retention.py` 清，`db_stat_snapshot` 由 `scripts/db_snapshot.py` 清；`USAGE_COUNTER_RETENTION_DAYS`、`LLM_USAGE_DAILY_RETENTION_DAYS` 目前沒有任何清除工作讀取（`usage_counter`、`llm_usage_daily` 不會被刪） |
 | `ASK_ENABLE_WEB`、`UPLOAD_ENABLED`、`QA_AGENTIC_ENABLED`、`ASK_FAITHFULNESS_ENABLED`、`ASK_RERANK_ENABLED`、`TRUSTED_DATA_ENABLED`、`QUOTA_ENFORCE`（功能旗標的上限） | 0、0、1、1、1、1、0 | 依序是功能旗標 `ask.web_search`、`uploads.intake`、`qa.agentic`、`qa.faithfulness`、`ask.rerank`、`trusted_data`、`quota.enforce`（`app/services/feature_flags.py`）的**上限**：實際值＝上限 AND 管理後台「功能旗標」頁的 DB 覆寫（`research.feature_flag`；沒有覆寫或 DB 讀不到＝registry 預設：`ask.web_search` 與 `quota.enforce` 預設關、其餘預設開，所以不設覆寫時網搜不開放、配額是影子模式，其餘就是這些環境變數）。覆寫只能在上限之下關閉或限定給角色／使用者；上限關時一律關，改上限要改環境檔並重啟 web。旗標只影響 web 的請求路徑，批次與評測只看環境變數。網搜要 `ASK_ENABLE_WEB=1` 且 `ask.web_search` 有覆寫開啟，開關才會出現，但後端不存在。各環境建議值與搬移步驟見 `docs/production_resilience.md`「功能開關與啟用矩陣」 |
@@ -325,11 +354,13 @@ cd frontend && npm run lint            # eslint
 python3 eval/question_contract.py eval/ragas_questions.json  # 零 LLM：驗題集契約並印 sha256
 uv run python eval/run_ragas.py --concurrency 1   # 探索性問答評測，預設寫 eval/candidate-ragas.json；會呼叫付費 API
 make eval-compare BASE=<基準線.json> CAND=eval/candidate-ragas.json
+make eval-gate PROFILE=<profile> RESULT=<結果.json>   # 上線驗收（零 LLM）：0 通過／1 有未豁免的指標沒過／2 不完整或不可比
 ```
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc + vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。測試的規則（不連網、不載模型、假物件、DB 契約測試、不可寫 repo 根的環境檔）、改動對照表與契約類測試的處理原則都在 `AGENTS.md`。
 - 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策。
-- 問答基準線：`eval/baselines/baseline-2026-11-02-jluna-gluna-rerank.json`（量尺系譜 `gpt-6-luna-2026-11`，開 rerank，18 題每題 3 次，F=0.917、CP=0.780、AR=0.674；**CP 未達 0.8 門檻**），語料是開發資料庫的固定快照（`devdb-2026-10-28:md5:3030a8008c760885c1b6630ddc83ecc7`）。`eval/baselines/` 裡其他的舊基準線是歷史紀錄，與現行 judge 不可比（`eval-compare` 回 2）。`eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（舊系譜 `deepseek-2026-09`，18 題每題 3 次，F=0.967、CP=0.873、AR=0.691）用的語料是 2026-09-29 從辦公室主機凍結的快照：15,255 份研報／616,769 個 chunk，快照 ID `sha256:969ba5277b99fb57d05262d19ceeb9fffe813c2f2ac7e0cc9ab6c87a7768373d`。評測設定是 `rerank_top_m=0`、`agentic=false`，只量固定脈絡下的答案品質；線上含重排與補查的整體延遲另用 `scripts/bench_load.py` 走 HTTP 量。快照原檔和含研報片段的檢查點留在未版控的資料目錄，版控只保留摘要分數與設定。`eval/ragas_questions.json` 是凍結題集，改題集就失去與基準線的可比性。
+- 其他券商導入時建自己的凍結題集（`scripts/draft_eval_questions.py`：LLM 草擬 → 研究員審 → 凍結，放在 `profiles/<名稱>/eval/`），評測入口帶 `--profile` 讀它、以 `make eval-gate` 做上線驗收；不帶 `--profile` 時一切照舊。流程見 `docs/WORKFLOW.md`「導入驗收」。
+- 問答基準線：`eval/baselines/baseline-2026-11-10-jluna-gluna-rerank.json`（量尺系譜 `gpt-6-luna-2026-11`，開 rerank，18 題每題 3 次，F=0.941、CP=0.798、AR=0.687；**CP 未達 0.8 門檻**），語料是開發資料庫的固定快照（`devdb-2026-10-28:md5:3030a8008c760885c1b6630ddc83ecc7`，即 `research_report.file_hash` 依序以逗號串接後的 md5）。同系譜、同語料的前一份 `eval/baselines/baseline-2026-11-02-jluna-gluna-rerank.json`（F=0.917、CP=0.780、AR=0.674）可直接比。開發資料庫停在 revision 0008，現行程式的檢索要用 0012 的 `doc_type`：評測時以它為 template 建一個拋棄式資料庫、`upgrade head` 後只連那份（語料雜湊不變，用完 DROP）。`eval/baselines/` 裡其他的舊基準線是歷史紀錄，與現行 judge 不可比（`eval-compare` 回 2）。`eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（舊系譜 `deepseek-2026-09`，18 題每題 3 次，F=0.967、CP=0.873、AR=0.691）用的語料是 2026-09-29 從辦公室主機凍結的快照：15,255 份研報／616,769 個 chunk，快照 ID `sha256:969ba5277b99fb57d05262d19ceeb9fffe813c2f2ac7e0cc9ab6c87a7768373d`。評測設定是 `rerank_top_m=0`、`agentic=false`，只量固定脈絡下的答案品質；線上含重排與補查的整體延遲另用 `scripts/bench_load.py` 走 HTTP 量。快照原檔和含研報片段的檢查點留在未版控的資料目錄，版控只保留摘要分數與設定。`eval/ragas_questions.json` 是凍結題集，改題集就失去與基準線的可比性。
 
   ```bash
   # 兩次執行使用同一個語料快照；SNAPSHOT_ID 填實際備份 ID 或內容雜湊。
@@ -351,11 +382,47 @@ make eval-compare BASE=<基準線.json> CAND=eval/candidate-ragas.json
 
 ## 部署與維運
 
+框架的官方部署形態是容器（下一節）；廷豐兩台主機的 systemd 部署見[廷豐 profile 與現行部署](#廷豐-profile-與現行部署)。兩種形態共用下面幾件事：
+
+- **Schema** 由 Alembic 管理（0009 留空不用）：`make schema` 跑 `alembic upgrade head`（連 `REPORT_MARK_DB_URL`；已有資料的庫要 `CONFIRM=<host:port/db>` 逐字確認目標）。`db/schema.sql` 是凍結的 baseline（revision 0001），只接受空庫；之後的變更寫在 `db/migrations/versions/`。`make schema-version` 只比 DB 版本與程式 head（唯讀），`make schema-check` 做完整 drift 比對。把還沒 stamp 的既有庫納入 Alembic 的步驟見 `AGENTS.md` 改動對照表。
+- **帳號**：第一位管理員用 `uv run python scripts/create_admin.py --username <名稱>` 建立，其餘在管理後台「帳號管理」建。忘記密碼或管理員全被停用時 `--reset-password`，遺失驗證器 `--reset-totp`。`app_user` 進了備份（含 Argon2id 雜湊），備份檔要當機密看待。
+
+### 容器部署（docker compose）
+
+給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。研報來源以 profile 的 `[connectors]` 接上（監看資料夾、S3 相容 bucket、插件；scheduler 的 `connectors` 工作輪詢入庫並跑下游批次），外部系統也可以經 `POST /external/v1/uploads` 送進上傳流程；設定與 metadata 側檔格式見 `docs/WORKFLOW.md`「資料來源連接器」。systemd timer 與容器排程的對照、零外連清單、備份還原、監控對接（`/metrics` 指標與告警規則、JSON 日誌欄位、版本對帳、通用 webhook 告警）見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
+
+### 首次導入（分層回填）
+
+數萬份歷史研報不一次跑完所有 LLM 派生：第一層（全部歷史）只做抽取、嵌入、標註；第二層（`report_date` 在最近 `[backfill].recent_months` 個月內）補摘要、標題、摘錄、訊號；第三層（更早與無日期）由背景在每日 token 上限內慢慢補。開跑前先估價（零 LLM、費率由使用者提供），步驟、進度與續跑見 `docs/WORKFLOW.md`「首次導入」。
+
+```bash
+make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"   # 估價：各層的 token、金額、時間（--json 給機器讀）
+uv run python scripts/backfill_tiers.py --tier 2 --dry-run         # 第二層會排入幾份（不呼叫 LLM）
+uv run python scripts/backfill_tiers.py --tier 2                   # 第二層
+make backfill-status                                               # 各層待補數與今天的背景用量
+# 第三層：profile 設 [backfill].background_enabled = true，scheduler 的 backfill-tiers 每小時補一輪
+```
+
+### 其他維運入口
+
+LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。
+
+## 廷豐 profile 與現行部署
+
+廷豐的 profile 在 `profiles/tingfong/`（預設 profile：`PROFILE_DIR` 沒設時載入它）；主機層附加元件（systemd unit、sudoers、polkit、維運代理、主機信標、探針與事件、NAS、LINE bot、sync 殼的 NAS／R2 來源段、對外邊緣、AWS 基礎設施）是 `deploy/OWNERSHIP.toml` 的 `tingfong_host`，框架的容器部署不用它們。
+
+兩個環境都是單機、單一 uvicorn worker：
+
+| 角色 | 主機 | DB | 對外 |
+|---|---|---|---|
+| 正式 | EC2（`research.tingfong.com`） | RDS PostgreSQL | Cloudflare 橘雲直連 apt 的 nginx |
+| 測試（也是開發機） | 辦公室主機（`research.kashionzarchive.com`，WSL2） | 容器 `report-mark-postgres`（`localhost:5436`，有真實資料） | Cloudflare Tunnel ＋ 容器 nginx |
+
+資源名、檔名與環境變數值裡的 `staging`（指 EC2）與 `prod`／`production`（指辦公室主機）是歷史命名，不代表角色；規則見 `AGENTS.md`「環境角色與資料安全」，各主機實際裝了什麼見 `docs/DEPLOYMENT_STATUS.md`。
+
 真相來源在 `deploy/`，不是機器上的 `/etc`。程序（部署順序、備份與還原、各 unit 的安裝與停用、告警處置）在 `docs/production_resilience.md`，各主機現況在 `docs/DEPLOYMENT_STATUS.md`。站序是 devdb 演練 → 測試環境 → 正式環境，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照）。辦公室主機的主 checkout 同時是測試環境的部署目錄：在那裡 `make build-web` 就是更新部署產物。
 
-- **部署新版**：`make schema` → `make build-web` → 重啟 `report-mark-web.service`（`make serve` 與 unit 都沒有 `--reload`，Python 改動要重啟）。回退只回退程式版本、保留新增的表與資料，不用 DROP 當回退步驟。
-- **Schema** 由 Alembic 管理（head 是 0011；0009 留空不用）：`make schema` 跑 `alembic upgrade head`（連 `REPORT_MARK_DB_URL`；已有資料的庫要 `CONFIRM=<host:port/db>` 逐字確認目標）。`db/schema.sql` 是凍結的 baseline（revision 0001），只接受空庫；之後的變更寫在 `db/migrations/versions/`。`make schema-version` 只比 DB 版本與程式 head（唯讀），`make schema-check` 做完整 drift 比對。把還沒 stamp 的既有庫納入 Alembic 的步驟見 `AGENTS.md` 改動對照表。
-- **帳號**：第一位管理員用 `uv run python scripts/create_admin.py --username <名稱>` 建立，其餘在管理後台「帳號管理」建。忘記密碼或管理員全被停用時 `--reset-password`，遺失驗證器 `--reset-totp`。`app_user` 進了備份（含 Argon2id 雜湊），備份檔要當機密看待。
+- **部署新版**：`make schema` → `make build-web` → `make build-info`（版本對帳用的 build_info.json）→ 重啟 `report-mark-web.service`（`make serve` 與 unit 都沒有 `--reload`，Python 改動要重啟）。回退只回退程式版本、保留新增的表與資料，不用 DROP 當回退步驟。
 - **unit 安裝**：辦公室主機 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；EC2 一律用 `deploy/install_units.sh`（見下方「非辦公室主機」）。
 
 下表是 `deploy/systemd/` 裡的 unit（開發用的 `report-mark-dev-smoke.service` 除外）；每台主機只裝其中一部分，EC2 沒裝的見「非辦公室主機」。
@@ -364,7 +431,7 @@ make eval-compare BASE=<基準線.json> CAND=eval/candidate-ragas.json
 |---|---|---|
 | `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --host 0.0.0.0 --port 8097`，單 worker、`Restart=always` |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
-| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：二十張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`、`api_client`、`api_client_entitlement`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
+| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：二十一張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`、`api_client`、`api_client_entitlement`、`report_metadata`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-audit-anchor.timer` | 04:15 | `scripts/audit_anchor.py`：驗稽核雜湊鏈、比對先前所有錨點、把鏈頭追加到 `$REPORT_MARK_BACKUP_DIR/audit-anchors.jsonl`（NAS）；鏈斷或與錨點不符 rc=1 告警 |
@@ -402,11 +469,9 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 - 來源監看：EC2 的新研報全靠辦公室主機推上來，那台停機或來源段壞掉時 EC2 自己的 sync 照樣 rc=0。辦公室主機裝 `report-mark-beacon` 並設 `HOST_BEACON_NAME`，EC2 的 `.env` 設同名的 `HOST_BEACON_WATCH` 並裝 `report-mark-feed-health`、`report-mark-feed-incident`；細節在管理後台「維運 → 來源主機」，步驟見 `docs/production_resilience.md`「來源主機信標」。
 - 對外：`research.tingfong.com` 是 Cloudflare 橘雲 A record 指向 EC2 的 Elastic IP，不走 Tunnel。EC2 上以 apt 的 nginx 載入 `deploy/nginx-origin.conf`（裝到 `/etc/nginx/sites-available/report-mark`），以 Cloudflare Origin CA 憑證（`/etc/ssl/report-mark/`，不進 repo）聽 443、反代 `127.0.0.1:8097`；App 靠對端 127.0.0.1 信任它（`REPORT_MARK_TRUSTED_PROXY_CIDRS` 預設值），所以 `proxy_pass` 不能改成其他位址。Security Group 只放行 Cloudflare IPv4 範圍的 443（由 CloudFormation stack `report-research-staging` 管理）。三個前提缺一不可：橘雲不能關（Origin CA 只有 Cloudflare 信任）、Cloudflare SSL/TLS 模式 Full (strict)、Cloudflare IP 範圍變動時 nginx 的 `set_real_ip_from` 與 SG 的 prefix list 一起改。
 
-### 其他維運入口
+### 辦公室主機的其他維運入口
 
 辦公室主機的對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。上傳掃描：`make up-clamav`／`down-clamav`／`clamav-smoke`（`deploy/clamav/docker-compose.yml`，獨立 compose 專案、常駐 clamd 容器 `report-mark-clamav`，只綁 `127.0.0.1:3310`，常駐約 1.2–1.6 GB；`clamav-smoke` 驗 EICAR 要 FOUND、正常 PDF 要 OK，可帶 `SMOKE_PDF=…`），安裝、停用與故障處置見 `docs/production_resilience.md`「ClamAV（上傳掃描）」。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
-
-LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。
 
 ## 延伸文件
 
@@ -416,11 +481,12 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 | `docs/ARCHITECTURE.md` | 模組地圖、import 方向、檢索／問答／讀取功能的不變量、Web 層、資料層、設定旋鈕、「刻意」設計索引、刻意不提供的功能 |
 | `docs/WORKFLOW.md` | 端到端管線、逐階段 I/O 與參數、生產同步鏈、研報上傳、標籤詞彙、Web API 契約、物件儲存（R2）、排錯 |
 | `docs/EXTRACTION.md` | 抽取層現況：選型與授權、文件模型、回退、品質指標、快取、`extraction_log`、golden set、回填、切塊與樣板 |
-| `docs/DEPLOYMENT_STATUS.md` | 各主機的部署現況與待確認事項 |
-| `docs/production_resilience.md` | 部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
+| `docs/DEPLOYMENT_STATUS.md` | 廷豐各主機的部署現況與待確認事項 |
+| `docs/CONTAINER_DEPLOYMENT.md` | 容器部署（映像＋docker compose）：系統需求、首次安裝、升級、備份與還原、systemd timer 對照表、零外連清單 |
+| `docs/production_resilience.md` | 廷豐主機的部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
 | `docs/EXTERNAL_API.md` | 交給 API 用戶端的對外 API 說明（認證、權限與資料範圍、限流與額度、端點、錯誤碼、範例）；後台「API 用戶端」頁的「說明文件」與「試打」分頁直接取用 |
-| `docs/EXTERNAL_ACCESS.md` | 辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |
-| `docs/nas_scheduled_sync_deployment.md` | NAS 定時同步的掛載、sudoers、timer 安裝 |
-| `docs/LINEBOT_ALWAYS_ON.md` | LineBot 常駐與監控 |
+| `docs/EXTERNAL_ACCESS.md` | 廷豐辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |
+| `docs/nas_scheduled_sync_deployment.md` | 廷豐辦公室主機的 NAS 定時同步：掛載、sudoers、timer 安裝 |
+| `docs/LINEBOT_ALWAYS_ON.md` | 廷豐辦公室主機的 LineBot 常駐與監控 |
 | `docs/CAPACITY.md` | 硬體用量量測與上雲選型 |
-| [AWS 基礎設施（正式環境）](deploy/aws/README.md) | CloudFormation 管理的 EC2／RDS（正式環境；資源名沿用 staging）、change set 與驗收流程 |
+| [AWS 基礎設施（廷豐正式環境）](deploy/aws/README.md) | CloudFormation 管理的 EC2／RDS（正式環境；資源名沿用 staging）、change set 與驗收流程 |

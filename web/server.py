@@ -37,15 +37,20 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 configure_logging()
 
-from app import request_context  # noqa: E402
+from app import (
+    FRAMEWORK_NAME,  # noqa: E402
+    request_context,  # noqa: E402
+)
+from app import profile as app_profile  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.services import accounts, db, llm_http, llm_models, usage_events  # noqa: E402
+from app.services import accounts, alert_webhook, db, llm_http, llm_models, usage_events  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
     csrf,  # noqa: E402
     deps,  # noqa: E402
     errors,  # noqa: E402
+    metrics,  # noqa: E402
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
@@ -66,12 +71,15 @@ from web.routers import admin_security as admin_security_routes  # noqa: E402
 from web.routers import admin_uploads as admin_uploads_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
+from web.routers import branding as branding_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
 from web.routers import external as external_routes  # noqa: E402
 from web.routers import features as features_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
 from web.routers import me_quota as me_quota_routes  # noqa: E402
+from web.routers import metrics as metrics_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
+from web.routers import oidc_login as oidc_login_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
@@ -114,8 +122,9 @@ async def _warmup_models() -> None:
 def _check_llm_models() -> None:
     """啟動自檢：線上任務解析到的模型各自需要什麼，缺了就說出來（不擋啟動）。
 
-    `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含舊的 `claude-*`）、網搜總閘開著
-    卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而健康檢查照樣 ok。判準在
+    `/healthz` 只探 DB。目前 provider 的金鑰沒填、模型名不在白名單（含舊的 `claude-*`）、端點設定有誤
+    （`llm_models.config_problems`）、網搜總閘開著卻沒有後端，都會讓問答回 SSE error（或時效題一律婉拒）而
+    健康檢查照樣 ok。判準在
     `llm_models.diagnose`（純函式）；金鑰只看有沒有值，不記任何內容。
     """
     resolved = llm_models.resolve_all(llm_models.ONLINE_TASKS)
@@ -129,6 +138,8 @@ def _check_llm_models() -> None:
         has_key=bool((os.environ.get(llm_models.key_env()) or "").strip()),
         web_enabled=get_settings().ask_enable_web,
         prov=llm_models.provider(),
+        allowed=llm_models.allowed_models(),
+        problems=llm_models.config_problems(),
     )
     for level, message in findings:
         logger.log(level, "%s", message)
@@ -179,6 +190,11 @@ def _start_usage_collection() -> usage_events.UsageFlusher | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # profile（app/profile.py）：機構名、品牌、prompt 參數、市場子集。設定錯了（未知鍵、缺 asset、非標準市場、
+    # PROFILE_DIR 不存在）就在這裡拋 ProfileError、拒絕啟動，不等到第一個問答或第一次載入品牌才炸。
+    loaded = app_profile.get_profile()
+    logger.warning("profile：%s（%s）", loaded.institution.product_name, loaded.root)
+    llm_models.set_identity_url(loaded.institution.website)  # 送給 LLM 供應商的自報身分（LLM 呼叫層不讀 profile）
     # 併發上限與背景 run 登錄表都是 per-process 狀態，多 worker 會讓上限翻倍、模型
     # 記憶體翻倍、研報重連隨機 404。偵測得到就拒絕啟動（fail-closed），偵測不到就
     # 放行——判準與已知缺口見 web/concurrency.py。
@@ -209,6 +225,11 @@ async def lifespan(app: FastAPI):
     # 線上 LLM 呼叫經 llm_http 的 observer 歸到人（只有 metadata）。USAGE_EVENTS_ENABLED=0 時都不啟動
     # （tests/conftest.py 如此，測試不寫任何庫）。詳見 app/services/usage_events.py。
     flusher = _start_usage_collection()
+    # 應用層監控訊號（web/metrics.py）：線上 LLM 呼叫的次數、耗時、失敗類別與 token 進 /metrics（只有 metadata）。
+    # 與用量收集分開註冊：USAGE_EVENTS_ENABLED=0 不該讓監控也跟著看不到 LLM。
+    llm_http.add_observer(metrics.observe_llm_call)
+    # 通用 webhook 告警的週期檢查（上傳積壓）；沒設 ALERT_WEBHOOK_URL 時不啟動（app/services/alert_webhook.py）。
+    alert_task = alert_webhook.start_watch()
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)
@@ -222,6 +243,13 @@ async def lifespan(app: FastAPI):
                 await warmup_task
             except asyncio.CancelledError:
                 pass
+        if alert_task is not None:
+            alert_task.cancel()
+            try:
+                await alert_task
+            except asyncio.CancelledError:
+                pass
+        llm_http.remove_observer(metrics.observe_llm_call)
         if flusher is not None:
             llm_http.remove_observer(usage_events.observe_llm_call)
             try:
@@ -236,19 +264,29 @@ async def lifespan(app: FastAPI):
             logger.exception("llm_http.aclose 失敗")
 
 
-app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
+app = FastAPI(title=FRAMEWORK_NAME, lifespan=lifespan)
 # 統一錯誤格式 {"detail", "code", "request_id"}（web/errors.py）。
 errors.install(app)
 
-# ───── 認證閘門(deny-by-default;白名單僅 /login 與 /healthz)─────
+# ───── 認證閘門(deny-by-default;白名單僅 /login、/healthz 與品牌)─────
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
 # 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
 # /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
-# 回應內容刻意極簡（見 routers/health.py）。
+# 回應內容刻意極簡（見 routers/health.py）。/readyz（就緒探測，容器部署的負載平衡器與 compose healthcheck 用）
+# 同樣免認證、回應同樣只有 status 一鍵。
 # /healthz/storage、/healthz/llm、/healthz/security、/healthz/feed 在白名單裡但只回答本機直連（其餘 404），
 # 理由見 routers/health.py。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed"}
-_AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
+# /api/branding 與 /api/branding/assets/ 底下：登入頁與 SPA 在登入前就要畫品牌；回應只有顯示用的名稱、
+# asset URL 與色票，asset 端點只交 profile 引用的檔（web/routers/branding.py）。
+# /login/oidc 與 /login/oidc/callback：OIDC 單一登入的起點與 IdP 導回點（還沒登入才需要；OIDC_ISSUER 沒設時回 404，
+# web/routers/oidc_login.py）。
+# /metrics：Prometheus 不登入；路由自己只回答允許的對端（METRICS_ALLOWED_CIDRS，預設只有本機、經代理一律 404），
+# 見 web/metrics.py。
+_AUTH_ALLOWLIST = {
+    "/login", "/healthz", "/readyz", "/healthz/storage", "/healthz/llm", "/healthz/security", "/healthz/feed",
+    "/api/branding", "/login/oidc", "/login/oidc/callback", "/metrics",
+}
+_AUTH_PREFIX_ALLOWLIST = ("/app/assets/", "/api/branding/assets/")
 # 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
 _EXTERNAL_PREFIX = "/external/"
 
@@ -341,6 +379,8 @@ async def reject_cross_site(request: Request, call_next):
 
 # 最後加＝最外層：401、302 與未捕捉例外的 500 也都拿得到關聯 id、也都記得到一行。
 app.add_middleware(RequestLogMiddleware)
+# HTTP 請求數與耗時（web/metrics.py）：比關聯 id 再外一層，所有回應（含 401／302／500）都算到。
+app.add_middleware(metrics.MetricsMiddleware)
 
 
 
@@ -354,6 +394,10 @@ app.add_middleware(RequestLogMiddleware)
 # /healthz（免認證存活探測）——必須與 _AUTH_ALLOWLIST 的白名單成對存在，
 # 只掛路由而沒放行等於它永遠回 302，與不存在的路由無從分辨（那正是它要解決的問題）。
 app.include_router(health_routes.router)
+# /metrics（免認證、只回答允許的對端）：同樣必須與 _AUTH_ALLOWLIST 成對存在。
+app.include_router(metrics_routes.router)
+# /api/branding、/api/branding/assets/{name}：登入前就要畫品牌，同樣在白名單（只交顯示用的欄位）。
+app.include_router(branding_routes.router)
 
 # /api/stats 與 /api/progress 已拆至 web/routers/monitor.py
 app.include_router(monitor_routes.router)
@@ -442,6 +486,7 @@ app.include_router(report_file_routes.router)
 
 # 登入流程頁面路由（middleware require_login 仍在本檔，見上）
 app.include_router(auth_pages_routes.router)
+app.include_router(oidc_login_routes.router)  # /login/oidc*：OIDC 單一登入（OIDC_ISSUER 沒設時 404）
 app.include_router(account_security_routes.router)  # /api/me/*：TOTP 自助設定與權限提升
 
 # SPA / 靜態服務：configure 內含 /app/assets Mount → router（catch-all）→ /static 的

@@ -37,6 +37,7 @@ from sqlalchemy import text as sql_text
 from app.services import llm_http
 from app.services.evidence import EvidenceLedger
 from app.services.judge_schema import (
+    DECLARED_LINEAGE_PREFIX,
     JUDGE_SCHEMA_VERSION,
     JudgeSchemaError,
     call_validated,
@@ -46,7 +47,7 @@ from app.services.judge_schema import (
     record_http_requests,
 )
 from app.services.llm import DEFAULT_MODEL
-from app.services.llm_models import is_http_model
+from app.services.llm_models import is_http_model, judge_lineage
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,10 @@ class FaithfulnessResult:
 
         judge_model 與 judge_schema_version 是讀分數時「只計現行 judge」的依據
         （app/services/judge_schema.py）；缺 judge_model 的舊列視為 claude-haiku-4-5。
+        設定宣告的 judge（系譜 `declared:<模型>`）另記 judge_lineage；內建模型不記，形狀與先前相同。
         """
+        lineage = judge_lineage(self.judge_model) if self.judge_model else None
+        declared = {"judge_lineage": lineage} if lineage and lineage.startswith(DECLARED_LINEAGE_PREFIX) else {}
         return {
             "citation_coverage": citation_coverage,
             "numeric_support_rate": self.numeric_support_rate,
@@ -219,6 +223,7 @@ class FaithfulnessResult:
             "judge_fingerprint": self.judge_fingerprint,
             "judge_requests": self.judge_requests,
             "usage": self.usage,
+            **declared,
         }
 
 

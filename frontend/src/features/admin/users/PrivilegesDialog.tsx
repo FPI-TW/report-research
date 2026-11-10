@@ -3,6 +3,7 @@ import { CheckRow, FormDialog, isElevationCancelled } from '../../../components/
 import type { AdminUser, GrantableScope } from '../useAdmin'
 import { SCOPE_LABELS, messageOf } from './userText'
 import c from '../../../components/console/Console.module.css'
+import { t } from '@/i18n'
 
 export type PrivilegesBody = { is_super: boolean; scopes: GrantableScope[] }
 
@@ -32,16 +33,16 @@ export function PrivilegesDialog({ user, onClose, onSave }: {
   }
 
   return (
-    <FormDialog open title={`調整「${user.username}」的權限`} width={460} submitLabel="儲存" busy={busy} error={error}
+    <FormDialog open title={t('admin.users.privilegesDialog.adjustPermissionsFor', { username: user.username })} width={460} submitLabel={t('admin.users.privilegesDialog.save')} busy={busy} error={error}
       onSubmit={() => { void submit() }} onClose={onClose}>
       {/* 勾選項一列一個（直排）：直接當表單的子項，不包 c.checkGroup（那是橫向換行）。 */}
-      <CheckRow checked={isSuper} onChange={setIsSuper}>super admin（可授予權限、管理其他 super admin）</CheckRow>
+      <CheckRow checked={isSuper} onChange={setIsSuper}>{t('admin.users.privilegesDialog.superAdminCanGrantPermissions')}</CheckRow>
       {(Object.keys(SCOPE_LABELS) as GrantableScope[]).map(s => (
         <CheckRow key={s} checked={isSuper || scopes.includes(s)} disabled={isSuper} onChange={() => toggle(s)}>
           {SCOPE_LABELS[s]}
         </CheckRow>
       ))}
-      <p className={c.fieldHint}>super admin 自動擁有全部權限。調整後對方的下一個動作就生效；需要重新驗證身分。</p>
+      <p className={c.fieldHint}>{t('admin.users.privilegesDialog.superAdminsAutomaticallyHaveEvery')}</p>
     </FormDialog>
   )
 }

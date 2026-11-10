@@ -11,9 +11,9 @@ name: CI
 
 on:
   pull_request:
-    # admin-v*-integration／ui-v*-integration：多分支平行開發的整合分支（管理後台、一般介面改版），
+    # admin-v*-integration／ui-v*-integration／framework-v*-integration：多分支平行開發的整合分支（管理後台、一般介面改版、通用框架化），
     # 各 lane 的 PR 先合進那裡、驗收後才整批進 main——那些 PR 同樣要跑完整 CI，否則整合分支上沒有任何自動驗證。
-    branches: [main, 'admin-v*-integration', 'ui-v*-integration']
+    branches: [main, 'admin-v*-integration', 'ui-v*-integration', 'framework-v*-integration']
   push:
     branches: [main]
 
@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 
-# 同一個 PR 連推多次時，取消尚未跑完的舊次（節省私有 repo 的 Actions 額度）。
+# 同一個 PR 連推多次時，取消尚未跑完的舊次（節省 Actions 額度與排隊時間）。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -362,6 +362,36 @@ jobs:
       - name: 研報可見性
         run: uv run pytest -q tests/test_report_visibility_db.py
 
+      # 文件類型（revision 0012）：類型關掉的文件從同一組讀取路徑消失、功能逐項開關、
+      # doc_type 與 is_research 的同步約束，以及廷豐 profile 下各功能的片段與 is_research 選到同一批。
+      - name: 文件類型
+        run: uv run pytest -q tests/test_doc_type_db.py
+
+      # revision 0012 的回填在空庫驗不到：另建一座停在 0011 的庫、塞 is_research true／false／預設三列，
+      # 再升到 head（已有資料，必須帶確認），讀回 doc_type 與統計。
+      - name: doc_type 回填演練
+        env:
+          REPORT_MARK_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/doctype_backfill
+        run: |
+          psql -h localhost -U postgres -d research -c "CREATE DATABASE doctype_backfill"
+          uv run alembic upgrade 0011
+          psql -h localhost -U postgres -d doctype_backfill -q -v ON_ERROR_STOP=1 \
+            -c "INSERT INTO research.research_report (id, file_hash, file_name, file_path, is_research) VALUES
+                  (gen_random_uuid(), 'h-true', 't.pdf', '/x/t.pdf', true),
+                  (gen_random_uuid(), 'h-false', 'f.pdf', '/x/f.pdf', false)" \
+            -c "INSERT INTO research.research_report (id, file_hash, file_name, file_path)
+                  VALUES (gen_random_uuid(), 'h-default', 'd.pdf', '/x/d.pdf')"
+          REPORT_MARK_MIGRATE_CONFIRM=localhost:5432/doctype_backfill uv run alembic upgrade head
+          got="$(psql -h localhost -U postgres -d doctype_backfill -Atc \
+            "SELECT string_agg(file_hash || '=' || doc_type || '/' || is_research, ',' ORDER BY file_hash)
+               FROM research.research_report")"
+          test "$got" = "h-default=research/true,h-false=non_research/false,h-true=research/true" \
+            || { echo "::error::doc_type 回填結果不對：$got"; exit 1; }
+          stats="$(psql -h localhost -U postgres -d doctype_backfill -Atc \
+            "SELECT count(*) FROM pg_stats WHERE schemaname = 'research' AND tablename = 'research_report'
+               AND attname = 'doc_type'")"
+          test "$stats" = 1 || { echo "::error::revision 0012 沒有對 doc_type 跑 ANALYZE"; exit 1; }
+
       # 單篇入庫核心的 pre_upsert hook 與 upsert_report 同一個交易：upsert 失敗時 hook 的寫入
       # 一起 rollback、hook 之前沒有任何 commit（上傳 worker 的草稿標記靠這一點）。
       - name: 入庫 hook 同交易
@@ -441,6 +471,11 @@ jobs:
       # 字面兩路帶 entitlement 時，授權範圍外的研報不會出現。
       - name: 對外 API 資料邊界
         run: uv run pytest -q tests/test_external_api_db.py
+
+      # 首次導入的分層回填：層別（窗期起點當天、前一天、NULL）、待補判斷（rejected 摘錄不算完成、
+      # 跳過名單與換 model）、挑候選不看訊號，以及查進度與估價的 SQL 執行得動。
+      - name: 分層回填
+        run: uv run pytest -q tests/test_backfill_tiers_db.py
 
   secrets:
     name: secret 掃描（gitleaks）

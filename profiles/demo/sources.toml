@@ -1,0 +1,17 @@
+# 示範券商 profile 的發行機構名單（虛構機構；格式見 app/profile.py 的 Sources 與 profiles/tingfong/sources.toml 檔頭）。
+# 代碼與顯示名稱與合成語料 scripts/demo_corpus.py 的 BROKERS 相同（tests/test_demo_profile.py 對帳）。
+# 合成語料的檔名帶發行機構代碼（20251001_aster_nvda_12.pdf），沒有側檔的研報靠這份名單推得 source；
+# 廷豐的券商 token（MS、GS、JPM…）不在這裡，檔名裡的美股 ticker 不會被誤判成發行機構。
+
+filename_tokens = [
+  { token = "ASTER", source = "aster" },
+  { token = "BIRCH", source = "birch" },
+  { token = "COBALT", source = "cobalt" },
+  { token = "DUNE", source = "dune" },
+]
+
+[display]
+aster = "星樺證券（虛構）"
+birch = "樺林投顧（虛構）"
+cobalt = "鈷藍證券（虛構）"
+dune = "沙丘資本（虛構）"

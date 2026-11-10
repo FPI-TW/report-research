@@ -7,25 +7,26 @@ import { dailyAxis, dailyCalls, dayIn } from './data/usageSeries'
 import { OpsQueryError } from './OpsShared'
 import { useLlmUsage } from './useOps'
 import styles from './data/Data.module.css'
+import { t } from '@/i18n'
 
 const RANGES: readonly SegOption<string>[] = [
-  { value: '7', label: '7 天' },
-  { value: '30', label: '30 天' },
-  { value: '90', label: '90 天' },
+  { value: '7', get label() { return t('admin.ops.opsLlmUsagePage.7Days') } },
+  { value: '30', get label() { return t('admin.ops.opsLlmUsagePage.30Days') } },
+  { value: '90', get label() { return t('admin.ops.opsLlmUsagePage.90Days') } },
 ]
 
 type View = 'task' | 'model' | 'day'
 const VIEWS: readonly SegOption<View>[] = [
-  { value: 'task', label: '依任務' },
-  { value: 'model', label: '依模型' },
-  { value: 'day', label: '依日期' },
+  { value: 'task', get label() { return t('admin.ops.opsLlmUsagePage.byTask') } },
+  { value: 'model', get label() { return t('admin.ops.opsLlmUsagePage.byModel') } },
+  { value: 'day', get label() { return t('admin.ops.opsLlmUsagePage.byDate') } },
 ]
-const VIEW_KEY_LABEL: Record<View, string> = { task: '任務', model: '模型', day: '日期' }
+const VIEW_KEY_LABEL: Record<View, string> = { get task() { return t('admin.ops.opsLlmUsagePage.task') }, get model() { return t('admin.ops.opsLlmUsagePage.model') }, get day() { return t('admin.ops.opsLlmUsagePage.date') } }
 
 const fmtInt = (n: number) => n.toLocaleString('zh-TW')
 
-function avgMs(t: LlmUsageTotals): string {
-  return t.calls ? `${(t.total_ms / t.calls / 1000).toFixed(1)} 秒` : '—'
+function avgMs(item: LlmUsageTotals): string {
+  return item.calls ? t('admin.ops.opsLlmUsagePage.s', { v: (item.total_ms / item.calls / 1000).toFixed(1) }) : '—'
 }
 
 function UsageTable({ caption, keyLabel, rows, showCost }: {
@@ -37,10 +38,10 @@ function UsageTable({ caption, keyLabel, rows, showCost }: {
       <table className={c.table} aria-label={caption}>
         <thead>
           <tr>
-            <th>{keyLabel}</th><th className={c.tdRight}>呼叫</th><th className={c.tdRight}>失敗</th>
-            <th className={c.tdRight}>輸入（快取命中）</th><th className={c.tdRight}>輸入（未命中）</th>
-            <th className={c.tdRight}>輸出</th><th className={c.tdRight}>推理</th><th className={c.tdRight}>平均耗時</th>
-            {showCost && <th className={c.tdRight}>費用</th>}
+            <th>{keyLabel}</th><th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.calls')}</th><th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.failures')}</th>
+            <th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.inputCacheHit')}</th><th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.inputCacheMiss')}</th>
+            <th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.output')}</th><th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.reasoning')}</th><th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.avgDuration')}</th>
+            {showCost && <th className={c.tdRight}>{t('admin.ops.opsLlmUsagePage.cost')}</th>}
           </tr>
         </thead>
         <tbody>
@@ -64,13 +65,13 @@ function UsageTable({ caption, keyLabel, rows, showCost }: {
 }
 
 /** 數字磚。`prefix` 讓合計、批次、線上三組磚的無障礙名稱不重複（畫面上的標籤不帶）。 */
-function Totals({ t, costAvailable, prefix = '' }: { t: LlmUsageTotals; costAvailable: boolean; prefix?: string }) {
+function Totals({ t: item, costAvailable, prefix = '' }: { t: LlmUsageTotals; costAvailable: boolean; prefix?: string }) {
   const tiles: [string, string, string][] = [
-    ['呼叫次數', fmtInt(t.calls), `失敗 ${fmtInt(t.failures)}・無用量 ${fmtInt(t.calls_without_tokens)}`],
-    ['輸入 token', fmtInt(t.prompt_hit_tokens + t.prompt_miss_tokens), `快取命中 ${fmtInt(t.prompt_hit_tokens)}`],
-    ['輸出 token', fmtInt(t.completion_tokens), `其中推理 ${fmtInt(t.reasoning_tokens)}`],
+    [t('admin.ops.opsLlmUsagePage.calls2'), fmtInt(item.calls), t('admin.ops.opsLlmUsagePage.failedWithoutUsage', { failures: fmtInt(item.failures), calls_without_tokens: fmtInt(item.calls_without_tokens) })],
+    [t('admin.ops.opsLlmUsagePage.inputTokens'), fmtInt(item.prompt_hit_tokens + item.prompt_miss_tokens), t('admin.ops.opsLlmUsagePage.cacheHits', { prompt_hit_tokens: fmtInt(item.prompt_hit_tokens) })],
+    [t('admin.ops.opsLlmUsagePage.outputTokens'), fmtInt(item.completion_tokens), t('admin.ops.opsLlmUsagePage.reasoning2', { reasoning_tokens: fmtInt(item.reasoning_tokens) })],
   ]
-  if (costAvailable && t.cost != null) tiles.push(['費用', t.cost.toFixed(4), '行內帶 cost 欄的加總'])
+  if (costAvailable && item.cost != null) tiles.push([t('admin.ops.opsLlmUsagePage.cost'), item.cost.toFixed(4), t('admin.ops.opsLlmUsagePage.sumOfLinesCarryingA')])
   return (
     <div className={`${c.tiles} ${styles.wideTiles}`}>
       {tiles.map(([name, value, hint]) => (
@@ -92,7 +93,7 @@ function Breakdown({ d, prefix = '' }: {
   return (
     <Card>
       <div className={styles.tabs}>
-        <Tabs label={`${prefix}用量明細`} tabs={VIEWS} value={view} onChange={setView} />
+        <Tabs label={t('admin.ops.opsLlmUsagePage.usageBreakdown', { prefix })} tabs={VIEWS} value={view} onChange={setView} />
       </div>
       <UsageTable caption={`${prefix}${label}`} keyLabel={VIEW_KEY_LABEL[view]} showCost={d.cost_available} rows={rows} />
     </Card>
@@ -114,10 +115,10 @@ function DailyCard({ d }: { d: LlmUsageResponse }) {
   if (!bars.some(b => (b.value ?? 0) > 0)) return null
   const peak = Math.max(...bars.map(b => b.value ?? 0))
   return (
-    <Card title="每日呼叫" hint={withOnline ? '批次＋線上' : '只有批次'} labelledBy="llm-daily-title"
-      right={<span>單日最高 <span className={c.num}>{fmtInt(peak)}</span> 次</span>}>
+    <Card title={t('admin.ops.opsLlmUsagePage.dailyCalls')} hint={withOnline ? t('admin.ops.opsLlmUsagePage.batchOnline') : t('admin.ops.opsLlmUsagePage.batchOnly')} labelledBy="llm-daily-title"
+      right={<span>{t('admin.ops.opsLlmUsagePage.dailyMax')}{' '}<span className={c.num}>{fmtInt(peak)}</span>{' '}{t('admin.ops.opsLlmUsagePage.calls3')}</span>}>
       <div className={styles.chartBody}>
-        <TrendBars bars={bars} label="每日呼叫次數" format={v => `${fmtInt(v)} 次`} highlightLast axis={dailyAxis(bars)} />
+        <TrendBars bars={bars} label={t('admin.ops.opsLlmUsagePage.dailyCallCount')} format={v => t('admin.ops.opsLlmUsagePage.calls4', { v: fmtInt(v) })} highlightLast axis={dailyAxis(bars)} />
       </div>
     </Card>
   )
@@ -127,26 +128,26 @@ function BatchSection({ d }: { d: LlmUsageResponse }) {
   return (
     <section className={styles.section} aria-labelledby="llm-batch-title">
       <div className={styles.sectionHead}>
-        <h2 id="llm-batch-title" className={styles.sectionTitle}>批次</h2>
+        <h2 id="llm-batch-title" className={styles.sectionTitle}>{t('admin.ops.opsLlmUsagePage.batch')}</h2>
         {d.source.exists && (
           <p className={c.meta}>
-            <span>範圍 <b>{fmtDateTime(d.since)}</b> ～ <b>{fmtDateTime(d.until)}</b>（日期以台北時間切）</span>
-            <span>範圍內 <b>{fmtInt(d.source.lines_in_range)}</b> 筆</span>
-            {d.source.lines_invalid > 0 && <span>無法解析 <b>{fmtInt(d.source.lines_invalid)}</b> 行（已略過）</span>}
+            <span>{t('admin.ops.opsLlmUsagePage.range')}{' '}<b>{fmtDateTime(d.since)}</b>{' '}{t('admin.ops.opsLlmUsagePage.text')}{' '}<b>{fmtDateTime(d.until)}</b>{t('admin.ops.opsLlmUsagePage.daysCutInTaipeiTime')}</span>
+            <span>{t('admin.ops.opsLlmUsagePage.inRange')}{' '}<b>{fmtInt(d.source.lines_in_range)}</b>{' '}{t('admin.ops.opsLlmUsagePage.lines')}</span>
+            {d.source.lines_invalid > 0 && <span>{t('admin.ops.opsLlmUsagePage.unparseable')}{' '}<b>{fmtInt(d.source.lines_invalid)}</b>{' '}{t('admin.ops.opsLlmUsagePage.linesSkipped')}</span>}
           </p>
         )}
       </div>
       {!d.source.exists ? (
-        <p className={styles.idle}>還沒有用量紀錄（data/llm_usage.jsonl 不存在；批次第一次呼叫 LLM 時才會建立）。</p>
+        <p className={styles.idle}>{t('admin.ops.opsLlmUsagePage.noUsageRecordsYetData')}</p>
       ) : (
         <>
           {d.source.truncated && (
             <p className={c.banner} data-tone="warn">
-              檔案超過讀取上限，只涵蓋 {fmtDateTime(d.source.earliest_ts)} 之後的紀錄。
+              {t('admin.ops.opsLlmUsagePage.theFileExceedsTheRead', { earliest_ts: fmtDateTime(d.source.earliest_ts) })}
             </p>
           )}
           {d.totals.calls === 0 ? (
-            <p className={styles.idle}>這段期間沒有任何批次 LLM 呼叫。</p>
+            <p className={styles.idle}>{t('admin.ops.opsLlmUsagePage.noBatchLlmCallsIn')}</p>
           ) : (
             <>
               <Totals t={d.totals} costAvailable={d.cost_available} />
@@ -164,25 +165,25 @@ function OnlineSection({ online }: { online: LlmUsageOnline | null | undefined }
   return (
     <section className={styles.section} aria-labelledby="llm-online-title">
       <div className={styles.sectionHead}>
-        <h2 id="llm-online-title" className={styles.sectionTitle}>線上（問答、忠實度抽查）</h2>
+        <h2 id="llm-online-title" className={styles.sectionTitle}>{t('admin.ops.opsLlmUsagePage.onlineQAFaithfulnessSpot')}</h2>
         {online?.available && (
           <p className={c.meta}>
-            <span>{online.since_day} ～ {online.until_day}（台北日，頭尾兩天整天計入）</span>
-            <span>歸因到 <b>{fmtInt(online.attributed_users)}</b> 位使用者</span>
-            {online.unattributed_calls > 0 && <span>未歸因 <b>{fmtInt(online.unattributed_calls)}</b> 次</span>}
+            <span>{t('admin.ops.opsLlmUsagePage.taipeiDaysFirstAndLast', { since_day: online.since_day, until_day: online.until_day })}</span>
+            <span>{t('admin.ops.opsLlmUsagePage.attributedTo')}{' '}<b>{fmtInt(online.attributed_users)}</b>{' '}{t('admin.ops.opsLlmUsagePage.users')}</span>
+            {online.unattributed_calls > 0 && <span>{t('admin.ops.opsLlmUsagePage.unattributed')}{' '}<b>{fmtInt(online.unattributed_calls)}</b>{' '}{t('admin.ops.opsLlmUsagePage.calls3')}</span>}
           </p>
         )}
       </div>
       {online == null ? (
-        <p className={styles.idle}>後端沒有回傳線上用量。</p>
+        <p className={styles.idle}>{t('admin.ops.opsLlmUsagePage.theBackendReturnedNoOnline')}</p>
       ) : !online.available ? (
-        <p className={c.banner} data-tone="warn" role="alert">{online.error ?? '線上用量暫時讀不到'}（批次用量不受影響）</p>
+        <p className={c.banner} data-tone="warn" role="alert">{online.error ?? t('admin.ops.opsLlmUsagePage.onlineUsageTemporarilyUnavailable')}{t('admin.ops.opsLlmUsagePage.batchUsageUnaffected')}</p>
       ) : online.totals.calls === 0 ? (
-        <p className={styles.idle}>這段期間沒有任何線上 LLM 呼叫。</p>
+        <p className={styles.idle}>{t('admin.ops.opsLlmUsagePage.noOnlineLlmCallsIn')}</p>
       ) : (
         <>
-          <Totals t={online.totals} costAvailable={online.cost_available} prefix="線上" />
-          <Breakdown d={online} prefix="線上・" />
+          <Totals t={online.totals} costAvailable={online.cost_available} prefix={t('admin.ops.opsLlmUsagePage.online')} />
+          <Breakdown d={online} prefix={t('admin.ops.opsLlmUsagePage.online2')} />
         </>
       )}
     </section>
@@ -195,8 +196,8 @@ function Usage({ d }: { d: LlmUsageResponse }) {
     <>
       {combined && d.online?.available && combined.totals.calls > 0 && (
         <section className={styles.section} aria-labelledby="llm-total-title">
-          <h2 id="llm-total-title" className={styles.sectionTitle}>合計（批次＋線上）</h2>
-          <Totals t={combined.totals} costAvailable={combined.cost_available} prefix="合計" />
+          <h2 id="llm-total-title" className={styles.sectionTitle}>{t('admin.ops.opsLlmUsagePage.totalBatchOnline')}</h2>
+          <Totals t={combined.totals} costAvailable={combined.cost_available} prefix={t('admin.ops.opsLlmUsagePage.total')} />
         </section>
       )}
       <DailyCard d={d} />
@@ -217,17 +218,16 @@ export default function OpsLlmUsagePage() {
   return (
     <>
       <PageHeader
-        summary="批次與線上 LLM 呼叫的 token 彙總；日期以台北時間切日。"
+        summary={t('admin.ops.opsLlmUsagePage.tokenTotalsOfBatchAnd')}
         help={(
           <>
-            兩個來源：批次（<code>data/llm_usage.jsonl</code>，摘要、標題、摘錄、訊號、簡報、標註）與線上（問答、忠實度抽查，記在 DB 的台北日彙總）。
-            只記 metadata、不記問題與答案。費用真值看供應商後台，這裡用來看哪個任務、哪個模型花了多少 token；個人用量在「配額」頁。
+            {t('admin.ops.opsLlmUsagePage.twoSourcesBatch')}<code>data/llm_usage.jsonl</code>{t('admin.ops.opsLlmUsagePage.summariesTitlesTakeawaysSignalsBriefs')}
           </>
         )}
-        actions={<Segmented label="範圍" options={RANGES} value={days} onChange={setDays} />}
+        actions={<Segmented label={t('admin.ops.opsLlmUsagePage.range')} options={RANGES} value={days} onChange={setDays} />}
       />
-      {q.isPending ? <p className={c.empty}>載入中…</p> : q.isError ? (
-        <OpsQueryError error={q.error} what="LLM 用量" />
+      {q.isPending ? <p className={c.empty}>{t('admin.ops.opsLlmUsagePage.loading')}</p> : q.isError ? (
+        <OpsQueryError error={q.error} what={t('admin.ops.opsLlmUsagePage.llmUsage')} />
       ) : <Usage d={q.data} />}
     </>
   )

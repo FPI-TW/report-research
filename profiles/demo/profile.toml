@@ -1,0 +1,92 @@
+# 示範券商的 profile（虛構機構）：證明框架不依賴廷豐的設定，也是業務展示環境。
+# 每一項都刻意與 profiles/tingfong 不同：機構名、產品名、logo、強調色、市場子集、連接器、背景補齊。
+# 用法與端到端測試見 docs/CONTAINER_DEPLOYMENT.md「示範環境」；格式與驗證規則見 app/profile.py 的模組 docstring。
+# 機構與產品名稱是虛構的，logo 是自製的幾何圖形，不模仿任何真實機構。
+
+[institution]
+name = "示範證券（虛構）"
+product_name = "研報洞察示範平台"
+short_name = "示範研報"
+
+[branding]
+logo_light = "logo.svg"
+logo_dark = "logo-dark.svg"
+favicon = "favicon.svg"
+
+# 強調色：青綠（框架預設是中性的石板藍、廷豐宣告鎏金）。鍵見 app/profile.py 的 ACCENT_TOKENS。
+[branding.colors.light]
+accent_text = "#0f6e6a"
+accent_strong = "#13857f"
+accent_hover = "#0b5653"
+accent_tint = "#e3f4f2"
+accent_line = "#b7e0dc"
+accent_panel = "#f1faf9"
+on_accent = "#ffffff"
+accent_button = "#0f766e"
+
+[branding.colors.dark]
+accent_text = "#5ed1c6"
+accent_strong = "#3bb8ac"
+accent_hover = "#86e0d7"
+accent_tint = "rgba(59, 184, 172, 0.14)"
+accent_line = "rgba(59, 184, 172, 0.4)"
+accent_panel = "rgba(59, 184, 172, 0.07)"
+on_accent = "#06201e"
+accent_button = "#3bb8ac"
+
+[prompt]
+system_name = "示範研報"
+system_name_en = "Demo Research"
+
+[markets]
+# 只啟用子集：篩選帶其他標準代碼（例如 HK）回 422 market_disabled；標到未啟用市場的研報照常可見。
+enabled = ["TW", "US", "MACRO"]
+
+[markets.display_names]
+TW = "台股"
+US = "美股"
+MACRO = "總體經濟"
+
+[security]
+totp_issuer = "研報洞察示範平台"
+
+[connectors]
+# 研報由券商自己的 S3 相容 bucket 送進來（端到端測試用 moto server），每份附 metadata 側檔（JSON 或 _metadata.csv）。
+# 憑證走環境變數：CONNECTOR_DEMO_BUCKET、_ACCESS_KEY_ID、_SECRET_ACCESS_KEY、_ENDPOINT、_REGION。
+enabled = ["research-inbox"]
+
+[connectors.sources.research-inbox]
+kind = "s3"
+prefix = "research/"
+env = "CONNECTOR_DEMO"
+poll_minutes = 15
+settle_seconds = 0
+
+[backfill]
+# 首次導入：第二層（近 12 個月）隨連接器匯入一起跑；更早的由背景補齊在小上限內慢慢補。
+recent_months = 12
+background_enabled = true
+daily_token_limit = 300000
+max_reports_per_round = 10
+
+[instruments]
+# 個股代號格式（標註結果 stock_targets 的驗證規則，各市場格式的聯集）：台股 4～6 碼數字（含 00878 這類 ETF），
+# 美股 1～5 個大寫字母（含 BRK.B 這類股別後綴；小寫會轉大寫）。廷豐只收 4 碼數字。
+[instruments.code_formats.TW]
+kind = "digits"
+min_length = 4
+max_length = 6
+
+[instruments.code_formats.US]
+kind = "letters"
+min_length = 1
+max_length = 5
+share_class = true
+
+[sources]
+# 虛構發行機構的名單（檔名 token、顯示名稱）；沒有側檔的研報由檔名推得發行機構。
+catalog = "sources.toml"
+
+[brief]
+# 示範環境隨時可產生當日簡報（廷豐等到 9 時，因為券商早報上午才進來）；端到端測試因此不受執行時刻影響。
+after_hour = 0

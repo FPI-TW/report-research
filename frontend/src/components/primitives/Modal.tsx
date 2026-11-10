@@ -4,6 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import { TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
 import styles from './Modal.module.css'
+import { t } from '@/i18n'
 
 interface ModalProps {
   open: boolean
@@ -68,7 +69,7 @@ export function Modal({ open, onClose, title, children, className, bare = false,
             {title != null && (
               <div className={styles.header}>
                 <div id={titleId} className={styles.title}>{title}</div>
-                <button type="button" className={styles.close} onClick={onClose} aria-label="關閉">×</button>
+                <button type="button" className={styles.close} onClick={onClose} aria-label={t('primitives.modal.close')}>×</button>
               </div>
             )}
             {bare ? children : <div className={styles.body}>{children}</div>}

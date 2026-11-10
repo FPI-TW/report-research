@@ -54,6 +54,8 @@ export const AdminUploadSchema = z.object({
   decision_reason: z.string().nullable().optional(),
   purge_after: z.string().nullable().optional(),
   purged_at: z.string().nullable().optional(),
+  api_client_id: z.number().int().nullable().optional(),
+  api_client: z.string().nullable().optional(),
 })
 export type AdminUpload = z.infer<typeof AdminUploadSchema>
 
@@ -254,7 +256,7 @@ export const ApiClientItemSchema = z.object({
   name: z.string(),
   key_prefix: z.string(),
   enabled: z.boolean(),
-  scopes: z.array(z.enum(['search', 'report.file'])),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])),
   rate_limit_per_min: z.number().int(),
   daily_quota: z.number().int(),
   entitlements: ApiClientEntitlementsSchema,
@@ -276,7 +278,7 @@ export const ApiClientWithKeySchema = z.object({
   name: z.string(),
   key_prefix: z.string(),
   enabled: z.boolean(),
-  scopes: z.array(z.enum(['search', 'report.file'])),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])),
   rate_limit_per_min: z.number().int(),
   daily_quota: z.number().int(),
   entitlements: ApiClientEntitlementsSchema,
@@ -374,6 +376,17 @@ export const AuthEventListResponseSchema = z.object({
 })
 export type AuthEventListResponse = z.infer<typeof AuthEventListResponseSchema>
 
+export const BuildInfoSchema = z.object({
+  available: z.boolean().optional(),
+  source: z.enum(['image', 'host', 'git']).nullable().optional(),
+  commit: z.string().nullable().optional(),
+  version: z.string().nullable().optional(),
+  tree_clean: z.boolean().nullable().optional(),
+  built_at: z.string().nullable().optional(),
+  stale_file: z.boolean().optional(),
+})
+export type BuildInfo = z.infer<typeof BuildInfoSchema>
+
 export const BulkReportResultSchema = z.object({
   file_hash: z.string(),
   status: z.enum(['ok', 'skipped']),
@@ -449,7 +462,7 @@ export type ConfigLimits = z.infer<typeof ConfigLimitsSchema>
 
 export const CreateApiClientRequestSchema = z.object({
   name: z.string(),
-  scopes: z.array(z.enum(['search', 'report.file'])),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])),
   rate_limit_per_min: z.number().int(),
   daily_quota: z.number().int(),
   entitlements: ApiClientEntitlementsSchema,
@@ -1269,6 +1282,7 @@ export const SecretsPresentSchema = z.object({
   edge_secret: z.boolean(),
   r2_credentials: z.boolean(),
   alert_webhook: z.boolean(),
+  generic_alert_webhook: z.boolean().nullable().optional(),
 })
 export type SecretsPresent = z.infer<typeof SecretsPresentSchema>
 
@@ -1442,7 +1456,7 @@ export type UnusedIndexesSection = z.infer<typeof UnusedIndexesSectionSchema>
 
 export const UpdateApiClientRequestSchema = z.object({
   enabled: z.boolean().nullable().optional(),
-  scopes: z.array(z.enum(['search', 'report.file'])).nullable().optional(),
+  scopes: z.array(z.enum(['search', 'report.file', 'report.upload'])).nullable().optional(),
   rate_limit_per_min: z.number().int().nullable().optional(),
   daily_quota: z.number().int().nullable().optional(),
   note: z.string().nullable().optional(),
@@ -1470,6 +1484,7 @@ export const UserItemSchema = z.object({
   scopes: z.array(z.enum(['qa_content.read', 'ops.operate', 'api_clients.manage'])).optional(),
   totp_enabled: z.boolean().optional(),
   deletion_execute_after: z.string().nullable().optional(),
+  sso_bound: z.boolean().optional(),
 })
 export type UserItem = z.infer<typeof UserItemSchema>
 
@@ -1479,6 +1494,7 @@ export const UserListResponseSchema = z.object({
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
 
 export const VersionsSectionSchema = z.object({
+  build: BuildInfoSchema.nullable().optional(),
   git: GitInfoSchema.nullable().optional(),
   frontend: FrontendBuildSchema.nullable().optional(),
   python: z.string().nullable().optional(),
@@ -1526,6 +1542,8 @@ export const AdminUploadDetailSchema = z.object({
   decision_reason: z.string().nullable().optional(),
   purge_after: z.string().nullable().optional(),
   purged_at: z.string().nullable().optional(),
+  api_client_id: z.number().int().nullable().optional(),
+  api_client: z.string().nullable().optional(),
   report: AdminUploadReportSchema.nullable().optional(),
 })
 export type AdminUploadDetail = z.infer<typeof AdminUploadDetailSchema>
@@ -1610,6 +1628,7 @@ export const ConfigSectionSchema = z.object({
   models: z.record(z.string(), z.unknown()).optional(),
   extractor: z.string().nullable().optional(),
   log_level: z.string().nullable().optional(),
+  log_format: z.string().nullable().optional(),
   ops_agent_environment: z.string().nullable().optional(),
   ops_agent_socket: z.string().nullable().optional(),
   flags: ConfigFlagsSchema.nullable().optional(),
@@ -2121,7 +2140,7 @@ export const adminApi = {
   /** GET /api/admin/security/audit-chain — Security Audit Chain */
   securityAuditChain: () => requestJSON('/api/admin/security/audit-chain', AuditChainStateResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/security/events — Security Events */
-  securityEvents: (query: { event?: 'login.success' | 'login.failure' | 'login.totp_failure' | 'login.locked' | 'login.insecure' | 'logout' | 'elevate.success' | 'elevate.failure' | null; user_id?: string | null; ip?: string | null; since?: string | null; until?: string | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/events${qs(query)}`, AuthEventListResponseSchema, { cache: 'no-store' }),
+  securityEvents: (query: { event?: 'login.success' | 'login.failure' | 'login.totp_failure' | 'login.locked' | 'login.insecure' | 'logout' | 'elevate.success' | 'elevate.failure' | 'login.sso_failure' | null; user_id?: string | null; ip?: string | null; since?: string | null; until?: string | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/events${qs(query)}`, AuthEventListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/security/high-risk — Security High Risk */
   securityHighRisk: (query: { days?: number; category?: 'privilege' | 'elevation' | 'session' | 'credential' | 'deletion' | 'ops' | 'data_access' | 'config' | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/high-risk${qs(query)}`, HighRiskResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/security/sessions — Security Sessions */

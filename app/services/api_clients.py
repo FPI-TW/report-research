@@ -33,14 +33,14 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from app.profile import get_profile
 from app.services.accounts import record_audit
 from app.services.db import SessionFactory
-from app.services.tagging import MARKETS
 
 logger = logging.getLogger(__name__)
 
 # 金鑰能呼叫的端點（與 research.api_client.scopes 的 CHECK 逐字一致）。
-KEY_SCOPES: frozenset[str] = frozenset({"search", "report.file"})
+KEY_SCOPES: frozenset[str] = frozenset({"search", "report.file", "report.upload"})
 # 授權範圍的維度（與 research.api_client_entitlement.dimension 的 CHECK 逐字一致）。
 ENTITLEMENT_DIMENSIONS: tuple[str, ...] = ("market", "source", "report_type", "instrument_type")
 
@@ -160,8 +160,8 @@ def _check_note(note) -> str | None:
 def normalize_entitlements(entitlements) -> dict[str, tuple[str, ...]]:
     """驗證並正規化授權範圍：去頭尾空白、去重、排序；空清單＝移除該維度（不限）。
 
-    `market` 必填、非空，值必須是 `tagging.MARKETS` 的代碼。空字串值一律拒絕（不靜默丟掉——
-    丟掉之後若整個維度變空，就從「限定」變成「不限」）。
+    `market` 必填、非空，值必須是 profile 啟用的標準市場代碼（`app/profile.py` 的 `[markets].enabled`）。
+    空字串值一律拒絕（不靜默丟掉——丟掉之後若整個維度變空，就從「限定」變成「不限」）。
     """
     if not isinstance(entitlements, Mapping):
         raise _invalid("授權範圍必須是 {維度: [值, …]}")
@@ -188,7 +188,7 @@ def normalize_entitlements(entitlements) -> dict[str, tuple[str, ...]]:
         if len(cleaned) > ENTITLEMENT_MAX_VALUES:
             raise _invalid(f"{dim} 最多 {ENTITLEMENT_MAX_VALUES} 個值")
         if dim == "market":
-            bad = sorted(cleaned - set(MARKETS))
+            bad = sorted(cleaned - set(get_profile().markets.enabled))
             if bad:
                 raise _invalid(f"不支援的市場代碼：{'、'.join(bad)}")
         if cleaned:

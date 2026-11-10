@@ -1,20 +1,23 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="{{lang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>登入 · 廷豐智能研報</title>
-<meta name="description" content="廷豐智能研報登入" />
+<title>{{t:title}}</title>
+<meta name="description" content="{{t:meta_description}}" />
 <meta name="theme-color" content="#efeeea" />
-<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAALpklEQVR42u2aeXBdVRnAf/e9mzSlaYBTpBRlKfsSCtYCg8CAFMEFcmSV4hh2UMACAqcTlKSJjLGHQQRLHzqjMopa5YD7mKdoMlGdEkCtQ4GH4C1vfm3Wz9AyI6qazGwV81yl0eWkNbROaoi6xecghzPqcqBFXOMYkfBpzqhsZ5UvOKM2l+8F4J/Az5KEiMjnh+wGgzOSLJgfZ7T1y4HLZM4EUfX81B6V1dZ/BBwtpesxwoQGZ9T9zqhdtPW55pZiqRuIRTJ5EUAMpOXtuHieixGjM2qyM2pBQHwl8CFwtLb+gyDjuwbYWnBr0tZ/uGB+nBnMPYNBl8QCK/yAFCwALtLW/8QZVaWt73FG7SVV2+3kOFQBS4F5wA3a+jeC9a4GLpR/b9LWnxF82168znfEoqdrvQ9obf1TwZ5nAdensUndHH9IxyyVZp4jVxTtrPKJHIUzgWclLP6xM+otbf1CQegFqQHeAhwm528cMAuY6Yz6vfQInwisNcCm0lzZX5og0yXyTBsnVRRb5vXa+r87o8Zq61dKr2CejOsGTo0iaGr0g64LrldRNNCC6cBvg27v8dr6p5OEaOpKldXWPzbjwLG/FOIml0mZw2pPOeI/AH4BnK6tX9jeFkc37VaIpsxZ2eeMOlkqzSnx52nrbxPc1qtBMqSyeBAhniE9wRTmArPEBVWK+0Ss9JHymyYlrJoykl4EPAM8CDyorV8i8yu19b3OqDHAFeKNUrhAW3/tULvFQ26NBUw4Brg5IKgLaNDW/xe20ErmThQbMk5erQCW1M3xi8MeXzjXGXUE8CPgs8Gcs7T1tw+nVT6sGyIBE/YSdd03+PwAcC3wUKiWa2tklvkWSf9wJlAXvH8OOENb/8xw7wkM+4pMKqWmRiqn9qgGineCwvP+N2ChGM0ubf3SdTC1WiK6IwAtR4ZA6tcAP9DWr2xqHFzld4MyIKzDCwG7AJdKQ6PU8C2ieAPkLfHpS4Niy1ZiLHcsKbkjZfJfiTd4MW2cFlvow4ORvCQVtbfFmeDM7gh8QzzFXqnHCZKh0syz9H0BeFFc3a3a+lcCjSswQrdJR/yaXJr1pedessl9pJU2TTLKSaIdlUEs0S21/tek3PYY8Gxw5S5bkiXyiWRACSMy5QyUM2qsMGCM4NADLNPWryhnaMskUp98BoR7LGsgejivMrna7uTY+tzaLkNH7W1xJu6qiaZnfUHKchv04vRGvS0eFllIYHZTcf/ZzSRE/fW+URiFURiFURiFURiFjQL/BtkcpszxhVcGAAAAAElFTkSuQmCC" />
+{{favicon_link}}
 <style>
 /* region:shell (lane login-shell)：:root、版面、登入卡、表單、功能磚共用樣式、響應式 */
   /* 登入頁在 auth 牆外，不可引用 /static 下受保護資產（tokens.css）；樣式全部 inline、字體走系統無襯線。
      --tf-* 四個是 frontend/src/styles/tokens.css 的手抄副本（tests/test_login_page.py 比對），改主題時兩邊都要動；
-     其餘色值是登入頁專用的設計定稿值。 */
+     其餘色值是登入頁專用的設計定稿值。
+     強調色（--tf-gold-text、--gold-hover、--gold-ink、--gold-tint）這裡是框架的中性預設，機構色由伺服器在
+     這段樣式表之後注入 profile 的 [branding.colors.light]（web/routers/auth_pages.py 的 LOGIN_ACCENT_VARS）；
+     半透明的強調色一律以 color-mix 從這四個變數算出來，不寫死色值。 */
   :root {
-    --tf-canvas: #f2f2f4; --tf-gold-text: #8a5a0f; --tf-surface: #ffffff; --tf-border: #e3e3e6;
-    --gold-hover: #7a4f0c; --gold-ink: #ae7415;
+    --tf-canvas: #f2f2f4; --tf-gold-text: #2f5577; --tf-surface: #ffffff; --tf-border: #e3e3e6;
+    --gold-hover: #23435f; --gold-ink: #3d6890; --gold-tint: #e9eff5;
     --page-bg: #efeeea; --tile-bg: #f8f7f4;
     --text-1: #1d1d1f; --text-2: #48484d; --text-desc: #5d5d58; --text-weak: #6b6b66;
     --rule: #efeee9; --hairline: rgba(0,0,0,.08);
@@ -35,7 +38,7 @@
     display: grid; gap: 16px;
     grid-template-columns: minmax(0,1fr) 440px minmax(0,1fr);
     grid-template-rows: repeat(3, minmax(0,1fr));
-    background: radial-gradient(520px 420px at 50% 50%, rgba(174,116,21,.10), transparent 70%);
+    background: radial-gradient(520px 420px at 50% 50%, color-mix(in srgb, var(--gold-ink) 10%, transparent), transparent 70%);
   }
   .intro { grid-column: 1; grid-row: 1 / span 3; }
   .login-card { grid-column: 2; grid-row: 1 / span 3; }
@@ -120,7 +123,7 @@
     background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: 12px; outline: none;
     transition: border-color .18s, box-shadow .18s, background-color .18s;
   }
-  .field input:focus { border-color: var(--tf-gold-text); box-shadow: 0 0 0 4px rgba(138,90,15,.12); }
+  .field input:focus { border-color: var(--tf-gold-text); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tf-gold-text) 12%, transparent); }
   .field input:disabled { background: var(--tf-canvas); color: var(--text-weak); }
   .field input#code { font-size: 18px; letter-spacing: .3em; text-align: center; }
   .form-error {
@@ -134,15 +137,41 @@
     transition: background-color .18s;
   }
   .submit:hover { background: var(--gold-hover); }
-  .submit:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(138,90,15,.22); }
+  .submit:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--tf-gold-text) 22%, transparent); }
   .submit:disabled { cursor: progress; background: var(--gold-hover); opacity: .85; }
   .form-alt { margin: -4px 0 0; text-align: center; font-size: 13px; }
   .form-alt a { color: var(--tf-gold-text); }
   .form-alt a:hover { color: var(--gold-hover); }
+  /* OIDC 單一登入：伺服器依 OIDC_ISSUER／OIDC_SSO_ONLY 把 login-card 的 data-sso 填成 off／on／only。
+     on＝公司帳號按鈕在上、帳密表單照常；only＝帳密表單收起，只留給緊急管理員展開。 */
+  .sso { display: none; flex-direction: column; gap: 14px; }
+  [data-sso="on"] .sso, [data-sso="only"] .sso { display: flex; }
+  .sso-button {
+    display: flex; align-items: center; justify-content: center; height: 50px; padding: 0 16px;
+    font-size: 15px; font-weight: 600; color: #fff; text-decoration: none;
+    background: var(--tf-gold-text); border-radius: 999px; transition: background-color .18s;
+  }
+  .sso-button:hover { background: var(--gold-hover); }
+  .sso-button:focus-visible { outline: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--tf-gold-text) 22%, transparent); }
+  .sso-divider { display: none; align-items: center; gap: 12px; font-size: 12px; color: var(--text-desc); }
+  .sso-divider::before, .sso-divider::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+  [data-sso="on"] .sso-divider { display: flex; }
+  [data-sso="on"] #password-form .submit { color: var(--tf-gold-text); background: var(--tf-surface);
+    box-shadow: inset 0 0 0 1px var(--tf-border); }
+  [data-sso="on"] #password-form .submit:hover { background: var(--tf-canvas); }
+  .local-toggle { display: none; margin: 0; padding: 0; font: inherit; font-size: 13px; color: var(--tf-gold-text);
+    background: none; border: none; cursor: pointer; text-align: center; }
+  .local-toggle:hover { color: var(--gold-hover); }
+  [data-sso="only"] .local-toggle { display: block; }
+  [data-sso="only"] #password-form:not(.is-open) { display: none; }
+  [data-sso="only"] .local-toggle.is-open { display: none; }
   .card-foot {
     padding-top: 18px; border-top: 1px solid var(--hairline);
     font-size: 12px; line-height: 1.5; color: var(--text-desc); text-align: center;
   }
+  /* 介面語言切換：profile 開放兩種以上語系才出現，連結由伺服器填（web/routers/auth_pages.py 的 _lang_switch）。 */
+  .lang-switch { display: block; margin-top: 6px; color: var(--tf-gold-text); }
+  .lang-switch:hover { color: var(--gold-hover); }
 
   /* 900–1279：intro｜登入卡兩欄，四塊功能磚移到下方、兩欄排列；高度隨內容。 */
   @media (max-width: 1279.98px) {
@@ -160,7 +189,7 @@
       padding: 16px;
       grid-template-columns: minmax(0,1fr);
       grid-template-rows: none;
-      background: radial-gradient(520px 420px at 50% 320px, rgba(174,116,21,.10), transparent 70%);
+      background: radial-gradient(520px 420px at 50% 320px, color-mix(in srgb, var(--gold-ink) 10%, transparent), transparent 70%);
     }
     .login-card, .intro, .features { grid-column: 1; grid-row: auto; }
     .login-card { padding: 36px 28px 24px; }
@@ -184,7 +213,7 @@
 @keyframes tfPop{0%,34%{opacity:0;transform:scale(.6)}40%{opacity:1;transform:scale(1.08)}44%,86%{opacity:1;transform:scale(1)}96%,100%{opacity:0;transform:scale(1)}}
 @keyframes tfMark{0%,12%{transform:scaleX(0)}32%,86%{transform:scaleX(1);opacity:1}96%,100%{transform:scaleX(1);opacity:0}}
 @keyframes tfDrop{0%{opacity:0;transform:translateY(-10px)}12%,86%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(0)}}
-@keyframes tfPulse{0%{box-shadow:0 0 0 0 rgba(174,116,21,.45)}70%,100%{box-shadow:0 0 0 10px rgba(174,116,21,0)}}
+@keyframes tfPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--gold-ink) 45%, transparent)}70%,100%{box-shadow:0 0 0 10px color-mix(in srgb, var(--gold-ink) 0%, transparent)}}
 @keyframes tfRow{0%{opacity:0;transform:translateY(8px)}10%,86%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(0)}}
 @keyframes tfTravel{0%{transform:translateX(0);opacity:0}2%{opacity:1}10%{transform:translateX(38px);opacity:1}12%,100%{transform:translateX(38px);opacity:0}}
 /* 減少動態：停用所有動畫與轉場。各 lane 的元素「基本樣式＝最終狀態」，動畫只負責從隱藏長出來。 */
@@ -211,7 +240,7 @@
   }
   .anim-qa .qa-caret, .anim-search .srch-caret {
     display: inline-block; width: 2px; height: 1.1em; margin-left: 3px; vertical-align: -.18em;
-    background: #8a5a0f; animation: tfBlink 1.1s steps(1) infinite;
+    background: var(--tf-gold-text); animation: tfBlink 1.1s steps(1) infinite;
   }
   .anim-qa .qa-caret { display: none; }
   .anim-qa .qa.is-typing .qa-caret { display: inline-block; }
@@ -219,7 +248,7 @@
     flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
     padding: 5px 10px; border-radius: 999px; white-space: nowrap;
   }
-  .anim-qa .qa-send { color: #8a5a0f; background: #f8f1e0; transition: background-color .2s, color .2s; }
+  .anim-qa .qa-send { color: var(--tf-gold-text); background: var(--gold-tint); transition: background-color .2s, color .2s; }
   .anim-qa .qa.is-typing .qa-send { color: #6b6b66; background: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
   .anim-search .srch-enter { color: #6b6b66; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
 
@@ -230,17 +259,17 @@
     position: absolute; left: -21px; top: 21px; bottom: -12px; width: 2px; border-radius: 1px;
     background: #e3e1da; overflow: hidden;
   }
-  .anim-qa .qa-line-fill { display: block; width: 100%; height: 100%; background: #ae7415; transform-origin: top; }
+  .anim-qa .qa-line-fill { display: block; width: 100%; height: 100%; background: var(--gold-ink); transform-origin: top; }
   .anim-qa .qa-node {
     position: absolute; left: -28px; top: 2px; width: 16px; height: 16px; border-radius: 999px;
     display: flex; align-items: center; justify-content: center;
-    background: #ae7415; border: 2px solid #ae7415; color: #ffffff;
+    background: var(--gold-ink); border: 2px solid var(--gold-ink); color: #ffffff;
     transition: background-color .25s, border-color .25s;
   }
   .anim-qa .qa-node svg { display: block; width: 10px; height: 10px; }
-  .anim-qa .qa-node-dot { display: none; width: 5px; height: 5px; border-radius: 999px; background: #ae7415; }
+  .anim-qa .qa-node-dot { display: none; width: 5px; height: 5px; border-radius: 999px; background: var(--gold-ink); }
   .anim-qa .qa-row.is-active .qa-node {
-    background: #ffffff; border: 2px solid #ae7415; animation: tfPulse 1.4s ease-out infinite;
+    background: #ffffff; border: 2px solid var(--gold-ink); animation: tfPulse 1.4s ease-out infinite;
   }
   .anim-qa .qa-row.is-pending .qa-node { background: #ffffff; border: 1.5px solid #d6d4cd; }
   .anim-qa .qa-row.is-active .qa-node svg, .anim-qa .qa-row.is-pending .qa-node svg { display: none; }
@@ -252,7 +281,7 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px;
     letter-spacing: .06em; color: #6b6b66; white-space: nowrap;
   }
-  .anim-qa .qa-status-active { display: none; color: #8a5a0f; }
+  .anim-qa .qa-status-active { display: none; color: var(--tf-gold-text); }
   .anim-qa .qa-row.is-active .qa-status-active { display: inline; }
   .anim-qa .qa-row.is-active .qa-status-done, .anim-qa .qa-row.is-pending .qa-status-done { display: none; }
   .anim-qa .qa-body-intent { min-height: 24px; }
@@ -284,7 +313,7 @@
     background: #ffffff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
     transition: box-shadow .25s, transform .25s;
   }
-  .anim-qa .qa-src-chip.is-lit { box-shadow: inset 0 0 0 1.5px #ae7415; transform: translateY(-2px); }
+  .anim-qa .qa-src-chip.is-lit { box-shadow: inset 0 0 0 1.5px var(--gold-ink); transform: translateY(-2px); }
   .anim-qa .qa-src-code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
     letter-spacing: .06em; color: #5d5d58;
@@ -292,9 +321,9 @@
   .anim-qa .qa-cite {
     flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px;
     font-weight: 700; line-height: 1.5; padding: 0 6px; border-radius: 999px;
-    background: #f8f1e0; color: #8a5a0f; transition: background-color .25s, color .25s;
+    background: var(--gold-tint); color: var(--tf-gold-text); transition: background-color .25s, color .25s;
   }
-  .anim-qa .qa-cite.is-lit { background: #8a5a0f; color: #ffffff; }
+  .anim-qa .qa-cite.is-lit { background: var(--tf-gold-text); color: #ffffff; }
   .anim-qa .qa-read { display: flex; flex-direction: column; gap: 7px; padding: 3px 0; }
   .anim-qa .qa-read-mark { position: relative; display: block; height: 4px; width: 94%; }
   .anim-qa .qa-read-hl {
@@ -319,7 +348,7 @@
     height: 18px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5d5d58;
     animation: tfFadeUp .3s ease-out both;
   }
-  .anim-qa .qa-grounded-in svg { display: block; flex: none; width: 14px; height: 14px; color: #ae7415; }
+  .anim-qa .qa-grounded-in svg { display: block; flex: none; width: 14px; height: 14px; color: var(--gold-ink); }
   .anim-qa .qa .qa-off { display: none; }
 
   /* 02 檢索 */
@@ -339,7 +368,7 @@
   .anim-search .srch-rel {
     flex: none; position: relative; width: 48px; height: 4px; border-radius: 2px; background: #e7e5df; overflow: hidden;
   }
-  .anim-search .srch-rel-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: #ae7415; }
+  .anim-search .srch-rel-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--gold-ink); }
   .anim-search .srch .srch-off { display: none; }
   /* <1280：功能磚移到下方、檢索磚寬可達 1000px；搜尋列可以全寬，結果列不跟著拉長，
      上限參考 1440 設計稿的結果列寬（388px），靠左對齊。 */
@@ -375,7 +404,7 @@
 .anim-reading .rd-foot { display: flex; justify-content: flex-end; }
 .anim-reading .rd-chip {
   font-size: 11px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px;
-  background: #f8f1e0; color: #8a5a0f; white-space: nowrap;
+  background: var(--gold-tint); color: var(--tf-gold-text); white-space: nowrap;
   animation: tfPop 4.8s ease-out .1s infinite both;
 }
 
@@ -398,7 +427,7 @@
   animation: tfDrop 5s ease-out .65s infinite both;
 }
 .anim-radar .rdr-gold-core {
-  display: block; width: 12px; height: 12px; border-radius: 50%; background: #ae7415;
+  display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--gold-ink);
   animation: tfPulse 1.6s ease-out 1.2s infinite;
 }
 .anim-radar .rdr-note { font-size: 11.5px; color: #6b6b66; }
@@ -422,7 +451,7 @@
 }
 .anim-brief .br-pulse {
   position: absolute; left: 0; top: -2px; width: 6px; height: 6px; border-radius: 999px;
-  background: #ae7415; opacity: 0;
+  background: var(--gold-ink); opacity: 0;
   animation: tfTravel 6s ease-in-out .7s infinite both;
 }
 .anim-brief .br-pulse:nth-child(2) { animation-delay: 1.2s; }
@@ -434,19 +463,19 @@
 }
 .anim-brief .br-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .anim-brief .br-title { font-size: 11.5px; font-weight: 600; color: #1d1d1f; white-space: nowrap; }
-.anim-brief .br-date { font-size: 10.5px; color: #8a5a0f; }
+.anim-brief .br-date { font-size: 10.5px; color: var(--tf-gold-text); }
 .anim-brief .br-item {
   display: flex; align-items: center; gap: 7px;
   animation: tfRow 6s ease-out 1.3s infinite both;
 }
 .anim-brief .br-item:nth-child(3) { animation-delay: 1.8s; }
 .anim-brief .br-item:nth-child(4) { animation-delay: 2.3s; }
-.anim-brief .br-bullet { flex: none; width: 5px; height: 5px; border-radius: 999px; background: #ae7415; }
+.anim-brief .br-bullet { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--gold-ink); }
 .anim-brief .br-item-body { flex: 1; min-width: 0; }
 .anim-brief .br-item-line { display: block; height: 4px; border-radius: 2px; background: #dcdad3; }
 .anim-brief .br-chip {
   flex: none; font-size: 10px; font-weight: 700; line-height: 1.5; padding: 0 6px;
-  border-radius: 999px; background: #f8f1e0; color: #8a5a0f;
+  border-radius: 999px; background: var(--gold-tint); color: var(--tf-gold-text);
 }
 /* <1280：功能磚移到下方後磚會變寬，動畫內容不跟著拉滿，維持接近 1440 設計稿的比例
    （1440 實測：閱讀頁、雷達 170px，簡報 388px、其中今日簡報卡 210px），靠左對齊磚內文字。 */
@@ -460,89 +489,97 @@
 }
 /* end:anim-css */
 </style>
+{{brand_colors}}
 </head>
 <body>
 <div class="page">
   <!-- 登入卡刻意排在 DOM 第一位：小螢幕單欄時在最上、鍵盤 Tab 也先到表單；桌面三欄由 grid 放到中欄。 -->
-  <main class="login-card" id="login-card">
+  <main class="login-card" id="login-card" data-sso="{{sso_mode}}">
 <!-- region:card (lane login-shell) -->
     <div class="card-body">
       <div class="brand">
-        <img class="glyph" src="data:image/png;base64,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" width="64" height="64" alt="廷豐智能研報" />
-        <div class="name">廷豐智能研報</div>
+        {{brand_logo}}
+        <div class="name">{{product_name}}</div>
       </div>
       <div class="card-rule" aria-hidden="true"></div>
       <div class="card-heading">
-        <h2 class="card-title" id="card-title"><span data-step="password">登入</span><span data-step="totp" hidden>兩步驟驗證</span></h2>
-        <p class="card-sub" data-step="password">請以管理者配發的帳號登入。</p>
-        <p class="card-sub" data-step="totp" hidden>請輸入驗證器 App 顯示的 6 位數驗證碼。</p>
+        <h2 class="card-title" id="card-title"><span data-step="password">{{t:sign_in}}</span><span data-step="totp" hidden>{{t:two_step}}</span></h2>
+        <p class="card-sub" data-step="password">{{login_hint}}</p>
+        <p class="card-sub" data-step="totp" hidden>{{t:totp_sub}}</p>
+      </div>
+      <!-- OIDC 單一登入（data-sso 為 off 時不顯示）。next 由下方 script 帶上。 -->
+      <div class="sso" data-step="password">
+        <a class="sso-button" href="/login/oidc" id="sso-link">{{t:sso_button}}</a>
+        <div class="sso-divider" aria-hidden="true">{{t:or}}</div>
+        <p class="form-error" id="sso-error" role="alert" hidden></p>
+        <button type="button" class="local-toggle" id="local-toggle" aria-controls="password-form">{{t:break_glass}}</button>
       </div>
       <form method="post" action="/login" autocomplete="on" id="password-form" class="login-form" aria-labelledby="card-title">
         <div class="field">
-          <label for="username">帳號</label>
+          <label for="username">{{t:username}}</label>
           <input id="username" name="username" type="text" autocomplete="username" autofocus required>
         </div>
         <div class="field">
-          <label for="password">密碼</label>
+          <label for="password">{{t:password}}</label>
           <input id="password" name="password" type="password" autocomplete="current-password" required>
         </div>
         <input type="hidden" name="next" class="next-field" id="next-field" />
         <p class="form-error" id="error" role="alert" hidden></p>
-        <button type="submit" class="submit" data-busy-label="登入中…">登入</button>
+        <button type="submit" class="submit" data-busy-label="{{t:signing_in}}">{{t:sign_in}}</button>
       </form>
       <!-- 第二步（帳號開了兩步驟驗證）：/login?step=totp 時顯示。暫時憑證在 path=/login 的 HttpOnly cookie。 -->
       <form method="post" action="/login" autocomplete="off" id="totp-form" class="login-form" aria-labelledby="card-title" hidden>
         <div class="field">
-          <label for="code">驗證碼</label>
+          <label for="code">{{t:code}}</label>
           <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
                  pattern="[0-9 ]*" maxlength="7" required>
         </div>
         <input type="hidden" name="step" value="totp" />
         <input type="hidden" name="next" class="next-field" />
         <p class="form-error" id="totp-error" role="alert" hidden></p>
-        <button type="submit" class="submit" data-busy-label="驗證中…">驗證</button>
-        <p class="form-alt"><a href="/login" id="restart-link">重新輸入帳號密碼</a></p>
+        <button type="submit" class="submit" data-busy-label="{{t:verifying}}">{{t:verify}}</button>
+        <p class="form-alt"><a href="/login" id="restart-link">{{t:restart}}</a></p>
       </form>
     </div>
-    <div class="card-foot" id="footer-hint">研究部內部系統 · 請以配發帳號登入</div>
+    <div class="card-foot" id="footer-hint">{{t:footer}}{{lang_switch}}</div>
 <!-- end:card -->
   </main>
 
-  <section class="intro tile" aria-label="平台介紹">
+  <section class="intro tile" aria-label="{{t:intro_label}}">
 <!-- region:intro-head (lane login-shell) -->
     <div class="intro-lead">
-      <div class="eyebrow">券商研究報告 · 智能檢索平台</div>
-      <h1 class="slogan"><span class="slogan-1">從大量研報中，</span><span class="slogan-2">直達關鍵段落。</span></h1>
+      <div class="eyebrow">{{t:eyebrow}}</div>
+      <h1 class="slogan"><span class="slogan-1">{{t:slogan_1}}</span><span class="slogan-2">{{t:slogan_2}}</span></h1>
     </div>
     <div class="tile-text">
-      <div class="tile-head"><span class="num">01</span><h2 class="tile-title">問答</h2></div>
-      <p class="tile-desc">以自然語言提問，AI 檢索研報後整理回答，每段附引用來源。</p>
+      <div class="tile-head"><span class="num">01</span><h2 class="tile-title">{{t:tile_qa}}</h2></div>
+      <p class="tile-desc">{{t:tile_qa_desc}}</p>
     </div>
 <!-- end:intro-head -->
     <div class="tile-anim anim-qa" id="anim-qa" aria-hidden="true">
 <!-- region:anim-qa (lane login-anim-js) -->
       <div class="qa" id="qa-flow">
         <div class="qa-pill">
-          <span class="qa-pill-text"><span id="qa-typed">台積電先進製程的最新展望如何？</span><span class="qa-caret"></span></span>
-          <span class="qa-send">提問 ↵</span>
+          <span class="qa-pill-text"><span id="qa-typed">{{t:demo_question}}</span><span class="qa-caret"></span></span>
+          <span class="qa-send">{{t:demo_ask}}</span>
         </div>
         <div class="qa-rail">
           <div class="qa-row" data-step="0">
             <span class="qa-line"><span class="qa-line-fill"></span></span>
             <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
-            <div class="qa-row-head"><span class="qa-step">理解問題</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-row-head"><span class="qa-step">{{t:step_understand}}</span><span class="qa-status"><span class="qa-status-active">{{t:in_progress}}</span><span class="qa-status-done">{{t:done}}</span></span></div>
             <div class="qa-body qa-body-intent">
               <div class="qa-chips qa-content">
-                <span class="qa-intent"><span class="qa-intent-k">標的</span>台積電</span>
-                <span class="qa-intent"><span class="qa-intent-k">主題</span>先進製程</span>
-                <span class="qa-intent"><span class="qa-intent-k">時間</span>最新</span>
+                <span class="qa-intent"><span class="qa-intent-k">{{t:intent_instrument}}</span>{{t:demo_tsmc}}</span>
+                <span class="qa-intent"><span class="qa-intent-k">{{t:intent_topic}}</span>{{t:demo_topic}}</span>
+                <span class="qa-intent"><span class="qa-intent-k">{{t:intent_time}}</span>{{t:demo_latest}}</span>
               </div>
             </div>
           </div>
           <div class="qa-row" data-step="1">
             <span class="qa-line"><span class="qa-line-fill"></span></span>
             <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
-            <div class="qa-row-head"><span class="qa-step">檢索研報</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-row-head"><span class="qa-step">{{t:step_search}}</span><span class="qa-status"><span class="qa-status-active">{{t:in_progress}}</span><span class="qa-status-done">{{t:done}}</span></span></div>
             <div class="qa-body qa-body-found">
               <div class="qa-chips qa-content">
                 <span class="qa-src"><span class="qa-src-chip" data-src="1"><span class="qa-src-code">TW</span><span class="qa-cite" data-cite="1">1</span></span></span>
@@ -555,7 +592,7 @@
           <div class="qa-row" data-step="2">
             <span class="qa-line"><span class="qa-line-fill"></span></span>
             <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
-            <div class="qa-row-head"><span class="qa-step">閱讀整理</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-row-head"><span class="qa-step">{{t:step_read}}</span><span class="qa-status"><span class="qa-status-active">{{t:in_progress}}</span><span class="qa-status-done">{{t:done}}</span></span></div>
             <div class="qa-body qa-body-read">
               <div class="qa-read qa-content">
                 <span class="qa-read-mark"><span class="qa-read-hl" id="qa-read-hl"></span><span class="qa-read-text"></span></span>
@@ -565,7 +602,7 @@
           </div>
           <div class="qa-row" data-step="3">
             <span class="qa-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg><span class="qa-node-dot"></span></span>
-            <div class="qa-row-head"><span class="qa-step">生成回答</span><span class="qa-status"><span class="qa-status-active">進行中</span><span class="qa-status-done">完成</span></span></div>
+            <div class="qa-row-head"><span class="qa-step">{{t:step_answer}}</span><span class="qa-status"><span class="qa-status-active">{{t:in_progress}}</span><span class="qa-status-done">{{t:done}}</span></span></div>
             <div class="qa-body qa-body-answer">
               <div class="qa-answer qa-content">
                 <div class="qa-ans-row"><span class="qa-ans-track"><span class="qa-ans-bar" style="width:100%"></span></span><span class="qa-ans-cite"><span class="qa-cite" data-cite="1">1</span></span><span class="qa-ans-cite"><span class="qa-cite" data-cite="2">2</span></span></div>
@@ -576,33 +613,33 @@
             </div>
           </div>
         </div>
-        <div class="qa-grounded"><div class="qa-grounded-in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg>依據 4 篇研報，每段附出處</div></div>
+        <div class="qa-grounded"><div class="qa-grounded-in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"/></svg>{{t:grounded}}</div></div>
       </div>
 <!-- end:anim-qa -->
     </div>
 <!-- region:intro-foot (lane login-shell) -->
     <div class="markets">
-      <span class="markets-label">涵蓋市場</span>
-      <span class="mkt"><code>TW</code>台股</span><span class="mkt"><code>US</code>美股</span><span class="mkt"><code>HK</code>港股</span>
-      <span class="mkt"><code>CN</code>陸股</span><span class="mkt"><code>WTX</code>台指期</span><span class="mkt"><code>FX</code>外匯</span>
-      <span class="mkt"><code>MACRO</code>總經</span><span class="mkt"><code>GLOBAL</code>全球</span><span class="mkt"><code>CRYPTO</code>加密</span>
+      <span class="markets-label">{{t:markets_label}}</span>
+      <span class="mkt"><code>TW</code>{{t:mkt_tw}}</span><span class="mkt"><code>US</code>{{t:mkt_us}}</span><span class="mkt"><code>HK</code>{{t:mkt_hk}}</span>
+      <span class="mkt"><code>CN</code>{{t:mkt_cn}}</span><span class="mkt"><code>WTX</code>{{t:mkt_wtx}}</span><span class="mkt"><code>FX</code>{{t:mkt_fx}}</span>
+      <span class="mkt"><code>MACRO</code>{{t:mkt_macro}}</span><span class="mkt"><code>GLOBAL</code>{{t:mkt_global}}</span><span class="mkt"><code>CRYPTO</code>{{t:mkt_crypto}}</span>
     </div>
 <!-- end:intro-foot -->
   </section>
 
-  <section class="features" aria-label="平台功能">
+  <section class="features" aria-label="{{t:features_label}}">
     <article class="tile tile-wide feat-search">
 <!-- region:search-head (lane login-shell) -->
       <div class="tile-text">
-        <div class="tile-head"><span class="num">02</span><h2 class="tile-title">檢索</h2></div>
-        <p class="tile-desc">語意＋關鍵字混合檢索，用字不必與原文相同；可依市場、商品類型與報告類型篩選。</p>
+        <div class="tile-head"><span class="num">02</span><h2 class="tile-title">{{t:tile_search}}</h2></div>
+        <p class="tile-desc">{{t:tile_search_desc}}</p>
       </div>
 <!-- end:search-head -->
       <div class="tile-anim anim-search" id="anim-search" aria-hidden="true">
 <!-- region:anim-search (lane login-anim-js) -->
         <div class="srch" id="srch-flow">
           <div class="srch-bar">
-            <span class="srch-text"><span id="srch-typed">AI 伺服器散熱</span><span class="srch-caret"></span></span>
+            <span class="srch-text"><span id="srch-typed">{{t:demo_query_1}}</span><span class="srch-caret"></span></span>
             <span class="srch-enter">Enter ↵</span>
           </div>
           <div class="srch-results">
@@ -619,8 +656,8 @@
     <article class="tile tile-small feat-reading">
 <!-- region:reading-head (lane login-shell) -->
       <div class="tile-text">
-        <div class="tile-head"><span class="num">03</span><h2 class="tile-title">閱讀頁</h2></div>
-        <p class="tile-desc">內嵌原始 PDF，並列重點摘錄、券商訊號與相似研報。</p>
+        <div class="tile-head"><span class="num">03</span><h2 class="tile-title">{{t:tile_reading}}</h2></div>
+        <p class="tile-desc">{{t:tile_reading_desc}}</p>
       </div>
 <!-- end:reading-head -->
       <div class="tile-anim anim-reading" id="anim-reading" aria-hidden="true">
@@ -633,7 +670,7 @@
             <span class="rd-line" style="width:94%"></span>
             <span class="rd-line" style="width:56%"></span>
           </div>
-          <div class="rd-foot"><span class="rd-chip">重點摘錄</span></div>
+          <div class="rd-foot"><span class="rd-chip">{{t:takeaways_chip}}</span></div>
         </div>
 <!-- end:anim-reading -->
       </div>
@@ -642,8 +679,8 @@
     <article class="tile tile-small feat-radar">
 <!-- region:radar-head (lane login-shell) -->
       <div class="tile-text">
-        <div class="tile-head"><span class="num">04</span><h2 class="tile-title">觀點雷達</h2></div>
-        <p class="tile-desc">彙整同一標的各家券商的評等、目標價與 EPS，追蹤觀點變化。</p>
+        <div class="tile-head"><span class="num">04</span><h2 class="tile-title">{{t:tile_radar}}</h2></div>
+        <p class="tile-desc">{{t:tile_radar_desc}}</p>
       </div>
 <!-- end:radar-head -->
       <div class="tile-anim anim-radar" id="anim-radar" aria-hidden="true">
@@ -655,7 +692,7 @@
             <span class="rdr-dot"></span><span class="rdr-dot"></span><span class="rdr-dot"></span>
             <span class="rdr-gold"><span class="rdr-gold-core"></span></span>
           </div>
-          <span class="rdr-note">一點＝一家券商</span>
+          <span class="rdr-note">{{t:radar_note}}</span>
         </div>
 <!-- end:anim-radar -->
       </div>
@@ -664,21 +701,21 @@
     <article class="tile tile-wide feat-brief">
 <!-- region:brief-head (lane login-shell) -->
       <div class="tile-text">
-        <div class="tile-head"><span class="num">05</span><h2 class="tile-title">每日簡報</h2></div>
-        <p class="tile-desc">每日彙整各家券商研報的重點，整理成一份簡報。</p>
+        <div class="tile-head"><span class="num">05</span><h2 class="tile-title">{{t:tile_brief}}</h2></div>
+        <p class="tile-desc">{{t:tile_brief_desc}}</p>
       </div>
 <!-- end:brief-head -->
       <div class="tile-anim anim-brief" id="anim-brief" aria-hidden="true">
 <!-- region:anim-brief (lane login-anim-css) -->
         <div class="br">
           <div class="br-src">
-            <div class="br-card"><span class="br-card-name">券商 A</span><span class="br-card-line"></span></div>
-            <div class="br-card"><span class="br-card-name">券商 B</span><span class="br-card-line"></span></div>
-            <div class="br-card"><span class="br-card-name">券商 C</span><span class="br-card-line"></span></div>
+            <div class="br-card"><span class="br-card-name">{{t:broker_a}}</span><span class="br-card-line"></span></div>
+            <div class="br-card"><span class="br-card-name">{{t:broker_b}}</span><span class="br-card-line"></span></div>
+            <div class="br-card"><span class="br-card-name">{{t:broker_c}}</span><span class="br-card-line"></span></div>
           </div>
           <div class="br-link"><span class="br-pulse"></span><span class="br-pulse"></span><span class="br-pulse"></span></div>
           <div class="br-out">
-            <div class="br-head"><span class="br-title">今日簡報</span><span class="br-date br-mono" id="br-date">--/--</span></div>
+            <div class="br-head"><span class="br-title">{{t:today_brief}}</span><span class="br-date br-mono" id="br-date">--/--</span></div>
             <div class="br-item"><span class="br-bullet"></span><span class="br-item-body"><span class="br-item-line" style="width:90%"></span></span><span class="br-chip br-mono">A</span></div>
             <div class="br-item"><span class="br-bullet"></span><span class="br-item-body"><span class="br-item-line" style="width:74%"></span></span><span class="br-chip br-mono">B</span></div>
             <div class="br-item"><span class="br-bullet"></span><span class="br-item-body"><span class="br-item-line" style="width:60%"></span></span><span class="br-chip br-mono">C</span></div>
@@ -695,14 +732,20 @@
   var p = new URLSearchParams(location.search);
   var totpStep = p.get("step") === "totp";
   var ERRORS = {
-    totp: "驗證碼不正確或已使用過，請輸入驗證器目前顯示的碼。",
-    expired: "驗證步驟已逾時，請重新輸入帳號密碼。",
-    locked: "嘗試次數過多，請稍後再試。",
-    insecure: "此登入只接受 HTTPS 或本機 localhost，請改走受保護入口。",
-    disabled: "此帳號已停用，請聯絡管理者。",
-    unavailable: "登入服務暫時無法使用，請稍後再試。"
+    totp: {{tjs:err_totp}},
+    expired: {{tjs:err_expired}},
+    locked: {{tjs:err_locked}},
+    insecure: {{tjs:err_insecure}},
+    disabled: {{tjs:err_disabled}},
+    unavailable: {{tjs:err_unavailable}},
+    sso: {{tjs:err_sso}},
+    sso_unavailable: {{tjs:err_sso_unavailable}},
+    sso_account: {{tjs:err_sso_account}},
+    sso_only: {{tjs:err_sso_only}}
   };
-  var DEFAULT_ERROR = "帳號或密碼錯誤。";
+  // 這些錯誤來自公司帳號登入；其餘來自帳密表單（只允許公司帳號時要把表單展開才看得到錯誤）。
+  var SSO_ERRORS = { sso: 1, sso_unavailable: 1, sso_account: 1, sso_only: 1 };
+  var DEFAULT_ERROR = {{tjs:err_default}};
 
   if (totpStep) {
     // 標題、副標與表單一起換成第二步；兩組文字都寫在 HTML 裡，只切 hidden。
@@ -714,17 +757,40 @@
     document.getElementById("totp-form").hidden = false;
     document.getElementById("code").focus();
   }
+  var passwordForm = document.getElementById("password-form");
+  var localToggle = document.getElementById("local-toggle");
+  var openLocal = function () {
+    passwordForm.classList.add("is-open");
+    localToggle.classList.add("is-open");
+    localToggle.setAttribute("aria-expanded", "true");
+  };
+  localToggle.setAttribute("aria-expanded", "false");
+  localToggle.addEventListener("click", function () {
+    openLocal();
+    document.getElementById("username").focus();
+  });
   if (p.has("error")) {
-    var el = document.getElementById(totpStep ? "totp-error" : "error");
     var code = p.get("error");
+    var ssoError = document.getElementById("login-card").getAttribute("data-sso") !== "off"
+      && Object.prototype.hasOwnProperty.call(SSO_ERRORS, code);
+    if (!totpStep && !ssoError) openLocal();
+    var el = document.getElementById(totpStep ? "totp-error" : (ssoError ? "sso-error" : "error"));
     el.textContent = Object.prototype.hasOwnProperty.call(ERRORS, code) ? ERRORS[code] : DEFAULT_ERROR;
     el.hidden = false;
+  }
+  // 換語言的連結保留目前的 next／step／error（沒有 JS 時退回只帶 lang）。
+  var langLink = document.getElementById("lang-switch");
+  if (langLink) {
+    var q = new URLSearchParams(location.search);
+    q.set("lang", langLink.getAttribute("hreflang"));
+    langLink.href = "/login?" + q.toString();
   }
   var nx = p.get("next");
   if (nx) {
     var fields = document.querySelectorAll(".next-field");
     for (var i = 0; i < fields.length; i++) fields[i].value = nx;
     document.getElementById("restart-link").href = "/login?next=" + encodeURIComponent(nx);
+    document.getElementById("sso-link").href = "/login/oidc?next=" + encodeURIComponent(nx);
   }
 
   // 送出中：按鈕換字並 disabled 防重複送出。只在 submit 事件裡改（原生驗證通過後才會觸發），
@@ -790,7 +856,7 @@
     /* ---- 01 問答：約 10.7 秒一輪 ---- */
     var qa = null;
     if (qaEl) {
-      var Q = "台積電先進製程的最新展望如何？";
+      var Q = {{tjs:demo_question}};
       var T = { type: 300, typeMs: 50, send: 1350, s: [1350, 2050, 3150, 3850], stream: 3950, lineMs: 520 };
       var LINE_CITES = [[1, 2], [3], [], [4]];
       T.done = T.stream + LINE_CITES.length * T.lineMs + 200;
@@ -849,7 +915,7 @@
     /* ---- 02 檢索：四個查詢逐字打、停、刪、換題 ---- */
     var sr = null;
     if (srEl) {
-      var QUERIES = ["AI 伺服器散熱", "台積電 先進封裝", "美國 升息", "台指期 部位策略"];
+      var QUERIES = [{{tjs:demo_query_1}}, {{tjs:demo_query_2}}, {{tjs:demo_query_3}}, {{tjs:demo_query_4}}];
       var CODES = [["TW", "TW"], ["TW", "US"], ["US", "MACRO"], ["WTX", "TW"]];
       var S = { typeMs: 120, hold: 1900, delMs: 40, gap: 420 };
       var spans = [], total = 0;

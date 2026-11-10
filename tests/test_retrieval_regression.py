@@ -596,6 +596,40 @@ class StaticContractTests(unittest.TestCase):
 
         self.assertEqual(rr.DATASET, DATASET)
 
+    def test_profile_question_sets(self):
+        """有提供才用：目前的 profile 自帶凍結題集就比那一份；廷豐（題集留在 eval/）照舊用 rr.DATASET。"""
+        from test_eval_question_draft import NOW, _draft
+
+        from eval import profile_eval as pe
+        from eval import question_draft as qd
+
+        self.assertEqual(script.resolve_dataset(None, {}), rr.DATASET)
+        self.assertEqual(script.resolve_dataset("tingfong", {}), rr.DATASET.resolve())
+        with tempfile.TemporaryDirectory() as td:
+            profile = Path(td) / "demo"
+            (profile / "eval").mkdir(parents=True)
+            self.assertEqual(script.resolve_dataset(None, {"PROFILE_DIR": str(profile)}), rr.DATASET)
+            raw, manifest = qd.freeze(_draft(), draft_sha256="0" * 64, profile="demo", frozen_at=NOW)
+            (profile / "eval" / pe.QUESTIONS_FILE).write_bytes(raw)
+            (profile / "eval" / pe.MANIFEST_FILE).write_bytes(qd.dumps(manifest))
+            own = profile / "eval" / pe.QUESTIONS_FILE
+            self.assertEqual(script.resolve_dataset(None, {"PROFILE_DIR": str(profile)}), own)
+            self.assertEqual(script.resolve_dataset(str(profile), {}), own)
+            (profile / "eval" / pe.QUESTIONS_FILE).write_bytes(raw.replace(b"q001", b"q001 ", 1))
+            with self.assertRaises(pe.EvalProfileError):
+                script.resolve_dataset(None, {"PROFILE_DIR": str(profile)})
+            with mock.patch.dict(os.environ, {"PROFILE_DIR": str(profile)}), \
+                    mock.patch.object(script, "_write") as write, contextlib.redirect_stderr(io.StringIO()):
+                rc = script.main(["check"])
+            self.assertEqual(rc, script.EXIT_ERROR)
+            self.assertEqual(write.call_args.args[2], rr.REASON_DATASET_INVALID)
+
+    def test_baseline_records_the_dataset_path(self):
+        doc = rr.build_baseline(questions=QUESTIONS[:1], items_by_id={}, dataset_sha256=_DIGEST, k=10, dense_scan=400,
+                                captured_at=T0, corpus_cutoff=T0, corpus_reports=1,
+                                dataset_rel="profiles/demo/eval/questions.json")
+        self.assertEqual(doc["dataset"]["path"], "profiles/demo/eval/questions.json")
+
     def test_conftest_redirects_baseline(self):
         self.assertTrue(os.environ["RETRIEVAL_REGRESSION_BASELINE"].startswith("/nonexistent/"))
         self.assertEqual(str(rr.baseline_path()), os.environ["RETRIEVAL_REGRESSION_BASELINE"])

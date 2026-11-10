@@ -1,0 +1,82 @@
+# 示範環境（profiles/demo）：疊在框架本體 deploy/compose/docker-compose.yml 之上的 override。
+# 多兩個服務——假 LLM（deploy/demo/fake_llm.py）與 S3 測試伺服器（moto）——並把 LLM 與連接器指過去，
+# 一台機器、完全離線就能把示範券商跑起來。說明見 docs/CONTAINER_DEPLOYMENT.md「示範環境」；
+# 端到端測試（scripts/e2e_compose.py）用的也是這一份。
+#
+#   cd deploy/compose
+#   docker compose -f docker-compose.yml -f ../demo/docker-compose.demo.yml run --rm migrate
+#   docker compose -f docker-compose.yml -f ../demo/docker-compose.demo.yml up -d
+#
+# 要接真的 LLM（給客戶看真實的問答品質）再疊 ../demo/docker-compose.real-llm.yml。
+#
+# S3 測試伺服器用 moto（Apache-2.0）。刻意不用 MinIO：AGPL，與 tests/test_license_guard.py 的授權政策衝突。
+# 這裡的金鑰與 bucket 憑證都是假值：假 LLM 與 moto 收任何非空值。
+
+x-demo-env: &demo-env
+  # LLM：openai_compatible 指到假 LLM。任務以模型名分派（fake_llm.MODELS），白名單照常只收宣告的名稱。
+  LLM_PROVIDER: openai_compatible
+  OPENAI_COMPATIBLE_BASE_URL: http://fake-llm:8080/v1
+  OPENAI_COMPATIBLE_API_KEY: fake-llm
+  OPENAI_COMPATIBLE_MODELS: demo-answer,demo-brief,demo-condense,demo-followup,demo-intent,demo-judge,demo-planner,demo-signal,demo-summary,demo-tag,demo-takeaway,demo-title
+  ASK_ANSWER_MODEL: demo-answer
+  ASK_INTENT_MODEL: demo-intent
+  ASK_CONDENSE_MODEL: demo-condense
+  QA_PLANNER_MODEL: demo-planner
+  ASK_FOLLOWUP_MODEL: demo-followup
+  FAITHFULNESS_MODEL: demo-judge
+  EVAL_JUDGE_MODEL: demo-judge
+  TAG_MODEL: demo-tag
+  SUMMARY_MODEL: demo-summary
+  TITLE_MODEL: demo-title
+  TAKEAWAY_MODEL: demo-takeaway
+  SIGNAL_MODEL: demo-signal
+  BRIEF_MODEL: demo-brief
+  # 連接器（profiles/demo 的 [connectors.sources.research-inbox]，env = "CONNECTOR_DEMO"）指到 moto。
+  CONNECTOR_DEMO_BUCKET: ${DEMO_S3_BUCKET:-demo-research}
+  CONNECTOR_DEMO_ACCESS_KEY_ID: moto
+  CONNECTOR_DEMO_SECRET_ACCESS_KEY: moto
+  CONNECTOR_DEMO_ENDPOINT: http://s3:5000
+  CONNECTOR_DEMO_REGION: us-east-1
+
+services:
+  web:
+    environment: *demo-env
+    depends_on:
+      fake-llm:
+        condition: service_healthy
+  worker:
+    environment: *demo-env
+  scheduler:
+    environment: *demo-env
+    depends_on:
+      s3:
+        condition: service_healthy
+  migrate:
+    environment: *demo-env
+
+  # 假 LLM：同一份應用映像跑 deploy/demo/fake_llm.py（只用標準函式庫）。不對主機發佈埠。
+  fake-llm:
+    image: ${REPORT_MARK_IMAGE:-report-mark:latest}
+    command: ["python", "/app/deploy/demo/fake_llm.py"]
+    restart: unless-stopped
+    environment:
+      FAKE_LLM_PORT: "8080"
+      FAKE_LLM_API_KEY: fake-llm
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # S3 相容的測試伺服器（moto server，Apache-2.0）。資料只在記憶體：容器重建就清空，示範時重新上傳即可。
+  # 發佈到 loopback 是為了讓主機上的上傳工具（scripts/e2e_compose.py --keep 或 aws cli）把語料放進去。
+  s3:
+    image: motoserver/moto:5.1.18
+    restart: unless-stopped
+    ports:
+      - "${DEMO_S3_PUBLISH:-127.0.0.1:5000}:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/moto-api/', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

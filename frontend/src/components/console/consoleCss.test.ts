@@ -88,8 +88,9 @@ describe('實心按鈕的對比（WCAG AA，文字 ≥ 4.5:1）', () => {
   })
 
   it('燈號與指示條的金、紅沒有跟著改（按鈕是另外一組）', () => {
-    expect(themeTokens('light')).toMatchObject({ '--ac-gold': '#ae7415', '--ac-bad': '#d6453a' })
-    expect(themeTokens('dark')).toMatchObject({ '--ac-gold': '#d4a64a', '--ac-bad': '#f2655a' })
+    // 框架的中性預設（機構色由 profile 在執行期覆寫；預設 profile 的色票逐值比對在 tests/test_brand_accent.py）
+    expect(themeTokens('light')).toMatchObject({ '--ac-gold': '#3d6890', '--ac-bad': '#d6453a' })
+    expect(themeTokens('dark')).toMatchObject({ '--ac-gold': '#7fa8d1', '--ac-bad': '#f2655a' })
   })
 })
 

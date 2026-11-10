@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { useState } from 'react'
 import { expect, test, vi, afterEach, beforeEach } from 'vitest'
-import { AI_NOTE, Composer } from './Composer'
+import { Composer } from './Composer'
+import { aiNote } from './aiNote'
 import { setWebSearch } from '../../lib/useWebSearch'
 
 // 網搜暫停（useWebSearchPaused：旗標 ask.web_search 沒開）以可切換的 mock 模擬：預設走「恢復後」的行為，
@@ -110,7 +111,7 @@ test('網搜暫停中：沒有工具鈕、殘留的開啟偏好不讓文案提�
   expect(screen.queryByRole('button', { name: '工具' })).toBeNull()
   expect(container.querySelector('textarea')!.parentElement!.children[0].tagName).toBe('TEXTAREA')
   expect(screen.queryByText(/非受信任行情來源/)).toBeNull()
-  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
+  expect(screen.getByText(aiNote())).toBeInTheDocument()
   setWebSearch(false)
 })
 
@@ -119,11 +120,11 @@ test('網搜暫停中：沒有工具鈕、殘留的開啟偏好不讓文案提�
 test.each(['center', 'bottom'] as const)('%s 變體揭露回答由 AI 生成、可能有誤，不寫供應商', (variant) => {
   setWebSearch(false)
   render(<Composer value="" onChange={() => {}} onSubmit={() => {}} variant={variant} />)
-  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
-  expect(AI_NOTE).toMatch(/回答由 AI 依/)
-  expect(AI_NOTE).not.toMatch(/DeepSeek|OpenAI|GPT/)
-  expect(AI_NOTE).toMatch(/可能有誤/)
-  expect(AI_NOTE).toMatch(/原始研報/)
+  expect(screen.getByText(aiNote())).toBeInTheDocument()
+  expect(aiNote()).toMatch(/回答由 AI 依/)
+  expect(aiNote()).not.toMatch(/DeepSeek|OpenAI|GPT/)
+  expect(aiNote()).toMatch(/可能有誤/)
+  expect(aiNote()).toMatch(/原始研報/)
 })
 
 // ── 換行後的版面（M11）──────────────────────────────────────────────────────

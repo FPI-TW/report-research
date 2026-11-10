@@ -106,11 +106,14 @@ class AccessTests(_Base):
     def test_allowlist_is_exact_not_a_healthz_prefix(self):
         """白名單是精確集合：`/healthz` 開頭的其他路徑照樣要登入（放寬成前綴等於把未來任何
         `/healthz/*` 端點都免認證對外開放，而只有列出的這幾支自己守了本機直連；/healthz/security 是 Admin v2 加的，
-        /healthz/feed 是來源主機信標）。"""
-        self.assertEqual(server._AUTH_ALLOWLIST, {"/login", "/healthz", "/healthz/storage", "/healthz/llm",
-                                                  "/healthz/security", "/healthz/feed"})
+        /healthz/feed 是來源主機信標；/api/branding 是登入前就要畫的品牌，只交顯示用欄位；/readyz 是容器部署的
+        就緒探測；/login/oidc 與其 callback 是 OIDC 單一登入，沒設定時回 404；
+        /metrics 是 Prometheus 端點，路由自己只回答允許的對端，見 web/metrics.py）。"""
+        self.assertEqual(server._AUTH_ALLOWLIST, {"/login", "/healthz", "/readyz", "/healthz/storage", "/healthz/llm",
+                                                  "/healthz/security", "/healthz/feed", "/api/branding",
+                                                  "/login/oidc", "/login/oidc/callback", "/metrics"})
         for path in ("/healthz/llm/", "/healthz/llmx", "/healthz/other", "/healthzz", "/healthz/storage/x",
-                     "/healthz/security/x", "/healthz/feed/x"):
+                     "/healthz/security/x", "/healthz/feed/x", "/readyz/", "/readyz/x", "/metrics/", "/metrics/x"):
             with self.subTest(path=path):
                 r = _local().get(path)
                 self.assertEqual((r.status_code, r.headers.get("location")), (302, "/login"), path)
@@ -179,7 +182,7 @@ class ProbeJudgementTests(_Base):
         req = self.requests[0]
         self.assertEqual(str(req.url), f"{go_base}/models")
         self.assertEqual(req.headers["authorization"], f"Bearer {FAKE_KEY}")
-        self.assertEqual(req.headers["user-agent"], llm_http.GO_USER_AGENT)
+        self.assertEqual(req.headers["user-agent"], llm_http.go_user_agent())
 
     def test_no_low_state_and_no_balance_logic(self):
         """沒有餘額可查就沒有「快用完」：LOW、judge_balance、fetch_balance 都移除，FAILING 不含它。"""

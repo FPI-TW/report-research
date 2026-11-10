@@ -17,7 +17,7 @@
   （規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）
 
 用法：uv run python scripts/generate_titles.py [--workers 2] [--limit N] [--excerpt 3000]
-      [--hashes-file F] [--exclude-hashes-file F] [--retry-blocked]
+      [--hashes-file F] [--exclude-hashes-file F] [--min-report-date YYYY-MM-DD] [--retry-blocked]
 
 注意：workers 預設壓到 2（理由見 generate_summaries.py 的註）。與其他 LLM 批次的互斥由
 scripts/_claude_lock.py 的 flock 強制（撞鎖以 rc=75 結束，不是這支壞掉）——不再只靠這行註解。
@@ -30,6 +30,7 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +45,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.doc_types import doc_type_enabled_sql  # noqa: E402
 from app.services.llm_models import TASK_TITLE, resolve_model  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
@@ -267,18 +269,24 @@ def read_hashes_file(path: str) -> list[str]:
     return [h.strip() for h in lines if h.strip()]
 
 
-def build_candidates_sql(by_hashes: bool, skip_blocked: bool, limit: bool, exclude: bool = False) -> str:
+def build_candidates_sql(by_hashes: bool, skip_blocked: bool, limit: bool, exclude: bool = False,
+                         min_date: bool = False) -> str:
     """待補標題的查詢（純字串，供測試斷言）。skip_blocked 時排除跳過名單上的研報；
-    exclude 時排除 `:exclude` 列出的 file_hash（空清單時呼叫端不開它）。"""
+    exclude 時排除 `:exclude` 列出的 file_hash（空清單時呼叫端不開它）；
+    min_date 時只收 `report_date >= :min_report_date`（NULL 不收；連接器排程的積壓段只補分層回填的第二層，
+    見 scripts/connector_sync.py）。"""
     sql = (
         "SELECT r.id::text, r.file_name, r.full_text, r.file_hash "
         "FROM research.research_report r "
-        "WHERE r.title IS NULL AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE "
+        "WHERE r.title IS NULL AND r.full_text IS NOT NULL "
+        f"AND {doc_type_enabled_sql('r', 'title')} "
     )
     if by_hashes:
         sql += "AND r.file_hash = ANY(:hashes) "
     if exclude:
         sql += "AND NOT (r.file_hash = ANY(:exclude)) "
+    if min_date:
+        sql += "AND r.report_date >= CAST(:min_report_date AS date) "
     if skip_blocked:
         sql += "AND " + llm_failures.skip_clause_sql("r") + " "
     sql += "ORDER BY r.report_date DESC NULLS LAST, r.file_name"
@@ -292,6 +300,7 @@ async def fetch_candidates(
     hashes: Optional[list[str]] = None,
     skip_blocked: bool = False,
     exclude_hashes: Optional[list[str]] = None,
+    min_report_date: Optional[date] = None,
 ) -> list[tuple[str, str, str, str]]:
     """挑待補標題的列：title IS NULL 的研究報告。
 
@@ -301,6 +310,7 @@ async def fetch_candidates(
     skip_blocked＝排除 research.llm_task_failure 判定該跳過的研報（同 MODEL）。
     exclude_hashes＝排除這批 file_hash（sync 積壓段排掉本輪 4b 剛打過的新研報）；
     None 或空清單不加條件。
+    min_report_date＝只收 report_date 不早於這天的研報（NULL 不收）；None 不加條件。
 
     排序刻意 report_date DESC：全語料一萬多篇跑不完時，先讓最近的報告有標題。
     """
@@ -315,7 +325,10 @@ async def fetch_candidates(
         params["exclude"] = exclude_hashes
     if limit:
         params["limit"] = limit
-    sql = build_candidates_sql(hashes is not None, skip_blocked, bool(limit), bool(exclude_hashes))
+    if min_report_date is not None:
+        params["min_report_date"] = min_report_date
+    sql = build_candidates_sql(hashes is not None, skip_blocked, bool(limit), bool(exclude_hashes),
+                               min_report_date is not None)
     async with SessionFactory() as session:
         rows = await session.execute(text(sql), params)
         return [(r[0], r[1], r[2], r[3]) for r in rows.all()]
@@ -328,6 +341,7 @@ async def main(
     hashes_file: Optional[str] = None,
     retry_blocked: bool = False,
     exclude_hashes_file: Optional[str] = None,
+    min_report_date: Optional[date] = None,
 ) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     hashes = read_hashes_file(hashes_file) if hashes_file else None
@@ -335,9 +349,12 @@ async def main(
     scope = f"本輪 {len(hashes)} 篇" if hashes is not None else "全表 NULL"
     if exclude:
         scope += f"（排除 {len(exclude)} 篇）"
+    if min_report_date is not None:
+        scope += f"（report_date ≥ {min_report_date}）"
     recorder = await llm_failures.open_recorder(llm_failures.TASK_TITLE, MODEL, SessionFactory)
     cands = await fetch_candidates(
-        limit, hashes, skip_blocked=recorder is not None and not retry_blocked, exclude_hashes=exclude
+        limit, hashes, skip_blocked=recorder is not None and not retry_blocked, exclude_hashes=exclude,
+        min_report_date=min_report_date,
     )
     total = len(cands)
     print(
@@ -385,6 +402,13 @@ if __name__ == "__main__":
         ),
     )
     ap.add_argument(
+        "--min-report-date",
+        type=date.fromisoformat,
+        default=None,
+        help="只補 report_date 不早於這天的研報（YYYY-MM-DD；NULL 不補）。連接器排程的標題積壓段傳分層回填的"
+             "窗期起點，更早的留給第三層背景補齊",
+    )
+    ap.add_argument(
         "--retry-blocked",
         action="store_true",
         help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打",
@@ -396,6 +420,6 @@ if __name__ == "__main__":
         asyncio.run(
             main(
                 args.workers, args.limit, args.excerpt, args.hashes_file, args.retry_blocked,
-                exclude_hashes_file=args.exclude_hashes_file,
+                exclude_hashes_file=args.exclude_hashes_file, min_report_date=args.min_report_date,
             )
         )

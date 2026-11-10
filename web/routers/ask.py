@@ -31,9 +31,10 @@ from pydantic import BaseModel, Field
 
 from app.services.accounts import User
 from app.services.llm import LLMUnavailableError
-from web import authz, deps
+from web import authz, deps, metrics
 from web.concurrency import ConcurrencyGate
 from web.errors import AppError
+from web.market_scope import check_market_filter
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     if not question:
         raise HTTPException(status_code=400, detail="question 不可為空")
     mkt = req.market if req.market and req.market != "全部" else None
+    check_market_filter(mkt)
     instr = (
         req.instrument_type
         if req.instrument_type and req.instrument_type != "全部"
@@ -164,6 +166,7 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     )
     # 唯一能回 429 的位置：SSE 一旦送出 200 就改不了 status code（見 ConcurrencyGate.queue_full）。
     if _ASK_GATE.queue_full():
+        metrics.record_qa("queue_full")
         raise HTTPException(
             status_code=429,
             detail="問答排隊人數已滿，請稍後再試",
@@ -175,6 +178,8 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     async def gen():
         # 排隊要先說。這段跑在回應開始串流之後，若直接 await 到取得名額，使用者看到的
         # 是「連線建立但永遠沒有 token」——與伺服器卡死完全無從分辨。
+        # 結局指標（web/metrics.py）：沒走到下面任何一個分支就離開＝使用者中途斷線或停止（GeneratorExit／取消）。
+        outcome, llm_kind = "cancelled", None
         if _ASK_GATE.would_queue():
             yield deps._sse("queued", _ASK_GATE.queue_event())
         await _ASK_GATE.acquire()
@@ -193,15 +198,19 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
                     user_id=user.id,
                 ):
                     yield deps._sse(event, payload)
+                outcome = "ok"
             except LLMUnavailableError as exc:
                 # answer_question 已把失敗那輪落庫（filters.llm_error），這裡只負責說人話。
+                outcome, llm_kind = "llm_error", exc.kind
                 logger.exception("ask failed: LLM 不可用 kind=%s", exc.kind)
                 yield deps._sse("error", {"detail": _llm_error_detail(exc)})
             except Exception:
+                outcome = "error"
                 logger.exception("ask failed")
                 yield deps._sse("error", {"detail": ASK_ERROR_DETAIL})
         finally:
             _ASK_GATE.release()
+            metrics.record_qa(outcome, llm_kind)
 
     return StreamingResponse(
         deps._with_heartbeat(gen()),

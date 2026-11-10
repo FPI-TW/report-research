@@ -1,5 +1,6 @@
 import type { BriefMarketCount, BriefReportRef } from '../../lib/briefSchemas'
 import { MARKET_ORDER, marketColor, marketLabel } from '../../lib/meta'
+import { t } from '@/i18n'
 
 /**
  * 把簡報的 markdown 拆成畫面上的區塊（今日重點、市場焦點），以及概況卡的市場分布。
@@ -22,7 +23,7 @@ export interface BriefHighlight {
 export interface BriefFocusBlock {
   /** 顯示用的市場名：認得的市場一律用介面的名稱（與概況卡圖例一致），其餘照原文。 */
   label: string | null
-  /** findb 市場代碼；認不出來是 null（不畫市場色、不顯示篇數）。 */
+  /** 標準市場代碼；認不出來是 null（不畫市場色、不顯示篇數）。 */
   market: string | null
   paragraphs: string[]
 }
@@ -54,7 +55,7 @@ export const OTHER_COLOR = '#c7c7cc'
 
 const KNOWN_MARKETS = new Set<string>(MARKET_ORDER)
 
-// 模型寫出來的市場名 → findb 代碼。前兩組是後端 market_zh() 與介面 meta.ts 的名稱，
+// 模型寫出來的市場名 → 標準市場代碼。前兩組是後端 market_zh() 與介面 meta.ts 的名稱，
 // 其餘是實際簡報裡出現過或同義的寫法。
 const MARKET_ALIASES: Record<string, string> = {
   台股: 'TW', 臺股: 'TW', 台灣: 'TW',
@@ -88,8 +89,8 @@ export function sourceLabels(reports: readonly BriefReportRef[]): Map<string, st
 const BROKER_SPLIT = /[、,，/／]/
 
 function localizeBroker(name: string, labels: Map<string, string>): string {
-  const t = name.trim()
-  return labels.get(t.toLowerCase()) ?? t
+  const item = name.trim()
+  return labels.get(item.toLowerCase()) ?? item
 }
 
 /**
@@ -101,7 +102,7 @@ export function localizeSources(text: string, labels: Map<string, string>): stri
   return text.replace(/([（(])([^（）()]{1,60})([）)])/g, (whole, open: string, inner: string, close: string) => {
     const parts = inner.split(BROKER_SPLIT).map(s => s.trim()).filter(Boolean)
     if (parts.length === 0 || !parts.every(p => labels.has(p.toLowerCase()))) return whole
-    return `${open}${parts.map(p => labels.get(p.toLowerCase())).join('、')}${close}`
+    return `${open}${parts.map(p => labels.get(p.toLowerCase())).join(t('brief.briefContent.text'))}${close}`
   })
 }
 
@@ -143,7 +144,7 @@ function parseHighlights(lines: string[], labels: Map<string, string>): BriefHig
       items.push(line)
     }
   }
-  return items.filter(Boolean).map(t => splitHighlight(t, labels))
+  return items.filter(Boolean).map(item => splitHighlight(item, labels))
 }
 
 // `**台股**`、`**台股**：內文`、`**台股：**內文`
@@ -261,6 +262,6 @@ export function briefMix(markets: readonly BriefMarketCount[] | null | undefined
     .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1] || order(a[0]) - order(b[0]))
     .map(([code, n]) => ({ market: code, label: marketLabel(code), color: marketColor(code), count: n }))
-  if (other > 0) items.push({ market: null, label: '其他', color: OTHER_COLOR, count: other })
+  if (other > 0) items.push({ market: null, label: t('brief.briefContent.other'), color: OTHER_COLOR, count: other })
   return items
 }

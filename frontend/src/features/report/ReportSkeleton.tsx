@@ -1,4 +1,5 @@
 import styles from './ReportSkeleton.module.css'
+import { t } from '@/i18n'
 
 /** 灰塊＋白色掃光。版面對齊實際內容，載入完成時不跳動。 */
 function Sk({ w, h, r }: { w: number | string; h: number; r?: number }) {
@@ -8,7 +9,7 @@ function Sk({ w, h, r }: { w: number | string; h: number; r?: number }) {
 /** 雙欄版型骨架（非中央 spinner）：研報面板＋PDF 畫布。 */
 export function ReportSkeleton() {
   return (
-    <div className={styles.page} aria-busy="true" aria-label="載入中" data-testid="report-skeleton">
+    <div className={styles.page} aria-busy="true" aria-label={t('report.reportSkeleton.loading')} data-testid="report-skeleton">
       <div className={styles.main}>
         <div className={styles.intel}>
           <div className={styles.hd}>

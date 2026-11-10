@@ -8,6 +8,7 @@ import { RATING_DISPLAY, fmtRevisionPct, fmtTargetPrice } from './readingFormat'
 import { useConsensusCount, useTargetRevision } from './useReading'
 import panel from './panel.module.css'
 import styles from './RatingSection.module.css'
+import { t } from '@/i18n'
 
 /** 評等 → 徽章類名（台股慣例紅漲綠跌，色票在 tokens.css 的 --tf-badge-*）。 */
 const BADGE_CLASS: Record<ReadingRatingNorm, string> = {
@@ -37,7 +38,7 @@ function ConsensusLink({ signal }: { signal: Signal }) {
   const n = count.data
   return (
     <Link className={styles.lk} to={consensusHref(market, signal.instrument_code)}>
-      {n ? <><span className={styles.num}>{n}</span> 家券商共識</> : '券商共識'}
+      {n ? <><span className={styles.num}>{n}</span>{' '}{t('report.ratingSection.brokerConsensus')}</> : t('report.ratingSection.consensus')}
       <ChevronRight size={13} strokeWidth={1.8} aria-hidden />
     </Link>
   )
@@ -55,7 +56,7 @@ function RatingCard({ signal, reportId }: { signal: Signal; reportId: string }) 
     <>
       <span className={`${styles.badge} ${BADGE_CLASS[rating]}`}>{RATING_DISPLAY[rating]}</span>
       <span className={styles.mid}>
-        <span className={styles.k}>目標價{currency ? `（${currency}）` : ''}</span>
+        <span className={styles.k}>{t('report.ratingSection.targetPrice')}{currency ? t('report.ratingSection.text', { currency }) : ''}</span>
         <span className={styles.vRow}>
           <span className={styles.v}>{fmtTargetPrice(signal.target_price)}</span>
           {rev && (
@@ -63,7 +64,7 @@ function RatingCard({ signal, reportId }: { signal: Signal; reportId: string }) 
               {rev.direction === 'up'
                 ? <ArrowUp size={11} strokeWidth={2.6} aria-hidden />
                 : <ArrowDown size={11} strokeWidth={2.6} aria-hidden />}
-              {rev.direction === 'up' ? '上調' : '下修'} {fmtRevisionPct(rev.pct)}
+              {rev.direction === 'up' ? t('report.ratingSection.raised') : t('report.ratingSection.cut')} {fmtRevisionPct(rev.pct)}
             </span>
           )}
         </span>
@@ -81,7 +82,7 @@ function RatingCard({ signal, reportId }: { signal: Signal; reportId: string }) 
   return (
     <Link className={`${styles.card} ${styles.cardOn}`} to={consensusHref(market, signal.instrument_code)}>
       {body}
-      <span className={styles.srOnly}>：前往券商共識</span>
+      <span className={styles.srOnly}>{t('report.ratingSection.goToConsensus')}</span>
     </Link>
   )
 }
@@ -97,7 +98,7 @@ export function RatingSection({ signals, reportId }: { signals: Signal[]; report
   return (
     <section className={panel.sec} aria-labelledby="rd-rate">
       <div className={panel.head}>
-        <h2 id="rd-rate" className={panel.h}>本篇評等</h2>
+        <h2 id="rd-rate" className={panel.h}>{t('report.ratingSection.thisReportSRating')}</h2>
         {/* 多檔標的時標題列不知道該連哪一檔，改由各張卡自己連 */}
         {single && <ConsensusLink signal={single} />}
       </div>

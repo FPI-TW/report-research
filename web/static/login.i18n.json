@@ -1,0 +1,325 @@
+{
+  "_comment": "登入頁（web/static/login.html）的介面字串：{{t:鍵}} 換成 HTML 跳脫的字、{{tjs:鍵}} 換成 JS 字串字面值。伺服器依 tf_locale cookie（SPA 寫的語言偏好）→ profile 預設挑語系（web/routers/auth_pages.py）。兩個語系的鍵必須相同（tests/test_login_i18n.py）。譯名照 frontend/src/i18n/GLOSSARY.md。",
+  "messages": {
+    "title": {
+      "zh-Hant": "登入 · {{product_name}}",
+      "en": "Sign in to {{product_name}}"
+    },
+    "sign_in": {
+      "zh-Hant": "登入",
+      "en": "Sign in"
+    },
+    "two_step": {
+      "zh-Hant": "兩步驟驗證",
+      "en": "Two-step verification"
+    },
+    "totp_sub": {
+      "zh-Hant": "請輸入驗證器 App 顯示的 6 位數驗證碼。",
+      "en": "Enter the 6-digit code shown in the authenticator app."
+    },
+    "signing_in": {
+      "zh-Hant": "登入中…",
+      "en": "Signing in…"
+    },
+    "sso_button": {
+      "zh-Hant": "以公司帳號登入",
+      "en": "Sign in with company account"
+    },
+    "or": {
+      "zh-Hant": "或",
+      "en": "or"
+    },
+    "break_glass": {
+      "zh-Hant": "緊急管理員登入",
+      "en": "Emergency administrator sign-in"
+    },
+    "username": {
+      "zh-Hant": "帳號",
+      "en": "Username"
+    },
+    "password": {
+      "zh-Hant": "密碼",
+      "en": "Password"
+    },
+    "verifying": {
+      "zh-Hant": "驗證中…",
+      "en": "Verifying…"
+    },
+    "code": {
+      "zh-Hant": "驗證碼",
+      "en": "Verification code"
+    },
+    "verify": {
+      "zh-Hant": "驗證",
+      "en": "Verify"
+    },
+    "restart": {
+      "zh-Hant": "重新輸入帳號密碼",
+      "en": "Re-enter username and password"
+    },
+    "footer": {
+      "zh-Hant": "研究部內部系統 · 請以配發帳號登入",
+      "en": "Internal research system. Sign in with the issued account."
+    },
+    "intro_label": {
+      "zh-Hant": "平台介紹",
+      "en": "About the platform"
+    },
+    "eyebrow": {
+      "zh-Hant": "券商研究報告 · 智能檢索平台",
+      "en": "Broker research, intelligent search"
+    },
+    "slogan_1": {
+      "zh-Hant": "從大量研報中，",
+      "en": "From a sea of reports, "
+    },
+    "slogan_2": {
+      "zh-Hant": "直達關鍵段落。",
+      "en": "straight to the key passage."
+    },
+    "tile_qa": {
+      "zh-Hant": "問答",
+      "en": "Q&A"
+    },
+    "tile_qa_desc": {
+      "zh-Hant": "以自然語言提問，AI 檢索研報後整理回答，每段附引用來源。",
+      "en": "Ask in natural language; AI searches the reports and compiles an answer with a cited source for every paragraph."
+    },
+    "demo_question": {
+      "zh-Hant": "台積電先進製程的最新展望如何？",
+      "en": "TSMC advanced-node outlook?"
+    },
+    "demo_ask": {
+      "zh-Hant": "提問 ↵",
+      "en": "Ask ↵"
+    },
+    "step_understand": {
+      "zh-Hant": "理解問題",
+      "en": "Understanding the question"
+    },
+    "in_progress": {
+      "zh-Hant": "進行中",
+      "en": "In progress"
+    },
+    "done": {
+      "zh-Hant": "完成",
+      "en": "Done"
+    },
+    "intent_instrument": {
+      "zh-Hant": "標的",
+      "en": "Instrument"
+    },
+    "demo_tsmc": {
+      "zh-Hant": "台積電",
+      "en": "TSMC"
+    },
+    "intent_topic": {
+      "zh-Hant": "主題",
+      "en": "Topic"
+    },
+    "demo_topic": {
+      "zh-Hant": "先進製程",
+      "en": "Advanced nodes"
+    },
+    "intent_time": {
+      "zh-Hant": "時間",
+      "en": "Time"
+    },
+    "demo_latest": {
+      "zh-Hant": "最新",
+      "en": "Latest"
+    },
+    "step_search": {
+      "zh-Hant": "檢索研報",
+      "en": "Searching reports"
+    },
+    "step_read": {
+      "zh-Hant": "閱讀整理",
+      "en": "Reading and organizing"
+    },
+    "step_answer": {
+      "zh-Hant": "生成回答",
+      "en": "Generating the answer"
+    },
+    "grounded": {
+      "zh-Hant": "依據 4 篇研報，每段附出處",
+      "en": "Based on 4 reports, every paragraph sourced"
+    },
+    "markets_label": {
+      "zh-Hant": "涵蓋市場",
+      "en": "Markets covered"
+    },
+    "mkt_tw": {
+      "zh-Hant": "台股",
+      "en": "Taiwan"
+    },
+    "mkt_us": {
+      "zh-Hant": "美股",
+      "en": "US"
+    },
+    "mkt_hk": {
+      "zh-Hant": "港股",
+      "en": "Hong Kong"
+    },
+    "mkt_cn": {
+      "zh-Hant": "陸股",
+      "en": "China"
+    },
+    "mkt_wtx": {
+      "zh-Hant": "台指期",
+      "en": "TAIEX futures"
+    },
+    "mkt_fx": {
+      "zh-Hant": "外匯",
+      "en": "FX"
+    },
+    "mkt_macro": {
+      "zh-Hant": "總經",
+      "en": "Macro"
+    },
+    "mkt_global": {
+      "zh-Hant": "全球",
+      "en": "Global"
+    },
+    "mkt_crypto": {
+      "zh-Hant": "加密",
+      "en": "Crypto"
+    },
+    "features_label": {
+      "zh-Hant": "平台功能",
+      "en": "Platform features"
+    },
+    "tile_search": {
+      "zh-Hant": "檢索",
+      "en": "Search"
+    },
+    "tile_search_desc": {
+      "zh-Hant": "語意＋關鍵字混合檢索，用字不必與原文相同；可依市場、商品類型與報告類型篩選。",
+      "en": "Hybrid semantic and keyword search, so wording needn't match the source; filter by market, asset class and report type."
+    },
+    "demo_query_1": {
+      "zh-Hant": "AI 伺服器散熱",
+      "en": "AI server cooling"
+    },
+    "tile_reading": {
+      "zh-Hant": "閱讀頁",
+      "en": "Reading page"
+    },
+    "tile_reading_desc": {
+      "zh-Hant": "內嵌原始 PDF，並列重點摘錄、券商訊號與相似研報。",
+      "en": "The original PDF embedded alongside key takeaways, broker signals and similar reports."
+    },
+    "takeaways_chip": {
+      "zh-Hant": "重點摘錄",
+      "en": "Key takeaways"
+    },
+    "tile_radar": {
+      "zh-Hant": "觀點雷達",
+      "en": "Viewpoint radar"
+    },
+    "tile_radar_desc": {
+      "zh-Hant": "彙整同一標的各家券商的評等、目標價與 EPS，追蹤觀點變化。",
+      "en": "Compiles every broker's rating, target price and EPS for an instrument and tracks how views change."
+    },
+    "radar_note": {
+      "zh-Hant": "一點＝一家券商",
+      "en": "One dot = one broker"
+    },
+    "tile_brief": {
+      "zh-Hant": "每日簡報",
+      "en": "Daily brief"
+    },
+    "tile_brief_desc": {
+      "zh-Hant": "每日彙整各家券商研報的重點，整理成一份簡報。",
+      "en": "Compiles the key points of each broker's reports into one brief every day."
+    },
+    "broker_a": {
+      "zh-Hant": "券商 A",
+      "en": "Broker A"
+    },
+    "broker_b": {
+      "zh-Hant": "券商 B",
+      "en": "Broker B"
+    },
+    "broker_c": {
+      "zh-Hant": "券商 C",
+      "en": "Broker C"
+    },
+    "today_brief": {
+      "zh-Hant": "今日簡報",
+      "en": "Today's brief"
+    },
+    "err_totp": {
+      "zh-Hant": "驗證碼不正確或已使用過，請輸入驗證器目前顯示的碼。",
+      "en": "The code is wrong or has already been used. Enter the code the authenticator shows now."
+    },
+    "err_expired": {
+      "zh-Hant": "驗證步驟已逾時，請重新輸入帳號密碼。",
+      "en": "The verification step timed out. Enter the username and password again."
+    },
+    "err_locked": {
+      "zh-Hant": "嘗試次數過多，請稍後再試。",
+      "en": "Too many attempts. Try again later."
+    },
+    "err_insecure": {
+      "zh-Hant": "此登入只接受 HTTPS 或本機 localhost，請改走受保護入口。",
+      "en": "This sign-in only accepts HTTPS or local localhost. Use the protected entry point."
+    },
+    "err_disabled": {
+      "zh-Hant": "此帳號已停用，請聯絡管理者。",
+      "en": "This account is disabled. Contact an administrator."
+    },
+    "err_unavailable": {
+      "zh-Hant": "登入服務暫時無法使用，請稍後再試。",
+      "en": "The sign-in service is temporarily unavailable. Try again later."
+    },
+    "err_sso": {
+      "zh-Hant": "公司帳號登入沒有完成，請重新登入。",
+      "en": "The company account sign-in didn't complete. Sign in again."
+    },
+    "err_sso_unavailable": {
+      "zh-Hant": "公司帳號登入服務暫時無法使用，請稍後再試。",
+      "en": "The company account sign-in service is temporarily unavailable. Try again later."
+    },
+    "err_sso_account": {
+      "zh-Hant": "這個公司帳號無法登入本系統，請聯絡管理者。",
+      "en": "This company account can't sign in to this system. Contact an administrator."
+    },
+    "err_sso_only": {
+      "zh-Hant": "請改以公司帳號登入。",
+      "en": "Sign in with the company account instead."
+    },
+    "err_default": {
+      "zh-Hant": "帳號或密碼錯誤。",
+      "en": "Wrong username or password."
+    },
+    "demo_query_2": {
+      "zh-Hant": "台積電 先進封裝",
+      "en": "TSMC advanced packaging"
+    },
+    "demo_query_3": {
+      "zh-Hant": "美國 升息",
+      "en": "US rate hikes"
+    },
+    "demo_query_4": {
+      "zh-Hant": "台指期 部位策略",
+      "en": "TAIEX futures positioning"
+    },
+    "meta_description": {
+      "zh-Hant": "{{product_name}}登入",
+      "en": "Sign in to {{product_name}}"
+    },
+    "hint_off": {
+      "zh-Hant": "請以管理者配發的帳號登入。",
+      "en": "Sign in with the account issued by an administrator."
+    },
+    "hint_on": {
+      "zh-Hant": "請以公司帳號或管理者配發的帳號登入。",
+      "en": "Sign in with a company account or the account issued by an administrator."
+    },
+    "hint_only": {
+      "zh-Hant": "請以公司帳號登入。",
+      "en": "Sign in with a company account."
+    }
+  }
+}

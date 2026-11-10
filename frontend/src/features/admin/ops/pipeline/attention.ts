@@ -1,4 +1,5 @@
 import type { Progress } from '../../../../lib/progressSchema'
+import { t } from '@/i18n'
 
 /**
  * 管線分頁頁首的結論。**只用既有判準，不發明門檻**：
@@ -33,14 +34,14 @@ export function pipelineAttention(p: Progress): AttentionItem[] {
   const items: AttentionItem[] = []
   const f = p.unit_failures
   if (f && f.count_24h > 0) {
-    const latest = f.latest ? `，最近一次 ${fmtMinute(f.latest)}` : ''
-    items.push({ level: 'bad', text: `近 24 小時有 ${f.count_24h} 次排程失敗${latest}`, target: 'schedule' })
+    const latest = f.latest ? t('admin.ops.pipeline.attention.last', { latest: fmtMinute(f.latest) }) : ''
+    items.push({ level: 'bad', text: t('admin.ops.pipeline.attention.scheduleFailuresInTheLast', { count_24h: f.count_24h, latest }), target: 'schedule' })
   }
   const qa = p.evaluation?.qa
   if (qa && qa.degraded > 0) {
     items.push({
       level: 'warn',
-      text: `問答忠實度有 ${qa.degraded} 筆 fail-open（judge 異常，該筆實際未被查核）`,
+      text: t('admin.ops.pipeline.attention.qAFaithfulnessChecksFailed', { degraded: qa.degraded }),
       target: 'quality',
     })
   }

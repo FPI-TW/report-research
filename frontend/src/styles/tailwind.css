@@ -188,8 +188,9 @@
   --selected: #D4D4D4;
   --destructive-light: #FEF2F2;
   --overlay: 0 0 0;
-  /* Fluid 的強調色改成品牌金（預設藍 #6B97FF）：焦點環、選取反白都跟著它 */
-  --fluid-accent: #8a5a0f;
+  /* Fluid 的強調色改成全站強調色（Fluid 預設藍 #6B97FF）：焦點環、選取反白都跟著它。值是 tokens.css 的
+     --tf-fluid-accent（只跟亮色的 accent_text 走，管理後台深色主題下也不變） */
+  --fluid-accent: var(--tf-fluid-accent);
   --focus-ring: var(--fluid-accent);
   --tint: rgb(0 0 0 / 0.08);
   --tint-hover: rgb(0 0 0 / 0.065);

@@ -85,9 +85,16 @@ def ts_string_array(src: str, name: str) -> list[str]:
 
 
 def ts_object_keys(src: str, name: str) -> list[str]:
-    """`{ key: '值', 'k-2': "值" }` 的鍵；值必須是字串字面量。"""
+    """`{ key: '值', 'k-2': "值" }` 的鍵；值必須是字串字面量。
+
+    介面字串進字典之後（frontend/src/i18n），標籤表寫成 `get key() { return t('字典鍵') }`：只認這一種形狀
+    （getter 本體只能是以字串字面量查字典），其他計算值與展開照樣拒絕。
+    """
     body = _LINE_COMMENT.sub("", _ts_const_initializer(src, name, "{"))
-    entry = re.compile(rf"\s*(?:([A-Za-z_$][\w$]*)|({_STR}))\s*:\s*(?:{_STR})\s*(?:,|$)")
+    entry = re.compile(
+        rf"\s*(?:(?:([A-Za-z_$][\w$]*)|({_STR}))\s*:\s*(?:{_STR})"
+        rf"|get\s+(?:([A-Za-z_$][\w$]*)|({_STR}))\s*\(\)\s*\{{\s*return\s+t\(\s*(?:{_STR})\s*\)\s*\}})\s*(?:,|$)"
+    )
     keys: list[str] = []
     pos = 0
     while pos < len(body):
@@ -96,7 +103,9 @@ def ts_object_keys(src: str, name: str) -> list[str]:
         m = entry.match(body, pos)
         if not m:
             raise AssertionError(f"`{name}` 有無法解析的項目：{body[pos:].strip()[:80]!r}")
-        keys.append(m.group(1) or _unquote(m.group(2)))
+        key = m.group(1) or m.group(3)
+        quoted = m.group(2) or m.group(4)
+        keys.append(key or _unquote(quoted))
         pos = m.end()
     return keys
 
@@ -231,6 +240,10 @@ class UploadVocabFrontendTests(unittest.TestCase):
             ts_object_keys("export const X: Record<string, string> = {\n  ...BASE,\n  a: 'x',\n}\n", "X")
         with self.assertRaises(AssertionError):
             ts_object_keys("export const X = {\n  a: label('x'),\n}\n", "X")
+        with self.assertRaises(AssertionError):
+            ts_object_keys("export const X = {\n  get a() { return label('x') },\n}\n", "X")
+        self.assertEqual(ts_object_keys("export const X = {\n  get a() { return t('k.a') },\n  b: 'y',\n}\n", "X"),
+                         ["a", "b"])
         with self.assertRaises(AssertionError):
             ts_string_array("export const X: readonly string[] = [...A, 'b']\n", "X")
         self.assertEqual(

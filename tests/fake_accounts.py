@@ -12,17 +12,22 @@ tester／testpass 的管理員——既有測試以那組帳密走 `/login`，�
 問答紀錄只模擬刪除需要的部分（`qa_logs`：id → user_id；`review_subjects`：review_state 的 subject_id），
 測試用 `seed_qa_log()` 放資料。Admin v2 的個人資料（`usage_counter`、`user_quota`、`llm_usage_daily`）
 同理只模擬刪帳需要的部分，用 `seed_usage()` 放；登入事件存在 `auth_events`（刪帳時刻意保留）。
+OIDC 單一登入（revision 0013）：帳號列多 `oidc_issuer`／`oidc_subject`，session 多 `auth_method`／`idp_mfa`；
+`sso_login` 的 JIT、綁定、停用、緊急管理員規則與 `accounts.sso_login` 一致；
+`add_user(..., oidc=(iss, sub))` 放已綁定的帳號。
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 import itertools
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from app.config import get_settings
 from app.services import accounts, passwords, totp
 from app.services.accounts import (
     AccountDeletedError,
@@ -45,6 +50,7 @@ from app.services.accounts import (
     SelfLockoutError,
     SessionInfo,
     SessionNotFoundError,
+    SsoLoginResult,
     TotpRequiredError,
     TotpSetup,
     TotpStateError,
@@ -71,6 +77,8 @@ class _Row:
     totp_enabled: bool = False
     totp_last_step: int | None = None
     deleted_at: datetime | None = None
+    oidc_issuer: str | None = None
+    oidc_subject: str | None = None
 
 
 @dataclass
@@ -101,6 +109,8 @@ class _Sess:
     elevated_until: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     revoked_at: datetime | None = None
+    auth_method: str = "password"
+    idp_mfa: bool = False
 
 
 class FakeAccounts:
@@ -136,6 +146,8 @@ class FakeAccounts:
     EXPORT_KINDS = accounts.EXPORT_KINDS
     BULK_USER_ACTIONS = accounts.BULK_USER_ACTIONS
     BULK_MAX_USERS = accounts.BULK_MAX_USERS
+    SSO_PASSWORD_HASH = accounts.SSO_PASSWORD_HASH
+    SsoLoginResult = SsoLoginResult
 
     def __init__(self) -> None:
         self.users: dict[str, _Row] = {}
@@ -172,16 +184,23 @@ class FakeAccounts:
 
     # ── 測試輔助 ─────────────────────────────────────────────────────
     def add_user(self, username: str, password: str, role: str = "user", *, enabled: bool = True,
-                 is_super: bool = False, scopes=()) -> str:
+                 is_super: bool = False, scopes=(), oidc: tuple[str, str] | None = None) -> str:
         uid = str(uuid.uuid4())
         self.users[uid] = _Row(id=uid, username=username, password=password, role=role, enabled=enabled,
-                               is_super=is_super, scopes=set(scopes))
+                               is_super=is_super, scopes=set(scopes),
+                               oidc_issuer=oidc[0] if oidc else None, oidc_subject=oidc[1] if oidc else None)
         return uid
 
     def _user(self, row: _Row, elevated_until=None) -> User:
+        # 簽章刻意維持兩個參數：多支測試的子類別覆寫它（改權限用），多一個參數它們就拋 TypeError。
+        # session 的登入方式由呼叫端以 dataclasses.replace 補上（_session_user）。
         return User(id=row.id, username=row.username, role=row.role, is_super=row.is_super,
                     scopes=accounts.effective_scopes(row.role, row.is_super, row.scopes),
                     elevated_until=elevated_until, totp_enabled=row.totp_enabled)
+
+    def _session_user(self, row: _Row, elevated_until=None, *, auth_method: str = "password",
+                      idp_mfa: bool = False) -> User:
+        return dataclasses.replace(self._user(row, elevated_until), auth_method=auth_method, idp_mfa=idp_mfa)
 
     def _pending_deletion(self, user_id: str) -> _Deletion | None:
         return next((d for d in self.deletions if d.user_id == str(user_id) and d.pending), None)
@@ -234,6 +253,7 @@ class FakeAccounts:
             is_super=row.is_super, scopes=tuple(sorted(row.scopes)), totp_enabled=row.totp_enabled,
             deleted_at=row.deleted_at,
             deletion_execute_after=d.execute_after if (d := self._pending_deletion(row.id)) else None,
+            sso_bound=row.oidc_subject is not None,
         )
 
     def _audit(self, actor_id, action, target_id, detail, target_type="user") -> None:
@@ -258,14 +278,21 @@ class FakeAccounts:
         row = self._by_name(username or "")
         if row is None or not password:
             return LoginResult(None, "unknown_user")
-        if row.password != password:
+        if not self._password_ok(row, password):
             return LoginResult(None, "bad_password", user_id=row.id)
         if not row.enabled:
             return LoginResult(None, "disabled", user_id=row.id)
+        if not accounts.local_login_permitted(row.username, row.role):
+            return LoginResult(None, "sso_only", user_id=row.id)
         if row.totp_enabled:
             return LoginResult(None, "totp_required", MfaChallenge(row.id, self._fingerprint(row)), user_id=row.id)
         row.last_login_at = datetime.now(timezone.utc)
         return LoginResult(self._user(row), "ok", user_id=row.id)
+
+    @staticmethod
+    def _password_ok(row: _Row, password: str) -> bool:
+        """`!` 開頭的是 DELETED_PASSWORD_HASH／SSO_PASSWORD_HASH 這類標記（不是 PHC 字串）：真的那份永遠比對不上。"""
+        return not row.password.startswith("!") and row.password == password
 
     def _fingerprint(self, row: _Row) -> str:
         return accounts.mfa_fingerprint(row.id, row.password, row.totp_last_step, row.totp_secret)
@@ -284,13 +311,16 @@ class FakeAccounts:
         row.last_login_at = datetime.now(timezone.utc)
         return self._user(row)
 
-    async def create_session(self, user_id: str, *, max_age_seconds: int, ip=None, user_agent=None) -> str:
+    async def create_session(self, user_id: str, *, max_age_seconds: int, ip=None, user_agent=None,
+                             auth_method: str = "password", idp_mfa: bool = False) -> str:
         self._check()
+        if auth_method not in accounts.AUTH_METHODS:
+            raise ValueError(f"未知的登入方式：{auth_method!r}")
         sid = str(uuid.uuid4())
         self.sessions[sid] = _Sess(
             id=sid, user_id=str(user_id),
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=max_age_seconds),
-            ip=ip, user_agent=user_agent,
+            ip=ip, user_agent=user_agent, auth_method=auth_method, idp_mfa=bool(idp_mfa) and auth_method == "sso",
         )
         return sid
 
@@ -302,7 +332,9 @@ class FakeAccounts:
         row = self.users.get(s.user_id)
         if row is None or not row.enabled or row.deleted_at is not None:
             return None
-        return self._user(row, s.elevated_until)
+        if s.auth_method != "sso" and not accounts.local_login_permitted(row.username, row.role):
+            return None
+        return self._session_user(row, s.elevated_until, auth_method=s.auth_method, idp_mfa=s.idp_mfa)
 
     async def elevate_session(self, session_id: str, password: str, totp_code: str | None = None):
         self._check()
@@ -312,7 +344,7 @@ class FakeAccounts:
         row = self.users.get(s.user_id)
         if row is None or not row.enabled:
             return None
-        if row.password != password:
+        if not self._password_ok(row, password):
             self._audit(row.id, "session.elevate_failed", session_id, {"username": row.username}, "session")
             return None
         if row.totp_enabled:
@@ -328,6 +360,55 @@ class FakeAccounts:
         self._audit(row.id, "session.elevate", session_id,
                     {"username": row.username, "seconds": accounts.ELEVATION_SECONDS}, "session")
         return s.elevated_until
+
+    async def elevate_sso_session(self, session_id: str, *, issuer: str, subject: str):
+        self._check()
+        s = self.sessions.get(session_id)
+        if s is None or s.revoked or s.expires_at <= datetime.now(timezone.utc):
+            return None
+        row = self.users.get(s.user_id)
+        if row is None or not row.enabled or row.deleted_at is not None:
+            return None
+        if s.auth_method != "sso" or row.oidc_issuer != issuer or row.oidc_subject != subject:
+            self._audit(row.id, "session.elevate_failed", session_id,
+                        {"username": row.username, "reason": "sso_identity", "via": "sso"}, "session")
+            return None
+        s.elevated_until = datetime.now(timezone.utc) + timedelta(seconds=accounts.ELEVATION_SECONDS)
+        self._audit(row.id, "session.elevate", session_id,
+                    {"username": row.username, "seconds": accounts.ELEVATION_SECONDS, "via": "sso"}, "session")
+        return s.elevated_until
+
+    async def sso_login(self, issuer: str, subject: str, username: str) -> SsoLoginResult:
+        self._check()
+        if not issuer or not subject or len(issuer) > 512 or len(subject) > 255:
+            raise ValueError("issuer／subject 不可為空或超過長度上限")
+        oidc = get_settings().oidc
+        row = next((r for r in self.users.values()
+                    if r.oidc_issuer == issuer and r.oidc_subject == subject), None)
+        if row is not None:
+            if not row.enabled or row.deleted_at is not None:
+                return SsoLoginResult(None, "disabled", user_id=row.id)
+            row.last_login_at = datetime.now(timezone.utc)
+            return SsoLoginResult(self._session_user(row, auth_method="sso"), "ok", user_id=row.id)
+        name = accounts.normalize_username(username)
+        if accounts.username_problem(name):
+            return SsoLoginResult(None, "invalid_username")
+        row = self._by_name(name)
+        if row is not None:
+            if oidc.is_break_glass(row.username):
+                return SsoLoginResult(None, "break_glass", user_id=row.id)
+            if not oidc.link_by_username or row.oidc_subject is not None or row.deleted_at is not None:
+                return SsoLoginResult(None, "username_conflict", user_id=row.id)
+            if not row.enabled:
+                return SsoLoginResult(None, "disabled", user_id=row.id)
+            row.oidc_issuer, row.oidc_subject = issuer, subject
+            row.last_login_at = datetime.now(timezone.utc)
+            self._audit(None, "user.sso_link", row.id, {"username": row.username, "issuer": issuer, "via": "sso"})
+            return SsoLoginResult(self._session_user(row, auth_method="sso"), "ok", user_id=row.id, linked=True)
+        uid = self.add_user(name, accounts.SSO_PASSWORD_HASH, "user", oidc=(issuer, subject))
+        self.users[uid].last_login_at = datetime.now(timezone.utc)
+        self._audit(None, "user.create", uid, {"username": name, "role": "user", "issuer": issuer, "via": "sso_jit"})
+        return SsoLoginResult(self._session_user(self.users[uid], auth_method="sso"), "ok", user_id=uid, created=True)
 
     async def revoke_session(self, session_id: str) -> None:
         self._check()
@@ -692,6 +773,7 @@ class FakeAccounts:
             row.username, row.password = accounts.deleted_username(user_id), accounts.DELETED_PASSWORD_HASH
             row.role, row.is_super, row.enabled, row.scopes = "user", False, False, set()
             row.totp_enabled, row.totp_secret, row.totp_last_step = False, None, None
+            row.oidc_issuer, row.oidc_subject = None, None
             row.last_login_at = None
             row.deleted_at = row.deleted_at or datetime.now(timezone.utc)
         sessions = [sid for sid, s in self.sessions.items() if s.user_id == user_id]
@@ -727,6 +809,7 @@ class FakeAccounts:
             row.username != accounts.deleted_username(uid) or row.password != accounts.DELETED_PASSWORD_HASH
             or row.enabled or row.role != "user" or row.is_super or row.totp_enabled
             or row.totp_secret is not None or row.last_login_at is not None or row.deleted_at is None
+            or row.oidc_subject is not None
         )
         return DeletionResidue(
             qa_log=len(qids), review_state=len(self.review_subjects & qids),

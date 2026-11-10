@@ -79,7 +79,6 @@ from app.services.batch_freshness import (  # noqa: E402  — 判斷邏輯與管
     EXIT_STALE,
     EXIT_UNKNOWN,
     EXIT_UPSTREAM_STALE,
-    LATEST_SQL,
     STATE_DISABLED,
     STATE_FRESH,
     STATE_STALE,
@@ -92,6 +91,7 @@ from app.services.batch_freshness import (  # noqa: E402  — 判斷邏輯與管
     fetch_latest,
     has_stale,
     has_upstream_stale,
+    latest_sql,
     read_heartbeat,
 )
 
@@ -101,9 +101,10 @@ HEARTBEAT_PATH = Path(__file__).resolve().parents[1] / "data" / ".last_successfu
 
 __all__ = [
     "ASSETS", "DEFAULT_PIPELINE_HOURS", "DEFAULT_THRESHOLDS", "EXIT_OK", "EXIT_STALE", "EXIT_UNKNOWN",
-    "EXIT_UPSTREAM_STALE", "HEARTBEAT_PATH", "LATEST_SQL", "STATE_DISABLED", "STATE_FRESH", "STATE_STALE",
+    "EXIT_UPSTREAM_STALE", "HEARTBEAT_PATH", "STATE_DISABLED", "STATE_FRESH", "STATE_STALE",
     "STATE_SUPPRESSED", "STATE_UPSTREAM_STALE", "Finding", "assess", "assess_pipeline", "exit_code",
-    "fetch_latest", "fmt_report", "has_stale", "has_upstream_stale", "parse_args", "read_heartbeat", "run",
+    "fetch_latest", "fmt_report", "has_stale", "has_upstream_stale", "latest_sql", "parse_args", "read_heartbeat",
+    "run",
     "thresholds_from_args",
 ]
 

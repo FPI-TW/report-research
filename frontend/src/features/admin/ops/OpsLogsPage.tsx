@@ -5,12 +5,13 @@ import { fmtDateTime } from '../auditLabels'
 import { OpsQueryError } from './OpsShared'
 import { useOpsLogs, useOpsServices } from './useOps'
 import styles from './exec/Exec.module.css'
+import { t } from '@/i18n'
 
 const SINCE_OPTIONS = [
-  { value: '15m', label: '最近 15 分鐘' },
-  { value: '1h', label: '最近 1 小時' },
-  { value: '6h', label: '最近 6 小時' },
-  { value: '1d', label: '最近 1 天' },
+  { value: '15m', get label() { return t('admin.ops.opsLogsPage.last15Minutes') } },
+  { value: '1h', get label() { return t('admin.ops.opsLogsPage.last1Hour') } },
+  { value: '6h', get label() { return t('admin.ops.opsLogsPage.last6Hours') } },
+  { value: '1d', get label() { return t('admin.ops.opsLogsPage.last1Day') } },
 ] as const satisfies readonly SegOption<string>[]
 const LINE_OPTIONS = [100, 200, 500, 1000] as const
 const LINE_SEG: readonly SegOption<string>[] = LINE_OPTIONS.map(n => ({ value: String(n), label: String(n) }))
@@ -29,8 +30,8 @@ function pickLines(v: string | null): number {
 
 function LogView({ service, since, lines }: { service: string; since: string; lines: number }) {
   const q = useOpsLogs(service, since, lines)
-  if (q.isPending) return <p className={c.empty}>載入日誌中…</p>
-  if (q.isError) return <OpsQueryError error={q.error} what="日誌" />
+  if (q.isPending) return <p className={c.empty}>{t('admin.ops.opsLogsPage.loadingLogs')}</p>
+  if (q.isError) return <OpsQueryError error={q.error} what={t('admin.ops.opsLogsPage.logs')} />
   const d = q.data
   return (
     <Card
@@ -39,27 +40,27 @@ function LogView({ service, since, lines }: { service: string; since: string; li
       labelledBy="ops-logs-title"
       right={(
         <>
-          <span>檢查時間 {fmtDateTime(d.checked_at)}</span>
+          <span>{t('admin.ops.opsLogsPage.checkedAt', { checked_at: fmtDateTime(d.checked_at) })}</span>
           <Button size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
-            {q.isFetching ? '更新中…' : '重新整理'}
+            {q.isFetching ? t('admin.ops.opsLogsPage.updating') : t('admin.ops.opsLogsPage.refresh')}
           </Button>
         </>
       )}
     >
       <div className={styles.logBody}>
         <p className={c.meta}>
-          <span>自 {fmtDateTime(d.since)} 起・{d.entries.length} 行</span>
+          <span>{t('admin.ops.opsLogsPage.sinceLines', { since: fmtDateTime(d.since), length: d.entries.length })}</span>
         </p>
         {d.truncated && (
           <p className={c.banner} data-tone="warn" role="note">
-            回應超過上限，已從較舊的一端截掉部分內容；要看更早的請縮短時間範圍或減少行數。
+            {t('admin.ops.opsLogsPage.theResponseExceededTheLimit')}
           </p>
         )}
         {d.entries.length === 0 ? (
-          <p className={c.muted}>這段時間沒有日誌</p>
+          <p className={c.muted}>{t('admin.ops.opsLogsPage.noLogsInThisPeriod')}</p>
         ) : (
           // tabIndex：限高自己捲的區塊要能用鍵盤捲
-          <pre className={`${c.log} ${styles.logBox}`} aria-label={`${d.name} 的日誌`} tabIndex={0}>{d.entries.join('\n')}</pre>
+          <pre className={`${c.log} ${styles.logBox}`} aria-label={t('admin.ops.opsLogsPage.logsFor', { name: d.name })} tabIndex={0}>{d.entries.join('\n')}</pre>
         )}
       </div>
     </Card>
@@ -79,18 +80,17 @@ export default function OpsLogsPage() {
   }
   const header = (
     <PageHeader
-      summary="單一服務最近的 journal 或容器日誌；形似祕密的片段已由維運代理遮成 <redacted>。"
+      summary={t('admin.ops.opsLogsPage.recentJournalOrContainerLogs')}
       help={(
         <>
-          systemd 服務讀 journal、容器讀 docker logs，都經維運代理（唯讀）。回應超過上限時從較舊的一端截掉，
-          要看更早的請縮短時間範圍或減少行數。選的服務、時間範圍與行數都放在網址，連結可以直接分享。
+          {t('admin.ops.opsLogsPage.systemdServicesReadTheJournal')}
         </>
       )}
     />
   )
 
-  if (services.isPending) return <>{header}<p className={c.empty}>載入中…</p></>
-  if (services.isError) return <>{header}<OpsQueryError error={services.error} what="服務清單" /></>
+  if (services.isPending) return <>{header}<p className={c.empty}>{t('admin.ops.opsLogsPage.loading')}</p></>
+  if (services.isError) return <>{header}<OpsQueryError error={services.error} what={t('admin.ops.opsLogsPage.serviceList')} /></>
   const withLogs = services.data.items.filter(s => s.actions.includes('logs'))
   const service = params.get('service') ?? ''
   const serviceOptions: SegOption<string>[] = withLogs.map(s => ({ value: s.name, label: <span className={c.mono}>{s.name}</span> }))
@@ -99,26 +99,26 @@ export default function OpsLogsPage() {
     <>
       {header}
       {withLogs.length === 0 ? (
-        <p className={c.empty}>沒有開放查看日誌的服務</p>
+        <p className={c.empty}>{t('admin.ops.opsLogsPage.noServicesAllowViewingLogs')}</p>
       ) : (
         <>
           <div className={styles.pickers}>
             <div className={styles.picker}>
-              <span className={styles.pickerLabel}>服務</span>
+              <span className={styles.pickerLabel}>{t('admin.ops.opsLogsPage.service')}</span>
               {/* 服務在測試環境有三十幾個：分段換行，每個都看得到、一下就切得過去。 */}
-              <Segmented wrap label="服務" options={serviceOptions} value={service} onChange={v => set('service', v)} />
+              <Segmented wrap label={t('admin.ops.opsLogsPage.service')} options={serviceOptions} value={service} onChange={v => set('service', v)} />
             </div>
             <div className={styles.picker}>
-              <span className={styles.pickerLabel}>時間範圍</span>
-              <Segmented label="時間範圍" options={SINCE_OPTIONS} value={since} onChange={v => set('since', v)} />
+              <span className={styles.pickerLabel}>{t('admin.ops.opsLogsPage.timeRange')}</span>
+              <Segmented label={t('admin.ops.opsLogsPage.timeRange')} options={SINCE_OPTIONS} value={since} onChange={v => set('since', v)} />
             </div>
             <div className={styles.picker}>
-              <span className={styles.pickerLabel}>行數</span>
-              <Segmented label="行數" options={LINE_SEG} value={String(lines)} onChange={v => set('lines', v)} />
+              <span className={styles.pickerLabel}>{t('admin.ops.opsLogsPage.lines')}</span>
+              <Segmented label={t('admin.ops.opsLogsPage.lines')} options={LINE_SEG} value={String(lines)} onChange={v => set('lines', v)} />
             </div>
           </div>
           {service === '' ? (
-            <p className={c.empty}>請先選擇服務</p>
+            <p className={c.empty}>{t('admin.ops.opsLogsPage.chooseAServiceFirst')}</p>
           ) : (
             <LogView service={service} since={since} lines={lines} />
           )}

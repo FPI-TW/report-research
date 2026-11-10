@@ -21,9 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text as sql_text  # noqa: E402
 
+from app.profile import get_profile  # noqa: E402
 from app.services.boilerplate import strip_boilerplate  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
+from app.services.doc_types import ingest_gate  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
 from app.services.extract import file_sha256  # noqa: E402
 from app.services.object_storage import get_object_storage, original_object_key  # noqa: E402
@@ -118,11 +120,11 @@ async def main(limit: int | None, batch_size: int) -> None:
             if h in existing:
                 stats["skip_exists"] += 1
                 continue
-            tag = load_tag(TAGS_DIR, h)
+            tag = load_tag(TAGS_DIR, h, normalize_code=get_profile().instruments.normalize_code)
             if tag is None:
                 stats["skip_untagged"] += 1
                 continue
-            if not tag.is_research or not tag.market:
+            if not ingest_gate(tag.doc_type, tag.market):
                 stats["skip_non_research"] += 1
                 await upsert_extraction_log(session, _log_row(rec, "not_research"))
                 await session.commit()
@@ -155,7 +157,7 @@ async def main(limit: int | None, batch_size: int) -> None:
                     file_name=rec["file_name"],
                     file_path=rec["file_path"],
                     market=tag.market,
-                    is_research=tag.is_research,
+                    doc_type=tag.doc_type,
                     confidence=tag.confidence,
                     source_object_key=source_object_key,
                     stock_code=rec.get("stock_code"),

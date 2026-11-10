@@ -7,6 +7,7 @@ import { fullDate } from './libraryFormat'
 import { PreviewLink } from './PreviewLink'
 import atoms from './atoms.module.css'
 import styles from './ResultRow.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   row: ReportRow
@@ -35,7 +36,7 @@ export function ResultRow({ row, isTop, terms, index, onPreview }: Props) {
         <span className={styles.market} style={{ color: marketColor(market) }}>{marketLabel(market)}</span>
         {row.source && <span className={styles.broker}>{row.source}</span>}
         {row.report_date && <span className={`${atoms.num} ${styles.date}`}>{fullDate(row.report_date)}</span>}
-        {isTop && <span className={styles.top}>最相關</span>}
+        {isTop && <span className={styles.top}>{t('search.resultRow.mostRelevant')}</span>}
       </span>
       <span className={styles.title}>{title}</span>
       {text && <span className={styles.summary}>{highlight(text, terms)}</span>}

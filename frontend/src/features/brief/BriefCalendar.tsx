@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import {
-  WEEKDAY_HEADERS,
+  weekdayHeaders,
   addMonths,
   monthCells,
   monthIndex,
@@ -10,6 +10,7 @@ import {
   type MonthRef,
 } from './briefDates'
 import styles from './BriefCalendar.module.css'
+import { formatCalendar, getLocale, t } from '@/i18n'
 
 interface Props {
   /** 有簡報的日期（新→舊）。 */
@@ -40,23 +41,25 @@ export function BriefCalendar({ dates, selected, today, onPick, className }: Pro
   const go = (delta: number) => setView({ anchor, month: addMonths(month, delta) })
 
   const { blanks, days } = monthCells(month)
-  const label = `${month.y} 年 ${month.m} 月`
+  const label = getLocale() === 'en'
+    ? formatCalendar(month.y, month.m, 1, { year: 'numeric', month: 'long' })
+    : t('brief.briefCalendar.text', { y: month.y, m: month.m })
 
   return (
     <section className={[className, styles.calendar].filter(Boolean).join(' ')} aria-labelledby="brief-cal">
       <div className={styles.head}>
         <h2 id="brief-cal" className={styles.label} aria-live="polite">{label}</h2>
-        <button type="button" className={styles.nav} aria-label="上個月" disabled={!canPrev} onClick={() => go(-1)}>
+        <button type="button" className={styles.nav} aria-label={t('brief.briefCalendar.previousMonth')} disabled={!canPrev} onClick={() => go(-1)}>
           <ChevronLeft size={14} strokeWidth={2} aria-hidden="true" />
         </button>
-        <button type="button" className={styles.nav} aria-label="下個月" disabled={!canNext} onClick={() => go(1)}>
+        <button type="button" className={styles.nav} aria-label={t('brief.briefCalendar.nextMonth')} disabled={!canNext} onClick={() => go(1)}>
           <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
       <div className={`${styles.grid} ${styles.weekdays}`} aria-hidden="true">
-        {WEEKDAY_HEADERS.map(w => <span key={w} className={styles.weekday}>{w}</span>)}
+        {weekdayHeaders().map((w, i) => <span key={i} className={styles.weekday}>{w}</span>)}
       </div>
-      <div className={styles.grid} role="group" aria-label="簡報日期">
+      <div className={styles.grid} role="group" aria-label={t('brief.briefCalendar.briefDates')}>
         {Array.from({ length: blanks }, (_, i) => <span key={`b${i}`} aria-hidden="true" />)}
         {days.map(({ iso, day }) => {
           const avail = available.has(iso)
@@ -73,7 +76,7 @@ export function BriefCalendar({ dates, selected, today, onPick, className }: Pro
               disabled={!avail}
               aria-pressed={avail ? isSel : undefined}
               aria-current={isToday ? 'date' : undefined}
-              aria-label={`${m} 月 ${day} 日${avail ? '' : '，無簡報'}`}
+              aria-label={t('brief.briefCalendar.text2', { m, day, v: avail ? '' : t('brief.briefCalendar.noBrief') })}
               onClick={() => { if (avail && !isSel) onPick(iso) }}
             >
               {day}

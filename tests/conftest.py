@@ -37,6 +37,20 @@ os.environ["OPENAI_BASE_URL"] = "http://127.0.0.1:9"
 # OpenCode Go（`LLM_PROVIDER=opencode_go`）同一套兩道防線：切到 Go 的測試自己 patch 假金鑰與 transport。
 os.environ["OPENCODE_GO_API_KEY"] = ""
 os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
+# 其他三個 provider（app/services/llm_models.py 的 PROVIDER_KEY_ENV／ENDPOINT_ENV）同一套：金鑰空、端點不可達。
+# 宣告模型、api-version 與能力旋鈕清成空字串（＝未設），部署目錄 `.env` 的值不滲進測試。
+os.environ["AZURE_OPENAI_API_KEY"] = ""
+os.environ["AZURE_OPENAI_ENDPOINT"] = "http://127.0.0.1:9"
+os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:9"
+os.environ["OPENAI_COMPATIBLE_API_KEY"] = ""
+os.environ["OPENAI_COMPATIBLE_BASE_URL"] = "http://127.0.0.1:9"
+os.environ["AZURE_OPENAI_API_VERSION"] = ""
+os.environ["AZURE_OPENAI_DEPLOYMENTS"] = ""
+os.environ["ANTHROPIC_MODELS"] = ""
+os.environ["OPENAI_COMPATIBLE_MODELS"] = ""
+os.environ["AZURE_OPENAI_SUPPORTS_REASONING_EFFORT"] = ""
+os.environ["OPENAI_COMPATIBLE_SUPPORTS_REASONING_EFFORT"] = ""
 
 # 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
 # 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
@@ -52,6 +66,8 @@ os.environ["OPENCODE_GO_BASE_URL"] = "http://127.0.0.1:9"
 # 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
 os.environ["LLM_PROVIDER"] = "openai"
 os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
+# 預設表的模型名覆寫（`LLM_DEFAULT_MODEL`）：與任務旋鈕同理強制成空字串，測試永遠拿到預設表的值。
+os.environ["LLM_DEFAULT_MODEL"] = ""
 for _knob in (
     "ASK_ANSWER_MODEL", "ASK_WEB_MODEL", "ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL",
     "QA_PLANNER_MODEL", "ASK_FOLLOWUP_MODEL", "FAITHFULNESS_MODEL", "EVAL_JUDGE_MODEL",
@@ -90,12 +106,28 @@ os.environ["RETRIEVAL_REGRESSION_BASELINE"] = "/nonexistent/report-mark-retrieva
 # 研報上傳的隔離區（app/services/quarantine.py；預設 repo 根的 data/quarantine/）：同理用賦值指到不存在的路徑——
 # 收檔建不出目錄就回 503 `quarantine_unavailable`，部署目錄不會留下測試寫的 .part／.bin。要寫檔的測試自己給 tempfile。
 os.environ["UPLOAD_QUARANTINE_DIR"] = "/nonexistent/report-mark-quarantine"
+# 資料來源連接器的狀態目錄（app/services/connectors/；預設 repo 根的 data/connectors/：處理紀錄、失敗清單、
+# 本輪 hashes）：同理用賦值指到不存在的路徑——部署目錄的處理紀錄不會被測試改寫。要跑連接器的測試自己給 tempfile。
+os.environ["CONNECTOR_DATA_DIR"] = "/nonexistent/report-mark-connectors"
+# 分層回填的工作目錄（app/services/backfill_tiers.work_dir；預設 repo 根的 data/backfill/：背景補齊的每日帳、
+# 編排鎖、每批的 hashes 檔）：同理用賦值指到不存在的路徑——帳讀起來是空的、寫入略過。要驗帳的測試自己給 tempfile。
+os.environ["BACKFILL_DIR"] = "/nonexistent/report-mark-backfill"
 # 上傳 worker 的整輪鎖與乾淨檔目錄（app/services/upload_worker.py；預設 repo 根的 data/.upload_worker.lock、
 # data/uploads/clean/）：同理用賦值指到不存在的路徑。要跑 worker 的測試自己給 tempfile（Ctx 的路徑欄位）。
 # 告警 webhook：worker 偵測到感染時會送；測試一律不得送出（要驗的測試自己給假的 runner 與 URL）。
 os.environ["UPLOAD_WORKER_LOCK_FILE"] = "/nonexistent/report-mark-upload-worker/.upload_worker.lock"
 os.environ["UPLOAD_CLEAN_DIR"] = "/nonexistent/report-mark-uploads-clean"
 os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
+# 通用 webhook 告警（app/services/alert_webhook.py）：同理一律不送（**用賦值**設空字串，env loader 才不會再補值）；
+# 冷卻狀態檔預設落在 repo 根的 data/，指到不存在的目錄（開不了檔＝冷卻失效、不寫部署目錄）。要驗的測試自己給
+# URL、MockTransport 與 tempfile。
+os.environ["ALERT_WEBHOOK_URL"] = ""
+os.environ["ALERT_WEBHOOK_STATE_FILE"] = "/nonexistent/report-mark-alert-webhook/state.json"
+# 應用層監控訊號（app/config.py 的 LOG_FORMAT／METRICS_*）：部署目錄 .env 或執行者 shell 的值不滲進測試
+# （LOG_FORMAT=json 會讓 caplog 以外的斷言看到另一種格式；METRICS_* 會改變 /metrics 的存取判定）。空值＝預設。
+os.environ["LOG_FORMAT"] = ""
+os.environ["METRICS_ENABLED"] = "1"
+os.environ["METRICS_ALLOWED_CIDRS"] = ""
 # 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器同時是測試環境的部署主機，代理裝上之後預設 socket
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"
@@ -105,12 +137,25 @@ os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
 # **用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
 # 開啟時的行為由 tests/test_admin_mfa.py 在自己的範圍內換掉 Settings 驗證。
 os.environ["ADMIN_MFA_REQUIRED"] = "0"
+# OIDC 單一登入：開發者環境或 .env 裡的 IdP 設定不可漏進測試（以賦值設空字串，env loader 才不會再補值）。
+# 要驗 SSO 的測試自己把 Settings.oidc 換掉（tests/test_oidc_login.py），HTTP 經 oidc._transport 的 MockTransport。
+# 清單另取名字（不寫成 for 迴圈裡的 tuple 字面）：tests/test_llm_models.py 把那種迴圈認定為 LLM 任務旋鈕的清單。
+_OIDC_KNOBS = ("OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_REDIRECT_URI", "OIDC_SCOPES",
+               "OIDC_USERNAME_CLAIM", "OIDC_ALLOWED_DOMAINS", "OIDC_LINK_BY_USERNAME", "OIDC_SSO_ONLY",
+               "OIDC_BREAK_GLASS_USERS", "OIDC_MFA_AMR", "OIDC_MFA_ACR", "OIDC_ASSUME_IDP_MFA",
+               "OIDC_CLOCK_SKEW_SECONDS")
+for _knob in _OIDC_KNOBS:
+    os.environ[_knob] = ""
 # 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／
 # llm_usage_daily——測試以 `with TestClient(app)` 觸發 lifespan 時，那就是寫進 REPORT_MARK_DB_URL 指的庫
 # （本機預設是測試環境的真實資料庫）。
 # **用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
 # 要驗寫入的測試自己給假的 session factory（tests/test_usage_events.py）。
 os.environ["USAGE_EVENTS_ENABLED"] = "0"
+# profile（app/profile.py）：一律用預設的廷豐 profile（空值＝預設）。**用賦值**：部署目錄 .env 或執行者 shell 若指向
+# 別的 profile，既有測試的品牌、prompt 與市場斷言都會失準。要驗別的 profile 的測試在 tempfile 建一份、自己設
+# PROFILE_DIR 並 reset_profile_cache()（下方 fixture 每題前後都會清快取）。
+os.environ["PROFILE_DIR"] = ""
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -173,9 +218,9 @@ def _fake_accounts():
 
 @pytest.fixture(autouse=True)
 def _reset_monitor_caches():
-    """監控的三個模組級 TTL 快取每題前後各清一次：`web.routers.monitor` 的 runtime 與
+    """監控的模組級 TTL 快取每題前後各清一次：`web.routers.monitor` 的 runtime 與
     tag 檔數兩個，加上 `web.stats_snapshot` 的 DB 快照（/api/stats、/api/progress、
-    /api/review/judge-scale 共用）。
+    /api/review/judge-scale 共用），以及 `web.metrics` 從 DB 算的訊號（/metrics）。
 
     沒有這層的話：A 測試 patch 掉 `_gather_runtime` 後打一次 `/api/progress`，
     假值就進了 `_RUNTIME_CACHE`，B 測試即使 patch 成別的值也拿得到 A 的——兩邊
@@ -187,7 +232,8 @@ def _reset_monitor_caches():
     """
 
     def _clear() -> None:
-        for name, reset in (("web.routers.monitor", "reset_caches"), ("web.stats_snapshot", "reset_cache")):
+        for name, reset in (("web.routers.monitor", "reset_caches"), ("web.stats_snapshot", "reset_cache"),
+                            ("web.metrics", "reset_db_cache")):
             mod = sys.modules.get(name)
             if mod is not None and hasattr(mod, reset):
                 getattr(mod, reset)()
@@ -209,6 +255,34 @@ def _reset_llm_batch_state():
         mod = sys.modules.get("scripts._claude_cli")
         if mod is not None and hasattr(mod, "_reset_state"):
             mod._reset_state()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_identity():
+    """`llm_models` 的自報身分網址是模組層狀態（由 lifespan 與 load_llm_env 設定）：每題前後清空，不留給下一題。"""
+
+    def _clear() -> None:
+        mod = sys.modules.get("app.services.llm_models")
+        if mod is not None:
+            mod.set_identity_url("")
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_profile_cache():
+    """`app.profile.get_profile()` 的快取每題前後各清一次：換 profile 的測試不能把別人的品牌留給下一題。"""
+
+    def _clear() -> None:
+        mod = sys.modules.get("app.profile")
+        if mod is not None:
+            mod.reset_profile_cache()
 
     _clear()
     yield
@@ -249,6 +323,9 @@ def _reset_v2_state():
         security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
         if security is not None:
             security.reset()
+        oidc = sys.modules.get("app.services.oidc")  # OIDC discovery 與 JWKS 快取
+        if oidc is not None:
+            oidc.reset_cache()
 
     _clear()
     yield

@@ -9,6 +9,7 @@ import { reportHref } from '../report/readingFormat'
 import { askHref, fullDate } from './libraryFormat'
 import atoms from './atoms.module.css'
 import styles from './ReportPreview.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   row: ReportRow | null
@@ -24,7 +25,7 @@ export function ReportPreview({ row, onClose }: Props) {
   const [shown, setShown] = useState(row)
   if (row && row !== shown) setShown(row)
   return (
-    <Modal open={row !== null} onClose={onClose} bare ariaLabel={shown ? displayTitle(shown) : '研報預覽'} className={styles.panel}>
+    <Modal open={row !== null} onClose={onClose} bare ariaLabel={shown ? displayTitle(shown) : t('search.reportPreview.reportPreview')} className={styles.panel}>
       {shown && <PreviewBody row={shown} onClose={onClose} />}
     </Modal>
   )
@@ -40,20 +41,20 @@ function PreviewBody({ row, onClose }: { row: ReportRow; onClose: () => void }) 
         <span className={styles.market} style={{ color: marketColor(market) }}>{marketLabel(market)}</span>
         {row.source && <span className={styles.broker}>{row.source}</span>}
         {row.report_date && <span className={`${atoms.num} ${styles.date}`}>{fullDate(row.report_date)}</span>}
-        <button type="button" className={styles.close} aria-label="關閉" onClick={onClose}>
+        <button type="button" className={styles.close} aria-label={t('search.reportPreview.close')} onClick={onClose}>
           <X size={15} strokeWidth={1.8} aria-hidden />
         </button>
       </div>
       <h2 className={styles.title}>{title}</h2>
       {targets.length > 0 && (
         <div className={styles.targets}>
-          {targets.map(t => <span key={t} className={atoms.codeChip}>{t}</span>)}
+          {targets.map(item => <span key={item} className={atoms.codeChip}>{item}</span>)}
         </div>
       )}
       {row.summary && <p className={styles.summary}>{row.summary}</p>}
       <div className={styles.actions}>
-        <Link className={atoms.btn} to={reportHref(row.file_hash)}>開啟閱讀頁</Link>
-        <Link className={`${atoms.btn} ${atoms.btnPrimary}`} to={askHref(title)}>就這篇提問</Link>
+        <Link className={atoms.btn} to={reportHref(row.file_hash)}>{t('search.reportPreview.openReadingPage')}</Link>
+        <Link className={`${atoms.btn} ${atoms.btnPrimary}`} to={askHref(title)}>{t('search.reportPreview.askAboutThisReport')}</Link>
       </div>
     </div>
   )

@@ -30,7 +30,7 @@ router = APIRouter(dependencies=[Depends(authz.require_admin)])
 
 # 與 api_clients.KEY_SCOPES／ENTITLEMENT_DIMENSIONS 逐字一致（tests/test_admin_api_clients.py 釘住）；
 # OpenAPI 與產生的前端 client 靠它列舉。
-ApiClientScope = Literal["search", "report.file"]
+ApiClientScope = Literal["search", "report.file", "report.upload"]
 EntitlementDimension = Literal["market", "source", "report_type", "instrument_type"]
 
 _MANAGE = Depends(authz.require_scope("api_clients.manage"))

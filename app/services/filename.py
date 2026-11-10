@@ -12,92 +12,22 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-# 券商代碼 → 正規化名稱（外資 + 本土）
-BROKER_MAP: dict[str, str] = {
-    "MS": "morgan_stanley",
-    "GS": "goldman_sachs",
-    "JPM": "jpmorgan",
-    "UBS": "ubs",
-    "NMR": "nomura",
-    "MQ": "macquarie",
-    "DW": "daiwa",
-    "DAIWA": "daiwa",  # 2026-07 NAS 批次與 Daiwa_ 前綴檔名帶全字
-    "大和": "daiwa",  # 大和台灣業務端中文筆記（大和 AMD 3QFY24法說摘要.pdf）
-    "FUBON": "fubon",  # 拉丁形式（memo_Fubon 20250730.pdf）；富邦 CJK 已另收
-    "CLSA": "clsa",
-    "CLST": "clsa",  # CL Securities Taiwan（CLSA 台灣）個股報告檔名帶 -CLST<日期>
-    "CITI": "citi",
-    "BOFA": "bofa",
-    "BAML": "bofa",
-    "HSBC": "hsbc",
-    "HTI": "haitong",
-    "JEF": "jefferies",
-    "ALETHEIA": "aletheia",
-    "中信": "citic",
-    "CTBC": "citic",  # 中信證券（CTBC）個股報告檔名帶 -CTBC<日期>（拉丁，詞邊界比對）
-    "群益": "capital",
-    "國泰": "cathay",
-    "凱基": "kgi",
-    "元大": "yuanta",
-    "元富": "masterlink",
-    "宏遠": "hongyuan",
-    "富邦": "fubon",
-    "永豐": "sinopac",
-    "兆豐": "mega",
-    "統一": "president",
-    "日盛": "jihsun",
-    "第一金": "first",
-    "國票": "ibf",
-}
+from app.profile import Sources, get_profile
 
-# 正規化 source → 顯示用名稱（給前端卡片）
-SOURCE_DISPLAY: dict[str, str] = {
-    "morgan_stanley": "摩根士丹利",
-    "goldman_sachs": "高盛",
-    "jpmorgan": "摩根大通",
-    "ubs": "瑞銀",
-    "nomura": "野村",
-    "macquarie": "麥格理",
-    "daiwa": "大和",
-    "clsa": "里昂",
-    "citi": "花旗",
-    "bofa": "美銀",
-    "hsbc": "滙豐",
-    "haitong": "海通",
-    "jefferies": "傑富瑞",
-    "aletheia": "Aletheia",
-    "citic": "中信",
-    "capital": "群益",
-    "cathay": "國泰",
-    "kgi": "凱基",
-    "yuanta": "元大",
-    "masterlink": "元富",
-    "fubon": "富邦",
-    "sinopac": "永豐",
-    "mega": "兆豐",
-    "president": "統一",
-    "jihsun": "日盛",
-    "first": "第一金",
-    "ibf": "國票",
-    "hongyuan": "宏遠",
-    "concord": "康和",
-    "huanan": "華南",
-    "fubon_sec": "福邦",
-}
+# 發行機構（研報的 source）名單由 profile 提供（`[sources].catalog`，`app/profile.py` 的 `Sources`）：檔名 token、
+# 內文指紋與顯示名稱都是機構專屬的資料（預設 profile 的名單在它目錄裡的 sources.toml），本模組只放比對規則。
+# 沒有名單的 profile 不從檔名或內文推斷發行機構，顯示名稱就是代碼本身。
+
+
+def _sources() -> Sources:
+    return get_profile().sources
 
 
 def source_display(source: str | None) -> str | None:
     if not source:
         return None
-    return SOURCE_DISPLAY.get(source, source)
+    return _sources().display.get(source, source)
 
-
-# 外資券商（英文報告 → 通常美股/海外）
-FOREIGN_BROKERS = {
-    "morgan_stanley", "goldman_sachs", "jpmorgan", "ubs", "nomura",
-    "macquarie", "daiwa", "clsa", "citi", "bofa", "hsbc", "haitong",
-    "jefferies", "aletheia",
-}
 
 REPORT_TYPE_KEYWORDS = [
     "雙週報", "週報", "月報", "速報", "策略", "評析", "報告", "snapshot", "memo",
@@ -196,7 +126,8 @@ def _detect_report_type(text: str) -> Optional[str]:
 
 
 def _normalize_source(token: str) -> Optional[str]:
-    return BROKER_MAP.get(token.upper()) or BROKER_MAP.get(token)
+    tokens = _token_map(_sources())
+    return tokens.get(token.upper()) or tokens.get(token)
 
 
 def is_admin_doc(file_name: str) -> bool:
@@ -227,7 +158,7 @@ def parse_filename(file_name: str) -> FilenameMeta:
             meta.matched_patterns.append("SOURCE_DATE")
 
     if meta.source is None:
-        for token, name in BROKER_MAP.items():
+        for token, name in _sources().filename_tokens:
             # 拉丁券商代碼（MS/GS/DW…）以詞邊界比對，避免子字串誤判：裸 "MS" 會命中
             # "MSCI"/"MSFT"/"EMS"/"Memory" 等（曾使多篇研報被錯標 morgan_stanley）。
             # 外資代碼的精確錨點是上方 RE_SOURCE_DATE（-MS20240314）；此處保留 -MS-/-MS<6碼>
@@ -265,94 +196,37 @@ def parse_filename(file_name: str) -> FilenameMeta:
 
 # ── 內文券商來源偵測 ──────────────────────────────────────────────────────────
 # 語料中約 67% 研報檔名不帶券商 token（如 daily story_/Takeaway_/速報/國際金融市場焦點），
-# 但內文一定載明發行機構。以高精度「發行機構指紋」補 source。
+# 但內文一定載明發行機構。以高精度「發行機構指紋」補 source（名單是 profile 的 `text_signatures`
+# 與 `fallback_signatures`，各份名單的取捨理由寫在該 profile 的名單檔）。
 #
-# 關鍵：指紋只用「發行者自我指稱」形式——自有研究網站 URL、著作權／免責聲明、圖表
-# 「資料來源：…投顧」自我標註，以及機構簡稱「X投顧」。**不可**用裸券商公司名「X證券」，
-# 因彙整型研報（如凱基 Taiwan daily/daily story）常「提及」競爭對手主辦的法說會
-# （「參加國票綜合證券舉辦之法說會」「永豐金證券…」），裸名會誤判（曾使 161 篇凱基研報
-# 被誤標為對手）。發行者指稱自己用「投顧」，提及他人主辦則用「證券」——以此切分。
+# 關鍵：指紋只用「發行者自我指稱」形式（自有網站 URL、著作權聲明、「X投顧」、圖表自我標註），
+# 不用裸公司名——彙整型研報常「提及」其他機構，裸名會誤判。
 #
 # 偵測採「最早指紋優先」：發行機構自我指稱位於報頭（char≈0），他人提及在內文深處，
-# 故位置最前者即為發行者。CJK＋本土自有 URL 同視窗（4000，含前數頁圖表標註）；外資
-# 拉丁指紋只掃表頭（2500）且詞邊界比對（避免 'ubs' 命中 'substrates'），且僅在無本土
-# 發行機構指紋時才採（保護本土晨報「提及」外資估值的情形）。指紋字串一律小寫存放
-# （比對前整段轉小寫；CJK 不受 lower() 影響）。
-# 指紋亦含「X期貨」「X金融控股」等子公司自我指稱：CFTC 籌碼快報／債券雙週報／盤後快訊
-# 等大宗格式由券商的期貨子公司發行，報頭自稱「本簡報由凱基期貨股份有限公司編製」「永豐期貨
-# 股份有限公司」「元大期貨法人總經講座」，而非「X投顧」。這些仍是發行者自我指稱（非裸公司名
-# 提及），且映射到與「X投顧」相同的母券商，故同樣安全；最早指紋優先規則保證報頭自稱勝過內文
-# 提及。實測補回 375 篇 NULL，且修正 2 篇被檔名「MS」誤命中「MSCI」而錯標 morgan_stanley 者。
-# 部分指紋亦含發行機構的「投信」（基金）關係企業自我標註（「X投信整理」）與圖表自我標註
-# 「資料來源：…X整理」，皆為發行者自我指稱、映射同一品牌；新增本土券商 concord（康和）／
-# huanan（華南）／fubon_sec（福邦證券，非富邦金）只用「X投顧」自稱形式，因其裸名（康和證券
-# 6016／華南金 2880）為上市公司，放進檔名 token 會 subject-company 誤判（同 [[宏遠／華南]] 教訓）。
-CONTENT_SIGNATURES_CJK: list[tuple[str, list[str]]] = [
-    ("kgi", ["凱基投顧", "kgisia", "kgi凱基", "凱基期貨", "凱基金融控股", "凱基金控"]),
-    ("masterlink", ["元富投顧", "masterlink", "元富期貨", "元富整理"]),
-    ("sinopac", ["永豐晨訊", "永豐證券投資顧問", "永豐金證券投資顧問", "永豐投顧", "永豐期貨"]),
-    ("capital", ["群益投顧", "群益證券投資顧問", "群益期貨"]),
-    ("cathay", ["國泰證券投資顧問", "國泰綜合證券股份", "國泰期貨"]),
-    ("fubon", ["富邦投顧", "富邦期貨"]),
-    ("mega", ["兆豐證券投資顧問", "兆豐投顧", "兆豐期貨", "兆豐國際證券投資顧問"]),
-    ("president", ["統一投顧", "統一綜合證券股份", "統一期貨", "統一投信"]),
-    ("jihsun", ["日盛投顧", "日盛證券投資顧問", "日盛期貨"]),
-    ("first", ["第一金投顧", "第一金證券投資顧問", "第一金期貨"]),
-    ("ibf", ["國票證券投資顧問", "國票投顧", "國票期貨"]),
-    ("citic", ["中信投顧", "中國信託綜合證券股份", "中信期貨"]),
-    ("yuanta", ["元大投顧", "元大期貨", "元大投信"]),
-    ("hongyuan", ["宏遠投顧"]),
-    ("haitong", ["海通國際"]),
-    ("concord", ["康和投顧"]),
-    ("huanan", ["華南投顧"]),
-    ("fubon_sec", ["福邦投顧"]),
-]
-# 拉丁指紋與 CJK 側同原則：**只用發行者自我指稱形式**（法律實體名、研究部門名、
-# 圖表自我標註「Source: X forecasts」），不可用裸品牌名——彙整型週報（本土「重要企業
-# 財報前瞻」轉述「投行Jefferies警告…」、英文 Last Week in Markets 提及「HSBC and
-# Hang Seng use their own HIBOR」）常在前 4000 字「提及」外資，裸名必誤標。
-# 舊版裸名靠 2500 小窗僥倖低誤中，窗擴至 4000 後裸名不可再留。
-CONTENT_SIGNATURES_LATIN: list[tuple[str, list[str]]] = [
-    ("morgan_stanley", [
-        "morgan stanley & co", "morgan stanley asia", "morgan stanley taiwan",
-        "morgan stanley research",
-    ]),
-    ("goldman_sachs", [
-        "goldman sachs & co", "goldman sachs japan", "goldman sachs asia",
-        "goldman sachs international", "goldman sachs research",
-    ]),
-    ("jpmorgan", [
-        "j.p. morgan securities", "j.p. morgan research", "jpmorgan chase",
-        "j.p. morgan asset management",
-    ]),
-    ("ubs", ["ubs ag", "ubs securities", "ubs limited"]),
-    ("nomura", [
-        "nomura securities", "nomura international", "nomura global markets",
-        "source: lseg, nomura",
-    ]),
-    ("macquarie", [
-        "macquarie capital", "macquarie securities", "macquarie research",
-    ]),
-    ("daiwa", [
-        "daiwa securities", "daiwa capital markets", "source: daiwa",
-        "daiwa forecasts",
-    ]),
-    ("clsa", [
-        "clsa limited", "clsa securities", "clsa research",
-        "cl securities taiwan", "source: clst",
-    ]),
-    ("citi", ["citigroup", "citi research", "citivelocity"]),
-    ("bofa", ["bofa securities", "merrill lynch", "bofaml"]),
-    ("hsbc", ["hsbc global research", "hsbc securities", "the hongkong and shanghai banking"]),
-    ("jefferies", ["jefferies llc", "jefferies group", "jefferies research", "jefferies hong kong"]),
-]
-_LATIN_SIG_RE: list[tuple[str, list[re.Pattern[str]]]] = [
-    (
-        name,
-        [re.compile(r"(?<![a-z])" + re.escape(m) + r"(?![a-z])") for m in markers],
-    )
-    for name, markers in CONTENT_SIGNATURES_LATIN
-]
+# 故位置最前者即為發行者。`text_signatures` 子字串比對；`fallback_signatures`（例如外資券商的
+# 拉丁字母指紋）詞邊界比對（避免 'ubs' 命中 'substrates'），且排在檔名之後、只在沒有前者時才採
+# （保護本土晨報「提及」外資估值的情形）。指紋字串一律小寫存放（比對前整段轉小寫；CJK 不受
+# lower() 影響；profile 載入時驗證）。
+
+_COMPILED: tuple[Sources, dict[str, str], list[tuple[str, list[re.Pattern[str]]]]] | None = None
+
+
+def _compiled(sources: Sources) -> tuple[dict[str, str], list[tuple[str, list[re.Pattern[str]]]]]:
+    """(檔名 token 對照, 編譯好的 fallback 指紋)；同一份名單只編譯一次（換 profile 就重算）。"""
+    global _COMPILED
+    if _COMPILED is None or _COMPILED[0] is not sources:
+        tokens = dict(sources.filename_tokens)
+        fallback = [
+            (name, [re.compile(r"(?<![a-z])" + re.escape(m) + r"(?![a-z])") for m in markers])
+            for name, markers in sources.fallback_signatures
+        ]
+        _COMPILED = (sources, tokens, fallback)
+    return _COMPILED[1], _COMPILED[2]
+
+
+def _token_map(sources: Sources) -> dict[str, str]:
+    return _compiled(sources)[0]
+
 
 # 本土發行機構指紋掃前 4000 字（含前數頁圖表自我標註）；外資拉丁同為 4000 —
 # 原 2500 太小：2026-07 NAS 批次外資 PDF 表頭較長（表格先被抽出），發行者自稱
@@ -368,7 +242,7 @@ def _detect_issuer(full_text: str, window: int) -> Optional[str]:
     head = full_text[:window].lower()
     best: Optional[str] = None
     best_pos = len(head) + 1
-    for name, markers in CONTENT_SIGNATURES_CJK:
+    for name, markers in _sources().text_signatures:
         for mk in markers:
             i = head.find(mk)
             if 0 <= i < best_pos:
@@ -377,11 +251,11 @@ def _detect_issuer(full_text: str, window: int) -> Optional[str]:
 
 
 def _detect_foreign(full_text: str, window: int) -> Optional[str]:
-    """外資券商指紋：表頭限定 + 詞邊界比對（避免內文提及與子字串誤判）。"""
+    """外資券商指紋（`fallback_signatures`）：表頭限定 + 詞邊界比對（避免內文提及與子字串誤判）。"""
     head = full_text[:window].lower()
     best: Optional[str] = None
     best_pos = len(head) + 1
-    for name, patterns in _LATIN_SIG_RE:
+    for name, patterns in _compiled(_sources())[1]:
         for pattern in patterns:
             if (m := pattern.search(head)) and m.start() < best_pos:
                 best_pos, best = m.start(), name

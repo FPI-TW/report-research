@@ -72,7 +72,7 @@ class ResearchReportIndexTests(unittest.TestCase):
             "idx_rr_report_date",
             "idx_rr_source",
             "idx_rr_report_type",
-            # stock_code 是純量欄位，與 stock_targets 的 GIN 互不覆蓋：_COVERAGE_SQL 的
+            # stock_code 是純量欄位，與 stock_targets 的 GIN 互不覆蓋：_coverage_sql 的
             # instrument_name 子查詢與 overview 個股條件的 OR 左支用的都是這一欄。
             "idx_rr_stock_code",
         ):

@@ -14,7 +14,9 @@ from datetime import date, timedelta
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.filename import BROKER_MAP, SOURCE_DISPLAY, source_display
+from app.profile import get_profile
+from app.services.doc_types import doc_type_enabled_sql
+from app.services.filename import source_display
 from app.services.tagging import INSTRUMENT_DISPLAY, MARKET_DISPLAY
 from app.services.textnorm import norm_for_match
 from app.services.visibility import visible_report_sql
@@ -33,7 +35,7 @@ def detect_overview(q: str) -> bool:
     return any(c in s for c in _OVERVIEW_CUES_NORM)
 
 
-# 市場同義詞 → findb 代碼（明確列出常見口語；不重用 LEGACY_TO_FINDB 的「期貨→WTX」，
+# 市場同義詞 → 標準市場代碼（明確列出常見口語；不重用 LEGACY_TO_FINDB 的「期貨→WTX」，
 # 避免與商品類型 futures 衝突——「台指期」才歸 WTX 市場，「期貨」歸商品類型）
 _MARKET_SYNONYMS: dict[str, str] = {
     "台股": "TW", "台灣": "TW", "美股": "US", "美國": "US",
@@ -52,15 +54,28 @@ _INSTRUMENT_SYNONYMS: dict[str, str] = {
 }
 _INSTRUMENT_SYNONYMS_NORM = {norm_for_match(k): v for k, v in _INSTRUMENT_SYNONYMS.items()}
 
-# 券商查找：中文券商名（BROKER_MAP 含中文鍵）+ 顯示名（含外資中文名）+ 代碼本身。
-# 跳過 BROKER_MAP 的英文短碼（MS/GS…），避免在中文查詢裡誤命中。
-_SOURCE_LOOKUP: dict[str, str] = {}
-for _k, _v in BROKER_MAP.items():
-    if re.search(r"[一-鿿]", _k):
-        _SOURCE_LOOKUP[norm_for_match(_k)] = _v
-for _code, _disp in SOURCE_DISPLAY.items():
-    _SOURCE_LOOKUP[norm_for_match(_disp)] = _code
-    _SOURCE_LOOKUP[norm_for_match(_code)] = _code
+# 券商查找：中文券商名（profile 名單的 CJK 檔名 token）+ 顯示名（含外資中文名）+ 代碼本身。
+# 跳過英文短碼（MS/GS…），避免在中文查詢裡誤命中。名單來自 profile，所以在呼叫時才組（import 期定值會留著
+# 上一個 profile 的名單），同一份名單只組一次。
+_SOURCE_LOOKUP_CACHE: tuple[object, dict[str, str], tuple[str, ...]] | None = None
+
+
+def _source_tables() -> tuple[dict[str, str], tuple[str, ...]]:
+    """(券商查找表, 公司名停用詞)；後者含前者的鍵，所以一起組。"""
+    global _SOURCE_LOOKUP_CACHE
+    sources = get_profile().sources
+    if _SOURCE_LOOKUP_CACHE is None or _SOURCE_LOOKUP_CACHE[0] is not sources:
+        lookup: dict[str, str] = {}
+        for token, code in sources.filename_tokens:
+            if re.search(r"[一-鿿]", token):
+                lookup[norm_for_match(token)] = code
+        for code, disp in sources.display.items():
+            lookup[norm_for_match(disp)] = code
+            lookup[norm_for_match(code)] = code
+        stopwords = _NAME_STOPWORDS_HEAD + tuple(lookup) + _NAME_STOPWORDS_TAIL
+        _SOURCE_LOOKUP_CACHE = (sources, lookup, stopwords)
+    return _SOURCE_LOOKUP_CACHE[1], _SOURCE_LOOKUP_CACHE[2]
+
 
 # 維度表面名詞（指「某個維度」本身而非其值，如「市場/商品/分類」）與狀態填充詞。
 # 必須剝除，否則「目前市場」「市場分類」這類泛化片段會殘留成 ≥3 字 CJK 段，被
@@ -71,12 +86,14 @@ _DIMENSION_NOUNS: tuple[str, ...] = (
 )
 
 # 解析個股中文名時，先剝除的非個股詞（提示詞 + 各維度表面詞 + 常見填充詞）
-_NAME_STOPWORDS: tuple[str, ...] = (
+# （券商名在中段，由 `_source_tables()` 依 profile 補上）
+_NAME_STOPWORDS_HEAD: tuple[str, ...] = (
     _OVERVIEW_CUES
     + tuple(_MARKET_SYNONYMS)
     + tuple(_INSTRUMENT_SYNONYMS)
-    + tuple(k for k in _SOURCE_LOOKUP)
-    + _DIMENSION_NOUNS
+)
+_NAME_STOPWORDS_TAIL: tuple[str, ...] = (
+    _DIMENSION_NOUNS
     + ("研報", "報告", "研究", "給我", "我", "想", "請", "幫我", "關於",
        "相關", "這", "那", "的", "最新", "出過", "出", "有", "最近", "今年",
        "去年", "本週", "這週", "一覽")
@@ -176,7 +193,7 @@ def _resolve_dates(s_norm: str, today: date) -> tuple[date | None, date | None]:
 def _extract_stock_name(q: str) -> str | None:
     """剝除各維度表面詞後，取最長的 CJK 殘餘段（3~8 字）當公司名候選。"""
     residual = q
-    for w in sorted(_NAME_STOPWORDS, key=len, reverse=True):
+    for w in sorted(_source_tables()[1], key=len, reverse=True):
         if re.search(r"[一-鿿]", w):  # 只剝中文停用詞，英文交給其他維度
             residual = residual.replace(w, " ")
     # v1 取精確優先於召回：殘餘段下限 3 字。2 字常見名詞（如「天氣」）若被誤判成
@@ -212,11 +229,13 @@ def resolve_filters(q: str, today: date) -> OverviewFilters:
     """中文條件 → 結構化過濾（確定性對應；解析不到的維度留空）。"""
     s = norm_for_match(q)
     date_from, date_to = _resolve_dates(s, today)
-    # 4 位數字 = 個股代碼，但緊跟「年」的（如「2025年」）是年份字面，非代碼。
-    m = re.search(r"(?<!\d)(\d{4})(?!\d)(?!\s*年)", q)
+    # 數字串 = 個股代碼（長度依 profile 的 [instruments] 純數字格式；預設 profile 是 4 碼），但緊跟「年」的
+    # （如「2025年」）是年份字面，非代碼。字母 ticker 不從問句抓：英文縮寫（AI、ETF）誤中面積太大。
+    lengths = get_profile().instruments.digit_lengths()
+    m = re.search(rf"(?<!\d)(\d{{{lengths[0]},{lengths[1]}}})(?!\d)(?!\s*年)", q) if lengths else None
     stock_code = m.group(1) if m else None
     f = OverviewFilters(
-        source=_match_longest(s, _SOURCE_LOOKUP),
+        source=_match_longest(s, _source_tables()[0]),
         market=_match_longest(s, _MARKET_SYNONYMS_NORM),
         instrument_type=_match_longest(s, _INSTRUMENT_SYNONYMS_NORM),
         date_from=date_from,
@@ -249,13 +268,11 @@ class CorpusOverview:
 
 
 def _build_where(f: OverviewFilters) -> tuple[str, dict]:
-    """OverviewFilters → (WHERE 片段, params)，欄位皆以別名 r 限定。"""
-    # `IS NOT FALSE` 而非 `= true`：全 repo 其餘 15 處都用前者（NULL＝標註器沒說，
-    # 一律當研報看），這裡是唯一的例外，於是總覽題的母體與檢索頁／閱讀頁不同。
-    # 今天結果一樣純屬巧合——實測 is_research 全是 true。`db/schema.sql` 已把該欄
-    # 收斂成 NOT NULL DEFAULT true，兩種寫法自此等價；統一寫法是為了**讀的時候**
-    # 不必再推敲「這裡為什麼不一樣」。
-    conds = ["r.is_research IS NOT FALSE"]
+    """OverviewFilters → (WHERE 片段, params)，欄位皆以別名 r 限定；沒有任何條件時是空字串。
+
+    母體的文件類型與可見性片段由 aggregate_facets 加上（守門測試要求它們與查詢在同一個函式）。
+    """
+    conds: list[str] = []
     params: dict = {}
     if f.source:
         conds.append("r.source = :source")
@@ -293,10 +310,11 @@ def _build_where(f: OverviewFilters) -> tuple[str, dict]:
 async def aggregate_facets(
     session: AsyncSession, f: OverviewFilters, *, sample_k: int = 5
 ) -> CorpusOverview:
-    """對 research.research_report 跑分面聚合（WHERE = is_research + 解析到的條件）。"""
+    """對 research.research_report 跑分面聚合（WHERE = 文件類型 + 解析到的條件）。"""
     where, params = _build_where(f)
-    # 被管理員隱藏的研報不進總覽的母體（app/services/visibility.py）。
-    where = f"{where} AND {visible_report_sql('r')}"
+    # 母體＝類型啟用了總覽的文件（app/services/doc_types.py；預設 profile 下即研報），且沒被管理員隱藏
+    # （app/services/visibility.py）。
+    where = " AND ".join([doc_type_enabled_sql("r", "overview"), *([where] if where else []), visible_report_sql("r")])
     base = f"FROM research.research_report r WHERE {where}"
 
     totals = (
@@ -361,8 +379,10 @@ async def aggregate_facets(
     )
 
 
-OVERVIEW_SYSTEM_PROMPT = (
-    "你是「廷豐研報」的研究問答助理，正在回答一個『語料總覽/統計』問題。\n"
+# 稱謂由 profile 注入（app/profile.py 的 [prompt]），在呼叫時渲染；OVERVIEW_SYSTEM_PROMPT 這個舊名由檔尾的
+# 模組 __getattr__ 提供（理由同 answer.py 檔尾）。
+_OVERVIEW_RULES = (
+    "，正在回答一個『語料總覽/統計』問題。\n"
     "下方『分面統計』是系統對符合條件的全部研報，由資料庫精確算出的數字。請遵守：\n"
     "1. 只能引用『分面統計』提供的數字與清單，嚴禁自行臆測或捏造任何數量。\n"
     "2. 一律用繁體中文、條理清楚作答；針對使用者的問法（例如問『種類』）回應。\n"
@@ -371,6 +391,10 @@ OVERVIEW_SYSTEM_PROMPT = (
     "4. 結尾可提示使用者可至檢索頁套用相同條件查看全部研報。\n"
     "5. 樣本研報已附編號，可在對應句末標註 [1]、[2]。"
 )
+
+
+def overview_system_prompt() -> str:
+    return f"你是「{get_profile().prompt.system_name}」的研究問答助理" + _OVERVIEW_RULES
 
 
 def _fmt_pairs(pairs: list[tuple[str, int]], label_map: dict[str, str] | None) -> str:
@@ -456,3 +480,9 @@ def render_overview_text(ov: CorpusOverview, locale: str = "zh-Hant") -> str:
             # 標題優先：檔名多是券商流水號，列進答案裡讀者看不懂
             parts.append(f"[{i}] {title or fn}{f'（{ds}）' if ds else ''}")
     return "\n".join(parts)
+
+
+def __getattr__(name: str):
+    if name == "OVERVIEW_SYSTEM_PROMPT":
+        return overview_system_prompt()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

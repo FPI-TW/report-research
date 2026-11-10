@@ -46,6 +46,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.config import get_settings  # noqa: E402
 from app.services import data_health  # noqa: E402
 from app.services import retrieval_regression as rr  # noqa: E402
+from eval import profile_eval  # noqa: E402
 from eval.question_contract import load_dataset  # noqa: E402
 
 EXIT_OK = 0
@@ -247,6 +248,7 @@ async def run_capture(
     doc = rr.build_baseline(
         questions=questions, items_by_id=current, dataset_sha256=digest, k=k, dense_scan=dense_scan,
         captured_at=now_fn(), corpus_cutoff=cutoff, corpus_reports=n_reports, simulated_as_of=as_of is not None,
+        dataset_rel=profile_eval.display_path(dataset_path),
     )
     rr.write_json_atomic(path, doc)
     print(f"基準已寫入 {path}：{len(questions)} 題、k={k}、dense_scan={dense_scan}、截點 {doc['corpus_cutoff']}")
@@ -401,9 +403,25 @@ async def run_check(
 # ── 進入點 ─────────────────────────────────────────────────────────────────
 
 
+def resolve_dataset(profile: str | None, env=None) -> Path:
+    """要比的凍結題集：`--profile` 指定的那份；沒指定時，目前的 profile（`PROFILE_DIR`）自帶凍結題集就用它，
+    否則是 repo 的 `eval/ragas_questions.json`（預設 profile 的題集，行為不變）。profile 的題集先核對凍結指紋，不合格拋
+    `profile_eval.EvalProfileError`。容器的 scheduler 只在 profile 自帶題集時才自動排這個工作
+    （`deploy/container/scheduler.py`）。"""
+    if profile is not None:
+        return profile_eval.load_profile_dataset(profile_eval.resolve_profile_arg(profile)).path
+    active = profile_eval.active_profile_dir(env)
+    if profile_eval.own_questions_path(active) is not None:
+        return profile_eval.load_profile_dataset(active).path
+    return rr.DATASET
+
+
 def _parse_as_of(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+_PROFILE_HELP = "改用該 profile 的凍結題集（預設依 PROFILE_DIR，見 resolve_dataset）"
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -411,11 +429,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     sub = p.add_subparsers(dest="cmd", required=True)
     cap = sub.add_parser("capture", help="一次性擷取基準快照")
     cap.add_argument("--baseline", type=Path, default=None, help="基準檔路徑（預設 RETRIEVAL_REGRESSION_BASELINE）")
+    cap.add_argument("--profile", default=None, help=_PROFILE_HELP)
     cap.add_argument("--force", action="store_true", help="覆寫既有基準")
     cap.add_argument("--as-of", type=_parse_as_of, default=None,
                      help="驗證用：假裝在這個時點擷取（之後入庫的研報不進基準），ISO 時間")
     chk = sub.add_parser("check", help="對基準比對（timer 跑這個）")
     chk.add_argument("--baseline", type=Path, default=None, help="基準檔路徑（預設 RETRIEVAL_REGRESSION_BASELINE）")
+    chk.add_argument("--profile", default=None, help=_PROFILE_HELP)
     chk.add_argument("--json", action="store_true", help="stdout 只印完整比對的 JSON（表格與結論改走 stderr）")
     return p.parse_args(argv)
 
@@ -424,9 +444,17 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     path = args.baseline or rr.baseline_path()
     try:
+        try:
+            dataset = resolve_dataset(args.profile)
+        except (OSError, ValueError) as exc:
+            msg = f"題集讀不了：{exc}"
+            print(msg, file=sys.stderr)
+            if args.cmd == "check":
+                _write(EXIT_ERROR, rr.OUTCOME_ERROR, rr.REASON_DATASET_INVALID, msg, None, datetime.now(timezone.utc))
+            return EXIT_ERROR
         if args.cmd == "capture":
-            return asyncio.run(run_capture(path, force=args.force, as_of=args.as_of))
-        return asyncio.run(run_check(path, json_out=args.json))
+            return asyncio.run(run_capture(path, force=args.force, as_of=args.as_of, dataset_path=dataset))
+        return asyncio.run(run_check(path, json_out=args.json, dataset_path=dataset))
     except Exception as exc:  # noqa: BLE001 — 未預期的例外不可落到 rc=1（那是「劣化」）
         traceback.print_exc()
         if args.cmd == "check":

@@ -12,8 +12,8 @@
 判斷「今天要不要跑」：
 
 - 當日已有列 → 直接 no-op 退出（唯一的冪等依據是 report_brief 的 UNIQUE(brief_date)）
-- 本地時間未到 --after-hour（預設 9 時）→ 不跑。券商早報上午才進來，太早跑的簡報
-  會漏掉當天大半內容，而一天只寫一列、寫了就不會再改
+- 本地時間未到 --after-hour（預設取 profile 的 `[brief].after_hour`，預設 profile 是 9 時）→ 不跑。券商早報上午才
+  進來，太早跑的簡報會漏掉當天大半內容，而一天只寫一列、寫了就不會再改
 - 窗期內既無新研報也無評等變動 → **不寫列**，下一輪再看。寫一列「今天沒事」會讓
   當天稍晚真的有素材時再也補不上（UNIQUE 擋著），而「今天沒事」對讀者沒有價值
 
@@ -23,6 +23,8 @@
 
 - 排程（今天、還沒有列）：上一份的 window_end → 現在；沒有上一份時取最近 24 小時
   （另有 --max-lookback-days 上限，避免久未執行後一次把幾週的東西全塞進 prompt）。
+  時數與上限的預設取 profile 的 `[brief]`（`default_lookback_hours`、`max_lookback_days`，預設 profile 是
+  24 小時、7 天）。
 - 目標日已有列（--force）：沿用該列存的窗期，不重算。素材與該份簡報當初看到的是同一段，
   前後的簡報也不受影響。
 - 補過去的日子（目標日還沒有列）：起點是目標日之前最近一份的 window_end；終點是目標日之後
@@ -58,6 +60,7 @@ from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
 # 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
 load_llm_env()
 
+from app.profile import get_profile  # noqa: E402
 from app.services import brief as brief_service  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, resolve_model  # noqa: E402
@@ -82,12 +85,8 @@ CLI_TIMEOUT = 300
 # 輸出上限（第二版計畫 §8）。
 MAX_TOKENS = 8192
 
-# 沒有前一份簡報時的預設回看窗，以及任何情況下的回看上限。
-DEFAULT_LOOKBACK_HOURS = 24
-MAX_LOOKBACK_DAYS = 7
-
-# 券商早報多在上午進來；預設等到這個鐘點之後才產生當日簡報。
-DEFAULT_AFTER_HOUR = 9
+# 作息（幾點後才產生、沒有前一份簡報時的回看窗、回看上限）是 profile 的 `[brief]`（`app/profile.py` 的 `Brief`）：
+# 券商早報幾點進來是機構的作息，不是框架的。預設 profile 是 9 時、24 小時、7 天。
 
 
 def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optional[str], Optional[str]]:
@@ -143,7 +142,7 @@ def blocked_today(target: date_cls, model: str) -> bool:
 def resolve_window(
     previous_end: Optional[datetime],
     now: datetime,
-    max_lookback_days: int = MAX_LOOKBACK_DAYS,
+    max_lookback_days: Optional[int] = None,
     not_after: Optional[datetime] = None,
 ) -> tuple[datetime, datetime]:
     """窗期＝上一份簡報的結尾 → 現在（無縫接續），但不回看超過上限。
@@ -154,10 +153,13 @@ def resolve_window(
     純函式：時間邏輯是這支腳本唯一容易錯又完全無聲的地方（錯了只是簡報少幾篇，
     沒有任何錯誤訊息），所以抽出來單測。
     """
+    schedule = get_profile().brief
+    if max_lookback_days is None:
+        max_lookback_days = schedule.max_lookback_days
     end = now if not_after is None else min(now, not_after)
     floor = end - timedelta(days=max_lookback_days)
     if previous_end is None:
-        start = end - timedelta(hours=DEFAULT_LOOKBACK_HOURS)
+        start = end - timedelta(hours=schedule.default_lookback_hours)
     else:
         start = previous_end
     return max(start, floor), end
@@ -178,7 +180,7 @@ def plan_window(
     previous: Optional[brief_service.BriefRow],
     following: Optional[brief_service.BriefRow],
     now: datetime,
-    max_lookback_days: int = MAX_LOOKBACK_DAYS,
+    max_lookback_days: Optional[int] = None,
 ) -> tuple[datetime, datetime]:
     """決定目標日的窗期（規則見模組 docstring；純函式）。
 
@@ -325,13 +327,19 @@ def main() -> int:
     ap.add_argument(
         "--after-hour",
         type=int,
-        default=DEFAULT_AFTER_HOUR,
-        help="本地時間到這個鐘點之後才產生（預設 9；--force 可繞過）",
+        default=None,
+        help="本地時間到這個鐘點之後才產生（預設 profile 的 [brief].after_hour；--force 可繞過）",
     )
-    ap.add_argument("--max-lookback-days", type=int, default=MAX_LOOKBACK_DAYS)
+    ap.add_argument("--max-lookback-days", type=int, default=None,
+                    help="回看上限（天；預設 profile 的 [brief].max_lookback_days）")
     ap.add_argument("--force", action="store_true", help="忽略時間閘與既有列，以該列原窗期重寫")
     ap.add_argument("--dry-run", action="store_true", help="只印素材，不呼叫 LLM、不寫庫")
     args = ap.parse_args()
+    schedule = get_profile().brief
+    if args.after_hour is None:
+        args.after_hour = schedule.after_hour
+    if args.max_lookback_days is None:
+        args.max_lookback_days = schedule.max_lookback_days
     # 模型與金鑰預檢排在 generate() 之前，也就在取鎖之前；--dry-run 不呼叫 LLM，不檢查。
     if not args.dry_run:
         require_llm_key({TASK_BRIEF: args.model})

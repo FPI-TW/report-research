@@ -1,52 +1,54 @@
 import { authEventLabel } from '../auditLabels'
+import { t } from '@/i18n'
 
 /** 告警狀態（`/healthz/security` 與 `/api/admin/security/alerts` 的 state）→ 中文。 */
 export const STATE_LABELS: Record<string, string> = {
-  ok: '正常',
-  unknown: '判斷不出來',
-  audit_chain_broken: '稽核鏈驗證失敗',
-  elevate_failures: '權限提升失敗過多',
-  account_failures: '有帳號連續登入失敗',
-  login_failures: '全站登入失敗過多',
+  get ok() { return t('admin.security.securityLabels.ok') },
+  get unknown() { return t('admin.security.securityLabels.undetermined') },
+  get audit_chain_broken() { return t('admin.security.securityLabels.auditChainVerificationFailed') },
+  get elevate_failures() { return t('admin.security.securityLabels.tooManyElevationFailures') },
+  get account_failures() { return t('admin.security.securityLabels.anAccountHasConsecutiveSign') },
+  get login_failures() { return t('admin.security.securityLabels.tooManySignInFailures') },
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {
-  privilege: '權限與角色',
-  elevation: '權限提升',
-  session: 'session 與停用',
-  credential: '密碼與兩步驟驗證',
-  deletion: '刪除帳號',
-  ops: '維運操作',
-  data_access: '問答原文與匯出',
-  config: '旗標與配額',
+  get privilege() { return t('admin.security.securityLabels.permissionsAndRoles') },
+  get elevation() { return t('admin.security.securityLabels.elevation') },
+  get session() { return t('admin.security.securityLabels.sessionsAndDisabling') },
+  get credential() { return t('admin.security.securityLabels.passwordsAndTwoStepVerification') },
+  get deletion() { return t('admin.security.securityLabels.accountDeletion') },
+  get ops() { return t('admin.security.securityLabels.operationsActions') },
+  get data_access() { return t('admin.security.securityLabels.qAContentAndExports') },
+  get config() { return t('admin.security.securityLabels.flagsAndQuotas') },
 }
 
 export const ANCHOR_LABELS: Record<string, string> = {
-  ok: '相符',
-  tamper: '與先前錨點不符',
-  error: '執行失敗',
-  stale: '超過 48 小時沒有新的錨定',
-  missing: '還沒有錨定紀錄',
-  corrupt: '狀態檔讀不懂',
+  get ok() { return t('admin.security.securityLabels.matches') },
+  get tamper() { return t('admin.security.securityLabels.doesnTMatchThePrevious') },
+  get error() { return t('admin.security.securityLabels.runFailed') },
+  get stale() { return t('admin.security.securityLabels.noNewAnchorForOver') },
+  get missing() { return t('admin.security.securityLabels.noAnchorRecordsYet') },
+  get corrupt() { return t('admin.security.securityLabels.statusFileUnreadable') },
 }
 
-export const LIVE_LABELS: Record<string, string> = { ok: '完整', broken: '斷裂', error: '驗證失敗（DB 不可用？）' }
+export const LIVE_LABELS: Record<string, string> = { get ok() { return t('admin.security.securityLabels.intact') }, get broken() { return t('admin.security.securityLabels.broken') }, get error() { return t('admin.security.securityLabels.verificationFailedDbUnavailable') } }
 
 /** 事件類型選單（順序即顯示順序）。值與後端 `accounts.AUTH_EVENT_TYPES` 一致（產生的 client 型別守住）。 */
 export const EVENT_OPTIONS = [
   'login.success', 'login.failure', 'login.totp_failure', 'login.locked', 'login.insecure',
-  'logout', 'elevate.success', 'elevate.failure',
+  'logout', 'elevate.success', 'elevate.failure', 'login.sso_failure',
 ] as const
 
 /** `bad_credentials` 是權限提升給了驗證碼卻失敗（服務層分不出是密碼還是驗證碼錯）。其餘沿用共用標籤。 */
 export function eventLabel(event: string, reason?: string | null): string {
-  if (reason === 'bad_credentials') return authEventLabel(event, null) + '（密碼或驗證碼錯誤）'
+  if (reason === 'bad_credentials') return authEventLabel(event, null) + t('admin.security.securityLabels.wrongPasswordOrCode')
   return authEventLabel(event, reason)
 }
 
 /** 事件列的語氣色：失敗＝bad、被擋下的彙總列＝warn，其餘不上色。未知事件不上色。 */
 export function eventTone(event: string): 'bad' | 'warn' | undefined {
-  if (event === 'login.failure' || event === 'login.totp_failure' || event === 'elevate.failure') return 'bad'
+  if (event === 'login.failure' || event === 'login.totp_failure' || event === 'elevate.failure'
+    || event === 'login.sso_failure') return 'bad'
   if (event === 'login.locked' || event === 'login.insecure') return 'warn'
   return undefined
 }

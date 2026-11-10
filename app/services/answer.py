@@ -24,6 +24,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import bindparam, text
 
 from app.config import get_settings
+from app.profile import get_profile
 from app.services.citation_filter import CitationStreamFilter, count_unknown_citations, filter_unknown_citations
 from app.services.db import SessionFactory
 from app.services.evidence import (
@@ -48,10 +49,10 @@ from app.services.locale import (
     resolve_locale,
 )
 from app.services.overview import (
-    OVERVIEW_SYSTEM_PROMPT,
     aggregate_facets,
     format_facts,
     merge_request_filters,
+    overview_system_prompt,
     render_overview_text,
 )
 from app.services.scope_router import (
@@ -134,8 +135,19 @@ MAX_HISTORY_ANSWER_CHARS = 600
 # 與 faithfulness 的教訓）；真正的決定性修法是讓檢索先撈得到，見 retrieval.extract_terms
 # 對純 CJK 不斷詞那條缺口。**症狀是靜默的**：使用者只看到「找不到相關資料」，與網搜
 # 壞掉完全同形，所以下面兩段的措辭是契約，改動前先看 test_ask_web_search.py。
-SYSTEM_PROMPT_BASE = (
-    "你是「廷豐研報」的研究問答助理。回答以使用者提供的『參考片段』（研報）為主，並遵守：\n"
+#
+# **prompt 只注入 profile 的稱謂（`app/profile.py` 的 `[prompt]`），不開放覆寫。** 各段以函式在呼叫時渲染
+# （`system_prompt_base()` 等），舊的常數名（`SYSTEM_PROMPT`、`OFF_TOPIC_MESSAGES`…）由檔尾的模組
+# `__getattr__` 照舊提供給 eval／scripts／測試。預設 profile 渲染出的全文與改動前逐字相同
+# （tests/test_profile_prompts.py 對 golden），否則評測基準線與 LLM 跳過名單都會失真。
+
+
+def _system_name() -> str:
+    return get_profile().prompt.system_name
+
+
+_SYSTEM_PROMPT_RULES = (
+    "回答以使用者提供的『參考片段』（研報）為主，並遵守：\n"
     "1. 以參考片段為主要依據，不要臆測。\n"
     "2. 一律用繁體中文、條理清楚且完整地回答：先用一兩句給結論，再分點整理。"
     "作答前先逐一檢視每個參考片段，判斷是否與問題相關；"
@@ -148,6 +160,12 @@ SYSTEM_PROMPT_BASE = (
     "多篇資訊相近時，並列所有來源（如 [1][3]），不要只引用其中一篇。"
     "若必須引用較舊研報且其結論可能已過時，請在該處註明『資料較舊，可能已過時』。"
 )
+
+
+def system_prompt_base() -> str:
+    """系統提示的共同規則（不含網搜那段）。"""
+    return f"你是「{_system_name()}」的研究問答助理。" + _SYSTEM_PROMPT_RULES
+
 
 # 未開網搜（預設）。第 6 條是**負面授權**，不是客套話：沒有它，模型會沿用訓練裡
 # 的「研究助理會查資料」慣性，把記憶當成搜尋結果寫出來。
@@ -173,20 +191,20 @@ WEB_POLICY = (
     "（例如「依規則需先進行網路搜尋」），也不要先寫一版「找不到」再改寫。"
 )
 
-# 未開網搜時的完整提示。名稱保留給既有讀取端（測試以它斷言預設形狀）。
-SYSTEM_PROMPT = SYSTEM_PROMPT_BASE + NO_WEB_POLICY
+# 未開網搜時的完整提示＝ask_system_prompt(False)。名稱 SYSTEM_PROMPT 保留給既有讀取端（測試以它斷言預設形狀），
+# 由檔尾的模組 __getattr__ 提供。
 
 
 def ask_system_prompt(web: bool) -> str:
     """依本輪網搜開關組出系統提示。web 為真時換上網路那組規則。"""
-    return SYSTEM_PROMPT_BASE + (WEB_POLICY if web else NO_WEB_POLICY)
+    return system_prompt_base() + (WEB_POLICY if web else NO_WEB_POLICY)
 
 
 # 時效題 × 使用者已開啟網搜（M11）。與受信任 adapter 那條路徑刻意分開：那條是零 LLM
 # 的確定性模板、可稽核；這條是模型自由網搜，只能要求標時間與來源，並由 Python 追加
 # 固定免責（見 WEB_ANSWER_DISCLAIMER）。兩者不可在使用者眼中混為一談。
-TIME_SENSITIVE_WEB_SYSTEM_PROMPT = (
-    "你是「廷豐研報」的研究問答助理。使用者問的是時效性資料（即時報價、最新公告、"
+_TIME_SENSITIVE_WEB_RULES = (
+    "使用者問的是時效性資料（即時報價、最新公告、"
     "剛發布的數字），且已明確開啟網路搜尋。請以網路搜尋作答，並遵守：\n"
     "1. 一律用繁體中文；先給重點數字或結論，再補必要脈絡。\n"
     "2. 每一項數值都要標明其資料時間（收盤日、公告日期等）；查不到時間就明說查不到，不要推估。\n"
@@ -199,6 +217,11 @@ TIME_SENSITIVE_WEB_SYSTEM_PROMPT = (
     "7. 在答案最後另起一行輸出標記 [EXT_SOURCES]，其後每行一個來源，"
     "格式『- 標題 | 網址』；正文不要放裸網址。"
 )
+
+
+def time_sensitive_web_system_prompt() -> str:
+    return f"你是「{_system_name()}」的研究問答助理。" + _TIME_SENSITIVE_WEB_RULES
+
 
 # 網搜時效答案的固定免責，由 Python 追加而非交給 prompt——本 repo 反覆踩過
 # 「prompt 寫了不等於保證」（見 zh_hant.py、faithfulness.py）。這句是使用者分辨
@@ -251,29 +274,40 @@ ASK_MIN_REPORTS = _S.ask_min_reports
 ASK_STALE_AGE_DAYS = _S.ask_stale_age_days
 ASK_MAX_STALE_REPORTS = _S.ask_max_stale_reports
 
-OFF_TOPIC_MESSAGE = (
-    "這裡是廷豐研報的投資研究問答，這個問題超出我能引據回答的範圍。"
-    "歡迎改問特定市場、個股、期貨、匯率或總經主題，我會依研報內容為你解讀。"
-)
-OFF_TOPIC_MESSAGE_EN = (
-    "This is 廷豐研報's investment-research Q&A, and this question is outside the scope "
-    "of what I can answer from our reports. Feel free to ask about a specific market, "
-    "stock, futures contract, FX pair, or macro topic, and I'll interpret it from the "
-    "research reports."
-)
+# 婉拒文案帶 profile 的稱謂。它同時是 qa_log 歷史重播的比對鍵（見 NOTICE_MESSAGES）：
+# 換稱謂之後，舊稱謂寫進庫裡的婉拒列就認不得了——稱謂是部署時決定一次的事，不要上線後改。
 
-# 舊版婉拒文案：既有 qa_log 列仍存此字串，所有離題偵測必須同時辨識新舊兩版。
-_LEGACY_OFF_TOPIC_MESSAGE = (
-    "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
-    "（例如特定市場、個股、期貨或總經主題）。"
-)
+
+def off_topic_message_zh() -> str:
+    return (
+        f"這裡是{_system_name()}的投資研究問答，這個問題超出我能引據回答的範圍。"
+        "歡迎改問特定市場、個股、期貨、匯率或總經主題，我會依研報內容為你解讀。"
+    )
+
+
+def off_topic_message_en() -> str:
+    return (
+        f"This is {get_profile().prompt.system_name_en}'s investment-research Q&A, and this question is outside "
+        "the scope of what I can answer from our reports. Feel free to ask about a specific market, "
+        "stock, futures contract, FX pair, or macro topic, and I'll interpret it from the "
+        "research reports."
+    )
+
+
+def _legacy_off_topic_message() -> str:
+    """舊版婉拒文案：既有 qa_log 列仍存此字串，所有離題偵測必須同時辨識新舊兩版。"""
+    return (
+        f"這個問題與{_system_name()}的語料無關，請改問與研報內容相關的問題"
+        "（例如特定市場、個股、期貨或總經主題）。"
+    )
+
+
 # NOTE：新增在地化文案（如英文版）必須一併列入此元組——歷史重播以精確字串比對
 # 判定「固定 notice」，漏列會讓英文婉拒被誤當成一般回答重播。
 # 順序約定：[0] 為現行中文版、[-1] 保持為舊版中文文案（既有測試以此定位）；
 # 新語系插在兩者之間，勿改動首末位置。
-OFF_TOPIC_MESSAGES: tuple[str, ...] = (
-    OFF_TOPIC_MESSAGE, OFF_TOPIC_MESSAGE_EN, _LEGACY_OFF_TOPIC_MESSAGE,
-)
+def off_topic_messages() -> tuple[str, ...]:
+    return (off_topic_message_zh(), off_topic_message_en(), _legacy_off_topic_message())
 
 TIME_SENSITIVE_UNAVAILABLE_MESSAGE = (
     "這個問題需要即時行情或最新公告資料，目前系統尚未接入可信的即時資料來源，"
@@ -316,7 +350,8 @@ TIME_SENSITIVE_MESSAGES: tuple[str, ...] = (
     TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN,
 )
 
-NOTICE_MESSAGES: tuple[str, ...] = (*OFF_TOPIC_MESSAGES, *TIME_SENSITIVE_MESSAGES)
+def notice_messages() -> tuple[str, ...]:
+    return (*off_topic_messages(), *TIME_SENSITIVE_MESSAGES)
 
 
 def notice_kind_for(answer: str) -> str | None:
@@ -327,7 +362,7 @@ def notice_kind_for(answer: str) -> str | None:
     生出它沒有的資料），使用者只會反覆改寫同一題，每次再吃一輪完整檢索。
     比對來源與 is_offtopic 完全相同，不另建第二份字串清單。
     """
-    if answer in OFF_TOPIC_MESSAGES:
+    if answer in off_topic_messages():
         return OFF_TOPIC
     if answer in TIME_SENSITIVE_MESSAGES:
         return TIME_SENSITIVE
@@ -360,7 +395,7 @@ def _discard_task_result(task: asyncio.Task) -> None:
 
 
 def off_topic_message(locale: str) -> str:
-    return OFF_TOPIC_MESSAGE_EN if locale == "en" else OFF_TOPIC_MESSAGE
+    return off_topic_message_en() if locale == "en" else off_topic_message_zh()
 
 
 def time_sensitive_message(locale: str, *, web_hint: bool = False) -> str:
@@ -673,6 +708,7 @@ def select_reports(
     mmr_max_per_source: int = 0,
     mmr_max_per_month: int = 0,
     gate_scores: dict[str, float] | None = None,
+    rerank_scores: dict[str, float] | None = None,
 ) -> list["SelectedReport"]:
     """選篇政策（純函式）：聚合→排序→過舊軟截斷→相關度下限→過舊配額→字數預算。
 
@@ -685,6 +721,13 @@ def select_reports(
       分支內任何例外 log 後 fallback 現行迴圈（fail-open）。
     - mmr_max_per_source / mmr_max_per_month：MMR 分支的多樣性配額，0＝不限；
       source=None／無日期不計入配額。
+    - rerank_scores：chunk_id → cross-encoder 分（只含實際被重排的 chunk，見
+      retrieval_pipeline.rerank_head_first）。給定時排序鍵改為
+      (best_tier, 是否被重排, 相關度 band, 新近度, 排序分, report_id)，排序分在被重排的研報是
+      best_rerank（它被重排過的 chunk 的最高分），其餘是 best_fused。理由：重排分是 sigmoid
+      [0,1]、尾段是 fused，兩種尺度丟進同一個 band 比，沒被重排的研報（fused 常在 0.9 以上）
+      會整批排到被 cross-encoder 判為最相關的研報前面。同一個 band 內照舊以新近度決勝。
+      只改排序，相關度下限、過舊截斷與配額照舊；未提供＝原排序。
     """
     # 契約：不動頂部 import 區（M5/M6 平行），跨模組常數以函式內 import 取用
     from app.services.retrieval import TIER_ALL_TERMS
@@ -699,6 +742,7 @@ def select_reports(
             continue
         # gate＝rerank 前 fused 快照（finding 3）；未提供／缺鍵退回自身 fused
         gate = gate_scores.get(row.chunk_id, fused) if gate_scores else fused
+        rr = rerank_scores.get(row.chunk_id) if rerank_scores else None
         info = by_report.get(rid)
         if info is None:
             info = {
@@ -715,6 +759,7 @@ def select_reports(
                 "best_tier": tier,
                 "best_fused": fused,
                 "best_gate": gate,
+                "best_rerank": rr,
             }
             by_report[rid] = info
             order.append(rid)
@@ -725,20 +770,39 @@ def select_reports(
                 info["best_fused"] = fused
             if gate > info["best_gate"]:
                 info["best_gate"] = gate
+            if rr is not None and (info["best_rerank"] is None or rr > info["best_rerank"]):
+                info["best_rerank"] = rr
         if len(info["passages"]) < max_passages:
             info["passages"].append(content)
 
     reports = [(rid, by_report[rid]) for rid in order if by_report[rid]["passages"]]
-    reports.sort(
-        key=lambda it: (
-            it[1]["best_tier"],
-            _relevance_band(it[1]["best_fused"]),
-            _recency_factor(it[1]["report_date"], now_date, half_life_days),
-            it[1]["best_fused"],
-            it[0],
-        ),
-        reverse=True,
-    )
+    if rerank_scores:
+        def _rank_score(info: dict) -> float:
+            rr = info["best_rerank"]
+            return info["best_fused"] if rr is None else rr
+
+        reports.sort(
+            key=lambda it: (
+                it[1]["best_tier"],
+                it[1]["best_rerank"] is not None,
+                _relevance_band(_rank_score(it[1])),
+                _recency_factor(it[1]["report_date"], now_date, half_life_days),
+                _rank_score(it[1]),
+                it[0],
+            ),
+            reverse=True,
+        )
+    else:
+        reports.sort(
+            key=lambda it: (
+                it[1]["best_tier"],
+                _relevance_band(it[1]["best_fused"]),
+                _recency_factor(it[1]["report_date"], now_date, half_life_days),
+                it[1]["best_fused"],
+                it[0],
+            ),
+            reverse=True,
+        )
 
     factors = {
         rid: _recency_factor(info["report_date"], now_date, half_life_days)
@@ -1017,6 +1081,7 @@ def build_context(
     mmr_max_per_source: int = 0,
     mmr_max_per_month: int = 0,
     gate_scores: dict[str, float] | None = None,
+    rerank_scores: dict[str, float] | None = None,
 ) -> tuple[list[Source], str]:
     """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』（選篇政策見 select_reports）。"""
     now_date = (now or datetime.now(timezone.utc)).date()
@@ -1028,7 +1093,7 @@ def build_context(
         max_stale=max_stale,
         mmr_lambda=mmr_lambda, chunk_embeddings=chunk_embeddings,
         mmr_max_per_source=mmr_max_per_source, mmr_max_per_month=mmr_max_per_month,
-        gate_scores=gate_scores,
+        gate_scores=gate_scores, rerank_scores=rerank_scores,
     )
 
     sources: list[Source] = []
@@ -1066,6 +1131,30 @@ def build_context(
             s.is_latest = s.n == latest_n
 
     return sources, "\n\n".join(blocks)
+
+
+def selection_order(
+    scored,
+    *,
+    max_reports: int,
+    max_passages: int = MAX_PASSAGES_PER_REPORT,
+    max_chars: int = MAX_CONTEXT_CHARS,
+    now: datetime | None = None,
+) -> list[str]:
+    """build_context（不帶 rerank_scores）會依序選進脈絡的 report_id。
+
+    給 retrieval_pipeline 挑 rerank 候選用：選篇政策只有 select_reports 這一份，候選直接問它，
+    不另寫一套「哪些研報進得了脈絡」的判準。參數預設與 build_context 相同。
+    """
+    now_date = (now or datetime.now(timezone.utc)).date()
+    selected = select_reports(
+        scored,
+        max_reports=max_reports, max_passages=max_passages, max_chars=max_chars,
+        now=now_date, half_life_days=RECENCY_HALF_LIFE_DAYS, min_reports=ASK_MIN_REPORTS,
+        relevance_floor=ASK_RELEVANCE_FLOOR, stale_age_days=ASK_STALE_AGE_DAYS,
+        max_stale=ASK_MAX_STALE_REPORTS,
+    )
+    return [sr.report_id for sr in selected]
 
 
 def build_history_block(
@@ -1158,7 +1247,7 @@ def history_item(row) -> dict:
         "feedback": feedback,
         "sources": sources or [],
         "ext_sources": ext_sources or [],
-        "is_offtopic": answer in NOTICE_MESSAGES,
+        "is_offtopic": answer in notice_messages(),
         # is_offtopic 保留是為了滾動部署（舊前端還在讀它）；新前端讀 notice_kind
         # 才分得出「離題」與「時效資料不可得」。
         "notice_kind": notice_kind_for(answer),
@@ -1507,7 +1596,7 @@ async def load_recent_turns(
                     {
                         "cid": conversation_id,
                         "uid": user_id,
-                        "offtopics": list(OFF_TOPIC_MESSAGES),
+                        "offtopics": list(off_topic_messages()),
                         "limit": limit,
                     },
                 )
@@ -1560,7 +1649,7 @@ async def list_conversations(
                     "ORDER BY last_at DESC, conv_id DESC LIMIT :limit OFFSET :offset"
                 ).bindparams(bindparam("offtopics", expanding=True)),
                 {
-                    "offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit,
+                    "offtopics": list(off_topic_messages()), "limit": limit,
                     "offset": max(0, offset), "pattern": pattern, "uid": user_id,
                 },
             )
@@ -1909,7 +1998,7 @@ async def _answer_overview(
     try:
         async with contextlib.aclosing(stream_completion(
             user_prompt, model=model,
-            system=OVERVIEW_SYSTEM_PROMPT + output_directive(locale), allow_web=False,
+            system=overview_system_prompt() + output_directive(locale), allow_web=False,
             meta=llm_meta, max_tokens=ASK_OVERVIEW_MAX_TOKENS, task="ask_overview",
         )) as chunks:
             async for chunk in chunks:
@@ -2178,7 +2267,7 @@ async def _answer_time_sensitive_web(
         async with contextlib.aclosing(stream_completion(
             query,
             model=ASK_WEB_MODEL,  # 網搜路線（ASK_WEB_MODEL），與主答開網搜同一顆
-            system=TIME_SENSITIVE_WEB_SYSTEM_PROMPT + output_directive(locale),
+            system=time_sensitive_web_system_prompt() + output_directive(locale),
             allow_web=True,
             timeout=ASK_WEB_TIMEOUT,
             meta=llm_meta, max_tokens=ASK_ANSWER_MAX_TOKENS, task="ask_web",
@@ -2865,3 +2954,25 @@ async def answer_question(
                 _faithfulness_spot_check(qa_id, body, context),
                 name=f"faithfulness:{qa_id}",
             )
+
+
+# 舊常數名的相容層（PEP 562）：這幾段文字帶 profile 的稱謂，不能在 import 期定值——測試與工具會在同一個行程換
+# profile（reset_profile_cache），import 期定值的常數會留著舊稱謂。模組內部一律呼叫上面的函式，這裡只服務
+# `from app.services.answer import SYSTEM_PROMPT` 這類外部讀取（eval、scripts、測試）。
+_PROFILE_RENDERED = {
+    "SYSTEM_PROMPT_BASE": system_prompt_base,
+    "SYSTEM_PROMPT": lambda: ask_system_prompt(False),
+    "TIME_SENSITIVE_WEB_SYSTEM_PROMPT": time_sensitive_web_system_prompt,
+    "OFF_TOPIC_MESSAGE": off_topic_message_zh,
+    "OFF_TOPIC_MESSAGE_EN": off_topic_message_en,
+    "_LEGACY_OFF_TOPIC_MESSAGE": _legacy_off_topic_message,
+    "OFF_TOPIC_MESSAGES": off_topic_messages,
+    "NOTICE_MESSAGES": notice_messages,
+}
+
+
+def __getattr__(name: str):
+    render = _PROFILE_RENDERED.get(name)
+    if render is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return render()

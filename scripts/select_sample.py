@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.filename import FOREIGN_BROKERS, parse_filename  # noqa: E402
+from app.services.filename import parse_filename  # noqa: E402
 
 SOURCE_DIR = Path(__file__).resolve().parents[1] / "研報自動匯入"
 OUT = Path(__file__).resolve().parents[1] / "data" / "sample_manifest.json"
@@ -27,6 +27,14 @@ QUOTAS = {
 }
 
 PERIODIC_KW = ["雙週報", "週報", "月報", "策略"]
+
+# 預設 profile 語料的外資券商（英文報告 → 通常美股/海外）。只有這支抽樣工具用：發行機構名單本身在 profile
+# 的名單檔（`[sources].catalog`），「外資」是這份語料的分桶口徑，不是框架的概念。
+FOREIGN_BROKERS = {
+    "morgan_stanley", "goldman_sachs", "jpmorgan", "ubs", "nomura",
+    "macquarie", "daiwa", "clsa", "citi", "bofa", "hsbc", "haitong",
+    "jefferies", "aletheia",
+}
 EN_NAME = re.compile(r"[A-Za-z]")
 
 

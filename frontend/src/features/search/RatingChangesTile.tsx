@@ -6,6 +6,7 @@ import { instrumentHref } from '../radar/catalogState'
 import { RATING_LABEL, shortDate } from './libraryFormat'
 import atoms from './atoms.module.css'
 import styles from './RatingChangesTile.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   items?: RatingChange[]
@@ -23,7 +24,7 @@ function ChangeRow({ c }: { c: RatingChange }) {
     <Link
       className={styles.row}
       to={instrumentHref(new URLSearchParams(), c.market, c.instrument_code)}
-      aria-label={`${name} ${c.instrument_code}，${broker}，${RATING_LABEL[c.rating_from]}${up ? '調升' : '調降'}為${RATING_LABEL[c.rating_to]}`}
+      aria-label={t('search.ratingChangesTile.to', { name, instrument_code: c.instrument_code, broker, RATING_LABEL: RATING_LABEL[c.rating_from], v: up ? t('search.ratingChangesTile.upgraded') : t('search.ratingChangesTile.downgraded'), RATING_LABEL2: RATING_LABEL[c.rating_to] })}
     >
       <span className={styles.main}>
         <span className={styles.name}>
@@ -56,18 +57,18 @@ export function RatingChangesTile({ items, failed, onRetry, className, style }: 
       aria-labelledby="library-rating-changes"
     >
       <div className={styles.head}>
-        <h2 id="library-rating-changes" className={atoms.h2}>最新評等變動</h2>
+        <h2 id="library-rating-changes" className={atoms.h2}>{t('search.ratingChangesTile.latestRatingChanges')}</h2>
         <Link className={`${atoms.lk} ${styles.more}`} to="/consensus">
-          券商共識<ChevronRight size={14} strokeWidth={1.8} aria-hidden />
+          {t('search.ratingChangesTile.consensus')}<ChevronRight size={14} strokeWidth={1.8} aria-hidden />
         </Link>
       </div>
       {failed ? (
         <p className={styles.note}>
-          評等變動載入失敗
-          <button type="button" className={atoms.lk} onClick={onRetry}>重試</button>
+          {t('search.ratingChangesTile.couldnTLoadRatingChanges')}
+          <button type="button" className={atoms.lk} onClick={onRetry}>{t('search.ratingChangesTile.retry')}</button>
         </p>
       ) : !items || items.length === 0 ? (
-        <p className={styles.note}>目前沒有評等變動</p>
+        <p className={styles.note}>{t('search.ratingChangesTile.noRatingChangesRightNow')}</p>
       ) : (
         items.map(c => <ChangeRow key={`${c.market}-${c.instrument_code}-${c.broker}-${c.report_date}`} c={c} />)
       )}

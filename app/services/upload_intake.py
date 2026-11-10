@@ -163,6 +163,9 @@ class UploadRow:
     decision_reason: Optional[str]
     purge_after: Optional[datetime]
     purged_at: Optional[datetime]
+    # 經對外上傳 API 收進來的：API 用戶端的 id 與名稱（用戶端已刪除時名稱為 None）；帳號上傳兩者皆 None。
+    api_client_id: Optional[int] = None
+    api_client: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -200,7 +203,8 @@ _COLS = (
     "u.state, u.state_changed_at, u.scan_attempts, u.scan_engine, u.scan_signature, u.scanned_at, "
     "u.scan_last_error, u.process_attempts, u.failure_kind, u.failure_detail, u.processed_at, "
     "(SELECT a.username FROM research.app_user a WHERE a.id = u.decided_by), u.decided_at, "
-    "u.decision_reason, u.purge_after, u.purged_at"
+    "u.decision_reason, u.purge_after, u.purged_at, u.api_client_id, "
+    "(SELECT c.name FROM research.api_client c WHERE c.id = u.api_client_id)"
 )
 
 
@@ -213,27 +217,36 @@ def _row(r) -> UploadRow:
 
 async def check_quota(
     session: AsyncSession, *, actor_id: Optional[str], daily_quota: int, max_in_flight: int,
+    api_client_id: Optional[int] = None,
 ) -> None:
     """超過配額拋 `QuotaExceededError`。收檔前先快查一次（不必收完整個檔才拒），INSERT 前在鎖內再查一次。
 
     `daily_quota` 是程式預設（`UPLOAD_DAILY_QUOTA`）；這個人有個人覆寫（`research.user_quota` 的 upload 列，
     Admin v2）就用覆寫——`daily_limit` NULL＝不限、0＝不能上傳（`quota.resolve_limit`）。上傳一直是正式阻擋，
     不受配額的影子模式影響。
+
+    對外上傳 API（`api_client_id` 有值）的「每人」改成「每個 API 用戶端」：依 `report_upload.api_client_id`
+    計數、上限就是 `daily_quota`（個人覆寫只屬於帳號）。全站處理中的上限兩條路徑共用。
     """
     # 函式內 import：quota 會拉起 feature_flags／config，收檔模組在 import 期不需要它們。
     from app.services import quota
 
-    daily_limit = await quota.resolve_limit(session, actor_id, quota.KIND_UPLOAD, daily_quota)
+    if api_client_id is not None:
+        daily_limit: Optional[int] = daily_quota
+        owner = "api_client_id = :cid"
+    else:
+        daily_limit = await quota.resolve_limit(session, actor_id, quota.KIND_UPLOAD, daily_quota)
+        owner = "uploaded_by IS NOT DISTINCT FROM CAST(:uid AS uuid) AND api_client_id IS NULL"
     row = (
         await session.execute(
             text(
                 "SELECT "
-                "count(*) FILTER (WHERE uploaded_by IS NOT DISTINCT FROM CAST(:uid AS uuid) "
+                f"count(*) FILTER (WHERE {owner} "
                 "  AND uploaded_at >= (date_trunc('day', now() AT TIME ZONE :tz) AT TIME ZONE :tz)), "
                 "count(*) FILTER (WHERE state = ANY(CAST(:in_flight AS text[]))) "
                 "FROM research.report_upload"
             ),
-            {"uid": actor_id, "tz": TZ_NAME, "in_flight": list(uploads.IN_FLIGHT_STATES)},
+            {"uid": actor_id, "cid": api_client_id, "tz": TZ_NAME, "in_flight": list(uploads.IN_FLIGHT_STATES)},
         )
     ).one()
     today, in_flight = int(row[0]), int(row[1])
@@ -291,28 +304,34 @@ async def create_upload(
     actor_id: Optional[str],
     daily_quota: int,
     max_in_flight: int,
+    api_client_id: Optional[int] = None,
 ) -> UploadRow:
-    """檢查重複與配額、INSERT 一列 `quarantined`、寫稽核——全在呼叫端的交易裡。呼叫端負責 commit／rollback。"""
+    """檢查重複與配額、INSERT 一列 `quarantined`、寫稽核——全在呼叫端的交易裡。呼叫端負責 commit／rollback。
+
+    `api_client_id`：經對外上傳 API 收進來的（`actor_id` 為 None）；寫進 `report_upload.api_client_id` 與稽核 detail。
+    """
     # 函式內 import：與 visibility.py 同理，不讓這個模組在 import 期拉起帳號模組。
     from app.services.accounts import record_audit
 
     await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": INTAKE_LOCK_KEY})
     await find_conflict(session, file_hash)
-    await check_quota(session, actor_id=actor_id, daily_quota=daily_quota, max_in_flight=max_in_flight)
+    await check_quota(session, actor_id=actor_id, daily_quota=daily_quota, max_in_flight=max_in_flight,
+                      api_client_id=api_client_id)
     try:
         row = (
             await session.execute(
                 text(
                     "WITH ins AS ("
                     "  INSERT INTO research.report_upload "
-                    "    (id, file_hash, original_name, size_bytes, client_mtime, uploaded_by, state) "
-                    "  VALUES (CAST(:id AS uuid), :h, :name, :size, :mtime, CAST(:uid AS uuid), :state) "
+                    "    (id, file_hash, original_name, size_bytes, client_mtime, uploaded_by, state, api_client_id) "
+                    "  VALUES (CAST(:id AS uuid), :h, :name, :size, :mtime, CAST(:uid AS uuid), :state, :cid) "
                     "  RETURNING *"
                     f") SELECT {_COLS} FROM ins u"
                 ),
                 {
                     "id": upload_id, "h": file_hash, "name": original_name, "size": size_bytes,
                     "mtime": client_mtime, "uid": actor_id, "state": uploads.STATE_QUARANTINED,
+                    "cid": api_client_id,
                 },
             )
         ).one()
@@ -325,6 +344,7 @@ async def create_upload(
         detail={
             "upload_id": upload_id, "file_name": original_name, "size_bytes": size_bytes,
             "state": uploads.STATE_QUARANTINED,
+            **({"api_client_id": api_client_id} if api_client_id is not None else {}),
         },
     )
     return _row(row)
@@ -366,6 +386,22 @@ async def get_upload(session: AsyncSession, upload_id: str) -> UploadRow:
         await session.execute(
             text(f"SELECT {_COLS} FROM research.report_upload u WHERE u.id = CAST(:id AS uuid)"),
             {"id": upload_id},
+        )
+    ).first()
+    if row is None:
+        raise UploadNotFoundError("上傳紀錄不存在")
+    return _row(row)
+
+
+async def get_client_upload(session: AsyncSession, upload_id: str, api_client_id: int) -> UploadRow:
+    """對外上傳 API 查狀態：只回這個 API 用戶端自己收進來的上傳；別人的與不存在的同一個錯誤。"""
+    if not valid_upload_id(upload_id):
+        raise UploadNotFoundError("上傳紀錄不存在")
+    row = (
+        await session.execute(
+            text(f"SELECT {_COLS} FROM research.report_upload u "
+                 "WHERE u.id = CAST(:id AS uuid) AND u.api_client_id = :cid"),
+            {"id": upload_id, "cid": api_client_id},
         )
     ).first()
     if row is None:

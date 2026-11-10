@@ -125,5 +125,70 @@ class JudgeIdentityTests(unittest.TestCase):
             self.assertNotIn("evaluation->>'judge_model'", src, f"{rel} 自己寫了一份 judge 過濾")
 
 
+
+class DeclaredLineageIdentityTests(unittest.TestCase):
+    """宣告模型（`declared:<模型>`）的 judge 識別：記在 evaluation 的 judge_lineage，比的是識別不是名稱。"""
+
+    ANTHROPIC = {"LLM_PROVIDER": "anthropic", "ANTHROPIC_MODELS": "claude-haiku-4-5"}
+
+    def test_prefix_mirrors_llm_models(self):
+        from app.services.llm_models import JUDGE_LINEAGE_DECLARED_PREFIX
+
+        self.assertEqual(js.DECLARED_LINEAGE_PREFIX, JUDGE_LINEAGE_DECLARED_PREFIX)
+
+    def test_builtin_and_legacy_identity_is_the_model_name(self):
+        """廷豐：沒有 judge_lineage 鍵的列，識別＝judge_model_of，判定與加入識別之前逐列相同。"""
+        for ev in ({}, {"judge_model": "gpt-6-luna"}, {"judge_model": ""}, {"judge_model": 1},
+                   {"judge_model": "gpt-6-luna", "judge_lineage": "gpt-6-luna-2026-11"}):
+            with self.subTest(ev=ev):
+                self.assertEqual(js.judge_identity_of(ev), js.judge_model_of(ev))
+        self.assertIsNone(js.judge_identity_of(None))
+        self.assertEqual(js.judge_identity("gpt-6-luna", "gpt-6-luna-2026-11"), "gpt-6-luna")
+        self.assertEqual(js.judge_identity("claude-haiku-4-5", "claude-haiku"), "claude-haiku-4-5")
+
+    def test_declared_name_colliding_with_the_legacy_name_is_a_different_judge(self):
+        """以 Anthropic 宣告 claude-haiku-4-5：與缺 judge_model 的 CLI 時代舊列同名，但不是同一把尺。"""
+        current = js.judge_identity("claude-haiku-4-5", "declared:claude-haiku-4-5")
+        self.assertEqual(current, "declared:claude-haiku-4-5")
+        new_row = {"judge_model": "claude-haiku-4-5", "judge_lineage": "declared:claude-haiku-4-5"}
+        self.assertTrue(js.is_current_judge(new_row, current))
+        self.assertFalse(js.is_current_judge({}, current), "CLI 時代的舊列不能算成宣告模型量的")
+        self.assertFalse(js.is_current_judge({"judge_model": "claude-haiku-4-5"}, current))
+        self.assertFalse(js.is_current_judge(new_row, "claude-haiku-4-5"))
+
+    def test_sql_fragment_mirrors_python(self):
+        self.assertIn(js.JUDGE_MODEL_SQL, js.JUDGE_IDENTITY_SQL)
+        self.assertIn("starts_with(evaluation->>'judge_lineage', 'declared:')", js.JUDGE_IDENTITY_SQL)
+        self.assertEqual(js.CURRENT_JUDGE_SQL, f"({js.JUDGE_IDENTITY_SQL}) = :judge_model")
+
+    def test_faithfulness_records_lineage_only_for_declared_judges(self):
+        from app.services.faithfulness import FaithfulnessResult
+
+        builtin = FaithfulnessResult(1.0, None, judge_model="gpt-6-luna").to_evaluation()
+        self.assertNotIn("judge_lineage", builtin, "內建 judge 的 evaluation 形狀不變")
+        with mock.patch.dict(os.environ, self.ANTHROPIC):
+            declared = FaithfulnessResult(1.0, None, judge_model="claude-haiku-4-5").to_evaluation()
+        self.assertEqual(declared["judge_lineage"], "declared:claude-haiku-4-5")
+        self.assertEqual(declared["judge_model"], "claude-haiku-4-5")
+        self.assertNotIn("judge_lineage", FaithfulnessResult(None, None).to_evaluation())
+
+    def test_readers_bind_the_identity(self):
+        """讀分數的各處綁給 :judge_model 的是識別（內建模型＝模型名，廷豐不變）。"""
+        from app.services import analytics
+        from web import stats_snapshot
+        from web.routers import review
+
+        for module in (stats_snapshot, review):
+            with self.subTest(module=module.__name__):
+                self.assertEqual(module._JUDGE_IDENTITY, module._JUDGE_MODEL)
+        bound = analytics._bind(analytics.date(2026, 11, 1), analytics.date(2026, 11, 2),
+                                analytics.Params(judge_model="gpt-6-luna"))
+        self.assertEqual(bound["judge_model"], "gpt-6-luna")
+        with mock.patch.dict(os.environ, self.ANTHROPIC):
+            bound = analytics._bind(analytics.date(2026, 11, 1), analytics.date(2026, 11, 2),
+                                    analytics.Params(judge_model="claude-haiku-4-5"))
+        self.assertEqual(bound["judge_model"], "declared:claude-haiku-4-5")
+
+
 if __name__ == "__main__":
     unittest.main()

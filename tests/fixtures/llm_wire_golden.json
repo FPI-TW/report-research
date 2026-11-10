@@ -1,0 +1,121 @@
+{
+ "_說明": "廷豐現行兩條路徑（openai、opencode_go）在加入其他 provider 之前錄下的請求（tests/test_llm_providers.py 的 GoldenWireTests 逐字比對）。重錄＝改了送出的內容，要在 PR 說明理由。",
+ "openai": {
+  "batch": {
+   "body": "{\"model\":\"gpt-6-luna\",\"messages\":[{\"role\":\"user\",\"content\":\"請摘要這份研報�。\"}],\"max_completion_tokens\":1024,\"stream\":true,\"reasoning_effort\":\"none\",\"stream_options\":{\"include_usage\":true}}",
+   "headers": {
+    "accept": "text/event-stream",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-openai0",
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "host": "api.openai.com",
+    "user-agent": "<httpx 預設>"
+   },
+   "method": "POST",
+   "url": "https://api.openai.com/v1/chat/completions"
+  },
+  "json": {
+   "body": "{\"model\":\"gpt-6-luna\",\"messages\":[{\"role\":\"system\",\"content\":\"你是分析師，只輸出 JSON。\"},{\"role\":\"user\",\"content\":\"請摘要這份研報�。\"}],\"max_completion_tokens\":2048,\"stream\":false,\"reasoning_effort\":\"none\",\"temperature\":0,\"response_format\":{\"type\":\"json_object\"}}",
+   "headers": {
+    "accept": "application/json",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-openai0",
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "host": "api.openai.com",
+    "user-agent": "<httpx 預設>"
+   },
+   "method": "POST",
+   "url": "https://api.openai.com/v1/chat/completions"
+  },
+  "probe": {
+   "body": "",
+   "headers": {
+    "accept": "application/json",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-openai0",
+    "connection": "keep-alive",
+    "host": "api.openai.com",
+    "user-agent": "<httpx 預設>"
+   },
+   "method": "GET",
+   "url": "https://api.openai.com/v1/models"
+  },
+  "stream": {
+   "body": "{\"model\":\"gpt-6-luna\",\"messages\":[{\"role\":\"system\",\"content\":\"你是分析師，只輸出 JSON。\"},{\"role\":\"user\",\"content\":\"請摘要這份研報�。\"}],\"max_completion_tokens\":512,\"stream\":true,\"reasoning_effort\":\"none\",\"stream_options\":{\"include_usage\":true}}",
+   "headers": {
+    "accept": "text/event-stream",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-openai0",
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "host": "api.openai.com",
+    "user-agent": "<httpx 預設>"
+   },
+   "method": "POST",
+   "url": "https://api.openai.com/v1/chat/completions"
+  }
+ },
+ "opencode_go": {
+  "batch": {
+   "body": "{\"model\":\"gpt-6-luna\",\"messages\":[{\"role\":\"user\",\"content\":\"請摘要這份研報�。\"}],\"max_completion_tokens\":1024,\"stream\":true,\"reasoning_effort\":\"none\",\"stream_options\":{\"include_usage\":true}}",
+   "headers": {
+    "accept": "text/event-stream",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-go0",
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "host": "opencode.ai",
+    "user-agent": "report-mark/1 (+https://research.tingfong.com)",
+    "x-opencode-session": "batch-summary"
+   },
+   "method": "POST",
+   "url": "https://opencode.ai/inference/go/v1/chat/completions"
+  },
+  "json": {
+   "body": "{\"model\":\"gpt-6-luna\",\"messages\":[{\"role\":\"system\",\"content\":\"你是分析師，只輸出 JSON。\"},{\"role\":\"user\",\"content\":\"請摘要這份研報�。\"}],\"max_completion_tokens\":2048,\"stream\":false,\"reasoning_effort\":\"none\",\"temperature\":0,\"response_format\":{\"type\":\"json_object\"}}",
+   "headers": {
+    "accept": "application/json",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-go0",
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "host": "opencode.ai",
+    "user-agent": "report-mark/1 (+https://research.tingfong.com)",
+    "x-opencode-session": "judge-faithfulness"
+   },
+   "method": "POST",
+   "url": "https://opencode.ai/inference/go/v1/chat/completions"
+  },
+  "probe": {
+   "body": "",
+   "headers": {
+    "accept": "application/json",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-go0",
+    "connection": "keep-alive",
+    "host": "opencode.ai",
+    "user-agent": "report-mark/1 (+https://research.tingfong.com)",
+    "x-opencode-session": "healthz"
+   },
+   "method": "GET",
+   "url": "https://opencode.ai/inference/go/v1/models"
+  },
+  "stream": {
+   "body": "{\"model\":\"gpt-6-luna\",\"messages\":[{\"role\":\"system\",\"content\":\"你是分析師，只輸出 JSON。\"},{\"role\":\"user\",\"content\":\"請摘要這份研報�。\"}],\"max_completion_tokens\":512,\"stream\":true,\"reasoning_effort\":\"none\",\"stream_options\":{\"include_usage\":true}}",
+   "headers": {
+    "accept": "text/event-stream",
+    "accept-encoding": "gzip, deflate, br",
+    "authorization": "Bearer fixed-test-secret-go0",
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "host": "opencode.ai",
+    "user-agent": "report-mark/1 (+https://research.tingfong.com)",
+    "x-opencode-session": "web-ask_answer"
+   },
+   "method": "POST",
+   "url": "https://opencode.ai/inference/go/v1/chat/completions"
+  }
+ }
+}

@@ -900,6 +900,21 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ValueError, "corpus_id"):
                     await rr.run(ds, out_path=None, concurrency=1, corpus_id="snapshot-1", match_baseline=baseline)
 
+    def test_real_build_config_matches_itself(self):
+        """build_config 產出的 config 必須能通過自己的核對（曾因核對清單要求已不記錄的 judge.retries，
+        任何真實基準線都不可比）。"""
+        cfg = rr.build_config(
+            dataset_path="eval/ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=3, rerank_top_m=16, scope=None,
+            limit=None, agentic=False, commit="a", started_at="2026-11-10T00:00:00+00:00", corpus_id="snap-1",
+        )
+        other = rr.build_config(
+            dataset_path="eval/ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=3, rerank_top_m=16, scope=None,
+            limit=None, agentic=False, commit="b", started_at="2026-11-11T00:00:00+00:00", corpus_id="snap-1",
+        )
+        rr.check_baseline_config({"config": json.loads(json.dumps(cfg))}, other)
+
     def test_baseline_config_and_complete_coverage_guard(self):
         cfg = {key: None for key in (
             "gen_model", "gen_timeout", "models", "embed_model", "rerank_top_m", "rerank_model",
@@ -907,7 +922,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         )}
         cfg.update(queryset_sha256="same", corpus_id="snapshot-1")
         cfg["judge"] = {key: None for key in (
-            "provider", "model", "timeout", "retries", "prompt_sha", "schema_version", "lineage", "max_tokens",
+            "provider", "model", "timeout", "prompt_sha", "schema_version", "lineage", "max_tokens",
         )}
         cfg["judge"].update(model="gpt-6-luna", prompt_sha="a")
         rr.check_baseline_config({"config": cfg}, cfg)
@@ -924,8 +939,8 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             rr.require_complete(report, 2)
 
     async def test_judge_lineage_is_labelled_in_config_and_notes_without_warning(self):
-        """現行 judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在
-        config.judge.lineage 與頂層 notes（eval_compare 會印），不進 summary（否則要在 METRIC_SPECS 分類）。"""
+        """現行 judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在 summary 的 META 鍵 judge_lineage
+        （eval_compare 已分類、宣告模型上線後才加）、config.judge.lineage 與頂層 notes（eval_compare 會印）。"""
         for judge, provider, lineage in (("gpt-6-luna", "llm_http", "gpt-6-luna-2026-11"),
                                          ("claude-haiku-4-5", "unsupported", "claude-haiku")):
             with self.subTest(judge=judge), tempfile.TemporaryDirectory() as td:
@@ -938,7 +953,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(report["config"]["judge"]["lineage"], lineage)
                 self.assertEqual(report["summary"]["judge_model"], judge)
                 self.assertNotIn("lineage", report["summary"])
-                self.assertNotIn("judge_lineage", report["summary"])
+                self.assertEqual(report["summary"]["judge_lineage"], lineage)
                 self.assertEqual(written["notes"], report["notes"])
                 self.assertIn(lineage, report["notes"][0])
                 self.assertNotIn("WARNING", err.getvalue())
@@ -948,6 +963,14 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("gpt-6-luna-2026-11", note)
         self.assertIn("eval/baselines/", note)
         self.assertIn("回 2", note)
+
+    def test_declared_judge_notes_say_it_is_its_own_lineage(self):
+        env = {"LLM_PROVIDER": "openai_compatible", "OPENAI_COMPATIBLE_MODELS": "Qwen/Qwen3-72B"}
+        with mock.patch.dict(os.environ, env):
+            note = rr.lineage_notes("Qwen/Qwen3-72B")[0]
+        self.assertIn("declared:Qwen/Qwen3-72B", note)
+        self.assertIn("自成一系", note)
+        self.assertNotIn("舊量尺", note)
 
     def test_old_judge_notes_say_they_are_the_old_scale(self):
         for model, lineage in (("deepseek-flash", "deepseek-2026-09"), ("claude-haiku-4-5", "claude-haiku")):
@@ -1030,3 +1053,59 @@ class MainNewFlagsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProfileQuestionSetTests(unittest.TestCase):
+    """`--profile`：讀該 profile 的凍結題集；不帶時結果檔與加入 --profile 之前逐字相同。"""
+
+    def _config(self, **kw):
+        return rr.build_config(
+            dataset_path=REPO_ROOT / "eval" / "ragas_questions.json", generator_model=rr.DEFAULT_MODEL,
+            judge_model=rr.DEFAULT_JUDGE_MODEL, concurrency=1, repeat=1, rerank_top_m=0, scope=None, limit=None,
+            agentic=False, commit=None, started_at="2026-11-10T00:00:00+00:00", **kw,
+        )
+
+    def test_profile_key_only_when_given(self):
+        self.assertNotIn("profile", self._config())
+        self.assertEqual(self._config(profile="tingfong")["profile"], "tingfong")
+
+    def test_cli_default_dataset_is_unchanged(self):
+        src = (REPO_ROOT / "eval" / "run_ragas.py").read_text(encoding="utf-8")
+        self.assertIn("dataset = dataset_arg(args.profile, args.dataset)", src)
+        from eval.profile_eval import dataset_arg
+
+        self.assertEqual(dataset_arg(None, None), "eval/ragas_questions.json")
+
+    def test_profile_and_dataset_together_stop_before_any_llm_call(self):
+        argv = ["run_ragas.py", "--profile", "tingfong", "--dataset", "eval/ragas_questions.json"]
+        err = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(rr, "require_llm_key") as req, \
+                mock.patch.object(rr, "run", side_effect=AssertionError("不應執行")), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                rr._main()
+        self.assertEqual(cm.exception.code, 2)
+        req.assert_not_called()
+        self.assertIn("擇一", err.getvalue())
+
+    def test_profile_reaches_run(self):
+        seen = {}
+
+        async def fake_run(dataset, **kw):
+            seen.update(dataset=dataset, **kw)
+            return {"summary": {}}
+
+        argv = ["run_ragas.py", "--profile", "tingfong", "--json"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(rr, "require_llm_key"), \
+                mock.patch.object(rr, "run", fake_run), contextlib.redirect_stdout(io.StringIO()):
+            rr._main()
+        self.assertEqual(seen["profile"], "tingfong")
+        self.assertEqual(Path(seen["dataset"]).resolve(), (REPO_ROOT / "eval" / "ragas_questions.json").resolve())
+
+
+class BenchLoadProfileTests(unittest.TestCase):
+    def test_profile_question_set(self):
+        from scripts import bench_load
+
+        self.assertEqual(bench_load.profile_question_set("tingfong"), bench_load.QUESTION_SET.resolve())
+        with self.assertRaisesRegex(RuntimeError, "profile 題集不能用"):
+            bench_load.profile_question_set("nosuch")

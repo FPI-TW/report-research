@@ -50,6 +50,7 @@ import { needleLadder } from './quoteNeedle'
 import { scrollToSearchResult } from './searchScroll'
 import { useTakeawayPages, type MarkSource } from './useTakeawayPages'
 import styles from './PdfViewer.module.css'
+import { t } from '@/i18n'
 
 /** 有引文的摘錄（縮圖列標金色編號用）。 */
 export type JumpMarkSource = MarkSource
@@ -122,12 +123,11 @@ function writeThumbsPref(open: boolean): void {
  * 選取高亮色。SelectionLayer 以 `mixBlendMode: multiply` 疊色，所以要給**不透明**的
  * 淺色（像螢光筆：白底變成該色、黑字仍是黑字），不是半透明色。
  *
- * 刻意比全站 `::selection` 的 `--tf-gold-tint`(#f8f1e0) 深一階，取 `--tf-gold-line`
- * 的值：那個 tint 是為了配深色網頁底色調的，疊在 PDF 的白紙上幾乎看不見。
- * 值寫死而非讀 CSS 變數，因為這是傳給外掛的 inline style 字串、拿不到 CSS Modules 的類別。
- * 改 tokens.css 的金色系時記得一起看這裡。
+ * 刻意比全站 `::selection` 的 `--tf-gold-tint` 深一階，取 `--tf-gold-line`：那個 tint 是為了配
+ * 深色網頁底色調的，疊在 PDF 的白紙上幾乎看不見。這是傳給外掛的 inline style（`background`），拿不到
+ * CSS Modules 的類別，但 CSS 變數照樣解析，所以跟著 profile 的強調色走。
  */
-const SELECTION_TINT = '#ead9ae'
+const SELECTION_TINT = 'var(--tf-gold-line)'
 
 /** 文件內搜尋的命中色（交接包：目前命中橘色、其他命中淡黃）。同樣是傳給外掛的 inline style。 */
 const FIND_HIT = 'rgba(255, 214, 10, 0.4)'
@@ -138,7 +138,7 @@ function Booting() {
   return (
     <div className={styles.booting} role="status">
       <div className={styles.bootPaper} />
-      <span>正在啟動 PDF 引擎…</span>
+      <span>{t('report.pdf.pdfViewer.startingPdfEngine')}</span>
     </div>
   )
 }
@@ -268,10 +268,10 @@ function FindBar({ documentId, focusTick, onClose, onSearch, scrollToHit }: Find
   const q = query.trim()
   useEffect(() => {
     if (lastRunRef.current === q) return
-    const t = setTimeout(() => {
+    const item = setTimeout(() => {
       if (lastRunRef.current !== q) run(q)
     }, q ? FIND_DEBOUNCE_MS : 0)
-    return () => clearTimeout(t)
+    return () => clearTimeout(item)
   }, [q, run])
 
   const hits = state.results.length
@@ -296,8 +296,8 @@ function FindBar({ documentId, focusTick, onClose, onSearch, scrollToHit }: Find
         ref={inputRef}
         className={styles.findInput}
         type="search"
-        placeholder="在文件中搜尋"
-        aria-label="在文件中搜尋"
+        placeholder={t('report.pdf.pdfViewer.searchInDocument')}
+        aria-label={t('report.pdf.pdfViewer.searchInDocument')}
         value={query}
         onChange={e => setQuery(e.target.value)}
         onKeyDown={e => {
@@ -318,8 +318,8 @@ function FindBar({ documentId, focusTick, onClose, onSearch, scrollToHit }: Find
       <button
         type="button"
         className={styles.ib}
-        aria-label="上一個命中"
-        title="上一個命中（Shift Enter）"
+        aria-label={t('report.pdf.pdfViewer.previousMatch')}
+        title={t('report.pdf.pdfViewer.previousMatchShiftEnter')}
         disabled={!settled || hits === 0}
         onClick={() => step(true)}
       >
@@ -328,14 +328,14 @@ function FindBar({ documentId, focusTick, onClose, onSearch, scrollToHit }: Find
       <button
         type="button"
         className={styles.ib}
-        aria-label="下一個命中"
-        title="下一個命中（Enter）"
+        aria-label={t('report.pdf.pdfViewer.nextMatch')}
+        title={t('report.pdf.pdfViewer.nextMatchEnter')}
         disabled={!settled || hits === 0}
         onClick={() => step(false)}
       >
         <ChevronDown size={14} strokeWidth={2} aria-hidden />
       </button>
-      <button type="button" className={styles.ib} aria-label="關閉搜尋" onClick={onClose}>
+      <button type="button" className={styles.ib} aria-label={t('report.pdf.pdfViewer.closeSearch')} onClick={onClose}>
         <X size={13} strokeWidth={2} aria-hidden />
       </button>
     </div>
@@ -416,8 +416,8 @@ function Chrome({
   // 靜默成功是最糟的謊。
   const onCopyClick = () => {
     void onCopy().then(ok => {
-      if (ok) showToast('已複製', { ok: true })
-      else showToast('複製失敗，請手動複製')
+      if (ok) showToast(t('report.pdf.pdfViewer.copied'), { ok: true })
+      else showToast(t('report.pdf.pdfViewer.copyFailedCopyManually'))
     })
   }
 
@@ -515,13 +515,13 @@ function Chrome({
 
       {/* 置中用 left/right 0＋margin auto，不用 translateX(-50%)：進場動畫的 transform
           會把它蓋掉，整條往右偏（交接包「實測抓到的坑」第 2 條）。 */}
-      <div className={styles.dock} role="toolbar" aria-label="文件工具">
+      <div className={styles.dock} role="toolbar" aria-label={t('report.pdf.pdfViewer.documentTools')}>
         <span className={styles.thumbsGroup}>
           <button
             type="button"
             className={thumbsOpen ? `${styles.ib} ${styles.ibOn}` : styles.ib}
-            aria-label="頁面縮圖"
-            title="頁面縮圖"
+            aria-label={t('report.pdf.pdfViewer.pageThumbnails')}
+            title={t('report.pdf.pdfViewer.pageThumbnails')}
             aria-pressed={thumbsOpen}
             onClick={onToggleThumbs}
           >
@@ -533,8 +533,8 @@ function Chrome({
         <button
           type="button"
           className={styles.ib}
-          aria-label="上一頁"
-          title="上一頁（PageUp）"
+          aria-label={t('report.pdf.pdfViewer.previousPage')}
+          title={t('report.pdf.pdfViewer.previousPagePageup')}
           disabled={current <= 1}
           onClick={() => goPage(current - 1)}
         >
@@ -547,7 +547,7 @@ function Chrome({
             type="text"
             inputMode="numeric"
             value={pageDraft ?? String(current)}
-            aria-label={`頁碼，共 ${total} 頁`}
+            aria-label={t('report.pdf.pdfViewer.pageNumberPages', { total })}
             onChange={e => setPageDraft(e.target.value.replace(/\D/g, ''))}
             onFocus={e => e.currentTarget.select()}
             onBlur={commitPage}
@@ -564,8 +564,8 @@ function Chrome({
         <button
           type="button"
           className={styles.ib}
-          aria-label="下一頁"
-          title="下一頁（PageDown）"
+          aria-label={t('report.pdf.pdfViewer.nextPage')}
+          title={t('report.pdf.pdfViewer.nextPagePagedown')}
           disabled={current >= total}
           onClick={() => goPage(current + 1)}
         >
@@ -577,8 +577,8 @@ function Chrome({
         <button
           type="button"
           className={styles.ib}
-          aria-label="縮小"
-          title="縮小"
+          aria-label={t('report.pdf.pdfViewer.zoomOut')}
+          title={t('report.pdf.pdfViewer.zoomOut')}
           disabled={level <= MIN_ZOOM + 0.001}
           onClick={() => zoom?.zoomOut()}
         >
@@ -588,8 +588,8 @@ function Chrome({
         <button
           type="button"
           className={`${styles.ib} ${styles.zoomPct}`}
-          aria-label={`重設縮放，目前 ${pct}%`}
-          title="重設縮放"
+          aria-label={t('report.pdf.pdfViewer.resetZoomCurrently', { pct })}
+          title={t('report.pdf.pdfViewer.resetZoom')}
           onClick={() => zoom?.requestZoom(ZoomMode.Automatic)}
         >
           {pct}%
@@ -597,8 +597,8 @@ function Chrome({
         <button
           type="button"
           className={styles.ib}
-          aria-label="放大"
-          title="放大"
+          aria-label={t('report.pdf.pdfViewer.zoomIn')}
+          title={t('report.pdf.pdfViewer.zoomIn')}
           disabled={level >= MAX_ZOOM - 0.001}
           onClick={() => zoom?.zoomIn()}
         >
@@ -610,8 +610,8 @@ function Chrome({
         <button
           type="button"
           className={findOpen ? `${styles.ib} ${styles.ibOn}` : styles.ib}
-          aria-label="在文件中搜尋"
-          title={`在文件中搜尋（${isMac ? '⌘' : 'Ctrl'} F）`}
+          aria-label={t('report.pdf.pdfViewer.searchInDocument')}
+          title={t('report.pdf.pdfViewer.searchInDocumentF', { v: isMac ? '⌘' : 'Ctrl' })}
           aria-expanded={findOpen}
           onClick={onToggleFind}
         >
@@ -626,8 +626,8 @@ function Chrome({
             <button
               type="button"
               className={styles.ib}
-              aria-label="複製選取的文字"
-              title={`複製選取的文字（${isMac ? '⌘' : 'Ctrl'} C）`}
+              aria-label={t('report.pdf.pdfViewer.copySelectedText')}
+              title={t('report.pdf.pdfViewer.copySelectedTextC', { v: isMac ? '⌘' : 'Ctrl' })}
               onClick={onCopyClick}
             >
               <Copy size={15} strokeWidth={1.8} aria-hidden />
@@ -746,8 +746,8 @@ export default function PdfViewer({ url, title, jump = null, marks, onJumpResult
   // 放在 isLoading 之前：引擎卡在 isLoading 與文件卡在開不起來，兩種都要接住。
   if (timedOutKey === loadKey) {
     throw new Error(
-      `PDF 引擎逾時未就緒（${READY_TIMEOUT_MS}ms）：` +
-        `engine=${engine ? 'ready' : 'null'}、isLoading=${isLoading}`,
+      t('report.pdf.pdfViewer.pdfEngineNotReadyWithin', { READY_TIMEOUT_MS }) +
+        t('report.pdf.pdfViewer.engineIsloading', { v: engine ? 'ready' : 'null', isLoading: String(isLoading) }),
     )
   }
   if (isLoading || !engine) {
@@ -837,11 +837,11 @@ function LoadFailed({ url, onShown, onRetry }: { url: string; onShown: () => voi
         role="alert"
         onCanvas
         icon={<AlertCircle size={18} strokeWidth={1.8} />}
-        title="PDF 載入失敗"
-        desc="左側的摘要與重點摘錄仍可閱讀。"
+        title={t('report.pdf.pdfViewer.couldnTLoadThePdf')}
+        desc={t('report.pdf.pdfViewer.theSummaryAndKeyTakeaways')}
       >
-        <button type="button" className={stateStyles.btn} onClick={onRetry}>重試</button>
-        <a className={stateStyles.btn} href={url} download>下載原始檔</a>
+        <button type="button" className={stateStyles.btn} onClick={onRetry}>{t('report.pdf.pdfViewer.retry')}</button>
+        <a className={stateStyles.btn} href={url} download>{t('report.pdf.pdfViewer.downloadOriginal')}</a>
       </StateBox>
     </div>
   )
@@ -948,9 +948,9 @@ function ViewerBody({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.isComposing || modalOpen()) return
-      const t = e.target as HTMLElement | null
+      const item = e.target as HTMLElement | null
       // 正在打字一律讓行——這個畫面上同時有搜尋框與頁碼輸入
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (item && (item.tagName === 'INPUT' || item.tagName === 'TEXTAREA' || item.isContentEditable)) return
       if (e.altKey) return
 
       // Ctrl/⌘+F：**刻意攔截瀏覽器的尋找**。PDF 內容是 canvas，不在 DOM 裡，
@@ -968,8 +968,8 @@ function ViewerBody({
         if (!hasSelection) return
         e.preventDefault()
         void copySelection().then(ok => {
-          if (ok) showToast('已複製', { ok: true })
-          else showToast('複製失敗，請手動複製')
+          if (ok) showToast(t('report.pdf.pdfViewer.copied'), { ok: true })
+          else showToast(t('report.pdf.pdfViewer.copyFailedCopyManually'))
         })
         return
       }
@@ -1045,7 +1045,7 @@ function ViewerBody({
           裡面的按鈕不進 Tab 序。<1024px 整列不顯示。 */}
       <nav
         className={thumbsOpen ? styles.thumbs : `${styles.thumbs} ${styles.thumbsOff}`}
-        aria-label="頁面縮圖"
+        aria-label={t('report.pdf.pdfViewer.pageThumbnails')}
         inert={!thumbsOpen}
       >
         <ThumbnailsPane documentId={documentId} className={styles.thumbsScroll}>
@@ -1059,7 +1059,7 @@ function ViewerBody({
                 type="button"
                 className={on ? `${styles.thumb} ${styles.thumbOn}` : styles.thumb}
                 style={{ top: meta.top, height: meta.wrapperHeight }}
-                aria-label={`第 ${n} 頁${mk.length ? `，含重點摘錄 ${mk.join('、')}` : ''}`}
+                aria-label={t('report.pdf.pdfViewer.page', { n: String(n), v: mk.length ? t('report.pdf.pdfViewer.keyTakeaways', { mk: mk.join(t('report.pdf.pdfViewer.text')) }) : '' })}
                 aria-current={on ? 'page' : undefined}
                 onClick={() => scroll?.scrollToPage({ pageNumber: n })}
               >

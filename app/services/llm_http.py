@@ -1,4 +1,5 @@
-"""Chat Completions 的 HTTP 客戶端（OpenAI 官方端點，或 OpenCode Go 的 OpenAI 相容端點）。
+"""LLM 的 HTTP 客戶端：OpenAI 族的 Chat Completions（OpenAI 官方、OpenCode Go、Azure OpenAI、自架相容端點）與
+Anthropic 原生 Messages API。
 
 本模組只負責「打一次 API、把結果與失敗原因說清楚」，不決定哪個任務用哪個模型、也不做
 呼叫端的重試策略——那兩件事分別在分派層（`llm.stream_completion`、`scripts/_claude_cli.
@@ -44,17 +45,41 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
     （`complete_chat` docstring）。
 - **金鑰在呼叫時才讀 `os.environ`**，不進 Settings：批次腳本不讀 repo 根 `.env`，而
   `get_settings()` 是 import 期就快取的單例（`app/services/db.py`），先快取到空值就一路空到底。
-- **不用 openai SDK**：它內建的重試會吃掉失敗原因，違反 `scripts/_claude_cli.py` 開頭四天
+- **不用 openai／anthropic SDK**：它們內建的重試會吃掉失敗原因，違反 `scripts/_claude_cli.py` 開頭四天
   停擺紀錄的教訓（失敗原因必須說得出口）。
 - **observer hook**（Admin v2，`add_observer`）：`_log_call` 每次呼叫恰好一次，順便把**同一份 metadata**
   （任務、模型、成敗、token、耗時——與那行 log 相同，沒有 prompt、沒有回答、沒有 header）交給已註冊的
   observer。web 在 lifespan 註冊 `app.services.usage_events.observe_llm_call`，把線上用量歸到人
   （`llm_usage_daily`）；批次行程不註冊，行為不變。observer 只能是同步、便宜的函式，例外一律吞掉
   （用量歸因不能讓 LLM 呼叫失敗）。註冊表只用標準庫，本模組仍是葉模組。
-- **provider（`LLM_PROVIDER`）在呼叫時才讀**，與金鑰同一個理由。兩條路徑是同一顆模型（`app/services/llm_models.py`
-  docstring），差異全收在本模組，分派層與呼叫端不知道走哪一條：金鑰與端點；Go 要求的自報 User-Agent 與穩定的
-  `x-opencode-session`；Go 的用量上限可能以 429 回應，訊息看得出是額度時歸 `QUOTA`（`_is_go_quota`）。兩邊都沒有餘額
-  端點，`probe_endpoint` 打 `/models` 只判斷端點與金鑰。log 與 observer 的 metadata 都帶 `provider`，費用才分得出來。
+- **provider（`LLM_PROVIDER`）在呼叫時才讀**，與金鑰同一個理由。provider 是每台主機固定的送達路徑、**沒有備援**
+  （`app/services/llm_models.py` docstring），差異全收在本模組，分派層與呼叫端不知道走哪一條；重試、逾時、截斷語意
+  只有這一份，各 provider 共用。**刻意不用官方 SDK**（`openai`、`anthropic`）：它們內建重試與自己的逾時，要關掉之後
+  剩下的只是 httpx 的薄包裝，卻多一個相依、多一層會吞掉失敗原因的例外轉換。log 與 observer 的 metadata 都帶
+  `provider`，費用才分得出來。各 provider 都沒有餘額端點，`probe_endpoint` 打模型清單只判斷端點與金鑰。
+
+## 各 provider 的對應規則（tests/test_llm_providers.py 逐點釘住）
+
+- **openai／opencode_go**（基準）：`{base}/chat/completions`、`Authorization: Bearer`；body 送模型名、
+  `max_completion_tokens`、`reasoning_effort=none`；temperature（judge 的 0）只在推理關時送；JSON 模式
+  `response_format=json_object`；串流讀 `choices[0].delta` 直到 `[DONE]`；usage 由 `prompt_tokens_details.cached_tokens`
+  補 hit／miss（`_normalize_usage`）；Go 的額度型 429 歸 QUOTA。
+- **azure_openai**：`{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`（deployment 由
+  `AZURE_OPENAI_DEPLOYMENTS` 對應）、`api-key` header；body **不送** model（路徑已是 deployment），其餘同基準；
+  `AZURE_OPENAI_SUPPORTS_REASONING_EFFORT=0` 時不送 `reasoning_effort`。串流首段可能只有 `prompt_filter_results`（沒有
+  choices，略過）；內容過濾是 400＋`content_filter` 或 `finish_reason=content_filter`；`retry-after-ms` 優先於
+  `retry-after`。
+- **openai_compatible**（vLLM 等）：網址與認證同基準；上限欄位用 `max_tokens`（多數相容伺服器只認舊名）；
+  `reasoning_effort` 預設**不送**（降級：交給伺服器預設），`OPENAI_COMPATIBLE_SUPPORTS_REASONING_EFFORT=1` 才送；
+  推理文字可能在 `reasoning`（vLLM 新版）而不是 `reasoning_content`，兩者都只記長度。
+- **anthropic**：`{base}/v1/messages`、`x-api-key`＋`anthropic-version`；body 是 `model`、`max_tokens`、頂層 `system`、
+  `messages`、`stream`；推理關＝不送 `thinking`（`reasoning_params` 定義其他強度的 budget 對應）；JSON 模式沒有
+  `response_format`，改以提示約束（judge 系統提示本來就要求只輸出 JSON）＋嚴格解析，只容許一層包住全文的 markdown 圍欄
+  （`_parse_anthropic_json_response`）；串流依 data 的 `type` 分派、`message_stop` 收尾（`_AnthropicAcc`）；
+  `stop_reason` 對應到 `finish_reason`（`ANTHROPIC_STOP_REASONS`）；usage 由 input 與兩個快取欄補成 hit／miss
+  （`_normalize_anthropic_usage`）；`billing_error`、credit balance 訊息歸 QUOTA，413 歸 BAD_REQUEST，529 照 5xx。
+
+既有的兩條路徑（openai、opencode_go）送出的 URL、header 與 body 與加入其他 provider 之前逐字相同（golden 測試）。
 - **judge 走非串流 JSON 模式**（`complete_json`）：judge 不需要串流。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），
   呼叫端再依自己的預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
 """
@@ -75,27 +100,44 @@ import time
 import weakref
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import httpx
 
 # 走 HTTP 的模型白名單搬到葉模組 llm_models（`app.config` 與批次預檢也要用它，留在這裡會
 # 形成 config ↔ llm_http 的 import 循環）。這裡以原名重新匯出，既有呼叫端與測試不必改。
 from app.services.llm_models import (  # noqa: F401
+    AZURE_API_VERSION_ENV,
+    BUILTIN_MODEL_PROVIDERS,
+    DECLARED_MODELS_ENV,
+    DEFAULT_ENDPOINTS,
+    ENDPOINT_ENV,
     HTTP_MODELS,
+    PROVIDER_ANTHROPIC,
+    PROVIDER_AZURE_OPENAI,
     PROVIDER_KEY_ENV,
     PROVIDER_LABEL,
     PROVIDER_OPENAI,
+    PROVIDER_OPENAI_COMPATIBLE,
     PROVIDER_OPENCODE_GO,
+    config_problems,
+    declared_deployments,
+    endpoint_base,
+    identity_url,
     is_http_model,
+    supports_reasoning_effort,
 )
 from app.services.llm_models import provider as _configured_provider
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_GO_BASE_URL = "https://opencode.ai/inference/go/v1"
-# Go 要求呼叫端自報身分（不要用 SDK／HTTP 函式庫的預設 UA），版本只是辨識用。
-GO_USER_AGENT = "report-mark/1 (+https://research.tingfong.com)"
+DEFAULT_BASE_URL = DEFAULT_ENDPOINTS[PROVIDER_OPENAI]
+DEFAULT_GO_BASE_URL = DEFAULT_ENDPOINTS[PROVIDER_OPENCODE_GO]
+# Anthropic Messages API 的版本 header。2023-06-01 是現行唯一的穩定版本；換版本＝換請求與回應的形狀，要發 PR。
+ANTHROPIC_VERSION = "2023-06-01"
+# Go 要求呼叫端自報身分（不要用 SDK／HTTP 函式庫的預設 UA），版本只是辨識用；括號裡的網址是 profile 的
+# `[institution].website`（沒給就只送產品代號），由載入 profile 的入口設定在 `llm_models.set_identity_url()`。
+GO_USER_AGENT_BASE = "report-mark/1"
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
 AUTH = "auth"                      # 缺金鑰、401、403
@@ -183,6 +225,94 @@ def _session_id(value: str | None) -> str | None:
     return _SESSION_ID_BAD.sub("-", value)[:512] or None
 
 
+# ── 推理強度與各 provider 的請求欄位 ────────────────────────────────────────────
+# **刻意固定為 none**（模組 docstring「推理預設是開的」）：開推理會改變 TTFT、成本、上限語意與 judge 的 t=0，
+# 等於換量尺。所以這裡不是旋鈕——要開就改這個常數、發 PR、重新評測。各 provider 對「非 none」的對應規則
+# 仍完整定義在 `reasoning_params`（tests/test_llm_providers.py 逐點釘住），開的那天不必再設計一次。
+REASONING_EFFORT = "none"
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high")
+# Anthropic extended thinking 的 budget（token）。官方下限 1024，且必須小於 `max_tokens`（budget 算在 max_tokens 內，
+# 與 OpenAI 的推理 token 算進 `max_completion_tokens` 同一個語意）。
+ANTHROPIC_THINKING_BUDGET = {"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384}
+ANTHROPIC_MIN_THINKING_BUDGET = 1024
+
+
+def reasoning_params(
+    prov: str, effort: str, *, max_tokens: int, temperature: float | None, supports_effort: bool = True,
+) -> dict:
+    """推理強度與 `temperature` 在各 provider 的請求欄位（純函式；鍵的順序就是送出時的順序）。
+
+    - OpenAI 族（`openai`、`opencode_go`、`azure_openai`、`openai_compatible`）：`supports_effort` 時送
+      `reasoning_effort`；不支援（自架端點預設、Azure 關掉能力旋鈕）就**不送**，交給伺服器預設（降級，不是 400）。
+      `temperature` 只有在 `reasoning_effort=none` 或根本沒送 `reasoning_effort` 時才送：官方規定推理開著時不收
+      temperature（judge 的 t=0 因此只在推理關時成立）。
+    - Anthropic：`none` 不送 `thinking`（API 預設即關）；其他強度送 `thinking={"type":"enabled","budget_tokens":…}`，
+      budget 取 `ANTHROPIC_THINKING_BUDGET` 並壓在 `max_tokens - 1` 以下，壓完不到下限 1024 就不開（降級：小上限的
+      任務如路由 16 token 開不了推理）。thinking 開著時不送 `temperature`（API 只接受 1）。
+    """
+    out: dict = {}
+    if prov == PROVIDER_ANTHROPIC:
+        budget = ANTHROPIC_THINKING_BUDGET.get(effort)
+        if budget is not None:
+            budget = min(budget, int(max_tokens) - 1)
+            if budget >= ANTHROPIC_MIN_THINKING_BUDGET:
+                out["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        if temperature is not None and "thinking" not in out:
+            out["temperature"] = temperature
+        return out
+    if supports_effort:
+        out["reasoning_effort"] = effort
+    if temperature is not None and out.get("reasoning_effort", "none") == "none":
+        out["temperature"] = temperature
+    return out
+
+
+def _openai_family_body(
+    prov: str, model: str, messages: list, *, max_tokens: int, stream: bool,
+    temperature: float | None, response_format: dict | None, supports_effort: bool,
+) -> dict:
+    """Chat Completions 的 body。`openai`／`opencode_go` 的鍵與順序與改寫前逐字相同（tests/test_llm_providers.py 以
+    golden 釘住），所以這裡逐鍵依序寫，不用 dict 合併。
+
+    - Azure：不送 `model`（路徑已是 deployment；送了也被忽略，留著只會讓人以為它有作用）。
+    - 自架（`openai_compatible`）：上限欄位用 `max_tokens`——`max_completion_tokens` 是 OpenAI 後來加的名字，
+      vLLM 以外的相容伺服器多半只認舊名。
+    """
+    body: dict = {}
+    if prov != PROVIDER_AZURE_OPENAI:
+        body["model"] = model
+    body["messages"] = messages
+    body["max_tokens" if prov == PROVIDER_OPENAI_COMPATIBLE else "max_completion_tokens"] = int(max_tokens)
+    body["stream"] = stream
+    extra = reasoning_params(
+        prov, REASONING_EFFORT, max_tokens=max_tokens, temperature=temperature, supports_effort=supports_effort,
+    )
+    if "reasoning_effort" in extra:
+        body["reasoning_effort"] = extra["reasoning_effort"]
+    if stream:
+        body["stream_options"] = {"include_usage": True}
+    if "temperature" in extra:
+        body["temperature"] = extra["temperature"]
+    if response_format is not None:
+        body["response_format"] = response_format
+    return body
+
+
+def _anthropic_body(
+    model: str, prompt: str, system: str | None, *, max_tokens: int, stream: bool, temperature: float | None,
+) -> dict:
+    """Messages API 的 body。system 是頂層欄位、不是一則訊息；沒有 `response_format`（JSON 模式見 `complete_json`）。"""
+    body: dict = {"model": model, "max_tokens": int(max_tokens)}
+    if system:
+        body["system"] = sanitize(system)
+    body["messages"] = [{"role": "user", "content": sanitize(prompt)}]
+    body["stream"] = stream
+    body.update(reasoning_params(
+        PROVIDER_ANTHROPIC, REASONING_EFFORT, max_tokens=max_tokens, temperature=temperature,
+    ))
+    return body
+
+
 def build_body(
     model: str,
     prompt: str,
@@ -192,30 +322,28 @@ def build_body(
     stream: bool = True,
     temperature: float | None = None,
     response_format: dict | None = None,
+    provider: str | None = None,
 ) -> dict:
-    """組請求 body（純函式）。推理一律關，見模組 docstring。
+    """組請求 body（`provider` 省略＝目前的 `LLM_PROVIDER`）。推理一律關，見模組 docstring 與 `reasoning_params`。
 
     `temperature`／`response_format` 預設不送（沿用伺服器預設）；judge（`complete_json`）送
-    `temperature=0` 與 `{"type": "json_object"}`。
+    `temperature=0` 與 `{"type": "json_object"}`。Anthropic 沒有 `response_format`，忽略它（`complete_json` 改以
+    提示約束＋嚴格解析，見其 docstring）。
     """
+    prov = provider or _provider()
+    if prov == PROVIDER_ANTHROPIC:
+        return _anthropic_body(
+            model, prompt, system, max_tokens=max_tokens, stream=stream, temperature=temperature,
+        )
     messages = []
     if system:
         messages.append({"role": "system", "content": sanitize(system)})
     messages.append({"role": "user", "content": sanitize(prompt)})
-    body: dict = {
-        "model": model,
-        "messages": messages,
-        "max_completion_tokens": int(max_tokens),
-        "stream": stream,
-        "reasoning_effort": "none",
-    }
-    if stream:
-        body["stream_options"] = {"include_usage": True}
-    if temperature is not None:
-        body["temperature"] = temperature
-    if response_format is not None:
-        body["response_format"] = response_format
-    return body
+    supports = supports_reasoning_effort({**os.environ, "LLM_PROVIDER": prov})
+    return _openai_family_body(
+        prov, model, messages, max_tokens=max_tokens, stream=stream, temperature=temperature,
+        response_format=response_format, supports_effort=supports,
+    )
 
 
 def _error_message(raw: bytes | str) -> str:
@@ -233,15 +361,15 @@ def _error_message(raw: bytes | str) -> str:
     return _one_line(text)[:200]
 
 
-def _error_code(raw: bytes | str) -> str | None:
-    """錯誤本體的 `error.code`；沒有或讀不懂回 None。"""
+def _error_code(raw: bytes | str, field: str = "code") -> str | None:
+    """錯誤本體的 `error.code`（`field="type"`：Anthropic 的 `error.type`）；沒有或讀不懂回 None。"""
     text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
     try:
         obj = json.loads(text)
     except ValueError:
         return None
     err = obj.get("error") if isinstance(obj, dict) else None
-    code = err.get("code") if isinstance(err, dict) else None
+    code = err.get(field) if isinstance(err, dict) else None
     return code if isinstance(code, str) else None
 
 
@@ -262,7 +390,38 @@ def _is_model_missing(message: str) -> bool:
     low = message.lower()
     # 最後一種是 OpenCode Go（400「Upstream request failed: Model is unavailable.」，10/28 探測）
     return ("model not exist" in low or "model_not_found" in low or "model does not exist" in low
-            or "model is unavailable" in low)
+            or "model is unavailable" in low
+            # vLLM：「The model `x` does not exist.」（多半是 404，相容伺服器有的回 400）
+            or (low.startswith("the model ") and low.endswith("does not exist.")))
+
+
+def _int_or_none(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _normalize_anthropic_usage(raw: dict) -> dict:
+    """Anthropic 的 usage（`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`）
+    → 用量紀錄沿用的 OpenAI 形狀（原鍵保留）：
+
+    - `prompt_tokens`＝input＋cache_read＋cache_creation（Anthropic 的 `input_tokens` **不含**快取的部分）；
+    - `prompt_cache_hit_tokens`＝cache_read，`prompt_cache_miss_tokens`＝input＋cache_creation（我們不送
+      `cache_control`，cache_creation 照理是 0；有值時它以較高單價計費，歸 miss 是保守的一邊）；
+    - `completion_tokens`＝output_tokens（**含** thinking：Anthropic 不另報推理 token，與 OpenAI 的
+      `completion_tokens` 含推理 token 同一個計費口徑）。不補 `completion_tokens_details`：推理關著時就是 0
+      （`scripts/_claude_cli._tokens` 的規則），費用歸因不失真。
+    任何一個計數都沒有時原樣回傳。
+    """
+    inp = _int_or_none(raw.get("input_tokens"))
+    read = _int_or_none(raw.get("cache_read_input_tokens")) or 0
+    created = _int_or_none(raw.get("cache_creation_input_tokens")) or 0
+    out = _int_or_none(raw.get("output_tokens"))
+    if inp is None and out is None:
+        return dict(raw)
+    miss = (inp or 0) + created
+    norm = {**raw, "prompt_tokens": miss + read, "prompt_cache_hit_tokens": read, "prompt_cache_miss_tokens": miss}
+    if out is not None:
+        norm["completion_tokens"] = out
+    return norm
 
 
 def _normalize_usage(usage: dict) -> dict:
@@ -291,17 +450,35 @@ def _is_go_quota(message: str) -> bool:
     return "rate limit" not in message.lower() and bool(_GO_QUOTA_RE.search(message))
 
 
+# Anthropic 的額度用完：`billing_error`（402），或 400 `invalid_request_error`「Your credit balance is too low…」
+# ——後者與一般 400 同狀態碼，只能看訊息；不歸 QUOTA 的話每篇都記一筆單篇失敗、批次卻不中止。
+_ANTHROPIC_QUOTA_RE = re.compile(r"credit balance|billing", re.IGNORECASE)
+
+
+def _is_anthropic_quota(message: str, error_type: str | None) -> bool:
+    return error_type == "billing_error" or bool(_ANTHROPIC_QUOTA_RE.search(message))
+
+
 def classify_status(status: int, raw: bytes | str = b"", provider: str | None = None) -> tuple[str, str]:
-    """非 200 回應 → (kind, 細節)。哪些情況要看本體見模組 docstring。`provider` 省略＝目前的 `LLM_PROVIDER`。"""
+    """非 200 回應 → (kind, 細節)。哪些情況要看本體見模組 docstring。`provider` 省略＝目前的 `LLM_PROVIDER`。
+
+    Anthropic 另看 `error.type`：`billing_error` 與「credit balance」訊息歸 QUOTA、`not_found_error`（含模型不存在，
+    404）歸 CONFIG、413 `request_too_large` 歸 BAD_REQUEST（單篇輸入太大）、529 `overloaded_error` 照 5xx 歸
+    OVERLOADED。Azure 的內容過濾是 400＋`error.code=content_filter`，與 OpenAI 同一條規則。
+    """
     message = _error_message(raw) if raw else ""
     code = _error_code(raw) if raw else None
     detail = _redact(f"HTTP {status}" + (f" {message}" if message else ""))
-    if status == 402 or code in _QUOTA_CODES:
+    anthropic = (provider or _provider()) == PROVIDER_ANTHROPIC
+    error_type = _error_code(raw, "type") if raw and anthropic else None
+    if status == 402 or code in _QUOTA_CODES or (anthropic and _is_anthropic_quota(message, error_type)):
         return QUOTA, detail
     if status in (401, 403):  # 403：金鑰權限不足或地區、組織限制，每一篇都會踩到，不是單篇輸入的問題
         return AUTH, detail
     if status == 404:
         return CONFIG, detail
+    if status == 413 and anthropic:
+        return BAD_REQUEST, detail
     if status in (400, 422):
         if _is_content_policy(message, code):
             return CONTENT_FILTER, detail
@@ -315,7 +492,17 @@ def classify_status(status: int, raw: bytes | str = b"", provider: str | None = 
     return OTHER, detail
 
 
-def _retry_after(headers: httpx.Headers) -> float | None:
+def _retry_after(headers: httpx.Headers, provider: str | None = None) -> float | None:
+    """`Retry-After`（秒）。Azure 另送更精確的 `retry-after-ms`，有就優先用它；其他 provider 只看 `retry-after`。"""
+    if (provider or _provider()) == PROVIDER_AZURE_OPENAI:
+        raw_ms = headers.get("retry-after-ms")
+        if raw_ms:
+            try:
+                value = float(raw_ms) / 1000.0
+            except ValueError:
+                value = None
+            if value is not None and math.isfinite(value):
+                return max(0.0, value)
     raw = headers.get("retry-after")
     if not raw:
         return None
@@ -435,11 +622,94 @@ class _Acc:
         if isinstance(delta.get("refusal"), str) and delta["refusal"]:
             self.error = (CONTENT_FILTER, "模型拒答（refusal）")
             return None
-        reasoning = delta.get("reasoning_content")
-        if isinstance(reasoning, str):
-            self.reasoning_chars += len(reasoning)
+        # `reasoning_content`（OpenAI 族的慣例）；自架的 vLLM 新版改叫 `reasoning`。只記長度，不收內容。
+        for reasoning in (delta.get("reasoning_content"), delta.get("reasoning")):
+            if isinstance(reasoning, str):
+                self.reasoning_chars += len(reasoning)
         content = delta.get("content")
         return content if isinstance(content, str) and content else None
+
+
+# Anthropic 的 `stop_reason` → 本模組沿用的 OpenAI `finish_reason` 詞彙
+# （`_final_kind`、`_parse_json_response` 只認後者）。
+# `refusal`（模型拒答）歸 content_filter，與 OpenAI 的 refusal 同類；`model_context_window_exceeded` 與 `max_tokens`
+# 一樣是撞到上限。表外的值（`tool_use`、`pause_turn`）原樣保留：我們不送工具，出現就是未預期，`complete_json`
+# 會以 `finish_reason=<值>` 歸 OTHER。
+ANTHROPIC_STOP_REASONS = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "model_context_window_exceeded": "length",
+    "refusal": "content_filter",
+}
+
+
+def _anthropic_finish(stop_reason) -> str | None:
+    if not isinstance(stop_reason, str) or not stop_reason:
+        return None
+    return ANTHROPIC_STOP_REASONS.get(stop_reason, stop_reason)
+
+
+@dataclass
+class _AnthropicAcc(_Acc):
+    """Anthropic Messages 串流的累加器（介面同 `_Acc`）。
+
+    事件形狀與 Chat Completions 不同：每個 data 帶 `type`（`event:` 行不必讀）；文字在
+    `content_block_delta.delta.text`（`text_delta`），thinking 在 `thinking_delta`（只記長度）；`stop_reason` 在
+    `message_delta`；usage 分兩段（`message_start.message.usage` 有 input 與快取，`message_delta.usage` 有累計的
+    output），合併後正規化；`message_stop` 等同 `[DONE]`（`done=True`）。`ping` 與未知事件略過。
+    """
+
+    raw_usage: dict = field(default_factory=dict)
+
+    def _merge_usage(self, usage) -> None:
+        if isinstance(usage, dict):
+            self.raw_usage.update({k: v for k, v in usage.items() if v is not None})
+            self.usage = _normalize_anthropic_usage(self.raw_usage)
+
+    def feed(self, obj: dict) -> str | None:
+        typ = obj.get("type")
+        err = obj.get("error")
+        if typ == "error" or (typ is None and err is not None):
+            err = err if isinstance(err, dict) else {"message": str(err)}
+            message = _error_message(json.dumps({"error": err}))
+            kind = CONTENT_FILTER if _is_content_policy(message) else OVERLOADED
+            self.error = (kind, _redact(f"stream error {err.get('type') or ''} {message}".replace("  ", " ")))
+            return None
+        if typ == "message_start":
+            msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+            if isinstance(msg.get("model"), str):
+                self.model_resp = msg["model"]
+            self._merge_usage(msg.get("usage"))
+            return None
+        if typ == "message_delta":
+            delta = obj.get("delta") if isinstance(obj.get("delta"), dict) else {}
+            finish = _anthropic_finish(delta.get("stop_reason"))
+            if finish:
+                self.finish_reason = finish
+            self._merge_usage(obj.get("usage"))
+            return None
+        if typ == "message_stop":
+            self.done = True
+            return None
+        if typ == "content_block_start":
+            block = obj.get("content_block") if isinstance(obj.get("content_block"), dict) else {}
+            if block.get("type") == "thinking" and isinstance(block.get("thinking"), str):
+                self.reasoning_chars += len(block["thinking"])
+            text = block.get("text") if block.get("type") == "text" else None
+            return text if isinstance(text, str) and text else None
+        if typ == "content_block_delta":
+            delta = obj.get("delta") if isinstance(obj.get("delta"), dict) else {}
+            if delta.get("type") == "thinking_delta" and isinstance(delta.get("thinking"), str):
+                self.reasoning_chars += len(delta["thinking"])
+                return None
+            text = delta.get("text") if delta.get("type") == "text_delta" else None
+            return text if isinstance(text, str) and text else None
+        return None
+
+
+def _new_acc() -> _Acc:
+    return _AnthropicAcc() if _provider() == PROVIDER_ANTHROPIC else _Acc()
 
 
 @dataclass
@@ -629,7 +899,7 @@ def _key_env() -> str:
 
 
 def _base_url_env() -> str:
-    return "OPENCODE_GO_BASE_URL" if _provider() == PROVIDER_OPENCODE_GO else "OPENAI_BASE_URL"
+    return ENDPOINT_ENV[_provider()]
 
 
 def _api_key() -> str:
@@ -637,12 +907,34 @@ def _api_key() -> str:
 
 
 def _base_url() -> str:
-    default = DEFAULT_GO_BASE_URL if _provider() == PROVIDER_OPENCODE_GO else DEFAULT_BASE_URL
-    return ((os.getenv(_base_url_env()) or "").strip() or default).rstrip("/")
+    return endpoint_base()
 
 
-def _url() -> str:
-    return _base_url() + "/chat/completions"
+def _azure_query() -> str:
+    return "?api-version=" + quote((os.getenv(AZURE_API_VERSION_ENV) or "").strip(), safe="")
+
+
+def _chat_url(model: str | None) -> str | None:
+    """送出聊天請求的網址；Azure 的 model 沒有對到 deployment 時回 None（`_preflight` 轉成 config）。"""
+    prov, base = _provider(), _base_url()
+    if prov == PROVIDER_ANTHROPIC:
+        return base + "/v1/messages"
+    if prov == PROVIDER_AZURE_OPENAI:
+        deployment = declared_deployments().get(model or "")
+        if deployment is None:
+            return None
+        return f"{base}/openai/deployments/{quote(deployment, safe='')}/chat/completions{_azure_query()}"
+    return base + "/chat/completions"
+
+
+def _models_url() -> str:
+    """`probe_endpoint` 打的模型清單端點（不計費）。"""
+    prov, base = _provider(), _base_url()
+    if prov == PROVIDER_ANTHROPIC:
+        return base + "/v1/models"
+    if prov == PROVIDER_AZURE_OPENAI:
+        return base + "/openai/models" + _azure_query()
+    return base + "/models"
 
 
 def api_key_configured() -> bool:
@@ -670,37 +962,66 @@ def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
     return httpx.Timeout(connect=connect, read=read, write=write, pool=_POOL_TIMEOUT)
 
 
+def go_user_agent() -> str:
+    """送給 Go 的 User-Agent：`report-mark/1 (+<對外網址>)`，沒設定網址時只有前半段。"""
+    url = identity_url()
+    return f"{GO_USER_AGENT_BASE} (+{url})" if url else GO_USER_AGENT_BASE
+
+
 def _provider_headers(user_id: str | None) -> dict:
     """Go 要求的自報 User-Agent 與每段對話穩定的 `x-opencode-session`。呼叫端傳的 `user_id` 本來就是
-    每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；OpenAI 不送。"""
+    每個任務固定的標籤（`batch-<task>`、線上任務名、judge），拿它當 session；其他 provider 不送。"""
     if _provider() != PROVIDER_OPENCODE_GO:
         return {}
-    return {"User-Agent": GO_USER_AGENT, "x-opencode-session": _session_id(user_id) or "report-mark"}
+    return {"User-Agent": go_user_agent(), "x-opencode-session": _session_id(user_id) or "report-mark"}
+
+
+def _auth_headers(key: str) -> dict:
+    """認證 header：Azure 用 `api-key`，Anthropic 用 `x-api-key`＋`anthropic-version`，其餘 Bearer。"""
+    prov = _provider()
+    if prov == PROVIDER_AZURE_OPENAI:
+        return {"api-key": key}
+    if prov == PROVIDER_ANTHROPIC:
+        return {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION}
+    return {"Authorization": f"Bearer {key}"}
 
 
 def _headers(key: str, user_id: str | None = None) -> dict:
     return {
-        "Authorization": f"Bearer {key}",
+        **_auth_headers(key),
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
         **_provider_headers(user_id),
     }
 
 
-def _preflight(t0: float) -> tuple[str, str] | ChatOutcome:
-    """送出前檢查金鑰與端點；設定錯誤一律回帳號層級的 outcome，不往外拋。
+def _preflight(t0: float, model: str | None = None, *, probe: bool = False) -> tuple[str, str] | ChatOutcome:
+    """送出前檢查金鑰與端點；設定錯誤一律回帳號層級的 outcome，不往外拋。回 (金鑰, 這次要打的網址)。
 
     兩種實際會發生的設定錯：金鑰被複製貼上帶進全形引號或零寬空白（`strip()` 去不掉，
     header 只能是 ASCII，httpx 會拋 UnicodeEncodeError）；`OPENAI_BASE_URL` 少了 scheme
     （httpx 拋 UnsupportedProtocol，那是 TransportError，會被當成網路錯誤重試——每篇都記
-    「連線失敗」、批次卻不中止，正是四天停擺那種型態）。
+    「連線失敗」、批次卻不中止，正是四天停擺那種型態）。內建以外的 provider 另檢查必填的端點旋鈕
+    （`llm_models.config_problems`；與啟動自檢、批次預檢同一份判準），以及 Azure 的 model 有沒有對到 deployment。
+    `probe=True`：打模型清單端點（`probe_endpoint`），不看 model。
     """
     key, key_env, url_env = _api_key(), _key_env(), _base_url_env()
     if not key:
         return _fail(AUTH, f"缺 {key_env}", t0)
     if not (key.isascii() and key.isprintable()):
         return _fail(AUTH, f"{key_env} 含非 ASCII 或不可列印字元（常見於貼上時帶入的全形引號、零寬空白）", t0)
-    url = _url()
+    if _provider() not in BUILTIN_MODEL_PROVIDERS:
+        problems = config_problems()
+        if problems:
+            return _fail(CONFIG, "；".join(problems), t0)
+    if probe:
+        url = _models_url()
+    else:
+        chat = _chat_url(model)
+        if chat is None:
+            knob = DECLARED_MODELS_ENV[PROVIDER_AZURE_OPENAI]
+            return _fail(CONFIG, f"model={model!r} 沒有在 {knob} 對到 deployment", t0)
+        url = chat
     try:
         parsed = httpx.URL(url)
     except (httpx.InvalidURL, ValueError):
@@ -823,14 +1144,14 @@ async def astream_chat(
     if total_deadline is not None and total_deadline < deadline:
         deadline = total_deadline
         first_token_timeout = total_timeout
-    pre = _preflight(t0)
+    pre = _preflight(t0, model)
     if isinstance(pre, ChatOutcome):
         _log_call(task, model, pre)
         yield pre
         return
     key, url = pre
 
-    acc = _Acc()
+    acc = _new_acc()
     got_text = False
     ttft_ms: int | None = None
     response: httpx.Response | None = None
@@ -917,6 +1238,9 @@ async def astream_chat(
                         got_text = True
                         ttft_ms = int((time.monotonic() - t0) * 1000)
                     yield text
+                if acc.done:  # Anthropic 的 message_stop（OpenAI 族只有 [DONE] 會設它，見上面）
+                    await _drain(lines)
+                    break
     finally:
         closer = getattr(lines, "aclose", None)
         if closer is not None:
@@ -964,15 +1288,15 @@ async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
     它的 curl 只等 5 秒。不重試：下一輪探針就是重試，連續失敗的判定在呼叫端。
     """
     t0 = time.monotonic()
-    pre = _preflight(t0)
+    pre = _preflight(t0, probe=True)
     if isinstance(pre, ChatOutcome):
         return ProbeResult(pre.kind, pre.detail)
-    key, _chat_url = pre
-    headers = {"Authorization": f"Bearer {key}", "Accept": "application/json", **_provider_headers("healthz")}
+    key, models_url = pre
+    headers = {**_auth_headers(key), "Accept": "application/json", **_provider_headers("healthz")}
     try:
         async with asyncio.timeout(timeout):
             response = await _async_client().get(
-                _base_url() + "/models", headers=headers, timeout=_timeout(timeout, cap=timeout),
+                models_url, headers=headers, timeout=_timeout(timeout, cap=timeout),
             )
     except (TimeoutError, httpx.TimeoutException) as exc:
         return ProbeResult(TIMEOUT, f"端點探測 {timeout:g}s 內未完成（{type(exc).__name__}）")
@@ -1030,7 +1354,7 @@ def _complete_once(
     user_id: str | None, deadline: float,
 ) -> tuple[ChatOutcome, str]:
     t0 = time.monotonic()
-    pre = _preflight(t0)
+    pre = _preflight(t0, model)
     if isinstance(pre, ChatOutcome):
         return pre, ""
     key, url = pre
@@ -1066,7 +1390,7 @@ def _complete_once(
     except httpx.TransportError as exc:
         return _fail(NETWORK, _transport_detail(exc), t0), ""
 
-    acc = _Acc()
+    acc = _new_acc()
     parts: list[str] = []
     ttft_ms: int | None = None
     try:
@@ -1098,6 +1422,8 @@ def _complete_once(
                     if ttft_ms is None:
                         ttft_ms = int((time.monotonic() - t0) * 1000)
                     parts.append(text)
+                if acc.done:  # Anthropic 的 message_stop
+                    break
         except _DeadlineExceeded:
             if acc.finish_reason is None:
                 if parts:
@@ -1219,7 +1545,7 @@ class JsonResult:
 
 def _json_headers(key: str, user_id: str | None = None) -> dict:
     return {
-        "Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json",
+        **_auth_headers(key), "Content-Type": "application/json", "Accept": "application/json",
         **_provider_headers(user_id),
     }
 
@@ -1279,11 +1605,67 @@ def _parse_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
     return ChatOutcome(kind=None, total_ms=int((time.monotonic() - t0) * 1000), **meta), data
 
 
+# Anthropic 沒有 JSON 模式：judge 的系統提示本來就要求「只輸出 JSON」，這裡只容許一層完整包住全文的 markdown
+# 圍欄（```json … ```），其餘一律照字面嚴格解析——前後多一句話就是 INVALID_JSON，不去「撈」裡面的 JSON。
+_JSON_FENCE = re.compile(r"\A```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```\Z", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    m = _JSON_FENCE.match(stripped)
+    return m.group(1) if m else stripped
+
+
+def _parse_anthropic_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
+    """Anthropic 非串流回應 → (outcome, data)。成功的條件與 `_parse_json_response` 相同：`stop_reason` 對應到
+    stop 且文字是 JSON 物件或陣列。文字＝所有 `text` block 依序相接；`thinking` block 只記長度。"""
+    try:
+        obj = json.loads(raw)
+    except ValueError:
+        return _fail(OTHER, "回應本體不是 JSON", t0, status=200), None
+    if not isinstance(obj, dict):
+        return _fail(OTHER, "回應本體不是 JSON 物件", t0, status=200), None
+    if obj.get("type") == "error" or obj.get("error") is not None:
+        err = obj.get("error") if isinstance(obj.get("error"), dict) else {"message": str(obj.get("error"))}
+        message = _error_message(json.dumps({"error": err}))
+        kind = CONTENT_FILTER if _is_content_policy(message) else OVERLOADED
+        return _fail(kind, _redact(f"response error {message}"), t0, status=200), None
+    blocks = [b for b in (obj.get("content") or []) if isinstance(b, dict)]
+    content = "".join(b["text"] for b in blocks if b.get("type") == "text" and isinstance(b.get("text"), str))
+    reasoning = sum(
+        len(b["thinking"]) for b in blocks if b.get("type") == "thinking" and isinstance(b.get("thinking"), str)
+    )
+    finish = _anthropic_finish(obj.get("stop_reason"))
+    meta = dict(
+        status=200, finish_reason=finish,
+        usage=_normalize_anthropic_usage(obj["usage"]) if isinstance(obj.get("usage"), dict) else None,
+        model_resp=obj.get("model") if isinstance(obj.get("model"), str) else None,
+        reasoning_chars=reasoning, system_fingerprint=None,
+    )
+    if finish == "content_filter":
+        return _fail(CONTENT_FILTER, f"stop_reason={obj.get('stop_reason')}", t0, **meta), None
+    if finish == "length":
+        return _fail(TRUNCATED, f"stop_reason={obj.get('stop_reason')}", t0, **meta), None
+    if finish != "stop":
+        return _fail(OTHER, f"stop_reason={obj.get('stop_reason')}", t0, **meta), None
+    if not content.strip():
+        detail = "只有 thinking、沒有文字" if reasoning else "沒有 content"
+        return _fail(EMPTY, detail, t0, **meta), None
+    text = _strip_json_fence(content)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return _fail(INVALID_JSON, f"content 不是合法 JSON（{len(content)} 字）", t0, **meta), None
+    if not isinstance(data, (dict, list)):
+        return _fail(INVALID_JSON, f"content 是 JSON 純量（{type(data).__name__}）", t0, **meta), None
+    return ChatOutcome(kind=None, total_ms=int((time.monotonic() - t0) * 1000), **meta), data
+
+
 async def _json_once(
     model: str, prompt: str, *, system: str | None, max_tokens: int, user_id: str | None, deadline: float,
 ) -> tuple[ChatOutcome, object]:
     t0 = time.monotonic()
-    pre = _preflight(t0)
+    pre = _preflight(t0, model)
     if isinstance(pre, ChatOutcome):
         return pre, None
     key, url = pre
@@ -1334,6 +1716,8 @@ async def _json_once(
         return _fail(
             kind, detail, t0, status=response.status_code, retry_after=_retry_after(response.headers),
         ), None
+    if _provider() == PROVIDER_ANTHROPIC:
+        return _parse_anthropic_json_response(response.content, t0)
     return _parse_json_response(response.content, t0)
 
 

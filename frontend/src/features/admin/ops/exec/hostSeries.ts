@@ -1,5 +1,6 @@
 import type { ObservationItem, ObservationListResponse } from '../../../../lib/generated/adminApi'
 import type { TrendBar } from '../../../../components/console'
+import { t } from '@/i18n'
 
 /** 每種粒度一個觀測區間有多長（秒）：原始觀測每 60 秒一筆，聚合是 5 分鐘或 1 小時一桶。 */
 const STEP_SECONDS: Record<ObservationListResponse['resolution'], number> = { raw: 60, '5m': 300, '1h': 3600 }
@@ -67,8 +68,8 @@ export function trendSlotSpan(data: ObservationListResponse): string | null {
   const g = grid(data)
   if (!g) return null
   const minutes = g.width / 60_000
-  if (minutes < 90) return `${Math.max(1, Math.round(minutes))} 分鐘`
-  return `${(minutes / 60).toFixed(1).replace(/\.0$/, '')} 小時`
+  if (minutes < 90) return t('admin.ops.exec.hostSeries.min', { max: Math.max(1, Math.round(minutes)) })
+  return t('admin.ops.exec.hostSeries.h', { replace: (minutes / 60).toFixed(1).replace(/\.0$/, '') })
 }
 
 /** 這段期間的最高值（聚合的桶 value 是平均，最高值要看 value_max）。 */

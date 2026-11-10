@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { routes } from './App'
+import { NEUTRAL_BRANDING } from './lib/branding'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -25,7 +26,8 @@ test('/library 落在研報庫且側欄可見', async () => {
   // 5000ms。少了它，findBy 的 15000 永遠等不到——測試會在第 5 秒被砍，錯誤訊息是
   // 「Test timed out in 5000ms」而不是找不到元素，看起來還很像是產品壞了。
   expect(await screen.findByLabelText('搜尋研報', {}, { timeout: 15000 })).toBeInTheDocument()
-  expect(screen.getByRole('heading', { level: 1, name: '廷豐智能研報' })).toBeInTheDocument()
+  // 品牌由 main.tsx 的 loadBranding() 執行期載入；這裡沒有載入，標題是中性預設（不阻斷頁面）。
+  expect(screen.getByRole('heading', { level: 1, name: NEUTRAL_BRANDING.productName })).toBeInTheDocument()
   // 側欄預設展開（256px），收合鈕可按
   expect(screen.getByRole('button', { name: '收合側欄' })).toBeInTheDocument()
 }, 15000)

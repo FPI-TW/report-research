@@ -1,23 +1,25 @@
 import type { ApiClientEntitlements } from '../../../lib/generated/adminApi'
 import { MARKET_ORDER, marketLabel } from '../../../lib/meta'
 import type { AdminApiClient, ApiClientScope } from '../useAdminApiClients'
+import { t } from '@/i18n'
 
 /** 錯誤物件 → 給人看的訊息。後端 400／404／409 的 detail 由 requestJSON 放進 message，原樣顯示。 */
 export function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : '操作失敗，請重試'
+  return err instanceof Error && err.message ? err.message : t('admin.apiClients.clientFields.actionFailedTryAgain')
 }
 
 export const SCOPE_LABELS: Record<ApiClientScope, string> = {
-  search: '語意檢索（search）',
-  'report.file': '研報原檔連結（report.file）',
+  get search() { return t('admin.apiClients.clientFields.semanticSearchSearch') },
+  get 'report.file'() { return t('admin.apiClients.clientFields.reportFileLinkReportFile') },
+  get 'report.upload'() { return t('admin.apiClients.clientFields.reportUploadReportUpload') },
 }
 export const SCOPE_ORDER = Object.keys(SCOPE_LABELS) as ApiClientScope[]
 
 // 選填維度：留空＝不限。值是語料裡的原字串（券商代碼、報告類型、商品類型代碼），逐字比對——券商是代碼不是中文名。
 export const OPTIONAL_DIMS = [
-  { key: 'source', label: '券商', example: 'yuanta、kgi' },
-  { key: 'report_type', label: '報告類型', example: '速報、報告' },
-  { key: 'instrument_type', label: '商品類型', example: 'equity、etf' },
+  { key: 'source', get label() { return t('admin.apiClients.clientFields.brokers') }, get example() { return t('admin.apiClients.clientFields.yuantaKgi') } },
+  { key: 'report_type', get label() { return t('admin.apiClients.clientFields.reportTypes') }, get example() { return t('admin.apiClients.clientFields.text') } },
+  { key: 'instrument_type', get label() { return t('admin.apiClients.clientFields.assetClasses') }, get example() { return t('admin.apiClients.clientFields.equityEtf') } },
 ] as const
 export type OptionalDim = (typeof OPTIONAL_DIMS)[number]['key']
 export type DimText = Record<OptionalDim, string>
@@ -35,9 +37,9 @@ export function splitValues(text: string): string[] {
 
 export function dimTextOf(e: ApiClientEntitlements | undefined): DimText {
   return {
-    source: (e?.source ?? []).join('、'),
-    report_type: (e?.report_type ?? []).join('、'),
-    instrument_type: (e?.instrument_type ?? []).join('、'),
+    source: (e?.source ?? []).join(t('admin.apiClients.clientFields.text2')),
+    report_type: (e?.report_type ?? []).join(t('admin.apiClients.clientFields.text2')),
+    instrument_type: (e?.instrument_type ?? []).join(t('admin.apiClients.clientFields.text2')),
   }
 }
 
@@ -60,17 +62,17 @@ export function sameEntitlements(a: ApiClientEntitlements, b: ApiClientEntitleme
 /** 每分鐘限流與每日額度的前端檢查；通過回 null。 */
 export function limitsError(rate: number, quota: number): string | null {
   if (!Number.isInteger(rate) || rate < RATE_RANGE[0] || rate > RATE_RANGE[1]) {
-    return `每分鐘限流需為 ${RATE_RANGE[0]}–${RATE_RANGE[1]} 的整數`
+    return t('admin.apiClients.clientFields.rateLimitPerMinuteMust', { RATE_RANGE: RATE_RANGE[0], RATE_RANGE2: RATE_RANGE[1] })
   }
   if (!Number.isInteger(quota) || quota < QUOTA_RANGE[0] || quota > QUOTA_RANGE[1]) {
-    return `每日額度需為 ${QUOTA_RANGE[0]}–${QUOTA_RANGE[1].toLocaleString()} 的整數`
+    return t('admin.apiClients.clientFields.dailyQuotaMustBeAn', { QUOTA_RANGE: QUOTA_RANGE[0], QUOTA_RANGE2: QUOTA_RANGE[1].toLocaleString() })
   }
   return null
 }
 
 /** 授權的市場（中文名）。市場必選，所以一定有內容。 */
 export function marketsText(e: ApiClientEntitlements): string {
-  return e.market.map(marketLabel).join('、')
+  return e.market.map(marketLabel).join(t('admin.apiClients.clientFields.text2'))
 }
 
 /** 選填維度的摘要：有設定的列出來，都沒設定就是不限。 */
@@ -78,9 +80,9 @@ export function dimsText(e: ApiClientEntitlements): string {
   const parts: string[] = []
   for (const { key, label } of OPTIONAL_DIMS) {
     const values = e[key]
-    if (values?.length) parts.push(`${label}：${values.join('、')}`)
+    if (values?.length) parts.push(t('admin.apiClients.clientFields.text3', { label, values: values.join(t('admin.apiClients.clientFields.text2')) }))
   }
-  return parts.length ? parts.join('；') : '券商、報告類型、商品類型不限'
+  return parts.length ? parts.join(t('admin.apiClients.clientFields.text4')) : t('admin.apiClients.clientFields.brokerReportTypeAndAsset')
 }
 
 /** 清單與詳情顯示的金鑰前綴。完整金鑰只在建立與輪替時出現一次，其他地方都只有前綴。 */

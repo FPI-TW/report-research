@@ -6,19 +6,20 @@ import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
 import { reportHref } from '../report/readingFormat'
 import styles from './TableView.module.css'
+import { t } from '@/i18n'
 
 interface Col { key: TableSortKey | null; label: string }
 const BASE_COLS: Col[] = [
-  { key: 'name', label: '報告名稱' },
-  { key: 'market', label: '市場' },
-  { key: 'type', label: '類型' },
-  { key: 'date', label: '日期' },
-  { key: 'source', label: '來源' },
-  { key: null, label: '標的' },
+  { key: 'name', get label() { return t('search.tableView.report') } },
+  { key: 'market', get label() { return t('search.tableView.market') } },
+  { key: 'type', get label() { return t('search.tableView.type') } },
+  { key: 'date', get label() { return t('search.tableView.date') } },
+  { key: 'source', get label() { return t('search.tableView.source') } },
+  { key: null, get label() { return t('search.tableView.instruments') } },
 ]
 const SEARCH_COLS: Col[] = [
-  { key: 'score', label: '相關度' },
-  { key: 'match', label: '命中' },
+  { key: 'score', get label() { return t('search.tableView.relevance') } },
+  { key: 'match', get label() { return t('search.tableView.matches') } },
 ]
 
 interface Props {
@@ -83,7 +84,7 @@ export function TableView({ rows, mode, sort, onSort }: Props) {
                 <td>{reportTypeLabel(r.report_type ?? '')}</td>
                 <td className={styles.nowrap}>{(r.report_date ?? '').slice(0, 10)}</td>
                 <td className={styles.nowrap}>{r.source ?? ''}</td>
-                <td>{targets.join('、')}</td>
+                <td>{targets.join(t('search.tableView.text'))}</td>
                 {mode === 'search' && <td className={styles.nowrap}>{Math.round((r.best_score ?? 0) * 100)}%</td>}
                 {mode === 'search' && <td className={styles.nowrap}>{r.match_count ?? 0}</td>}
               </tr>

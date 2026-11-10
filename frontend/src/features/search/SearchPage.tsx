@@ -8,7 +8,7 @@ import {
 import { normalizeSort } from '../../lib/sortForMode'
 import { queryTerms } from '../../lib/terms'
 import { latestId } from '../../lib/isLatest'
-import { MARKET_ORDER } from '../../lib/meta'
+import { useEnabledMarkets } from '../../lib/marketsConfig'
 import type { ReportRow } from '../../lib/schemas'
 import type { TableSort, TableSortKey } from '../../lib/tableSort'
 import { SearchBar } from './SearchBar'
@@ -21,6 +21,7 @@ import { ResultsSection } from './ResultsSection'
 import { ReportPreview } from './ReportPreview'
 import { StateBox } from './StateBox'
 import styles from './SearchPage.module.css'
+import { t } from '@/i18n'
 
 /** 按 Enter 搜尋後骨架至少顯示這麼久（交接包：0.65 秒），快取命中時也看得出「有在找」。 */
 export const SEARCH_FLASH_MS = 650
@@ -78,6 +79,7 @@ export default function SearchPage() {
   }, [stats.data])
 
   /** 搜尋時的市場計數來自命中集合（/api/search 分面）。 */
+  const enabledMarkets = useEnabledMarkets()
   const hitCounts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const f of results.facets) m[f.market] = f.count
@@ -92,11 +94,11 @@ export default function SearchPage() {
   const searchAllMarkets = mode === 'search' && state.market === 'ALL'
   const chipCounts = mode === 'search' ? (searchAllMarkets && !results.isLoading ? hitCounts : undefined) : corpusCounts
   const chipCodes = searchAllMarkets && !results.isLoading
-    ? MARKET_ORDER.filter(c => (hitCounts[c] ?? 0) > 0)
+    ? enabledMarkets.filter(c => (hitCounts[c] ?? 0) > 0)
     : undefined
 
-  const instrumentOptions = (stats.data?.instrument_types ?? []).map(t => t.type)
-  const reportTypeOptions = (stats.data?.report_types ?? []).map(t => t.type)
+  const instrumentOptions = (stats.data?.instrument_types ?? []).map(item => item.type)
+  const reportTypeOptions = (stats.data?.report_types ?? []).map(item => item.type)
 
   function onTableSort(key: TableSortKey) {
     setTableSort(s => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))
@@ -111,9 +113,9 @@ export default function SearchPage() {
         <StateBox
           kind="error"
           className={styles.stateTop}
-          title="研報載入失敗"
-          description="連線逾時，請稍後再試。"
-          action="重試"
+          title={t('search.searchPage.couldnTLoadReports')}
+          description={t('search.searchPage.theConnectionTimedOutTry')}
+          action={t('search.searchPage.retry')}
           onAction={retry}
         />
       )

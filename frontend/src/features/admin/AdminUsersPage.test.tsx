@@ -15,7 +15,7 @@ afterEach(() => {
 type User = {
   id: string; username: string; role: 'admin' | 'user'; enabled: boolean; active_sessions: number
   last_login_at: string | null; last_seen_at: string | null
-  is_super?: boolean; scopes?: string[]; totp_enabled?: boolean; deletion_execute_after?: string | null
+  is_super?: boolean; scopes?: string[]; totp_enabled?: boolean; deletion_execute_after?: string | null; sso_bound?: boolean
 }
 type Reply = { status?: number; body: unknown }
 type Override = (path: string, init?: RequestInit) => Reply | undefined
@@ -163,8 +163,14 @@ test('帳號表格列出角色、狀態與有效 session；自己那列的停用
   ])
 })
 
+test('綁定公司帳號的使用者標「公司帳號（SSO）」，沒綁定的不標', async () => {
+  mount({ users: [user('me', 'root', { role: 'admin' }), user('u2', 'alice', { sso_bound: true }), user('u3', 'bob')] })
+  expect((await row('alice')).getByText('公司帳號（SSO）')).toBeInTheDocument()
+  expect((await row('bob')).queryByText('公司帳號（SSO）')).not.toBeInTheDocument()
+})
+
 test('長帳號單行截斷、完整名稱放 title；操作欄釘在右邊，表格橫向捲動時還看得到', async () => {
-  const long = 'institutional-sales.asia-pacific.derivative-desk@tingfong.com.tw'
+  const long = 'institutional-sales.asia-pacific.derivative-desk@example-securities.tw'
   mount({ users: [user('me', 'root', { role: 'admin' }), user('u2', long)] })
   const name = await screen.findByText(long)
   expect(name).toHaveAttribute('title', long)

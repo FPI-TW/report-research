@@ -10,6 +10,7 @@ import { BriefMain } from './BriefMain'
 import { BriefSources } from './BriefSources'
 import { ISO_DATE, dayTitle, mergeDates, neighbours, todayIso } from './briefDates'
 import styles from './BriefPage.module.css'
+import { t } from '@/i18n'
 
 const STALE_MS = 5 * 60 * 1000
 
@@ -81,7 +82,7 @@ export default function BriefPage() {
         >
           <BriefMain brief={brief} older={older} newer={newer} onGo={go} />
         </div>
-        <aside className={`${styles.rail} ${styles.stagger}`} aria-label="日期與來源">
+        <aside className={`${styles.rail} ${styles.stagger}`} aria-label={t('brief.briefPage.dateAndSources')}>
           <BriefCalendar
             className={styles.tile}
             dates={dates}
@@ -92,7 +93,7 @@ export default function BriefPage() {
           {brief.reports.length > 0 && (
             <BriefSources key={brief.brief_date} className={styles.tile} reports={brief.reports} reportCount={brief.report_count} />
           )}
-          <p className={styles.disclaimer}>內容由 AI 彙整自券商研報，可能有誤，非投資建議。</p>
+          <p className={styles.disclaimer}>{t('brief.briefPage.compiledByAiFromBroker')}</p>
         </aside>
       </div>
     )
@@ -102,7 +103,7 @@ export default function BriefPage() {
     <div className={styles.page}>
       <div className={styles.scroll}>
         <div className={styles.pad}>
-          <h1 className={styles.title}>每日簡報</h1>
+          <h1 className={styles.title}>{t('brief.briefPage.dailyBrief')}</h1>
           {body}
         </div>
       </div>
@@ -116,7 +117,7 @@ function BriefSkeleton() {
   )
   return (
     <div className={`${styles.grid} ${styles.fadeIn}`} aria-busy="true">
-      <span className={styles.srOnly} role="status">簡報載入中</span>
+      <span className={styles.srOnly} role="status">{t('brief.briefPage.loadingBrief')}</span>
       <div className={styles.col} aria-hidden="true">
         <div className={`${styles.tile} ${styles.skelOverview}`}>
           {skel('42%', 38)}
@@ -147,16 +148,16 @@ function NotGenerated({ date, today, previous, onGo }: {
   onGo: (iso: string) => void
 }) {
   // 今天以後的日期是「還沒產生」；過去的日期沒有簡報是那段時間沒有產生，不說「尚未」。
-  const title = date >= today ? `${dayTitle(date)}的簡報尚未產生` : `${dayTitle(date)}沒有簡報`
+  const title = date >= today ? t('brief.briefPage.theBriefForHasnT', { date: dayTitle(date) }) : t('brief.briefPage.noBriefFor', { date: dayTitle(date) })
   return (
     <div className={`${styles.tile} ${styles.stateBox} ${styles.fadeIn}`}>
       <span className={styles.stateIc} aria-hidden="true"><CalendarDays size={18} strokeWidth={1.8} /></span>
       <h2 className={styles.stateT}>{title}</h2>
-      <p className={styles.stateD}>每天上午彙整前一日入庫的研報。</p>
+      <p className={styles.stateD}>{t('brief.briefPage.compiledEveryMorningFromThe')}</p>
       {previous && previous !== date && (
         <div className={styles.stateA}>
           <button type="button" className={`${styles.btn} ${styles.btnPrimary}`} onClick={() => onGo(previous)}>
-            看前一份簡報
+            {t('brief.briefPage.viewPreviousBrief')}
           </button>
         </div>
       )}
@@ -166,14 +167,14 @@ function NotGenerated({ date, today, previous, onGo }: {
 
 function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   // 拿得到 HTTP 狀態碼就是伺服器有回應，不說「連線逾時」。
-  const detail = error instanceof ApiError ? '請稍後再試。' : '連線逾時，請稍後再試。'
+  const detail = error instanceof ApiError ? t('brief.briefPage.tryAgainLater') : t('brief.briefPage.theConnectionTimedOutTry')
   return (
     <div className={`${styles.tile} ${styles.stateBox} ${styles.fadeIn}`} role="alert">
       <span className={styles.stateIc} aria-hidden="true"><CircleAlert size={18} strokeWidth={1.8} /></span>
-      <h2 className={styles.stateT}>簡報載入失敗</h2>
+      <h2 className={styles.stateT}>{t('brief.briefPage.couldnTLoadTheBrief')}</h2>
       <p className={styles.stateD}>{detail}</p>
       <div className={styles.stateA}>
-        <button type="button" className={styles.btn} onClick={onRetry}>重試</button>
+        <button type="button" className={styles.btn} onClick={onRetry}>{t('brief.briefPage.retry')}</button>
       </div>
     </div>
   )

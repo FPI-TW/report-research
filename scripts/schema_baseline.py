@@ -806,25 +806,36 @@ class DumpResult:
     seconds: float = 0.0
 
 
-def _dump_commands(url: str, container: str | None, docker_bin: str) -> tuple[list[str], list[str], dict]:
-    """回 (pg_dump 指令, pg_restore -l 指令前綴, 環境)。祕密走環境變數，不進 argv。"""
+def libpq_env(url: str) -> dict[str, str]:
+    """連線字串 → libpq 的 PG* 環境變數（PGHOST／PGPORT／PGUSER／PGDATABASE，有密碼才有 PGPASSWORD、
+    有 `ssl` 參數才有 PGSSLMODE）。給在本機直接跑 pg_dump／pg_isready 的呼叫端：祕密走環境變數，不進 argv。
+    容器的排程角色（deploy/container/entrypoint.py）也以它把 REPORT_MARK_DB_URL 交給 scripts/db_backup.sh。"""
     from sqlalchemy.engine import make_url
 
     u = make_url(url)
-    common = ["-Fc", "--no-owner", "--no-privileges"]
-    if container:
-        dump = [docker_bin, "exec", "-i", container, "pg_dump", "-U", u.username or "postgres",
-                "-d", u.database or "", *common]
-        restore = [docker_bin, "exec", "-i", container, "pg_restore", "-l"]
-        return dump, restore, dict(os.environ)
-    env = dict(os.environ)
-    env.update({"PGHOST": u.host or "localhost", "PGPORT": str(u.port or 5432),
-                "PGUSER": u.username or "", "PGDATABASE": u.database or ""})
+    env = {"PGHOST": u.host or "localhost", "PGPORT": str(u.port or 5432),
+           "PGUSER": u.username or "", "PGDATABASE": u.database or ""}
     if u.password:
         env["PGPASSWORD"] = u.password
     ssl = u.query.get("ssl")
     if isinstance(ssl, str) and ssl:
         env["PGSSLMODE"] = ssl
+    return env
+
+
+def _dump_commands(url: str, container: str | None, docker_bin: str) -> tuple[list[str], list[str], dict]:
+    """回 (pg_dump 指令, pg_restore -l 指令前綴, 環境)。祕密走環境變數，不進 argv。"""
+    from sqlalchemy.engine import make_url
+
+    common = ["-Fc", "--no-owner", "--no-privileges"]
+    if container:
+        u = make_url(url)
+        dump = [docker_bin, "exec", "-i", container, "pg_dump", "-U", u.username or "postgres",
+                "-d", u.database or "", *common]
+        restore = [docker_bin, "exec", "-i", container, "pg_restore", "-l"]
+        return dump, restore, dict(os.environ)
+    env = dict(os.environ)
+    env.update(libpq_env(url))
     return ["pg_dump", *common], ["pg_restore", "-l"], env
 
 

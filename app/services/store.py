@@ -11,6 +11,7 @@ from typing import Optional, Sequence
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.doc_types import doc_type_enabled_sql, legacy_is_research
 from app.services.entitlement import Entitlement
 from app.services.rows import ChunkRow
 from app.services.visibility import visible_report_sql
@@ -22,7 +23,8 @@ class ReportRow:
     file_name: str
     file_path: str
     market: Optional[str]
-    is_research: Optional[bool]
+    # 文件類型（revision 0012）。舊欄位 is_research 不在這裡：upsert_report 由 doc_type 推得，兩欄不會分岔。
+    doc_type: str
     confidence: Optional[float]
     source_object_key: Optional[str] = None
     stock_code: Optional[str] = None
@@ -45,6 +47,9 @@ class ReportRow:
     page_count: Optional[int] = None
     pages_failed: Optional[list[int]] = None
     needs_review: bool = False
+    # metadata 側檔給了標題時直接寫入（title_source='metadata'）；標題批次只挑 title IS NULL，就不再呼叫 LLM。
+    title: Optional[str] = None
+    title_source: Optional[str] = None
 
 
 # extraction_log.stopped_at 的封閉詞彙。**與 db/schema.sql 的 CHECK 逐字一致**
@@ -332,26 +337,28 @@ async def upsert_report(
         text(
             """
             INSERT INTO research.research_report
-                (id, file_hash, file_name, file_path, source_object_key, market, is_research,
+                (id, file_hash, file_name, file_path, source_object_key, market, doc_type, is_research,
                  confidence, stock_code, company_name, source, report_date,
                  report_type, language, instrument_types, relates_stock,
                  relates_futures, stock_targets, futures_targets, full_text,
                  extractor, extraction_version, quality_score, quality_flags,
-                 page_count, pages_failed, needs_review)
+                 page_count, pages_failed, needs_review, title, title_source)
             VALUES
-                (:id, :file_hash, :file_name, :file_path, :source_object_key, :market, :is_research,
+                (:id, :file_hash, :file_name, :file_path, :source_object_key, :market, :doc_type, :is_research,
                  :confidence, :stock_code, :company_name, :source, :report_date,
                  :report_type, :language, CAST(:instrument_types AS text[]),
                  :relates_stock, :relates_futures,
                  CAST(:stock_targets AS text[]), CAST(:futures_targets AS text[]),
                  :full_text,
                  :extractor, :extraction_version, :quality_score, CAST(:quality_flags AS jsonb),
-                 :page_count, CAST(:pages_failed AS int[]), :needs_review)
+                 :page_count, CAST(:pages_failed AS int[]), :needs_review, :title, :title_source)
             """
         ),
         {
             "id": report_id,
             **report.__dict__,
+            # 舊欄位由 doc_type 推得（revision 0012 的 CHECK 綁死兩欄），舊版程式與備份還原仍讀得懂。
+            "is_research": legacy_is_research(report.doc_type),
             "quality_flags": (
                 json.dumps(report.quality_flags, ensure_ascii=False) if report.quality_flags is not None else None
             ),
@@ -386,6 +393,24 @@ async def upsert_report(
 
     await session.commit()
     return report_id
+
+
+async def upsert_report_metadata(
+    session: AsyncSession, file_hash: str, *, connector: str, origin: str, metadata: dict
+) -> None:
+    """入庫時採用的 metadata 側檔寫進 `research.report_metadata`（以 file_hash 為鍵，同 hash 覆寫）。
+
+    不 commit：`ingest_one` 在 `upsert_report` 之前呼叫，由它內部那次 commit 一起落庫（同一筆交易）。
+    """
+    await session.execute(
+        text(
+            "INSERT INTO research.report_metadata (file_hash, connector, origin, metadata) "
+            "VALUES (:h, :c, :o, CAST(:m AS jsonb)) "
+            "ON CONFLICT (file_hash) DO UPDATE SET connector = EXCLUDED.connector, origin = EXCLUDED.origin, "
+            "metadata = EXCLUDED.metadata, updated_at = now()"
+        ),
+        {"h": file_hash, "c": connector, "o": origin[:1024], "m": json.dumps(metadata, ensure_ascii=False)},
+    )
 
 
 async def report_exists(session: AsyncSession, file_hash: str) -> bool:
@@ -449,8 +474,9 @@ async def list_reports(
     relates_futures, stock_targets, futures_targets, summary)。
     呼叫端以位移解包，欄序即契約。
     """
-    # 被管理員隱藏的研報不列（app/services/visibility.py）；別名 r 只為了這個片段。
-    conds: list[str] = [visible_report_sql("r")]
+    # 被管理員隱藏的研報不列（app/services/visibility.py）、類型沒開檢索的不列（app/services/doc_types.py）；
+    # 別名 r 只為了這兩個片段。
+    conds: list[str] = [visible_report_sql("r"), doc_type_enabled_sql("r", "search")]
     params: dict = {}
     if market:
         conds.append("market = :market")
@@ -581,7 +607,7 @@ async def search_chunks_meta(
     conds = (
         _meta_filters(params, market, instrument_type, relates_stock, relates_futures, report_type)
         + _entitlement_filters(params, entitlement)
-        + [visible_report_sql("r")]
+        + [visible_report_sql("r"), doc_type_enabled_sql("r", "search")]
     )
     where = "WHERE " + " AND ".join(conds)
     # ef_search 須 ≥ scan，否則 HNSW 最多只回 ef_search 列（預設 40 會默默截斷）；
@@ -647,11 +673,12 @@ def _lexical_sql(
     # ingest 中途被砍、或未來加入「先寫 chunk 後補嵌入」的流程就會踩到。
     # 放在 CTE 內（不是最外層）：讓 NULL 列連 `:cap` 名額都不佔。
     # 可見性片段放在 CTE 內（與 embedding IS NOT NULL 同理）：被隱藏的研報連 `:cap` 名額都不佔。
+    # 文件類型片段同理（app/services/doc_types.py）。
     conds = (
         [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)]
         + ["c.embedding IS NOT NULL"]
         + extra_conds
-        + [visible_report_sql("r")]
+        + [visible_report_sql("r"), doc_type_enabled_sql("r", "search")]
     )
     where = " AND ".join(conds)
     final_limit = "\n        LIMIT :limit" if limit is not None else ""
@@ -797,14 +824,15 @@ async def pick_title_lead_term(
     """
     if not candidates:
         return None
+    usable = f"{visible_report_sql('r')} AND {doc_type_enabled_sql('r', 'search')}"
     row = (
         await session.execute(
             text(
                 "SELECT a FROM unnest(CAST(:c AS text[])) AS a "
                 "WHERE EXISTS (SELECT 1 FROM research.research_report r "
-                f"              WHERE r.title LIKE a || '%' AND {visible_report_sql('r')}) "
+                f"              WHERE r.title LIKE a || '%' AND {usable}) "
                 "ORDER BY (SELECT count(*) FROM research.research_report r "
-                f"          WHERE r.title LIKE a || '%' AND {visible_report_sql('r')}) DESC, length(a) ASC "
+                f"          WHERE r.title LIKE a || '%' AND {usable}) DESC, length(a) ASC "
                 "LIMIT 1"
             ),
             {"c": list(candidates)},

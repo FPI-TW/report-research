@@ -52,7 +52,7 @@ class _Storage:
         self.events.append(("upload", key, expected_sha256))
 
 
-class IngestOneTests(unittest.IsolatedAsyncioTestCase):
+class _IngestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -101,6 +101,8 @@ class IngestOneTests(unittest.IsolatedAsyncioTestCase):
             kw.setdefault("tags_dir", self.tags_dir)
             return await ic.ingest_one(self.session, path or self.path, **kw)
 
+
+class IngestOneTests(_IngestCase):
     # ── 成功 ────────────────────────────────────────────────────────────────
     async def test_ingested_outcome_and_side_effect_order(self):
         committed: list = []
@@ -340,6 +342,80 @@ class IngestOneTests(unittest.IsolatedAsyncioTestCase):
             "ingested", "skip_admin", "skip_scanned", "skip_exists", "skip_non_research",
         }
         self.assertEqual(set(ic.KINDS) - {"missing", "would_ingest"}, sync_keys)
+
+
+class MetadataTests(_IngestCase):
+    """metadata 側檔（連接器帶進來）：有給的欄位優先、足夠時跳過標註 LLM、與 upsert 同一筆交易保存。"""
+
+    async def run_meta(self, data: dict, **kw):
+        from app.services.connectors.sidecar import validate
+
+        self.meta_rows: list = []
+
+        async def _fake_meta(session, file_hash, *, connector, origin, metadata):
+            self.assertIs(session, self.session)
+            self.meta_rows.append((file_hash, connector, origin, metadata))
+            self.events.append("metadata")
+
+        with mock.patch("app.services.store.upsert_report_metadata", _fake_meta):
+            return await self.run_one(metadata=validate(data, "券商A/a.json"), connector="inbox", **kw)
+
+    async def test_market_and_targets_skip_the_tag_llm(self):
+        out = await self.run_meta({"market": "US", "stock_targets": ["AAPL"], "instrument_types": ["equity"]})
+        self.assertEqual((out.kind, out.market, out.tag_skipped), ("ingested", "US", True))
+        self.assertEqual(self.llm_calls, [], "側檔已給 market 與 stock_targets：不呼叫標註 LLM")
+        report = self.reports[0][0]
+        self.assertEqual((report.stock_targets, report.relates_stock, report.instrument_types),
+                         (["AAPL"], True, ["equity"]))
+        self.assertFalse((self.tags_dir / f"{self.file_hash}.json").exists(), "側檔版標籤不寫進 LLM 標註快取")
+
+    async def test_partial_metadata_still_tags_then_overrides(self):
+        out = await self.run_meta({"market": "HK"})
+        self.assertEqual((out.kind, out.market, out.tag_skipped), ("ingested", "HK", False))
+        self.assertEqual(len(self.llm_calls), 1)
+        report = self.reports[0][0]
+        self.assertEqual(report.stock_targets, ["2330"], "沒給的欄位沿用 LLM 標註")
+
+    async def test_report_fields_title_and_persistence_order(self):
+        out = await self.run_meta({
+            "title": "人工標題", "report_date": "2026-01-02", "source": "acme", "market": "TW",
+            "stock_targets": [], "rating": "買進", "target_price": 100, "target_currency": "TWD",
+        })
+        self.assertEqual(out.kind, "ingested")
+        report = self.reports[0][0]
+        from datetime import date
+
+        self.assertEqual((report.title, report.title_source), ("人工標題", "metadata"))
+        self.assertEqual((report.report_date, report.source), (date(2026, 1, 2), "acme"))
+        self.assertEqual((report.stock_targets, report.relates_stock), ([], False))
+        (file_hash, connector, origin, data) = self.meta_rows[0]
+        self.assertEqual((file_hash, connector, origin), (self.file_hash, "inbox", "券商A/a.json"))
+        self.assertEqual(data["rating"], "買進")
+        self.assertEqual(data["target_price"], 100.0)
+        self.assertLess(self.events.index("metadata"), self.events.index("upsert"),
+                        "側檔在 upsert_report 之前寫（同一筆交易，由 upsert 內部的 commit 一起落庫）")
+
+    async def test_no_metadata_keeps_title_null(self):
+        await self.run_one()
+        self.assertEqual((self.reports[0][0].title, self.reports[0][0].title_source), (None, None))
+
+    async def test_metadata_failure_rolls_back_like_any_ingest_error(self):
+        from app.services.connectors.sidecar import validate
+
+        async def boom(*a, **k):
+            raise RuntimeError("db")
+
+        with mock.patch("app.services.store.upsert_report_metadata", boom):
+            out = await self.run_one(metadata=validate({"title": "x"}, "a.json"), connector="inbox")
+        self.assertEqual((out.kind, out.stage), ("fail", "ingest"))
+        self.assertNotIn("upsert", self.events)
+        self.assertIn("rollback", self.events)
+
+    async def test_existing_report_is_not_rewritten_by_metadata(self):
+        self.exists = True
+        out = await self.run_meta({"title": "x", "market": "TW", "stock_targets": []})
+        self.assertEqual(out.kind, "skip_exists")
+        self.assertEqual(self.meta_rows, [])
 
 
 if __name__ == "__main__":

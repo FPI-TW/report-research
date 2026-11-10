@@ -123,7 +123,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 from app.services import llm_failures, llm_http, llm_models, llm_usage
-from app.services.llm_models import HTTP_MODELS, is_http_model
+from app.services.llm_models import is_http_model
 from scripts._llm_env import BREAKER_TTL_S, breaker_path, sync_round_id
 
 
@@ -183,6 +183,21 @@ _ACCOUNT_HINTS = {
         llm_http.AUTH: "檢查 OPENCODE_GO_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
         llm_http.QUOTA: "OpenCode Go 額度用完（5 小時／每週／每月上限）：等額度窗重置後重跑",
         llm_http.CONFIG: "檢查模型名、OPENCODE_GO_BASE_URL，以及 Go 主控台的 Regions 設定",
+    },
+    llm_models.PROVIDER_AZURE_OPENAI: {
+        llm_http.AUTH: "檢查 AZURE_OPENAI_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+        llm_http.QUOTA: "到 Azure 入口網站確認訂閱與該 deployment 的配額，補足後重跑",
+        llm_http.CONFIG: "檢查 AZURE_OPENAI_ENDPOINT、AZURE_OPENAI_API_VERSION 與 AZURE_OPENAI_DEPLOYMENTS",
+    },
+    llm_models.PROVIDER_ANTHROPIC: {
+        llm_http.AUTH: "檢查 ANTHROPIC_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+        llm_http.QUOTA: "到 Anthropic Console 確認 credit balance 與用量上限，補足後重跑",
+        llm_http.CONFIG: "檢查模型名（ANTHROPIC_MODELS）與 ANTHROPIC_BASE_URL",
+    },
+    llm_models.PROVIDER_OPENAI_COMPATIBLE: {
+        llm_http.AUTH: "檢查 OPENAI_COMPATIBLE_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+        llm_http.QUOTA: "自架端點回報額度不足：檢查該伺服器的配額設定",
+        llm_http.CONFIG: "檢查 OPENAI_COMPATIBLE_BASE_URL，以及 OPENAI_COMPATIBLE_MODELS 是否與伺服器載入的名稱相同",
     },
 }
 
@@ -289,7 +304,19 @@ class _Breaker:
                 "確認供應商恢復後可刪除標記"
             )
         _write_breaker_marker(message)
+        _notify_breaker(message)
         raise LlmEnvironmentError(message)
+
+
+def _notify_breaker(message: str) -> None:
+    """通用 webhook 告警（`app/services/alert_webhook.py`；沒設 ALERT_WEBHOOK_URL＝不送）。永不拋例外。"""
+    try:
+        from app.services import alert_webhook
+
+        alert_webhook.notify(alert_webhook.EVENT_LLM_BREAKER, message, severity="critical",
+                             details={"window": BREAKER_WINDOW, "trip": BREAKER_TRIP})
+    except Exception as exc:  # noqa: BLE001 — 告警不能改變斷路器的行為
+        _warn(f"斷路器 webhook 告警失敗：{type(exc).__name__}")
 
 
 _BREAKER = _Breaker()
@@ -492,7 +519,7 @@ def run_claude(
     meta = dict(meta or {})
     if not is_http_model(model):
         raise LlmEnvironmentError(
-            f"model={model!r} 不在模型白名單（{'、'.join(sorted(HTTP_MODELS))}），"
+            f"model={model!r} 不在模型白名單（{llm_models.allowed_models_label()}），"
             "沒有其他 backend。檢查該批次的模型旋鈕或 --model"
         )
     return _run_http(prompt, model, timeout, max_tokens, meta)

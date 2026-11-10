@@ -9,6 +9,7 @@ import { TableView } from './TableView'
 import { ViewSwitch } from './ViewSwitch'
 import atoms from './atoms.module.css'
 import styles from './ResultsSection.module.css'
+import { t } from '@/i18n'
 
 interface Props {
   mode: SearchMode
@@ -35,10 +36,10 @@ export function ResultsSection(p: Props) {
   return (
     <section className={styles.section} aria-labelledby="library-results">
       <div className={styles.head}>
-        <h2 id="library-results" className={styles.title}>{p.mode === 'search' ? '搜尋結果' : '最新入庫'}</h2>
-        <span className={`${atoms.num} ${styles.count}`}>{p.total.toLocaleString()} 篇</span>
+        <h2 id="library-results" className={styles.title}>{p.mode === 'search' ? t('search.resultsSection.searchResults') : t('search.resultsSection.recentlyIngested')}</h2>
+        <span className={`${atoms.num} ${styles.count}`}>{t('search.resultsSection.reports', { total: p.total.toLocaleString() })}</span>
         <span className={styles.tools}>
-          {!empty && <span className={styles.sort}>{p.mode === 'search' ? '依相關度排序' : '依日期排序'}</span>}
+          {!empty && <span className={styles.sort}>{p.mode === 'search' ? t('search.resultsSection.sortedByRelevance') : t('search.resultsSection.sortedByDate')}</span>}
           {p.filters}
           {!empty && <ViewSwitch view={p.view} onChange={p.onView} />}
         </span>
@@ -48,9 +49,9 @@ export function ResultsSection(p: Props) {
         <StateBox
           kind="empty"
           level={3}
-          title="沒有符合的研報"
-          description="換個關鍵字或放寬市場篩選再試一次。"
-          action="清除條件"
+          title={t('search.resultsSection.noMatchingReports')}
+          description={t('search.resultsSection.tryAnotherKeywordOrWiden')}
+          action={t('search.resultsSection.clear')}
           onAction={p.onClear}
         />
       ) : p.view === 'table' ? (

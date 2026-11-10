@@ -7,6 +7,7 @@ import {
   NAME_MAX, SCOPE_ORDER, dimTextOf, entitlementsOf, limitsError, messageOf, sameEntitlements, sameList, type DimText,
 } from './clientFields'
 import { DimFields, LimitFields, MarketChecks, NoteField, ScopeChecks } from './ClientFormParts'
+import { t } from '@/i18n'
 
 /** 表單送出的共同流程：忙碌狀態、後端錯誤顯示在表單裡；重新驗證被取消不算錯誤。 */
 function useSubmit() {
@@ -41,10 +42,10 @@ export function CreateClientDialog({ onClose, onCreate }: {
   const { error, setError, busy, run } = useSubmit()
 
   const submit = () => {
-    if (!name.trim()) { setError('請填寫名稱'); return }
+    if (!name.trim()) { setError(t('admin.apiClients.clientDialogs.enterAName')); return }
     const invalid = limitsError(Number(rate), Number(quota))
     if (invalid) { setError(invalid); return }
-    if (markets.length === 0) { setError('至少要允許一個市場'); return }
+    if (markets.length === 0) { setError(t('admin.apiClients.clientDialogs.allowAtLeastOneMarket')); return }
     void run(() => onCreate({
       name: name.trim(), scopes: SCOPE_ORDER.filter(s => scopes.includes(s)),
       rate_limit_per_min: Number(rate), daily_quota: Number(quota),
@@ -53,10 +54,10 @@ export function CreateClientDialog({ onClose, onCreate }: {
   }
 
   return (
-    <FormDialog open title="建立 API 用戶端" body="建立後會產生一把金鑰，只顯示這一次。建立需要重新驗證身分。"
-      submitLabel="建立" busy={busy} error={error} onSubmit={submit} onClose={onClose}>
-      <Field label="名稱" counter={`${name.length}／${NAME_MAX}`}>
-        <input className={c.input} value={name} maxLength={NAME_MAX} autoComplete="off" placeholder="例如：partner-portal"
+    <FormDialog open title={t('admin.apiClients.clientDialogs.createApiClient')} body={t('admin.apiClients.clientDialogs.aKeyIsGeneratedOn')}
+      submitLabel={t('admin.apiClients.clientDialogs.create')} busy={busy} error={error} onSubmit={submit} onClose={onClose}>
+      <Field label={t('admin.apiClients.clientDialogs.name')} counter={t('admin.apiClients.clientDialogs.text', { length: name.length, NAME_MAX })}>
+        <input className={c.input} value={name} maxLength={NAME_MAX} autoComplete="off" placeholder={t('admin.apiClients.clientDialogs.eGPartnerPortal')}
           onChange={e => setName(e.target.value)} />
       </Field>
       <ScopeChecks value={scopes} onChange={setScopes} />
@@ -89,8 +90,8 @@ export function LimitsDialog({ client, onClose, onSave }: {
   }
 
   return (
-    <FormDialog open title={`調整「${client.name}」的限流與額度`} body="下一個請求就生效。每日額度以台北時間日曆日計。"
-      submitLabel="儲存" submitDisabled={unchanged} busy={busy} error={error} onSubmit={submit} onClose={onClose}>
+    <FormDialog open title={t('admin.apiClients.clientDialogs.adjustRateLimitAndQuota', { name: client.name })} body={t('admin.apiClients.clientDialogs.takesEffectOnTheNext')}
+      submitLabel={t('admin.apiClients.clientDialogs.save')} submitDisabled={unchanged} busy={busy} error={error} onSubmit={submit} onClose={onClose}>
       <LimitFields rate={rate} quota={quota} onRate={setRate} onQuota={setQuota} />
     </FormDialog>
   )
@@ -114,7 +115,7 @@ export function ScopeDialog({ client, onClose, onSave }: {
   const entitlementsChanged = !sameEntitlements(next, client.entitlements)
 
   const submit = () => {
-    if (markets.length === 0) { setError('至少要允許一個市場'); return }
+    if (markets.length === 0) { setError(t('admin.apiClients.clientDialogs.allowAtLeastOneMarket')); return }
     void run(() => onSave({
       scopes: scopesChanged ? SCOPE_ORDER.filter(s => scopes.includes(s)) : null,
       entitlements: entitlementsChanged ? next : null,
@@ -122,8 +123,8 @@ export function ScopeDialog({ client, onClose, onSave }: {
   }
 
   return (
-    <FormDialog open title={`變更「${client.name}」的授權範圍`} body="市場必填；券商、報告類型、商品類型不設定就是不限。"
-      submitLabel="儲存" submitDisabled={!scopesChanged && !entitlementsChanged} busy={busy} error={error}
+    <FormDialog open title={t('admin.apiClients.clientDialogs.changeAccessScopeFor', { name: client.name })} body={t('admin.apiClients.clientDialogs.marketIsRequiredLeavingBroker')}
+      submitLabel={t('admin.apiClients.clientDialogs.save')} submitDisabled={!scopesChanged && !entitlementsChanged} busy={busy} error={error}
       onSubmit={submit} onClose={onClose}>
       <ScopeChecks value={scopes} onChange={setScopes} />
       <MarketChecks value={markets} onChange={setMarkets} />
@@ -141,7 +142,7 @@ export function NoteDialog({ client, onClose, onSave }: {
   const [note, setNote] = useState(client.note ?? '')
   const { error, busy, run } = useSubmit()
   return (
-    <FormDialog open title={`編輯「${client.name}」的備註`} submitLabel="儲存" submitDisabled={note.trim() === (client.note ?? '')}
+    <FormDialog open title={t('admin.apiClients.clientDialogs.editNoteFor', { name: client.name })} submitLabel={t('admin.apiClients.clientDialogs.save')} submitDisabled={note.trim() === (client.note ?? '')}
       busy={busy} error={error} onSubmit={() => { void run(() => onSave(note.trim())) }} onClose={onClose}>
       <NoteField value={note} onChange={setNote} />
     </FormDialog>

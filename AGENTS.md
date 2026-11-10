@@ -1,13 +1,17 @@
 # AGENTS.md
 
-廷豐智能研報——券商研報平台：PDF/docx 抽字 → LLM（`gpt-6-luna`）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
+券商研報平台——給券商單租戶、部署在自己環境的研報框架：PDF/docx 抽字 → LLM（`gpt-6-luna`）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。機構專屬的設定在 profile（`profiles/<名稱>/`，載入與驗證在 `app/profile.py`），祕密與部署層設定走環境變數；部署形態是容器映像＋docker compose（`docs/CONTAINER_DEPLOYMENT.md`）。廷豐是第一個 profile（`profiles/tingfong/`，也是預設 profile）與現行的兩台主機部署，規則集中在下面的「廷豐部署」。`deploy/`、`scripts/`、`ops_agent/` 每個檔案屬框架或廷豐主機層，列在 `deploy/OWNERSHIP.toml`。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
 
-本檔是給貢獻者與 AI 代理的**唯一**指引檔（repo 刻意不放 CLAUDE.md，不要新增）。這裡只列鐵律、改動連動與陷阱；模組地圖與「刻意」設計的完整出處在 `docs/ARCHITECTURE.md`，管線與 API 契約在 `docs/WORKFLOW.md`，部署與維運程序在 `docs/production_resilience.md`。
+本檔是給貢獻者與 AI 代理的**唯一**指引檔（repo 刻意不放 CLAUDE.md，不要新增）。這裡只列鐵律、改動連動與陷阱；模組地圖與「刻意」設計的完整出處在 `docs/ARCHITECTURE.md`，管線與 API 契約在 `docs/WORKFLOW.md`，容器部署在 `docs/CONTAINER_DEPLOYMENT.md`，廷豐主機的部署與維運程序在 `docs/production_resilience.md`。
 
 - 回覆使用者一律繁體中文；不加裝飾性 emoji。
 - 動任何標記「刻意」的設計前，先讀該處的 docstring 或註解（`docs/ARCHITECTURE.md` §10 只索引主要幾項，不是完整清單）。
 
-## 環境角色與資料安全
+## 廷豐部署（`profiles/tingfong` 的兩台主機）
+
+本段是廷豐 profile 現行部署的規則：兩台主機、它們的資料與部署產物，以及主機層附加元件（`deploy/OWNERSHIP.toml` 的 `tingfong_host`）。**在辦公室主機上工作（含所有 worktree）一律適用**，做的是框架的工作也一樣；其他券商的容器部署不受本段約束、由各自的部署方決定。
+
+### 環境角色與資料安全
 
 | 角色 | 主機 | DB | 名稱裡的歷史命名（保留不改，不代表角色） |
 |---|---|---|---|
@@ -24,6 +28,19 @@
   - `make ingest-lowio`：`fsync=off`，SIGKILL 後不還原；處置 `make restore-durability`。
 - **共用工作樹**：`git add <path>`，不用 `-A`／`.`（他人有 WIP）。辦公室主機的主 checkout 同時是測試環境的部署目錄；worktree 不是。
 - **開發不等於部署**：可在工作樹執行測試與建置（含 `make build-web`）；安裝到系統目錄、更新部署產物及重啟部署服務（例如 `report-mark-web.service`），僅在使用者已授權部署至明確目標時執行。主 checkout 同時是部署目錄，在其中建置前端會更新部署產物，須按部署操作處理（`frontend/dist` 不存在時 SPA 回 503）。部署程序見 `docs/production_resilience.md`。
+
+### 部署現況
+
+部署、啟停元件、調整功能旗標或確認主機狀態前，先讀 `docs/DEPLOYMENT_STATUS.md` 的最後紀錄與待確認事項，再到目標主機核對；更新現況記錄也寫在該文件。
+
+### 主機維運（沒註明主機的條目兩個環境通用）
+
+- 部署、安裝、停用與站序的程序在 `docs/production_resilience.md`；EC2 的基礎設施在 `deploy/aws/README.md`（全文沿用 staging 這個歷史命名）。真相來源在 `deploy/`，不是機器上的 `/etc`。
+- sync 鏈（各段見 `docs/WORKFLOW.md`「生產同步鏈」）：摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉大半新入庫的研報）；訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制不是效能旋鈕。
+- 補救：單篇失敗用 `scripts/failures_to_delta.py` 轉 delta 重放，不要 `--all-local`；整段中止時照 log 印出的指令重放，這時 `failures_to_delta.py` 與 `--all-local` 都不可用（何時才用 `--all-local` 等各情境見 `docs/WORKFLOW.md` 與 `docs/production_resilience.md`「整批中止後的重放」）。
+- 健康判定打 `/healthz`（只探 DB，回應只有 `status` 一鍵是釘死的），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。**本機 `/healthz` 綠不代表外網連得到**（邊緣故障的處置見 `docs/EXTERNAL_ACCESS.md`）。
+- 探針（`scripts/check_*_health.sh`）只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED；同一個退出碼在不同探針意思不同，改探針或 `INCIDENT_HOLD_EXIT_CODES` 前先讀各探針檔頭的退出碼契約。
+- `研報自動匯入/` 唯讀。
 
 ## 鐵律
 
@@ -89,6 +106,7 @@ uv run python scripts/ingest_all.py
 
 | 改了什麼 | 還要做什麼 |
 |---|---|
+| 在 `deploy/`、`scripts/`、`ops_agent/` 新增、刪除或改名檔案 | `deploy/OWNERSHIP.toml` 同步歸類（framework 或 tingfong_host，逐檔列、不用萬用字元；`tests/test_ownership.py` 對帳）。框架的檔案不依賴主機層、不寫機構名（`tests/test_framework_branding.py` 掃 OWNERSHIP 的 framework 與 `app/`、`web/`、`frontend/src/`、`eval/` 的程式；機構值由 profile 提供，白名單逐檔釘行數與理由、不放寬）。已被主機引用的主機層檔案不搬（引用方式見 `deploy/OWNERSHIP.toml` 檔頭） |
 | 改檔名、刪檔、加端點 | `tests/test_docs_contract.py` 會紅：**改文件，不放寬 allowlist**。living docs 是本檔、`README.md`、`docs/WORKFLOW.md`、`docs/ARCHITECTURE.md`、`docs/EXTRACTION.md`、`docs/DEPLOYMENT_STATUS.md`、`docs/EXTERNAL_API.md`、`docs/CONTAINER_DEPLOYMENT.md`（新增這類文件要加進該測試的 `LIVING_DOCS`）。端點路徑逐字寫進 README 的 API 表（`docs/WORKFLOW.md` 有契約細節時也寫），含參數名與 `:path`。這支測試掃的是磁碟不是 git：引用還沒 `git add` 的檔案，本機綠、CI 紅 |
 | 新增後端 SSE 事件 | 加進 `tests/fixtures/sse_events.json`（兩側測試會指出另一側缺什麼） |
 | 新增 SSE 事件欄位 | 契約測試**抓不到**欄位漏宣告：自己在 `frontend/src/lib/askSchemas.ts` 用 `optional()` 宣告（zod 預設 strip，未宣告鍵靜默丟掉），並在 `askSchemas.test.ts` 補斷言 |
@@ -97,7 +115,7 @@ uv run python scripts/ingest_all.py
 | 既有庫導入 Alembic（尚未 stamp 的庫） | baseline 只接受空庫，`make schema` 對既有庫會拒絕。順序：`make schema-check`（`scripts/schema_baseline.py`，在同伺服器建暫存庫逐項比對系統目錄）必須零 drift——有 drift 先修（已知差異的修正在 `db/align_baseline_indexes.sql`）→ `make schema-stamp-baseline CONFIRM=… DUMP_DIR=…`（受保護的庫強制全庫 `pg_dump -Fc` preflight：空間、時限、PGDMP 檔頭、`pg_restore -l`）。DB 不在容器（正式環境的 RDS）時加 `DUMP_CONTAINER=`，並以 `REPORT_MARK_PROTECTED_DB_TARGETS` 把它列為受保護 |
 | 新增不可重建的表 | `scripts/db_backup.sh` 的 `BACKUP_TABLES`、`tests/test_db_backup.py` 的清單、README／`docs/ARCHITECTURE.md`／`docs/production_resilience.md` 的表數字樣一起改 |
 | 新增管理端點 | 路徑放 `/api/admin/` 或 `/api/review/` 底下、router 層掛 `authz.require_admin`，每條再掛 `authz.require_scope(...)`（或 `require_super`；敏感操作加 `require_elevated`），`tests/test_authz.py` 結構性檢查每一條；不在這兩個前綴底下的管理端點（例如 `/api/progress`）在路由上掛同一組守門，並加進該測試的 `_ADMIN_PATHS`，否則結構檢查看不到它；`/api/admin/*` 的 pydantic model 改了要重跑 `uv run python scripts/gen_admin_client.py`（`tests/test_admin_client_generated.py` 比對 `frontend/src/lib/generated/adminApi.ts`）；要特定錯誤代碼用 `web.errors.AppError`；帳號規則寫在 `app/services/accounts.py` 而不是路由層（CLI 也要受約束）；會改資料的管理動作在同一筆交易寫 `admin_audit_log`，`detail` 不得含密碼或註記全文。批次操作逐筆呼叫單筆的同一個本體（`accounts._update_user_in`／`visibility.set_visibility`），規則不另寫一份：被規則擋的逐筆略過、其餘同一筆交易，每筆各一列稽核再加一列摘要。管理清單的 CSV 匯出走 `web/routers/admin_exports.py`（先 `accounts.record_export` 寫稽核再交資料、筆數上限、`web/csv_export.py` 防公式注入），刻意不提供問答原文的匯出 |
-| 對外 API（`/external/*`）的端點、參數、scope、錯誤碼或回應欄位 | 同步改 `docs/EXTERNAL_API.md`：它是交給 API 用戶端的說明，後台「API 用戶端」頁的說明文件與試打表單都從它解析（參數表的欄位格式不要改）。只寫用戶端需要知道的事，不寫內部路徑與實作；站台網址寫 `{BASE_URL}`。`tests/test_external_api_doc.py` 對帳，新端點另在該測試的 `RESPONSE_BUILDERS` 登記；README API 表照常要寫 |
+| 對外 API（`/external/*`）的端點、參數、scope、錯誤碼或回應欄位 | 同步改 `docs/EXTERNAL_API.md`：它是交給 API 用戶端的說明，後台「API 用戶端」頁的說明文件與試打表單都從它解析（參數表的欄位格式不要改）。只寫用戶端需要知道的事，不寫內部路徑與實作；站台網址寫 `{BASE_URL}`、產品名寫 `{PRODUCT_NAME}`（後台代入，文件不寫任何機構名）。`tests/test_external_api_doc.py` 對帳，新端點另在該測試的 `RESPONSE_BUILDERS` 登記；README API 表照常要寫 |
 | scope 詞彙 | `app/services/accounts.py` 的 `ADMIN_DEFAULT_SCOPES`／`GRANTABLE_SCOPES` 是唯一定義；可授予的那組同時是 `research.user_scope` 的 CHECK（寫 revision、重生 `db/expected_constraints.txt`）與 `web/routers/admin.py` 的 `GrantableScope`（`tests/test_admin_api.py` 釘住），改完重跑 `scripts/gen_admin_client.py` |
 | `review_state` 詞彙（kind／status／verification） | `web/routers/review.py` 的 `Literal` 與 `frontend/src/lib/reviewSchemas.ts` 的 zod enum 逐字一致（`tests/test_frontend_vocab_sync.py` 守）；`verification` 的預設值 `untested` 改了要寫 revision（表刻意無 CHECK、無 FK）；部署時的順序是 `make schema` → `make build-web` → 重啟 web |
 | 上傳狀態與 `failure_kind` 詞彙（`report_upload`） | `app/services/uploads.py` 是唯一定義：`state` 的 CHECK 與 partial unique index 條件由 `tests/test_uploads_vocab.py` 對帳 migration；`failure_kind` 刻意無 CHECK，新增類別不需要 revision。前端 `frontend/src/features/admin/uploadLabels.ts`（中文標籤、分頁籤分組、`IN_FLIGHT_STATES`、`REJECTABLE_STATES`、`RETRYABLE_FAILURE_KINDS`）要手動同步（`tests/test_frontend_vocab_sync.py` 以後端為準對帳）。`failure_kind` 的未知值原樣顯示、不擋畫面；`state` 在產生的 client（`frontend/src/lib/generated/adminApi.ts`）是嚴格 enum，新增 `state` 要重跑 `scripts/gen_admin_client.py` 並重 build 前端，否則整份上傳清單解析失敗。可重試類別以後端判定為準 |
@@ -107,6 +125,7 @@ uv run python scripts/ingest_all.py
 | 新增含 SQL 的 Python 頂層目錄 | 加進 `tests/test_sql_bind_casts.py` 的 `SCAN_ROOTS`，否則 bind 轉型的守門掃不到它 |
 | 新增 DB 契約測試（參照 `REPORT_MARK_REQUIRE_DB`） | 在 `.github/workflows/ci.yml` 的 schema job 加一個步驟，`tests/test_ci_db_contract.py` 對帳兩邊清單（理由見「測試與 CI」） |
 | profile schema 新增 section（`app/profile.py`） | 寫一個 parser 以 `@_section` 登記，`Profile` 末尾加帶預設的欄位（`tests/test_profile.py` 對帳兩邊）；驗證照樣 fail-closed（未知鍵、型別錯一律拋 `ProfileError`），不做「認不得就忽略」。會被免登入看到的欄位只能經 `web/routers/branding.py`，加進 `/api/branding` 前先確認它是顯示用的。改了 `profiles/tingfong/profile.toml` 要重啟 web |
+| 強調色的鍵（`app/profile.py` 的 `ACCENT_TOKENS`）或 `frontend/src/styles/tokens.css` 的強調色預設 | 鍵與 `frontend/src/lib/branding.ts` 的 `ACCENT_CSS_VARS` 逐一相同（`tests/test_profile.py`）；登入頁只吃 `web/routers/auth_pages.py` 的 `LOGIN_ACCENT_VARS`。tokens.css 的預設是框架的中性色票，**不寫回任何機構色**：機構色在 profile 的 `[branding.colors]`，廷豐宣告的鎏金由 `tests/test_brand_accent.py` 對去品牌前的 golden 逐變數比對（廷豐畫面不變）。模組 CSS 與登入頁不寫死強調色，半透明的寫 `color-mix(in srgb, var(--tf-gold-*) N%, transparent)` |
 | 系統提示的文字或注入的稱謂（`answer`、`scope_router`、`query_planner`、`agentic_qa`、`overview`） | prompt 只注入 profile 的 `[prompt]` 參數，不開放覆寫；新提示一律在呼叫時以函式渲染（import 期定值的常數會留著上一個 profile 的稱謂）。廷豐的全文由 `tests/test_profile_prompts.py` 對 `tests/fixtures/profile_prompts_tingfong.json` 逐字比對：刻意改 prompt 時才重生 golden，並前後各跑一次評測（`make eval-compare`）|
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的讀取**不要順手搬**；找旋鈕要同時搜 `os.getenv` 與 `os.environ`（搜尋指令見 `docs/ARCHITECTURE.md` §9）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶這個前綴的變數一律不改名（不屬 auth／DB 的例外清單在 §9，都是 live 的） |
 | `ops_agent/` 或 `deploy/ops/services.*.toml` | 代理只用標準庫、不 import `app.*`（`tests/test_ops_agent.py` 守）；新增 action 要同時改 `ops_agent/protocol.py` 的 `KNOWN_ACTIONS`／`OPS` 與 `web/routers/admin_ops.py` 的 `Action`。部署時：代理從 root 擁有的 `/opt/report-mark-ops/` 執行（docker 群組等同 root，不從 repo 跑），要重新 `install` 到那裡、`--check` 後重啟該主機的代理（測試環境 `report-mark-ops-agent.service`、正式環境 `report-mark-ops-agent-staging.service`；步驟見 `docs/production_resilience.md`「維運代理」） |
@@ -184,21 +203,11 @@ uv run python scripts/ingest_all.py
 - 帳號刪除的正確性靠 `accounts._purge_user` 的單一交易與 DB 之外的 tombstone（`qa_log.user_id` 刻意沒有 FK）：**從備份還原 `qa_log`／`app_user` 之後一定要跑 `scripts/replay_deletions.py`**，否則已刪除使用者的問答會復活。
 - 祕密不進 argv（例如 webhook URL 經 stdin 餵給 curl）。
 
-## 維運（沒註明主機的條目兩個環境通用）
+## 維運（批次與資料健康）
 
-- 部署、安裝、停用與站序的程序在 `docs/production_resilience.md`；EC2 的基礎設施在 `deploy/aws/README.md`（全文沿用 staging 這個歷史命名）。真相來源在 `deploy/`，不是機器上的 `/etc`。
-- sync 鏈（各段見 `docs/WORKFLOW.md`「生產同步鏈」）：摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉大半新入庫的研報）；訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制不是效能旋鈕。
-- 補救：單篇失敗用 `scripts/failures_to_delta.py` 轉 delta 重放，不要 `--all-local`；整段中止時照 log 印出的指令重放，這時 `failures_to_delta.py` 與 `--all-local` 都不可用（何時才用 `--all-local` 等各情境見 `docs/WORKFLOW.md` 與 `docs/production_resilience.md`「整批中止後的重放」）。
 - LLM 批次以 `scripts/_claude_lock.py` 的 flock 互斥（防重複計費、摘錄覆寫互撞與 DB 連線數；名單是 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS`），撞鎖 rc=75 是「不跑」不是「跑壞」。**從 worktree 跑批次不與主 checkout 互斥**；`CLAUDE_LOCK_DISABLE=1` 是一次性逃生口，不放進任何環境檔。
 - 批次斷路器 `data/.llm_breaker` 觸發後，手動跑的批次在冷卻期內 rc=2 拒跑（sync 輪內的規則見 `docs/production_resilience.md` 的「斷路器」）；`data/llm_usage.jsonl` 是費用歸因依據。
-- 健康判定打 `/healthz`（只探 DB，回應只有 `status` 一鍵是釘死的），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。**本機 `/healthz` 綠不代表外網連得到**（邊緣故障的處置見 `docs/EXTERNAL_ACCESS.md`）。
-- 探針（`scripts/check_*_health.sh`）只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED；同一個退出碼在不同探針意思不同，改探針或 `INCIDENT_HOLD_EXIT_CODES` 前先讀各探針檔頭的退出碼契約。
 - 改 `make freshness`、`make db-audit` 的判定前先讀 `scripts/check_batch_freshness.py`、`scripts/db_audit.py` 的 docstring（`signal` 門檻 0 與語料閘是刻意預設；db-audit 只讀不修，warn 也算失敗）。
-- `研報自動匯入/` 唯讀。
-
-## 部署現況
-
-部署、啟停元件、調整功能旗標或確認主機狀態前，先讀 `docs/DEPLOYMENT_STATUS.md` 的最後紀錄與待確認事項，再到目標主機核對；更新現況記錄也寫在該文件。
 
 ## 慣例
 
@@ -210,6 +219,6 @@ uv run python scripts/ingest_all.py
 
 - `app/services/`：抽取（`extract.py`、`extraction/`）、標註、切塊、嵌入、混合檢索（`retrieval.py`、`retrieval_pipeline.py`）、RAG 問答（`answer.py`），以及 `reading/`、`radar/`、`brief.py`。`app/config.py` 是新旋鈕唯一去處。
 - `web/`：`server.py` 組合層、`routers/`、`deps.py`。`frontend/`：`src/features/*` 每頁一個、`src/lib/*` 是 API 邊界（zod、SSE、reducer）。
-- `scripts/`：批次與維運；`deploy/`：systemd、nginx、docker-compose 的真相來源；`db/`：`schema.sql`（凍結的 baseline）、`migrations/`（Alembic，設定在 repo 根 `alembic.ini`）與約束 golden；`eval/`：離線評測與基準線（不進 CI）。`研報自動匯入/`（唯讀鏡像）與 `data/`（執行期產物）不進版控。
+- `scripts/`：批次與維運；`deploy/`：部署的真相來源（`container/`、`compose/`、`demo/` 是框架的容器部署，其餘是廷豐主機層：systemd、nginx、edge 的 docker-compose、維運代理 catalog、AWS；逐檔歸屬在 `deploy/OWNERSHIP.toml`）；`profiles/<名稱>/`：各機構的 profile；`db/`：`schema.sql`（凍結的 baseline）、`migrations/`（Alembic，設定在 repo 根 `alembic.ini`）與約束 golden；`eval/`：離線評測與基準線（不進 CI）。`研報自動匯入/`（唯讀鏡像）與 `data/`（執行期產物）不進版控。
 - 文件：`README.md`（開發總覽、完整 API 表、環境變數、部署）、`docs/ARCHITECTURE.md`（模組地圖與不變量完整版）、`docs/WORKFLOW.md`（端到端管線、階段 I/O、標籤詞彙、API 契約、物件儲存的不變量）、`docs/EXTRACTION.md`（抽取層）；交給 API 用戶端的 `docs/EXTERNAL_API.md`；維運類 `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/nas_scheduled_sync_deployment.md`；容器部署（映像＋docker compose，給其他券商自架）`docs/CONTAINER_DEPLOYMENT.md`；EC2 的基礎設施 `deploy/aws/README.md`。
 - 文件只描述現況；歷史規劃、架構檢視快照、版面診斷與設計稿已於 2026-09-18 移出 repo，需要時看 git 歷史（原檔名 docs/EXTRACTION_REDESIGN.md、docs/ARCHITECTURE_REVIEW_2026-07.md 與其 _VERIFY、docs/REPORT_LAYOUT_FIXES.md、docs/design/；刻意不加反引號，免得觸發文件契約測試的路徑檢查）。

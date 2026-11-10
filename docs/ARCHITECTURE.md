@@ -1,6 +1,6 @@
 # 架構：模組地圖與不變量
 
-本檔是 `AGENTS.md` 架構不變量摘要的完整版：每個模組負責什麼、誰 import 誰、哪些設計是「刻意」的以及出處。它是 `tests/test_docs_contract.py` 掃描的 living doc；改名或刪檔要同步改這裡。**§ 編號被 `AGENTS.md`、程式註解與其他文件引用，不要重排。**
+本檔描述「券商研報平台」框架（機構專屬的設定在 profile，廷豐是其中一個 profile 與一組主機層附加元件），是 `AGENTS.md` 架構不變量摘要的完整版：每個模組負責什麼、誰 import 誰、哪些設計是「刻意」的以及出處。它是 `tests/test_docs_contract.py` 掃描的 living doc；改名或刪檔要同步改這裡。**§ 編號被 `AGENTS.md`、程式註解與其他文件引用，不要重排。**
 
 ## 1. 分工鐵律
 
@@ -22,8 +22,9 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 - 同一個 codebase 服務不同機構，機構專屬的非祕密設定放 `profiles/<name>/profile.toml` 與 `assets/`；祕密與部署層設定（金鑰、DB URL、LLM 端點）仍走環境變數。用廷豐 profile（預設）時行為與 profile 機制上線前逐字相同。
 - prompt **不開放覆寫**，只注入 `[prompt]` 的稱謂：`answer`、`scope_router`、`query_planner`、`agentic_qa`、`overview` 的系統提示在呼叫時由函式渲染（`answer.system_prompt_base()`、`scope_router.route_system_prompt()` 等），舊常數名（`SYSTEM_PROMPT`、`OFF_TOPIC_MESSAGES`、`ROUTE_SYSTEM_PROMPT`…）由各模組的 `__getattr__` 提供給 eval、scripts 與測試。廷豐的渲染結果由 `tests/test_profile_prompts.py` 對改動前的全文（`tests/fixtures/profile_prompts_tingfong.json`）逐字比對：換一個字評測基準線就不再可比。婉拒文案同時是 `qa_log` 歷史重播的比對鍵，稱謂上線後不要改。
 - 市場代碼是框架固定的標準詞彙（`tagging.MARKETS`，標註 prompt 不變）；profile 只能選使用者端啟用的子集（選單、`market` 篩選、API 用戶端 entitlement）與改顯示名稱，**不是可見性**：標到未啟用市場的研報照常出現在不帶篩選的清單與問答裡。給 LLM 的文字（簡報、總覽的分面統計）照舊用標準名稱。
-- 品牌對前端只經免登入的 `GET /api/branding`（名稱與英文名稱、asset URL、強調色、`[locale]`）與 `GET /api/branding/assets/{name}`；登入頁由伺服器注入，SPA 由 `frontend/src/lib/branding.ts` 在啟動時抓、讀不到退回中性預設。強調色的鍵是固定清單（`ACCENT_TOKENS`，前端 `ACCENT_CSS_VARS` 對到 `tokens.css` 的鎏金系列與 `--ac-gold*`），色值只收 hex 與 `rgb()`／`rgba()`。
+- 品牌對前端只經免登入的 `GET /api/branding`（名稱與英文名稱、asset URL、強調色、`[locale]`）與 `GET /api/branding/assets/{name}`；登入頁由伺服器注入，SPA 由 `frontend/src/lib/branding.ts` 在啟動時抓、讀不到退回中性預設。強調色的鍵是固定清單（`ACCENT_TOKENS`，前端 `ACCENT_CSS_VARS` 對到 `tokens.css` 的 `--tf-gold-*` 與 `--ac-gold*`，`console_*` 只蓋管理後台那一組；登入頁經 `auth_pages.LOGIN_ACCENT_VARS` 由伺服器注入），色值只收 hex 與 `rgb()`／`rgba()`。`tokens.css` 的預設是框架的中性色票（變數名的 gold 是沿用的舊名），機構色一律在 profile 宣告（廷豐宣告鎏金，`tests/test_brand_accent.py` 逐變數比對去品牌前的值）；模組 CSS 不寫死強調色，半透明的以 `color-mix` 從變數算出。
 - 加新 section：一個 parser＋`@_section` 登記＋`Profile` 末尾帶預設的欄位（步驟在 `app/profile.py` docstring）。
+- 框架與主機層：`deploy/`、`scripts/`、`ops_agent/` 每個檔案歸到 framework 或 tingfong_host（`deploy/OWNERSHIP.toml`，逐檔列出，`tests/test_ownership.py` 對帳；框架不 import、不排程主機層的腳本）。框架擁有的檔案不寫機構名（`tests/test_framework_branding.py`），機構值（網址、名稱、色票）由 profile 提供；框架自己的名稱是 `app.FRAMEWORK_NAME`。
 - 兩個 profile：`profiles/tingfong`（預設、正式）與 `profiles/demo`（虛構的示範券商）。後者每一項都刻意與廷豐不同（機構與產品名、自製 logo、強調色、市場只開 `TW`／`US`／`MACRO`、S3 連接器＋metadata 側檔、背景補齊開著且上限小、個股代號收美股 ticker、自己的發行機構名單、簡報不等早上 9 時），用途有二：證明框架不依賴廷豐的設定（`scripts/e2e_compose.py` 以它把 compose 從空庫跑到問答，`tests/test_demo_profile.py` 釘住「每一項都不同」），以及業務展示環境（`docs/CONTAINER_DEPLOYMENT.md`「示範環境」）。它的語料是 `scripts/demo_corpus.py` 以固定種子產生的虛構 PDF，LLM 是 `deploy/demo/fake_llm.py`（OpenAI 相容的決定性假服務）。
 
 ### 2.2 `app/services/` 檢索與問答

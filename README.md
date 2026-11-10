@@ -1,15 +1,15 @@
-# 廷豐智能研報（report-mark）
+# 券商研報平台（report-mark）
 
-券商研報平台：把 `研報自動匯入/` 的 PDF／docx 抽字、以 LLM（`gpt-6-luna`）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達、每日簡報與管理後台。個別帳號登入（管理員／一般使用者兩種角色）。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
+券商研報平台是給券商**單租戶、部署在自己環境**的研報框架：把研報 PDF／docx 抽字、以 LLM（`gpt-6-luna`）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達、每日簡報與管理後台。個別帳號登入（管理員／一般使用者兩種角色），對外另有 API 用戶端（`/external/v1/*`）。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
 
-兩個環境都是單機、單一 uvicorn worker：
+同一份程式服務每一家券商：機構專屬的東西放在 **profile**（`profiles/<名稱>/`），祕密與部署層設定（金鑰、DB URL、LLM 端點）走環境變數。
 
-| 角色 | 主機 | DB | 對外 |
-|---|---|---|---|
-| 正式 | EC2（`research.tingfong.com`） | RDS PostgreSQL | Cloudflare 橘雲直連 apt 的 nginx |
-| 測試（也是開發機） | 辦公室主機（`research.kashionzarchive.com`，WSL2） | 容器 `report-mark-postgres`（`localhost:5436`，有真實資料） | Cloudflare Tunnel ＋ 容器 nginx |
+- **profile**：`profile.toml`（機構名、品牌與強調色、prompt 注入的稱謂、啟用的標準市場子集、文件類型與功能、資料來源連接器、語系、個股代號格式、發行機構名單、簡報作息；啟動時嚴格驗證，錯了拒起）、`assets/`（logo、favicon）、`plugins/`（插件連接器）、`eval/`（凍結題集與上線驗收設定）。以 `PROFILE_DIR` 指定，預設 `profiles/tingfong`。格式見 `app/profile.py` 的模組 docstring。
+- **導入**：寫好 profile → 首次導入（先估價，再分層回填，見[首次導入](#首次導入分層回填)）→ 草擬並凍結 profile 的評測題集、跑上線驗收（`make eval-gate`，`docs/WORKFLOW.md`「導入驗收」）。
+- **部署**：一份容器映像＋docker compose，除了 LLM 端點以外零外連，見[容器部署](#容器部署docker-compose)與 `docs/CONTAINER_DEPLOYMENT.md`。`profiles/demo/`（虛構的示範券商）是可以直接起的示範環境。
+- **框架與主機層**：`deploy/`、`scripts/`、`ops_agent/` 每個檔案的歸屬（框架、廷豐主機層）列在 `deploy/OWNERSHIP.toml`。
 
-資源名、檔名與環境變數值裡的 `staging`（指 EC2）與 `prod`／`production`（指辦公室主機）是歷史命名，不代表角色；規則見 `AGENTS.md`「環境角色與資料安全」，各主機實際裝了什麼見 `docs/DEPLOYMENT_STATUS.md`。
+廷豐是第一個 profile（`profiles/tingfong/`），也是現行的兩台主機部署，見[廷豐 profile 與現行部署](#廷豐-profile-與現行部署)。
 
 ## 目錄
 
@@ -21,6 +21,7 @@
 - [設定（環境變數）](#設定環境變數)
 - [開發與測試](#開發與測試)
 - [部署與維運](#部署與維運)
+- [廷豐 profile 與現行部署](#廷豐-profile-與現行部署)
 - [延伸文件](#延伸文件)
 
 ## 功能總覽
@@ -53,7 +54,7 @@
                      R2（研報原檔 originals/、跨主機送檔 inbox/、主機信標 beacons/）
 ```
 
-新研報的來源只有辦公室主機碰得到（NAS）：它每輪 sync 把新檔推到 R2 `inbox/`，EC2 的 sync 從那裡拉（`docs/WORKFLOW.md`「生產同步鏈」）。
+上圖是廷豐的現行部署（systemd timer、Cloudflare＋nginx）；容器部署的角色與排程見 `docs/CONTAINER_DEPLOYMENT.md`。廷豐的新研報來源只有辦公室主機碰得到（NAS）：它每輪 sync 把新檔推到 R2 `inbox/`，EC2 的 sync 從那裡拉（`docs/WORKFLOW.md`「生產同步鏈」）。
 
 分工鐵律：Python 做所有決定性的事，LLM（`gpt-6-luna`）只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
 
@@ -115,7 +116,8 @@ frontend/src/
 scripts/                  批次與維運；呼叫 LLM 的批次取 _claude_lock.py 的 flock
 db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision，head 0014、0009 留空不用）、
                           db/expected_constraints.txt（約束 golden）
-deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
+deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署；其餘是廷豐主機層
+                          （systemd unit、nginx、edge 的 docker-compose…），逐檔歸屬見 OWNERSHIP.toml
                           deploy/ops/：維運代理的 Service Catalog（services.prod.toml＝辦公室主機、
                                        services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
                           deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
@@ -380,11 +382,47 @@ make eval-gate PROFILE=<profile> RESULT=<結果.json>   # 上線驗收（零 LLM
 
 ## 部署與維運
 
+框架的官方部署形態是容器（下一節）；廷豐兩台主機的 systemd 部署見[廷豐 profile 與現行部署](#廷豐-profile-與現行部署)。兩種形態共用下面幾件事：
+
+- **Schema** 由 Alembic 管理（0009 留空不用）：`make schema` 跑 `alembic upgrade head`（連 `REPORT_MARK_DB_URL`；已有資料的庫要 `CONFIRM=<host:port/db>` 逐字確認目標）。`db/schema.sql` 是凍結的 baseline（revision 0001），只接受空庫；之後的變更寫在 `db/migrations/versions/`。`make schema-version` 只比 DB 版本與程式 head（唯讀），`make schema-check` 做完整 drift 比對。把還沒 stamp 的既有庫納入 Alembic 的步驟見 `AGENTS.md` 改動對照表。
+- **帳號**：第一位管理員用 `uv run python scripts/create_admin.py --username <名稱>` 建立，其餘在管理後台「帳號管理」建。忘記密碼或管理員全被停用時 `--reset-password`，遺失驗證器 `--reset-totp`。`app_user` 進了備份（含 Argon2id 雜湊），備份檔要當機密看待。
+
+### 容器部署（docker compose）
+
+給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。研報來源以 profile 的 `[connectors]` 接上（監看資料夾、S3 相容 bucket、插件；scheduler 的 `connectors` 工作輪詢入庫並跑下游批次），外部系統也可以經 `POST /external/v1/uploads` 送進上傳流程；設定與 metadata 側檔格式見 `docs/WORKFLOW.md`「資料來源連接器」。systemd timer 與容器排程的對照、零外連清單、備份還原、監控對接（`/metrics` 指標與告警規則、JSON 日誌欄位、版本對帳、通用 webhook 告警）見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
+
+### 首次導入（分層回填）
+
+數萬份歷史研報不一次跑完所有 LLM 派生：第一層（全部歷史）只做抽取、嵌入、標註；第二層（`report_date` 在最近 `[backfill].recent_months` 個月內）補摘要、標題、摘錄、訊號；第三層（更早與無日期）由背景在每日 token 上限內慢慢補。開跑前先估價（零 LLM、費率由使用者提供），步驟、進度與續跑見 `docs/WORKFLOW.md`「首次導入」。
+
+```bash
+make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"   # 估價：各層的 token、金額、時間（--json 給機器讀）
+uv run python scripts/backfill_tiers.py --tier 2 --dry-run         # 第二層會排入幾份（不呼叫 LLM）
+uv run python scripts/backfill_tiers.py --tier 2                   # 第二層
+make backfill-status                                               # 各層待補數與今天的背景用量
+# 第三層：profile 設 [backfill].background_enabled = true，scheduler 的 backfill-tiers 每小時補一輪
+```
+
+### 其他維運入口
+
+LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。
+
+## 廷豐 profile 與現行部署
+
+廷豐的 profile 在 `profiles/tingfong/`（預設 profile：`PROFILE_DIR` 沒設時載入它）；主機層附加元件（systemd unit、sudoers、polkit、維運代理、主機信標、探針與事件、NAS、LINE bot、sync 殼的 NAS／R2 來源段、對外邊緣、AWS 基礎設施）是 `deploy/OWNERSHIP.toml` 的 `tingfong_host`，框架的容器部署不用它們。
+
+兩個環境都是單機、單一 uvicorn worker：
+
+| 角色 | 主機 | DB | 對外 |
+|---|---|---|---|
+| 正式 | EC2（`research.tingfong.com`） | RDS PostgreSQL | Cloudflare 橘雲直連 apt 的 nginx |
+| 測試（也是開發機） | 辦公室主機（`research.kashionzarchive.com`，WSL2） | 容器 `report-mark-postgres`（`localhost:5436`，有真實資料） | Cloudflare Tunnel ＋ 容器 nginx |
+
+資源名、檔名與環境變數值裡的 `staging`（指 EC2）與 `prod`／`production`（指辦公室主機）是歷史命名，不代表角色；規則見 `AGENTS.md`「環境角色與資料安全」，各主機實際裝了什麼見 `docs/DEPLOYMENT_STATUS.md`。
+
 真相來源在 `deploy/`，不是機器上的 `/etc`。程序（部署順序、備份與還原、各 unit 的安裝與停用、告警處置）在 `docs/production_resilience.md`，各主機現況在 `docs/DEPLOYMENT_STATUS.md`。站序是 devdb 演練 → 測試環境 → 正式環境，每站先備份（測試環境 `make db-backup`，正式環境 RDS 手動快照）。辦公室主機的主 checkout 同時是測試環境的部署目錄：在那裡 `make build-web` 就是更新部署產物。
 
 - **部署新版**：`make schema` → `make build-web` → `make build-info`（版本對帳用的 build_info.json）→ 重啟 `report-mark-web.service`（`make serve` 與 unit 都沒有 `--reload`，Python 改動要重啟）。回退只回退程式版本、保留新增的表與資料，不用 DROP 當回退步驟。
-- **Schema** 由 Alembic 管理（head 是 0011；0009 留空不用）：`make schema` 跑 `alembic upgrade head`（連 `REPORT_MARK_DB_URL`；已有資料的庫要 `CONFIRM=<host:port/db>` 逐字確認目標）。`db/schema.sql` 是凍結的 baseline（revision 0001），只接受空庫；之後的變更寫在 `db/migrations/versions/`。`make schema-version` 只比 DB 版本與程式 head（唯讀），`make schema-check` 做完整 drift 比對。把還沒 stamp 的既有庫納入 Alembic 的步驟見 `AGENTS.md` 改動對照表。
-- **帳號**：第一位管理員用 `uv run python scripts/create_admin.py --username <名稱>` 建立，其餘在管理後台「帳號管理」建。忘記密碼或管理員全被停用時 `--reset-password`，遺失驗證器 `--reset-totp`。`app_user` 進了備份（含 Argon2id 雜湊），備份檔要當機密看待。
 - **unit 安裝**：辦公室主機 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；EC2 一律用 `deploy/install_units.sh`（見下方「非辦公室主機」）。
 
 下表是 `deploy/systemd/` 裡的 unit（開發用的 `report-mark-dev-smoke.service` 除外）；每台主機只裝其中一部分，EC2 沒裝的見「非辦公室主機」。
@@ -431,27 +469,9 @@ EC2 是正式環境（資源名與部分檔名裡的 staging 是歷史命名）�
 - 來源監看：EC2 的新研報全靠辦公室主機推上來，那台停機或來源段壞掉時 EC2 自己的 sync 照樣 rc=0。辦公室主機裝 `report-mark-beacon` 並設 `HOST_BEACON_NAME`，EC2 的 `.env` 設同名的 `HOST_BEACON_WATCH` 並裝 `report-mark-feed-health`、`report-mark-feed-incident`；細節在管理後台「維運 → 來源主機」，步驟見 `docs/production_resilience.md`「來源主機信標」。
 - 對外：`research.tingfong.com` 是 Cloudflare 橘雲 A record 指向 EC2 的 Elastic IP，不走 Tunnel。EC2 上以 apt 的 nginx 載入 `deploy/nginx-origin.conf`（裝到 `/etc/nginx/sites-available/report-mark`），以 Cloudflare Origin CA 憑證（`/etc/ssl/report-mark/`，不進 repo）聽 443、反代 `127.0.0.1:8097`；App 靠對端 127.0.0.1 信任它（`REPORT_MARK_TRUSTED_PROXY_CIDRS` 預設值），所以 `proxy_pass` 不能改成其他位址。Security Group 只放行 Cloudflare IPv4 範圍的 443（由 CloudFormation stack `report-research-staging` 管理）。三個前提缺一不可：橘雲不能關（Origin CA 只有 Cloudflare 信任）、Cloudflare SSL/TLS 模式 Full (strict)、Cloudflare IP 範圍變動時 nginx 的 `set_real_ip_from` 與 SG 的 prefix list 一起改。
 
-### 容器部署（docker compose）
-
-給其他券商自架的官方形態（也是測試環境之後的遷移目標）：一份映像（`deploy/container/Dockerfile`，嵌入與 rerank 權重封在映像裡、執行期離線）、`deploy/compose/docker-compose.yml` 裡的 postgres／web／worker／scheduler／migrate（one-shot）／clamav（選配）。升級三步：拉新映像 → `docker compose run --rm migrate`（先全庫備份並驗證、再逐字確認目標）→ `docker compose up -d`；web／worker／scheduler 啟動時只檢查 schema 版本，不一致就拒起。研報來源以 profile 的 `[connectors]` 接上（監看資料夾、S3 相容 bucket、插件；scheduler 的 `connectors` 工作輪詢入庫並跑下游批次），外部系統也可以經 `POST /external/v1/uploads` 送進上傳流程；設定與 metadata 側檔格式見 `docs/WORKFLOW.md`「資料來源連接器」。systemd timer 與容器排程的對照、零外連清單、備份還原、監控對接（`/metrics` 指標與告警規則、JSON 日誌欄位、版本對帳、通用 webhook 告警）見 [docs/CONTAINER_DEPLOYMENT.md](docs/CONTAINER_DEPLOYMENT.md)。
-
-### 首次導入（分層回填）
-
-數萬份歷史研報不一次跑完所有 LLM 派生：第一層（全部歷史）只做抽取、嵌入、標註；第二層（`report_date` 在最近 `[backfill].recent_months` 個月內）補摘要、標題、摘錄、訊號；第三層（更早與無日期）由背景在每日 token 上限內慢慢補。開跑前先估價（零 LLM、費率由使用者提供），步驟、進度與續跑見 `docs/WORKFLOW.md`「首次導入」。
-
-```bash
-make estimate ESTIMATE_ARGS="--source cache --rates rates.toml"   # 估價：各層的 token、金額、時間（--json 給機器讀）
-uv run python scripts/backfill_tiers.py --tier 2 --dry-run         # 第二層會排入幾份（不呼叫 LLM）
-uv run python scripts/backfill_tiers.py --tier 2                   # 第二層
-make backfill-status                                               # 各層待補數與今天的背景用量
-# 第三層：profile 設 [backfill].background_enabled = true，scheduler 的 backfill-tiers 每小時補一輪
-```
-
-### 其他維運入口
+### 辦公室主機的其他維運入口
 
 辦公室主機的對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。上傳掃描：`make up-clamav`／`down-clamav`／`clamav-smoke`（`deploy/clamav/docker-compose.yml`，獨立 compose 專案、常駐 clamd 容器 `report-mark-clamav`，只綁 `127.0.0.1:3310`，常駐約 1.2–1.6 GB；`clamav-smoke` 驗 EICAR 要 FOUND、正常 PDF 要 OK，可帶 `SMOKE_PDF=…`），安裝、停用與故障處置見 `docs/production_resilience.md`「ClamAV（上傳掃描）」。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
-
-LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。
 
 ## 延伸文件
 
@@ -461,12 +481,12 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 | `docs/ARCHITECTURE.md` | 模組地圖、import 方向、檢索／問答／讀取功能的不變量、Web 層、資料層、設定旋鈕、「刻意」設計索引、刻意不提供的功能 |
 | `docs/WORKFLOW.md` | 端到端管線、逐階段 I/O 與參數、生產同步鏈、研報上傳、標籤詞彙、Web API 契約、物件儲存（R2）、排錯 |
 | `docs/EXTRACTION.md` | 抽取層現況：選型與授權、文件模型、回退、品質指標、快取、`extraction_log`、golden set、回填、切塊與樣板 |
-| `docs/DEPLOYMENT_STATUS.md` | 各主機的部署現況與待確認事項 |
+| `docs/DEPLOYMENT_STATUS.md` | 廷豐各主機的部署現況與待確認事項 |
 | `docs/CONTAINER_DEPLOYMENT.md` | 容器部署（映像＋docker compose）：系統需求、首次安裝、升級、備份與還原、systemd timer 對照表、零外連清單 |
-| `docs/production_resilience.md` | 部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
+| `docs/production_resilience.md` | 廷豐主機的部署與維運程序：部署順序、重啟策略、健康探針、告警鏈、備份與還原（含 `pg_restore` 演練）、各 unit 的安裝與停用 |
 | `docs/EXTERNAL_API.md` | 交給 API 用戶端的對外 API 說明（認證、權限與資料範圍、限流與額度、端點、錯誤碼、範例）；後台「API 用戶端」頁的「說明文件」與「試打」分頁直接取用 |
-| `docs/EXTERNAL_ACCESS.md` | 辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |
-| `docs/nas_scheduled_sync_deployment.md` | NAS 定時同步的掛載、sudoers、timer 安裝 |
-| `docs/LINEBOT_ALWAYS_ON.md` | LineBot 常駐與監控 |
+| `docs/EXTERNAL_ACCESS.md` | 廷豐辦公室主機的對外存取（Cloudflare Tunnel ＋ nginx） |
+| `docs/nas_scheduled_sync_deployment.md` | 廷豐辦公室主機的 NAS 定時同步：掛載、sudoers、timer 安裝 |
+| `docs/LINEBOT_ALWAYS_ON.md` | 廷豐辦公室主機的 LineBot 常駐與監控 |
 | `docs/CAPACITY.md` | 硬體用量量測與上雲選型 |
-| [AWS 基礎設施（正式環境）](deploy/aws/README.md) | CloudFormation 管理的 EC2／RDS（正式環境；資源名沿用 staging）、change set 與驗收流程 |
+| [AWS 基礎設施（廷豐正式環境）](deploy/aws/README.md) | CloudFormation 管理的 EC2／RDS（正式環境；資源名沿用 staging）、change set 與驗收流程 |

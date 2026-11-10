@@ -1,5 +1,7 @@
 # AWS 基礎設施（正式環境）
 
+本文件描述廷豐 profile 的主機部署（正式環境 EC2／RDS 的 AWS 基礎設施）；框架的容器部署見 `docs/CONTAINER_DEPLOYMENT.md`，檔案的歸屬見 `deploy/OWNERSHIP.toml`。
+
 > 這套 EC2 與 RDS 是**正式環境**（`research.tingfong.com`）。stack、RDS、參數檔、標籤與 IAM 政策檔名裡的 staging 是建置當時的歷史命名，沿用不改；環境角色見 `AGENTS.md`「環境角色與資料安全」。
 
 此目錄以 CloudFormation 管理 `report-research-staging` 這個 stack：VPC、子網與路由、安全群組、EC2 與 Elastic IP、EC2 IAM role／instance profile、RDS subnet group、parameter group 與 PostgreSQL 執行個體。它**不會** clone/build/run 專案、不套用 schema、不搬資料，也不建立 Web、批次、nginx 或排程服務；那些在 stack 之外部署（見「應用層」），改它們不會因 stack 更新而自動完成。Cloudflare DNS 由 Cloudflare 控制台管理（本 AWS 帳號沒有 Route 53 hosted zone）。

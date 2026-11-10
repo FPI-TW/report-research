@@ -103,13 +103,23 @@ class RequestTests(_Transport):
         (req,) = self.requests
         self.assertEqual(str(req.url), GO_BASE + "/chat/completions")
         self.assertEqual(req.headers["authorization"], f"Bearer {GO_KEY}")
-        self.assertEqual(req.headers["user-agent"], llm_http.GO_USER_AGENT)
+        self.assertEqual(req.headers["user-agent"], llm_http.go_user_agent())
         self.assertEqual(req.headers["x-opencode-session"], "batch-summary")
         body = json.loads(req.content)
         self.assertEqual(body["model"], "gpt-6-luna")  # 名稱不翻譯：Go 與官方同一個模型 id
         self.assertNotIn("user_id", body)
         self.assertNotIn("thinking", body)  # Go 對這顆模型的 thinking 回 400
         self.assertEqual(body["reasoning_effort"], "none")
+
+    def test_user_agent_carries_the_identity_url_only_when_set(self):
+        """沒設定網址（profile 沒給 `[institution].website`）時只送產品代號；預設 profile 的完整值由
+        llm_wire_golden.json 釘住，設定網址的兩個入口由 tests/test_llm_identity.py 釘住。"""
+        lm.set_identity_url("")
+        self.chat()
+        lm.set_identity_url("https://research.example.com")
+        self.chat()
+        self.assertEqual([r.headers["user-agent"] for r in self.requests],
+                         ["report-mark/1", "report-mark/1 (+https://research.example.com)"])
 
     def test_openai_mode_has_no_go_headers(self):
         with mock.patch.dict(os.environ, {"LLM_PROVIDER": "openai", "OPENAI_API_KEY": "fixed-test-secret-openai0",
@@ -119,7 +129,7 @@ class RequestTests(_Transport):
         self.assertEqual(str(req.url), "https://oa.example.test/v1/chat/completions")
         self.assertEqual(req.headers["authorization"], "Bearer fixed-test-secret-openai0")
         self.assertNotIn("x-opencode-session", req.headers)
-        self.assertNotEqual(req.headers.get("user-agent"), llm_http.GO_USER_AGENT)
+        self.assertNotEqual(req.headers.get("user-agent"), llm_http.go_user_agent())
         body = json.loads(req.content)
         self.assertEqual(body["model"], "gpt-6-luna")
         self.assertNotIn("user_id", body)

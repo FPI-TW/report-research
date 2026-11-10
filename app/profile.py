@@ -40,7 +40,7 @@
 
 市場代碼是框架固定的**標準市場代碼**（`app/services/tagging.py` 的 `MARKETS`，標註 prompt 與 `tests/test_tagging.py`
 逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
-廷豐 profile 的代碼與 findb 對齊，是廷豐的跨 repo 契約，不是框架的。
+個別 profile 與機構既有系統的代碼對齊（例如預設 profile 與 findb）是該 profile 的跨 repo 契約，不是框架的。
 
 ## 語系
 
@@ -57,15 +57,16 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
 
 ## 個股代號、發行機構、簡報作息
 
-這三項原本寫死在程式裡、對所有 profile 生效，其實是廷豐的假設；改由 profile 宣告後，廷豐 profile 宣告原值（零回歸）。
+這三項原本寫死在程式裡、對所有 profile 生效，其實是第一個導入機構的假設；改由 profile 宣告後，預設 profile
+宣告原值（零回歸）。
 
 - `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
   長度）。標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`；`tagging` 不 import
   本模組，規則由呼叫端傳入 `get_profile().instruments.normalize_code`）；總覽題從問句抓代號也依純數字格式的長度。
   標註 prompt 不變（它只要求 4 碼代碼），section 缺席＝只收 4 碼數字。
-- `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（廷豐 `sources.toml`），內容是檔名 token、內文指紋與顯示名稱；
-  比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構（只靠側檔的 `source`），
-  顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
+- `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（例如預設 profile 的 `sources.toml`），內容是檔名 token、
+  內文指紋與顯示名稱；比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構
+  （只靠側檔的 `source`），顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
 - `[brief]`：每日簡報幾點後才產生、回看窗與回看上限（`scripts/generate_brief.py`；命令列參數仍可覆寫）。
 """
 
@@ -107,6 +108,8 @@ class Institution:
     name_en: str = ""
     product_name_en: str = ""
     short_name_en: str = ""
+    # 機構的對外網址（選填，https）。只用在送給 LLM 供應商的自報身分（OpenCode Go 的 User-Agent），不出現在介面上。
+    website: str = ""
 
     def localized(self, locale: str) -> tuple[str, str, str]:
         """(機構名, 產品名, 簡稱)：英文介面先用 *_en，沒給就用原名。"""
@@ -142,7 +145,7 @@ class Branding:
 @dataclass(frozen=True)
 class PromptParams:
     # prompt 不開放覆寫，只注入這幾個參數。system_name 是 prompt 裡「你是『○○』…」對本系統的稱謂，
-    # system_name_en 是英文文案裡的同一個稱謂（廷豐 profile 刻意沿用中文名，與改動前逐字相同）。
+    # system_name_en 是英文文案裡的同一個稱謂（預設 profile 刻意沿用中文名，與改動前逐字相同）。
     system_name: str
     system_name_en: str
 
@@ -451,6 +454,8 @@ ASSET_CONTENT_TYPES = {
 # 強調色覆寫的鍵（profile.toml 的寫法）。對應的 CSS 變數由前端 `frontend/src/lib/branding.ts` 的
 # ACCENT_CSS_VARS 決定（tests/test_profile.py 對帳兩邊的鍵）。值只收 hex 或 rgb()／rgba()，
 # 因為它會被原樣寫進 <style>：任何其他寫法都可能是 CSS 注入。
+# 會原樣放進 HTTP header（User-Agent 的括號裡），所以不收空白、括號與引號。
+_WEBSITE = re.compile(r"https://[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?")
 ACCENT_TOKENS = frozenset({
     "accent_text", "accent_strong", "accent_hover", "accent_tint", "accent_line", "accent_panel",
     "on_accent", "accent_button",
@@ -479,10 +484,14 @@ def _section(name: str) -> Callable[[_Parser], _Parser]:
 
 @_section("institution")
 def _parse_institution(table: dict, ctx: _Ctx) -> Institution:
-    ctx.reject_unknown(table, {"name", "product_name", "short_name", "name_en", "product_name_en", "short_name_en"})
+    ctx.reject_unknown(table, {"name", "product_name", "short_name", "name_en", "product_name_en", "short_name_en",
+                               "website"})
     name = ctx.string(table, "name", max_len=40)
     product_name = ctx.string(table, "product_name", max_len=60)
-    return Institution(name=name, product_name=product_name,
+    website = ctx.string(table, "website", default="", max_len=120)
+    if website and not _WEBSITE.fullmatch(website):
+        raise ctx.error("website", f"只接受 https:// 開頭、不含空白與括號的網址：{website!r}")
+    return Institution(name=name, product_name=product_name, website=website,
                        short_name=ctx.string(table, "short_name", default=product_name, max_len=40),
                        name_en=ctx.string(table, "name_en", default="", max_len=80),
                        product_name_en=ctx.string(table, "product_name_en", default="", max_len=80),

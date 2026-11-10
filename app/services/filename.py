@@ -15,7 +15,7 @@ from typing import Optional
 from app.profile import Sources, get_profile
 
 # 發行機構（研報的 source）名單由 profile 提供（`[sources].catalog`，`app/profile.py` 的 `Sources`）：檔名 token、
-# 內文指紋與顯示名稱都是機構專屬的資料（廷豐的名單在 profiles/tingfong/sources.toml），本模組只放比對規則。
+# 內文指紋與顯示名稱都是機構專屬的資料（預設 profile 的名單在它目錄裡的 sources.toml），本模組只放比對規則。
 # 沒有名單的 profile 不從檔名或內文推斷發行機構，顯示名稱就是代碼本身。
 
 
@@ -197,14 +197,14 @@ def parse_filename(file_name: str) -> FilenameMeta:
 # ── 內文券商來源偵測 ──────────────────────────────────────────────────────────
 # 語料中約 67% 研報檔名不帶券商 token（如 daily story_/Takeaway_/速報/國際金融市場焦點），
 # 但內文一定載明發行機構。以高精度「發行機構指紋」補 source（名單是 profile 的 `text_signatures`
-# 與 `fallback_signatures`，廷豐的取捨理由寫在 profiles/tingfong/sources.toml）。
+# 與 `fallback_signatures`，各份名單的取捨理由寫在該 profile 的名單檔）。
 #
 # 關鍵：指紋只用「發行者自我指稱」形式（自有網站 URL、著作權聲明、「X投顧」、圖表自我標註），
 # 不用裸公司名——彙整型研報常「提及」其他機構，裸名會誤判。
 #
 # 偵測採「最早指紋優先」：發行機構自我指稱位於報頭（char≈0），他人提及在內文深處，
-# 故位置最前者即為發行者。`text_signatures` 子字串比對；`fallback_signatures`（廷豐是外資的
-# 拉丁指紋）詞邊界比對（避免 'ubs' 命中 'substrates'），且排在檔名之後、只在沒有前者時才採
+# 故位置最前者即為發行者。`text_signatures` 子字串比對；`fallback_signatures`（例如外資券商的
+# 拉丁字母指紋）詞邊界比對（避免 'ubs' 命中 'substrates'），且排在檔名之後、只在沒有前者時才採
 # （保護本土晨報「提及」外資估值的情形）。指紋字串一律小寫存放（比對前整段轉小寫；CJK 不受
 # lower() 影響；profile 載入時驗證）。
 

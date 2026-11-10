@@ -166,6 +166,20 @@ def _key_name() -> str:
 
 
 def load_llm_env() -> None:
+    try:
+        _load_llm_env_file()
+    finally:
+        _configure_llm_identity()
+
+
+def _configure_llm_identity() -> None:
+    """送給 LLM 供應商的自報身分取 profile 的 `[institution].website`（LLM 呼叫層是葉模組、不讀 profile）。"""
+    from app.profile import get_profile
+
+    llm_models.set_identity_url(get_profile().institution.website)
+
+
+def _load_llm_env_file() -> None:
     path = env_file_path()
     preset_empty = sorted(
         k for k in ALL_KEYS if os.environ.get(k) is not None and not (os.environ.get(k) or "").strip()

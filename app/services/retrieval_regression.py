@@ -69,7 +69,7 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BASELINE = REPO_ROOT / "data" / "retrieval_regression" / "baseline.json"
 # 重用凍結題集（不另建、不改它；`tests/test_eval_question_contract.py` 守內容）。基準記下它的 sha256，
-# 題集一變就不可比——改題集等於換一把尺，要重新擷取。這是預設（廷豐）；profile 自帶凍結題集
+# 題集一變就不可比——改題集等於換一把尺，要重新擷取。這是預設 profile 的題集；profile 自帶凍結題集
 # （`profiles/<名稱>/eval/questions.json`）時 CLI 改用那一份（`scripts/retrieval_regression.py` 的 `resolve_dataset`）。
 DATASET_REL = "eval/ragas_questions.json"
 DATASET = REPO_ROOT / DATASET_REL

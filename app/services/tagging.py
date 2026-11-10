@@ -5,7 +5,7 @@
 （`app/profile.py` 的 `[markets]`），不能新增代碼。標準詞彙未涵蓋的類別歸到最接近者
 （債券→MACRO、原物料→GLOBAL）。
 
-這組代碼與 findb 的市場分類（findb: app/models/canonical.py、scripts/seed_data.py）對齊——那是廷豐
+這組代碼與 findb 的市場分類（findb: app/models/canonical.py、scripts/seed_data.py）對齊——那是預設
 profile 的跨 repo 契約，不是框架的；`LEGACY_TO_FINDB` 等名稱沿用當時的命名。
 """
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# 標準市場代碼（大寫）；廷豐 profile 與 findb instruments.market 一致
+# 標準市場代碼（大寫）；預設 profile 與 findb instruments.market 一致
 MARKETS = ["TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"]
 
 # 市場代碼 → 顯示名稱（前端/報表用）
@@ -198,7 +198,7 @@ CodeRule = Callable[[object], Optional[str]]
 def normalize_stock_targets(value, *, normalize_code: CodeRule) -> list[str]:
     """正規化個股標的：只留通過 `normalize_code` 的值、去重保序、截斷到上限；非 list 回傳 []。
 
-    格式由 profile 的 `[instruments]` 宣告（廷豐只收「正好 4 碼數字」，section 缺席時也是這條）。
+    格式由 profile 的 `[instruments]` 宣告（預設 profile 只收「正好 4 碼數字」，section 缺席時也是這條）。
     防呆：擋掉把日期/頁碼（如 0209、Page 6）誤當代碼的情形。只改解析後的驗證，標註 prompt
     （`TAG_INSTRUCTION`，只要求 4 碼代碼）不變。
     """

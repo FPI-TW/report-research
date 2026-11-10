@@ -1,6 +1,6 @@
 """框架的導入排程（容器 scheduler 的 `connectors` 工作）：連接器輪詢入庫 → 下游批次，一輪一次。
 
-廷豐主機的對應是 `scripts/sync_new_reports.sh`（來源段是 NAS／R2 inbox，第 3 段匯入、第 4 段起下游）。
+systemd 主機的對應是 `scripts/sync_new_reports.sh`（來源段是 NAS／R2 inbox，第 3 段匯入、第 4 段起下游）。
 這支把「來源＋匯入」換成 `scripts/ingest_connectors.py`，**下游照抄 sync 鏈第 4 段起的步驟與參數**：
 
 1. `ingest_connectors.py --hashes-out <本輪 hashes>`：本輪成功入庫的 file_hash。
@@ -15,7 +15,8 @@
 本輪新研報只把 `report_date` 在 profile `[backfill].recent_months` 窗期內的（第二層）交給摘要、標題、摘錄；窗期外與
 `report_date` 為 NULL 的留給第三層背景補齊（`scripts/backfill_tiers.py --tier 3`，受每日上限）。訊號與標題積壓段帶
 `--min-report-date <窗期起點>`，同樣只補第二層。不這樣做的話，首次導入的數萬份舊檔會全部當第二層付費，積壓段也會
-繞過背景補齊的每日上限。查不到本輪研報的日期時（DB 錯誤）退回不分層、照殼的行為跑，並記一行。廷豐走 sync 殼，不受影響。
+繞過背景補齊的每日上限。查不到本輪研報的日期時（DB 錯誤）退回不分層、照殼的行為跑，並記一行。
+systemd 主機走 sync 殼，不受影響。
 
 各步驟是獨立的行程，照舊各自取 LLM 批次鎖（`scripts/_claude_lock.py`）、各自載入 LLM 環境；這支本身不呼叫 LLM。
 下游步驟是 best-effort（失敗只記一行、照常往下跑），與 sync 殼相同。

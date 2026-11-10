@@ -100,7 +100,7 @@ def _plan_specs() -> list[tuple[str, str | None, str, str]]:
     # 未啟用市場（示範 profile 只開 TW／US／MACRO）的研報照常入庫：子集管的是篩選，不是可見性。
     specs += [("HK", "0700", "birch", "full")]
     # 美股 NVDA 補到訊號子集的門檻（≥3 家券商、≥5 份）：沒有側檔或側檔不給 stock_targets 的這幾份要經標註
-    # 才有標的，profile 的 [instruments] 收字母 ticker 時美股才進得了訊號與雷達（廷豐的 4 碼規則會全部丟掉）。
+    # 才有標的，profile 的 [instruments] 收字母 ticker 時美股才進得了訊號與雷達（預設 profile 的 4 碼規則會全部丟掉）。
     # 加在最後：不改動前面各份的索引（i % 9 決定落在哪一層）。
     specs += [("US", "NVDA", "birch", "none"), ("US", "NVDA", "cobalt", "partial")]
     return specs

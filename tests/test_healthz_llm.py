@@ -182,7 +182,7 @@ class ProbeJudgementTests(_Base):
         req = self.requests[0]
         self.assertEqual(str(req.url), f"{go_base}/models")
         self.assertEqual(req.headers["authorization"], f"Bearer {FAKE_KEY}")
-        self.assertEqual(req.headers["user-agent"], llm_http.GO_USER_AGENT)
+        self.assertEqual(req.headers["user-agent"], llm_http.go_user_agent())
 
     def test_no_low_state_and_no_balance_logic(self):
         """沒有餘額可查就沒有「快用完」：LOW、judge_balance、fetch_balance 都移除，FAILING 不含它。"""

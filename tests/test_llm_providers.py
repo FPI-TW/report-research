@@ -206,6 +206,10 @@ class GoldenWireTests(_Case):
     """openai／opencode_go 的 URL、header、body 與加入其他 provider 之前錄下的逐字相同（body 比位元組）。"""
 
     async def test_requests_match_the_golden_recording(self):
+        # 自報身分由載入 profile 的入口設定（tests/test_llm_identity.py 釘住兩處）；這裡照預設 profile 設定。
+        from app.profile import get_profile
+
+        lm.set_identity_url(get_profile().institution.website)
         for prov, (key_env, key) in GOLDEN_KEYS.items():
             with self.subTest(prov=prov), mock.patch.dict(os.environ, {
                 "LLM_PROVIDER": prov, key_env: key, "OPENAI_BASE_URL": "", "OPENCODE_GO_BASE_URL": "",

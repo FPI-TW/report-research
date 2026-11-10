@@ -405,7 +405,7 @@ async def run_check(
 
 def resolve_dataset(profile: str | None, env=None) -> Path:
     """要比的凍結題集：`--profile` 指定的那份；沒指定時，目前的 profile（`PROFILE_DIR`）自帶凍結題集就用它，
-    否則是 repo 的 `eval/ragas_questions.json`（廷豐，行為不變）。profile 的題集先核對凍結指紋，不合格拋
+    否則是 repo 的 `eval/ragas_questions.json`（預設 profile 的題集，行為不變）。profile 的題集先核對凍結指紋，不合格拋
     `profile_eval.EvalProfileError`。容器的 scheduler 只在 profile 自帶題集時才自動排這個工作
     （`deploy/container/scheduler.py`）。"""
     if profile is not None:

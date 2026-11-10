@@ -11,7 +11,7 @@
 
 - `folder`：監看本機資料夾。券商自己的 SMB／NFS 由主機（或 compose volume）掛上，框架不做 mount。
   `fetch()` 什麼都不做，檔案本來就在 `path`。
-- `s3`：S3 相容 bucket 的某個 prefix（`s3.S3Connector`），拉到 `landing`。廷豐的 R2 inbox 是它的一個實例
+- `s3`：S3 相容 bucket 的某個 prefix（`s3.S3Connector`），拉到 `landing`。主機層 sync 殼的 R2 inbox 是它的一個實例
   （`scripts/r2_inbox.py pull` 與它共用 `s3.pull`）。
 - `plugin`：profile 的 `plugins/<名稱>.py`。**只載入 profile 以名稱明確引用的那一個檔**（`[connectors.sources.x]`
   的 `plugin = "<名稱>"`，`app/profile.py` 驗證檔案存在），不掃描目錄、不自動 import 其他檔。plugin 模組要

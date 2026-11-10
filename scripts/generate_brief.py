@@ -12,7 +12,7 @@
 判斷「今天要不要跑」：
 
 - 當日已有列 → 直接 no-op 退出（唯一的冪等依據是 report_brief 的 UNIQUE(brief_date)）
-- 本地時間未到 --after-hour（預設取 profile 的 `[brief].after_hour`，廷豐 9 時）→ 不跑。券商早報上午才
+- 本地時間未到 --after-hour（預設取 profile 的 `[brief].after_hour`，預設 profile 是 9 時）→ 不跑。券商早報上午才
   進來，太早跑的簡報會漏掉當天大半內容，而一天只寫一列、寫了就不會再改
 - 窗期內既無新研報也無評等變動 → **不寫列**，下一輪再看。寫一列「今天沒事」會讓
   當天稍晚真的有素材時再也補不上（UNIQUE 擋著），而「今天沒事」對讀者沒有價值
@@ -23,7 +23,8 @@
 
 - 排程（今天、還沒有列）：上一份的 window_end → 現在；沒有上一份時取最近 24 小時
   （另有 --max-lookback-days 上限，避免久未執行後一次把幾週的東西全塞進 prompt）。
-  時數與上限的預設取 profile 的 `[brief]`（`default_lookback_hours`、`max_lookback_days`，廷豐 24 小時、7 天）。
+  時數與上限的預設取 profile 的 `[brief]`（`default_lookback_hours`、`max_lookback_days`，預設 profile 是
+  24 小時、7 天）。
 - 目標日已有列（--force）：沿用該列存的窗期，不重算。素材與該份簡報當初看到的是同一段，
   前後的簡報也不受影響。
 - 補過去的日子（目標日還沒有列）：起點是目標日之前最近一份的 window_end；終點是目標日之後
@@ -85,7 +86,7 @@ CLI_TIMEOUT = 300
 MAX_TOKENS = 8192
 
 # 作息（幾點後才產生、沒有前一份簡報時的回看窗、回看上限）是 profile 的 `[brief]`（`app/profile.py` 的 `Brief`）：
-# 券商早報幾點進來是機構的作息，不是框架的。廷豐是 9 時、24 小時、7 天。
+# 券商早報幾點進來是機構的作息，不是框架的。預設 profile 是 9 時、24 小時、7 天。
 
 
 def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optional[str], Optional[str]]:

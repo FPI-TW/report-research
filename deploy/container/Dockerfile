@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# 廷豐智能研報（通用框架）的應用映像：一份映像、四個角色（web／worker／scheduler／migrate），
+# 券商研報平台的應用映像：一份映像、四個角色（web／worker／scheduler／migrate），
 # 由 entrypoint 的第一個參數決定（deploy/container/entrypoint.py）。說明見 docs/CONTAINER_DEPLOYMENT.md。
 #
 # 建置（context 是 repo 根；.dockerignore 也在 repo 根）：

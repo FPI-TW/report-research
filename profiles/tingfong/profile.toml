@@ -6,6 +6,8 @@
 name = "廷豐"
 product_name = "廷豐智能研報"
 short_name = "廷豐研報"
+# 對外網址：只用在送給 LLM 供應商的自報身分（OpenCode Go 的 User-Agent；tests/fixtures/llm_wire_golden.json 逐字釘住）。
+website = "https://research.tingfong.com"
 
 # 英文介面用的名稱（name_en、product_name_en、short_name_en）沒給：英文介面沿用上面的中文原名。
 

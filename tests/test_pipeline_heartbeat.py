@@ -297,6 +297,29 @@ class FeedStateTests(unittest.TestCase):
         feed = self._feed()
         self.assertEqual((feed["result"], feed["push"]), ("rsync_failed", "none"))
 
+    def test_rsync_vanished_files_is_a_warning(self):
+        """rc=24（列檔後檔案消失，例如 LINE bot 的 `.linebot_health_probe`）不中止：已傳的照常匯入。
+
+        2026-11-09 18:00 起改掛子資料夾後每輪都撞到這個探測檔，rc=24 被當失敗，連續十多輪沒有入庫。
+        """
+        self.h.rsync_rc = 24
+        self.h._write_fakes()
+        env = {"SYNC_SOURCE": "nas", "SYNC_INBOX_PUSH": "1"}
+        p = self.h.run(**env)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        feed = self._feed(**env)
+        self.assertEqual((feed["result"], feed["push"], feed["new_files"]), ("ok", "ok", 1))
+        ids = (self.h.root / "round_ids").read_text(encoding="utf-8")
+        self.assertIn("sync_new_reports ", ids, "rc=24 之後應該照常跑匯入")
+
+    def test_rsync_excludes_hidden_files(self):
+        """點開頭的隱藏檔（探測檔、.DS_Store 之類）不進鏡像、不進 delta。"""
+        args = self.h.root / "rsync_args"
+        self.h._fake("rsync", f'printf "%s\\n" "$@" > "{args}"\ncat "{self.h.delta_file}"\n')
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("--exclude=.*", args.read_text(encoding="utf-8").splitlines())
+
     def test_mount_failure(self):
         self.h._fake("mountpoint", "exit 1\n")
         p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="1")

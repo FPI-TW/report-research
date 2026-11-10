@@ -484,10 +484,16 @@ else
   # `|| RC=$?` 不可省：本檔開頭是 set -e，裸呼叫失敗會就地中止，下面那行 `RC=$?`
   # 永遠讀到 0 而且根本執行不到——2026-07-28 起連續 10 輪匯入失敗，日誌就只停在
   # 「增量匯入 delta…」，事後完全看不出敗在哪一步（見下方同型修正）。
+  #    --exclude='.*'：點開頭的隱藏檔不是研報。LINE bot 的 /health 會在研報資料夾建了又刪
+  #    `.linebot_health_probe`（確認 NAS 可寫）；改掛子資料夾之後 rsync 每輪都掃到它，回 rc=24
+  #    整輪中止，2026-11-09 18:00 起連續十多輪沒有入庫，已落地的新檔還因 --size-only 不再進 delta。
+  #    rc=24（列檔後、傳送前檔案消失）同樣只當警告：消失的檔不會出現在 delta，其餘已傳的照常匯入；
+  #    真的研報若在傳送途中被改名，下一輪會以新名字再傳。
   RC=0
-  rsync -rt --size-only --no-motd --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG" || RC=$?
+  rsync -rt --size-only --no-motd --exclude='.*' --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG" || RC=$?
   NEW=$(grep -cvE '/$' "$DELTA" 2>/dev/null || echo 0)
   log "rsync rc=$RC，本次新傳檔列≈${NEW}"
+  if [ "$RC" -eq 24 ]; then log "rsync rc=24（部分檔案在傳送前消失）→ 視為警告，繼續匯入已傳的 ${NEW} 份"; RC=0; fi
   if [ "$RC" -ne 0 ]; then write_feed_state rsync_failed "$NEW" none; log "rsync 失敗 → 結束"; exit 1; fi
 
   # 2b) 把這一輪的新檔推到 R2 inbox，給沒有 NAS 的部署拉（SYNC_INBOX_PUSH=1 才做）。

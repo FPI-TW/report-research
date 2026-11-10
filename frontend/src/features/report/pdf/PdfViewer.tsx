@@ -123,12 +123,11 @@ function writeThumbsPref(open: boolean): void {
  * 選取高亮色。SelectionLayer 以 `mixBlendMode: multiply` 疊色，所以要給**不透明**的
  * 淺色（像螢光筆：白底變成該色、黑字仍是黑字），不是半透明色。
  *
- * 刻意比全站 `::selection` 的 `--tf-gold-tint`(#f8f1e0) 深一階，取 `--tf-gold-line`
- * 的值：那個 tint 是為了配深色網頁底色調的，疊在 PDF 的白紙上幾乎看不見。
- * 值寫死而非讀 CSS 變數，因為這是傳給外掛的 inline style 字串、拿不到 CSS Modules 的類別。
- * 改 tokens.css 的金色系時記得一起看這裡。
+ * 刻意比全站 `::selection` 的 `--tf-gold-tint` 深一階，取 `--tf-gold-line`：那個 tint 是為了配
+ * 深色網頁底色調的，疊在 PDF 的白紙上幾乎看不見。這是傳給外掛的 inline style（`background`），拿不到
+ * CSS Modules 的類別，但 CSS 變數照樣解析，所以跟著 profile 的強調色走。
  */
-const SELECTION_TINT = '#ead9ae'
+const SELECTION_TINT = 'var(--tf-gold-line)'
 
 /** 文件內搜尋的命中色（交接包：目前命中橘色、其他命中淡黃）。同樣是傳給外掛的 inline style。 */
 const FIND_HIT = 'rgba(255, 214, 10, 0.4)'

@@ -74,8 +74,9 @@ class TingfongProfileTests(unittest.TestCase):
         # 全部標準市場啟用；顯示名稱就是標準名稱（零回歸）。
         self.assertEqual(set(prof.markets.enabled), set(MARKETS))
         self.assertEqual(dict(prof.markets.display_names), MARKET_DISPLAY)
-        # 強調色不覆寫（tokens.css 的鎏金即廷豐色票）。
-        self.assertEqual((dict(prof.branding.colors_light), dict(prof.branding.colors_dark)), ({}, {}))
+        # 強調色明確宣告鎏金（框架預設是中性色票）；廷豐畫面逐變數不變由 tests/test_brand_accent.py 比對。
+        self.assertEqual((prof.branding.colors_light["accent_strong"], prof.branding.colors_dark["accent_strong"]),
+                         ("#ae7415", "#d4a64a"))
         self.assertEqual(prof.institution.website, "https://research.tingfong.com")
         self.assertEqual(sorted(prof.branding.assets()), ["favicon.svg", "logo.png"])
 

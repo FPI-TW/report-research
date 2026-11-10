@@ -13,7 +13,7 @@ logo_light = "logo.svg"
 logo_dark = "logo-dark.svg"
 favicon = "favicon.svg"
 
-# 強調色：青綠（廷豐沿用 tokens.css 的鎏金預設）。鍵見 app/profile.py 的 ACCENT_TOKENS。
+# 強調色：青綠（框架預設是中性的石板藍、廷豐宣告鎏金）。鍵見 app/profile.py 的 ACCENT_TOKENS。
 [branding.colors.light]
 accent_text = "#0f6e6a"
 accent_strong = "#13857f"

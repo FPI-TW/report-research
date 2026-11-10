@@ -121,6 +121,25 @@ def _lang_switch(locale: str) -> str:
     return "".join(links)
 
 
+# profile 的強調色鍵（`app/profile.py` 的 `ACCENT_TOKENS`）→ 登入頁 `:root` 的 CSS 變數。登入頁只有亮色、不載入
+# SPA 的 tokens.css，所以只接這四個；login.html 裡半透明的強調色都由它們以 color-mix 算出。
+LOGIN_ACCENT_VARS = {
+    "accent_text": "--tf-gold-text",
+    "accent_hover": "--gold-hover",
+    "accent_strong": "--gold-ink",
+    "accent_tint": "--gold-tint",
+}
+
+
+def _brand_colors_style(colors: dict[str, str]) -> str:
+    """profile 的亮色強調色寫成一段 <style>（排在 login.html 的樣式之後才蓋得過預設）；沒覆寫就是空字串。
+
+    色值在 profile 載入時已嚴格驗證（只收 #hex 與 rgb()/rgba()），這裡不再跳脫：它是 CSS 值，不是 HTML。
+    """
+    decls = [f"{var}: {colors[key]};" for key, var in LOGIN_ACCENT_VARS.items() if key in colors]
+    return f"<style>:root {{ {' '.join(decls)} }}</style>" if decls else ""
+
+
 def _login_page(locale: str = "zh-Hant") -> HTMLResponse:
     """登入頁：`web/static/login.html` 填上 profile 的品牌後回傳，並標記 no-cache（改版後免強制重整）。
 
@@ -128,6 +147,7 @@ def _login_page(locale: str = "zh-Hant") -> HTMLResponse:
     機構名不像樣，而且這頁刻意不載入任何外部 script。替換的值一律 HTML 跳脫；`{{brand_logo}}` 在 profile 沒有
     logo 時換成空字串（版面照常，只少一張圖）。每次都回 200 全量 body（約 50 KB，成本可忽略）。
     `{{sso_mode}}`／`{{login_hint}}`：OIDC 單一登入的模式（`OIDC_ISSUER` 沒設＝off，與沒有這個功能時同一個畫面）。
+    `{{brand_colors}}`：profile 的強調色覆寫（`_brand_colors_style`；沒覆寫時頁面是框架的中性預設）。
 
     介面字串在 `web/static/login.i18n.json`：`{{t:鍵}}` 換成 HTML 跳脫的字、`{{tjs:鍵}}` 換成 JS 字串字面值，語系由
     `login_locale` 決定。先換字串再換品牌：標題的字串裡帶 `{{product_name}}`。品牌名稱依語系
@@ -155,7 +175,9 @@ def _login_page(locale: str = "zh-Hant") -> HTMLResponse:
         "{{favicon_link}}", f'<link rel="icon" href="{html.escape(favicon)}" />' if favicon else "",
     ).replace("{{product_name}}", name).replace("{{sso_mode}}", sso_mode).replace(
         "{{login_hint}}", html.escape(text(f"hint_{sso_mode}")),
-    ).replace("{{lang}}", html.escape(locale)).replace("{{lang_switch}}", _lang_switch(locale))
+    ).replace("{{lang}}", html.escape(locale)).replace("{{lang_switch}}", _lang_switch(locale)).replace(
+        "{{brand_colors}}", _brand_colors_style(brand["colors"]["light"]),
+    )
     return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 

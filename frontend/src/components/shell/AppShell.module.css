@@ -21,7 +21,7 @@
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(1200px 800px at 0% 0%, rgba(174, 116, 21, 0.045), transparent 62%),
+    radial-gradient(1200px 800px at 0% 0%, color-mix(in srgb, var(--tf-gold-strong) 4.5%, transparent), transparent 62%),
     radial-gradient(1000px 700px at 100% 100%, rgba(44, 44, 46, 0.03), transparent 60%);
 }
 

@@ -173,7 +173,7 @@
   background-color: rgba(0, 0, 0, 0.18);
 }
 .viewport::-webkit-scrollbar-thumb:active {
-  background-color: rgba(138, 90, 15, 0.55);
+  background-color: color-mix(in srgb, var(--tf-gold-text) 55%, transparent);
 }
 .viewport:focus-visible {
   box-shadow: inset 0 0 0 2px var(--tf-gold-text);
@@ -211,19 +211,19 @@
 .hit {
   position: absolute;
   border-radius: 2px;
-  background: rgba(174, 116, 21, 0.3);
-  box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3);
+  background: color-mix(in srgb, var(--tf-gold-strong) 30%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf-gold-strong) 30%, transparent);
   mix-blend-mode: multiply;
   animation: pdfHit 1.4s var(--tf-ease-apple) both;
 }
 @keyframes pdfHit {
   0% {
-    background: rgba(174, 116, 21, 0.6);
-    box-shadow: 0 0 0 6px rgba(174, 116, 21, 0.25);
+    background: color-mix(in srgb, var(--tf-gold-strong) 60%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--tf-gold-strong) 25%, transparent);
   }
   100% {
-    background: rgba(174, 116, 21, 0.3);
-    box-shadow: 0 0 0 2px rgba(174, 116, 21, 0.3);
+    background: color-mix(in srgb, var(--tf-gold-strong) 30%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--tf-gold-strong) 30%, transparent);
   }
 }
 

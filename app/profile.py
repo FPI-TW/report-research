@@ -459,6 +459,8 @@ _WEBSITE = re.compile(r"https://[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*
 ACCENT_TOKENS = frozenset({
     "accent_text", "accent_strong", "accent_hover", "accent_tint", "accent_line", "accent_panel",
     "on_accent", "accent_button",
+    # 只覆寫管理後台的線色與選取底色（沒給時沿用 accent_line／accent_panel；對照見 frontend/src/lib/branding.ts）
+    "console_accent_line", "console_accent_panel",
 })
 _COLOR = re.compile(
     r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?"

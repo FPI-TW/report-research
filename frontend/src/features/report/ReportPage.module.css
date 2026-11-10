@@ -58,7 +58,7 @@
   background-color: rgba(0, 0, 0, 0.18);
 }
 .intel::-webkit-scrollbar-thumb:active {
-  background-color: rgba(138, 90, 15, 0.55);
+  background-color: color-mix(in srgb, var(--tf-gold-text) 55%, transparent);
 }
 
 /* 摘要是面板的主體，字級提到內文級 */

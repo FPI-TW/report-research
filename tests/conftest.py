@@ -122,6 +122,8 @@ os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
 # 冷卻狀態檔預設落在 repo 根的 data/，指到不存在的目錄（開不了檔＝冷卻失效、不寫部署目錄）。要驗的測試自己給
 # URL、MockTransport 與 tempfile。
 os.environ["ALERT_WEBHOOK_URL"] = ""
+# 簡報截斷的診斷檔（scripts/generate_brief.truncation_log_path；預設 repo 根的 data/brief_truncated.log）：同理用賦值。
+os.environ["BRIEF_TRUNCATION_LOG"] = os.devnull
 os.environ["ALERT_WEBHOOK_STATE_FILE"] = "/nonexistent/report-mark-alert-webhook/state.json"
 # 應用層監控訊號（app/config.py 的 LOG_FORMAT／METRICS_*）：部署目錄 .env 或執行者 shell 的值不滲進測試
 # （LOG_FORMAT=json 會讓 caplog 以外的斷言看到另一種格式；METRICS_* 會改變 /metrics 的存取判定）。空值＝預設。

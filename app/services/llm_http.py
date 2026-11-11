@@ -1315,13 +1315,18 @@ async def probe_endpoint(timeout: float = PROBE_TIMEOUT) -> ProbeResult:
 # ── 批次：同步呼叫 ───────────────────────────────────────────────────────────
 @dataclass
 class ChatResult:
-    """批次呼叫結果。`text is None` 時 `error` 必有值，且以 `API[<kind>]` 開頭。"""
+    """批次呼叫結果。`text is None` 時 `error` 必有值，且以 `API[<kind>]` 開頭。
+
+    `partial`：只在截斷（`TRUNCATED`）時帶回已收到的文字，給呼叫端留診斷用；**不可當成結果使用**
+    （批次沒有「部分成功」，見 `complete_chat`）。
+    """
 
     text: str | None
     error: str | None
     kind: str | None
     attempts: int = 1
     outcome: ChatOutcome = field(default_factory=lambda: ChatOutcome(kind=None))
+    partial: str | None = None
 
 
 def _timed_out_kind(deadline: float) -> str:
@@ -1502,7 +1507,7 @@ def complete_chat(
         detail = f"max_tokens={max_tokens}"
     return ChatResult(
         text=None, error=error_string(out.kind, detail), kind=out.kind,
-        attempts=attempts, outcome=out,
+        attempts=attempts, outcome=out, partial=(text or None) if out.kind == TRUNCATED else None,
     )
 
 

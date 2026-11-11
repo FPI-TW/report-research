@@ -288,6 +288,8 @@ class HttpDispatchTests(_HttpCase):
                 res = self.call()
                 self.assertIsNone(res.text)
                 self.assertTrue(res.error.startswith(prefix), res.error)
+                self.assertEqual(res.partial, "半" if prefix == "API[truncated]" else None,
+                                 "只有截斷帶回已收到的文字（診斷用）")
                 self.assertNotIn("\t", res.error)
                 self.assertNotIn("\n", res.error)
                 self.assertEqual(len(self.requests), 1)

@@ -167,6 +167,8 @@ class CliResult(NamedTuple):
     text: Optional[str]
     error: Optional[str]
     model_resp: Optional[str] = None
+    # 截斷時已收到的文字（`llm_http.ChatResult.partial`），只給呼叫端留診斷；不是結果。
+    partial: Optional[str] = None
 
 
 # 傳輸層退避用的 sleep；測試把它換成記錄器，免得真的等 2／6 秒。
@@ -552,5 +554,5 @@ def _run_http(
         # 只有伺服器真的回了 400 才參與升級；本機編碼失敗（status 為 None）是單篇輸入
         _BAD_REQUESTS.observe(out.detail, meta.get("file_hash"))
     if result.text is None:
-        return CliResult(None, result.error)
+        return CliResult(None, result.error, partial=result.partial)
     return CliResult(result.text, None, out.model_resp)

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import uuid
 from datetime import date as date_cls
@@ -75,6 +76,10 @@ from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "brief_failures.log"
+# 截斷時模型已輸出的頭尾（診斷用，不進 DB）。`BRIEF_TRUNCATION_LOG` 只給測試用（conftest 指到 os.devnull）。
+_TRUNCATION_EXCERPT_CHARS = 2000
+# 截斷時同一輪再打幾次（見 `generate` 裡的說明）。
+TRUNCATION_RETRIES = 1
 # BRIEF_MODEL 旋鈕，未設時查預設表（app/services/llm_models.py）；--model 可覆寫。
 MODEL = resolve_model(TASK_BRIEF)
 
@@ -97,7 +102,34 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
     那是「這一天產生失敗」的紀錄，帳號與設定問題不是）。
     """
     res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
+    if res.error and error_kind(res.error) == "truncated":
+        record_truncation(model, res.partial)
     return res.text, res.error
+
+
+def truncation_log_path() -> Path:
+    return Path(os.environ.get("BRIEF_TRUNCATION_LOG") or ROOT / "data" / "brief_truncated.log")
+
+
+def record_truncation(model: str, partial: Optional[str]) -> None:
+    """截斷時把模型已輸出的頭尾各 `_TRUNCATION_EXCERPT_CHARS` 字追加到診斷檔。best-effort，寫不進去不影響流程。
+
+    2026-11-09、11-10 兩天的簡報都寫滿 MAX_TOKENS，同一份素材事後重打三次卻都在 900 多 token 正常結束：
+    看起來是模型偶發的重複輸出。當時傳輸層把截斷的內容丟掉了，看不出重複的是什麼——這個檔就是為了下一次。
+    """
+    text = partial or ""
+    if len(text) > 2 * _TRUNCATION_EXCERPT_CHARS:
+        body = f"{text[:_TRUNCATION_EXCERPT_CHARS]}\n…（中略 {len(text) - 2 * _TRUNCATION_EXCERPT_CHARS} 字）…\n" \
+               f"{text[-_TRUNCATION_EXCERPT_CHARS:]}"
+    else:
+        body = text
+    try:
+        path = truncation_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"=== {datetime.now(timezone.utc).isoformat()} model={model} chars={len(text)} ===\n{body}\n")
+    except OSError:
+        pass
 
 
 def record_failure(target: date_cls, reason: str, model: str = "") -> None:
@@ -113,7 +145,8 @@ def record_failure(target: date_cls, reason: str, model: str = "") -> None:
 
 # 同一天同一個 model 出現過就不再重打的失敗 kind（`blocked_today`）。
 #   - content_filter：素材是上一次的超集，幾乎一定再被擋。
-#   - truncated（`finish_reason=length`，撞到 MAX_TOKENS）：素材只會更多，同一個上限只會截得更早。
+#   - truncated（`finish_reason=length`，撞到 MAX_TOKENS）：`generate` 已在同一輪重打過一次仍截斷才記進來；
+#     之後的輪次素材只會更多，再打多半一樣，所以今天不再重試。
 # **期限型截斷（`timeout_streamed`）刻意不在這裡**：它可能只是供應商暫時變慢，下一輪常常就好。
 _BLOCKING_KINDS = frozenset({"content_filter", "truncated"})
 
@@ -267,8 +300,15 @@ async def generate(args) -> int:
     # 一天一次。若照其他批次的慣例在 main 進入點取鎖，其餘七次 no-op 都會在訊號或
     # 標題批次執行中撞鎖 rc=75，於是 unit_failures 每天多七筆「失敗」——那個檔是
     # OnFailure 告警的落點，灌滿雜訊等於把它廢掉。
+    # 截斷同一輪再打一次：同一份素材事後重打通常正常結束（見 `record_truncation`），而一次截斷若直接進
+    # blocked_today，就是一整天沒有簡報、sync 心跳停住。重打仍截斷才照下面記失敗、今天不再重試。
     with claude_cli_lock_or_exit("generate_brief"):
         raw, error = call_cli(prompt, args.model)
+        for _ in range(TRUNCATION_RETRIES):
+            if not (error and error_kind(error) == "truncated"):
+                break
+            print(f"[brief] {target} 輸出被截斷（撞到 MAX_TOKENS={MAX_TOKENS}），同一輪重試一次", file=sys.stderr)
+            raw, error = call_cli(prompt, args.model)
     if error:
         record_failure(target, error, args.model)
         if error_kind(error) == "content_filter":
@@ -282,9 +322,10 @@ async def generate(args) -> int:
             )
             return 1
         if error_kind(error) == "truncated":
-            # max_tokens 截斷：同上不寫列、今天不再重打（blocked_today）；處置是看素材量或調 MAX_TOKENS
+            # max_tokens 截斷（同一輪重打後仍截斷）：同上不寫列、今天不再重打（blocked_today）；
+            # 先看 data/brief_truncated.log 裡模型輸出了什麼，再決定是看素材量還是調 MAX_TOKENS
             print(
-                f"[brief] {target} 輸出被截斷（撞到 MAX_TOKENS={MAX_TOKENS}），本次跳過、不寫列"
+                f"[brief] {target} 重試後輸出仍被截斷（撞到 MAX_TOKENS={MAX_TOKENS}），本次跳過、不寫列"
                 f"（今天不再重試，隔天以新的窗期再試）：{error}",
                 file=sys.stderr,
             )

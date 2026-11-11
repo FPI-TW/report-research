@@ -10,6 +10,7 @@ import contextlib
 import io
 import os
 import sys
+import tempfile
 import time
 import unittest
 from dataclasses import replace
@@ -297,7 +298,7 @@ class _Session:
 class GenerateWindowTests(unittest.IsolatedAsyncioTestCase):
     """窗期要真的接到素材查詢與落庫上。不呼叫 LLM（call_cli 是假的）、不連 DB。"""
 
-    async def _generate(self, *, target, existing=None, previous=None, following=None, force=True):
+    async def _generate(self, *, target, existing=None, previous=None, following=None, force=True, replies=None):
         svc = generate_brief.brief_service
         args = argparse.Namespace(
             date=target.isoformat(), force=force, after_hour=0, dry_run=False, model="gpt-6-luna", max_lookback_days=7,
@@ -312,8 +313,13 @@ class GenerateWindowTests(unittest.IsolatedAsyncioTestCase):
             "upsert_brief": mock.AsyncMock(),
         }
         call_cli = mock.MagicMock(return_value=(ParseTests.BODY, None))
+        if replies is not None:
+            call_cli = mock.MagicMock(side_effect=replies)
         out = io.StringIO()
+        self.fail_log = Path(tempfile.mkdtemp()) / "brief_failures.log"
         with mock.patch.multiple(svc, **mocks), \
+                mock.patch.object(generate_brief, "FAIL_LOG", self.fail_log), \
+                contextlib.redirect_stderr(io.StringIO()), \
                 mock.patch.object(generate_brief, "SessionFactory", _Session), \
                 mock.patch.object(generate_brief, "call_cli", call_cli), \
                 mock.patch.object(generate_brief, "blocked_today", return_value=False), \
@@ -361,6 +367,71 @@ class GenerateWindowTests(unittest.IsolatedAsyncioTestCase):
         mocks["fetch_window_reports"].assert_not_awaited()
         mocks["upsert_brief"].assert_not_awaited()
         call_cli.assert_not_called()
+
+
+    async def test_truncation_is_retried_once_in_the_same_round(self):
+        """2026-11-09、11-10 兩天各截斷一次就一整天沒有簡報：同一份素材重打通常正常結束，同一輪先重打一次。"""
+        truncated = (None, "API[truncated] 輸出截斷：max_tokens=8192")
+        rc, mocks, call_cli, _ = await self._generate(target=NOV[4], replies=[truncated, (ParseTests.BODY, None)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(call_cli.call_count, 2)
+        mocks["upsert_brief"].assert_awaited_once()
+        self.assertFalse(self.fail_log.exists(), "重打成功就不記失敗（否則 blocked_today 會擋掉今天的其他輪次）")
+
+    async def test_truncated_twice_records_one_failure(self):
+        truncated = (None, "API[truncated] 輸出截斷：max_tokens=8192")
+        rc, mocks, call_cli, _ = await self._generate(target=NOV[4], replies=[truncated, truncated])
+        self.assertEqual(rc, 1)
+        self.assertEqual(call_cli.call_count, 1 + generate_brief.TRUNCATION_RETRIES)
+        mocks["upsert_brief"].assert_not_awaited()
+        lines = self.fail_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("API[truncated]", lines[0])
+
+    async def test_other_failures_are_not_retried(self):
+        rc, _, call_cli, _ = await self._generate(
+            target=NOV[4], replies=[(None, "API[content_filter] 內容審查"), (ParseTests.BODY, None)],
+        )
+        self.assertEqual(rc, 1)
+        call_cli.assert_called_once()
+
+
+class TruncationDiagnosticsTests(unittest.TestCase):
+    """截斷時把模型已輸出的頭尾留下來（data/brief_truncated.log），下一次才看得出模型在重複什麼。"""
+
+    def _call(self, partial):
+        from scripts._claude_cli import CliResult
+
+        log = Path(tempfile.mkdtemp()) / "brief_truncated.log"
+        res = CliResult(None, "API[truncated] 輸出截斷：max_tokens=8192", partial=partial)
+        with mock.patch.dict(os.environ, {"BRIEF_TRUNCATION_LOG": str(log)}), \
+                mock.patch.object(generate_brief, "run_claude", return_value=res):
+            text, error = generate_brief.call_cli("素材", "gpt-6-luna")
+        self.assertIsNone(text)
+        self.assertTrue(error.startswith("API[truncated]"))
+        return log.read_text(encoding="utf-8")
+
+    def test_short_output_is_kept_whole(self):
+        body = self._call("## 今日重點\n- 重複")
+        self.assertIn("model=gpt-6-luna chars=12", body)
+        self.assertIn("## 今日重點\n- 重複", body)
+
+    def test_long_output_keeps_head_and_tail(self):
+        n = generate_brief._TRUNCATION_EXCERPT_CHARS
+        body = self._call("頭" * n + "中" * 50 + "尾" * n)
+        self.assertIn("頭" * n, body)
+        self.assertIn("尾" * n, body)
+        self.assertNotIn("中", body.replace("中略", ""))
+        self.assertIn("中略 50 字", body)
+
+    def test_unwritable_log_does_not_break_the_call(self):
+        from scripts._claude_cli import CliResult
+
+        res = CliResult(None, "API[truncated] 輸出截斷：max_tokens=8192", partial="x")
+        with mock.patch.dict(os.environ, {"BRIEF_TRUNCATION_LOG": "/nonexistent-root-dir/a/b.log"}), \
+                mock.patch.object(generate_brief, "run_claude", return_value=res), \
+                mock.patch.object(Path, "mkdir", side_effect=PermissionError("denied")):
+            self.assertEqual(generate_brief.call_cli("素材", "gpt-6-luna")[0], None)
 
 
 class SignalAgeBaseTests(unittest.IsolatedAsyncioTestCase):

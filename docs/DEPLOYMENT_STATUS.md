@@ -7,7 +7,7 @@
 最後一次整份查證：2026-10-13，兩個環境的程式都在 main `58e2e4f`。
 
 - **環境角色與站序**：見 `AGENTS.md`「環境角色與資料安全」。
-- **schema 版本**（2026-10-13）：兩個環境都在 revision 0011（目前的 head）。
+- **schema 版本**：測試環境（2026-11-10）在 revision 0014（目前的 head）；正式環境（2026-10-13）在 0011，**落後 0012～0014**，換程式前要先套。
 - **正式環境（EC2）**（2026-10-13）：
   - 已裝並啟用：`report-mark-web`、`report-mark-ops-agent-staging`，以及 sync、freshness、audit、r2-reconcile、schema-check、db-snapshot、analytics-rollup、security-retention 的 timer，和 health／incident、edge-health／edge-incident、security-health／security-incident、feed-health／feed-incident 四組探針與事件。
   - 沒裝：監控收集與匯入（metrics、load-observations、rollup-observations）、容器與主機探針（container-*、host-*）、linebot 探針、應用層備份（backup）、稽核錨定（audit-anchor）、檢索回歸（retrieval-regression）、上傳 worker（upload）與 ClamAV、回填（backfill）、信標發布（beacon）。本專案在 EC2 不用容器。
@@ -18,7 +18,9 @@
 - **來源主機信標**（2026-10-13）：兩台都已啟用——辦公室主機設 `HOST_BEACON_NAME=office` 並跑 `report-mark-beacon.timer`，EC2 設 `HOST_BEACON_WATCH=office` 並跑 feed-health／feed-incident。**告警還沒演練過**（沒有實際驗證過失聯或推送失敗時通知會送達）。處置與停用見 `docs/production_resilience.md`「來源主機信標」。
 - **開關**（2026-10-13）：兩個環境的環境檔都沒有設 `UPLOAD_ENABLED`、`QUOTA_ENFORCE`、`ADMIN_MFA_REQUIRED`，走程式預設（關、影子模式、關；`app/config.py`）；都設 `ASK_ENABLE_WEB=0`；功能旗標沒有任何 DB 覆寫（`ask.web_search` 的預設是關，`app/services/feature_flags.py`）。
 - **網搜**（repo 可查）：沒有後端（尚未實作），後端對網搜請求一律以設定錯誤拒絕，前端 `frontend/src/lib/useWebSearch.ts` 依功能旗標隱藏開關。後端完成後把 `ASK_ENABLE_WEB` 設 1、再到管理後台「功能旗標」覆寫開啟即可，前端不必改。
-- **程式版本**：正式環境（2026-11-02）的部署目錄在 main `a91e3511`（含 #393、#394），已重啟 web 與維運代理。測試環境（2026-11-05）的部署目錄在 main `6d0fc572`（含 #396、#398），批次下一輪就用新版；web 上次重啟是 2026-11-02 16:38（#394 之前），`llm_http` 的 403 修正要等下次重啟才生效（OpenCode Go 路徑不受影響），前端與維運代理在 `2173be7d`（#393）。前端以 `vite build --outDir dist.new` 建置後換版，上一版留在部署目錄的 frontend/dist.prev 可回滾。正式環境切換前的 RDS 快照 `report-research-pre-openai-20261102`；環境檔原檔備份 `.env.bak-20261102`、`/etc/default/report-mark-llm.bak-20261102`。
+- **程式版本**：正式環境（2026-11-02）的部署目錄在 main `a91e3511`（含 #393、#394），已重啟 web 與維運代理；通用框架化（#416）與 sync 的 rsync 修正（#417）都還沒上。測試環境（2026-11-10）的部署目錄在 main `ade7496b`（含 #416、#417）：已套 0012～0014、`make build-web`、`make build-info`、重啟 web、`make edge-reload`，`/healthz`、`/readyz`、`/healthz/security`、`/healthz/llm` 皆 ok，profile 為 `profiles/tingfong`；維運代理與 unit 沒有變更、未重裝。測試環境的部署形態仍是 systemd 主機安裝，改跑 compose 尚未進行。前端以 `vite build --outDir dist.new` 建置後換版，上一版留在部署目錄的 frontend/dist.prev 可回滾。正式環境切換前的 RDS 快照 `report-research-pre-openai-20261102`；環境檔原檔備份 `.env.bak-20261102`、`/etc/default/report-mark-llm.bak-20261102`。
+- **sync 中斷與重放**（2026-11-10）：#400 改掛研報子資料夾後，LINE bot 健康檢查的 `.linebot_health_probe` 讓 rsync 每輪回 rc=24，2026-11-09 17:17 至 11-10 15:00 共 10 輪沒有入庫。#417 修正後 11-10 18:00 那輪 rsync 回 0、照常入庫。中斷期間落地的兩份 delta（11-10 09:00、12:00）已依「整批中止後的重放」補完：入庫 27 篇（另 1 篇內容重複）、摘要與標題 27 篇、摘錄 26 篇（1 篇被拒），並補推 R2 inbox（含 11-09 12:00 保留的 2 篇）；用過的 delta 已刪。
+- **每日簡報輸出截斷**（2026-11-10，待查）：11-09、11-10 兩天的簡報都寫滿 `max_tokens=8192` 被截斷、沒有寫入（平常輸出約 500～1,000 token，輸入只有 5.7k～7.4k），上一份成功的是 11-06。sync 殼因此判定「有一段異常」不更新心跳，`make freshness` 持續回 `UPSTREAM_STALE`，直到簡報恢復。
 - **封面索引表污染的修復**（2026-10-29）：#378／#387 之後新進研報在標註與訊號擷取前剔除索引表；既有資料已用 `scripts/repair_rating_index.py --apply` 修完（測試環境標的變動 772 篇、刪訊號 437 筆；正式環境 790 篇、441 筆；兩邊標註都 0 失敗），再以 `make signals` 補擷取（測試環境 546 篇全數成功；正式環境 549 篇、1 篇被拒）。修復前的 `stock_targets` 留在兩台部署目錄的 `data/repair_rating_index_targets_before_20261029.csv`；正式環境另有 RDS 快照 `report-research-pre-rating-index-20261029`。
 - **LLM 供應商**（2026-11-02）：兩個環境都用 `gpt-6-luna`。正式環境 `LLM_PROVIDER=openai`（OpenAI 官方端點，金鑰是限制權限的金鑰，沒有 Models 讀取權限，`/healthz/llm` 以 403 判斷已通過認證）；測試環境 `LLM_PROVIDER=opencode_go`。正式環境已驗證健康檢查、批次預檢與一題完整問答流程，**批次的第一輪（sync）與登入後的實際問答待確認**。兩邊環境檔都還留著 `DEEPSEEK_API_KEY` 舊鍵，正式環境另留 `OPENCODE_GO_API_KEY`，待刪。
 - **物件儲存與金鑰共用**（2026-11-02）：兩個環境都是 `OBJECT_STORAGE_MODE=r2`，共用同一個 R2 bucket：在測試環境刪改 R2 物件會影響正式環境。LLM 金鑰不再共用（正式 OpenAI、測試 OpenCode Go）。

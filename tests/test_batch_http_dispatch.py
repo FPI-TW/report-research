@@ -1031,20 +1031,37 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
         self.assertEqual(len(self.requests), 2 * sent, "過載不是審查，下一輪照打")
 
     def test_truncated_is_not_called_again_same_day(self):
-        """max_tokens 截斷（finish_reason=length）同審查：該次跳過、rc=1、同一天同一個 model 不再重打。"""
+        """max_tokens 截斷（finish_reason=length）：同一輪重打一次，仍截斷才跳過、rc=1、同一天同一個 model 不再重打。"""
         self.install(lambda req: httpx.Response(200, content=sse(chunk(content="## 今日重點\n- 半"),
                                                                   chunk(content="", finish="length"))))
+        per_round = 1 + gb.TRUNCATION_RETRIES
         rc, upsert, _, err = self._generate(force=False, real_log=True)
-        self.assertEqual((rc, len(self.requests)), (1, 1))
+        self.assertEqual((rc, len(self.requests)), (1, per_round))
+        self.assertIn("同一輪重試一次", err)
         self.assertIn("MAX_TOKENS=", err)
         self.assertIn("今天不再重試", err)
         upsert.assert_not_awaited()
+        lines = (self.tmp / "brief_failures.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1, "重打仍截斷只記一筆失敗")
         rc, upsert, _, err = self._generate(force=False, real_log=True)
         self.assertEqual(rc, 1)
-        self.assertEqual(len(self.requests), 1, "今日已截斷過：不再送出請求")
+        self.assertEqual(len(self.requests), per_round, "今日已截斷過：不再送出請求")
         self.assertIn("今日已被", err)
         self._generate(force=True, real_log=True)
-        self.assertEqual(len(self.requests), 2, "--force 照打")
+        self.assertEqual(len(self.requests), 2 * per_round, "--force 照打（同樣含一次重打）")
+
+    def test_truncated_then_ok_writes_the_brief(self):
+        """截斷是偶發的（2026-11-09、11-10 同一份素材事後重打都正常結束）：同一輪重打成功就照常落庫。"""
+        body = "## 今日重點\n" + "- 台積電上修目標價，先進製程需求強勁。\n" * 10
+        replies = iter([
+            httpx.Response(200, content=sse(chunk(content="## 今日重點\n- 半"), chunk(content="", finish="length"))),
+            httpx.Response(200, content=sse(chunk(content=body), chunk(content="", finish="stop"))),
+        ])
+        self.install(lambda req: next(replies))
+        rc, upsert, _, err = self._generate(force=False, real_log=True)
+        self.assertEqual((rc, len(self.requests)), (0, 2), err)
+        upsert.assert_awaited_once()
+        self.assertFalse((self.tmp / "brief_failures.log").exists(), "重打成功不記失敗")
 
     def test_blocked_today_kinds(self):
         """算「今日已擋」的只有審查與 max_tokens 截斷；期限型截斷（timeout_streamed）與逾時可能只是暫時變慢。"""

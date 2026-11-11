@@ -614,6 +614,15 @@ class CompleteChatTests(_TransportMixin, unittest.TestCase):
         res = self._call(max_tokens=16384)
         self.assertIn("max_tokens=16384", res.error)
         self.assertEqual(res.kind, lh.TRUNCATED)
+        self.assertIsNone(res.text, "截斷不是部分成功")
+        self.assertEqual(res.partial, "半", "截斷時帶回已收到的文字，給呼叫端留診斷")
+
+    def test_partial_only_on_truncation(self):
+        self.install(lambda req: httpx.Response(200, content=_sse(_chunk(content="", finish="stop"))))
+        self.assertIsNone(self._call().partial)
+        full = _sse(_chunk(content="完整"), _chunk(content="", finish="stop"))
+        self.install(lambda req: httpx.Response(200, content=full))
+        self.assertIsNone(self._call().partial)
 
     def test_missing_key_sends_nothing(self):
         self.install(lambda req: httpx.Response(200, content=_sse()))

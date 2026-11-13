@@ -266,8 +266,25 @@ class EdgeNginxAuthorizationTests(unittest.TestCase):
                 self.assertIn("proxy_pass", blocks["^~ /external/"])
                 self.assertIn("X-Edge-Secret", blocks["^~ /external/"], "external 也要覆寫 X-Edge-Secret")
                 for loc, body in blocks.items():
-                    if loc != "^~ /external/":
+                    # 不轉給 App 的 location（例如 nginx 直接回的靜態簡報）沒有東西可以透傳。
+                    if loc != "^~ /external/" and "proxy_pass" in body:
                         self.assertIn('proxy_set_header Authorization "";', body, f"{rel} 的 location {loc} 要清空")
+
+    def test_deck_page_is_static_and_keeps_security_headers(self):
+        """EC2 的 /deck 由 nginx 直接回靜態檔、不經 App（所以免登入）。
+
+        location 裡一寫 add_header，server 層的 add_header 就不再繼承，安全 header 必須在 location 內重寫。
+        """
+        blocks = self._locations("deploy/nginx-origin.conf")
+        self.assertIn("= /deck", blocks, "deploy/nginx-origin.conf 缺少 location = /deck")
+        body = blocks["= /deck"]
+        self.assertNotIn("proxy_pass", body)
+        self.assertIn("alias /var/www/report-mark-deck/index.html;", body)
+        headers = (
+            "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy", "Content-Security-Policy", "X-Robots-Tag",
+        )
+        for header in headers:
+            self.assertIn(f"add_header {header} ", body, f"/deck 缺少 {header}")
 
 if __name__ == "__main__":
     unittest.main()

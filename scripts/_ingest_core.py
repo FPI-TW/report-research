@@ -144,12 +144,13 @@ def _tag_via_cli(
     2026-08-12 那輪 rsync 帶進 33 檔、全被吞掉，四天後才被發現。
     """
     from app.services.rating_index import strip_rating_index
-    from app.services.tagging import TAG_INSTRUCTION, parse_tags
+    from app.services.tagging import parse_tags, tag_instruction
 
     # 封面的近期報告／評等異動索引表會被當成本篇標的（app/services/rating_index.py）
     body = strip_rating_index(text)[:excerpt]
+    instruments = get_profile().instruments
     prompt = (
-        f"{TAG_INSTRUCTION}\n\n檔名：{file_name}\n"
+        f"{tag_instruction(instruments.code_formats)}\n\n檔名：{file_name}\n"
         f"報告內文（前 {excerpt} 字摘錄）：\n{body}\n\n"
         f"請依上述規則只輸出單一 JSON 物件。"
     )
@@ -160,7 +161,7 @@ def _tag_via_cli(
     )
     if not res.text:
         return None, res.error or "LLM 無回應"
-    tag = parse_tags(res.text, normalize_code=get_profile().instruments.normalize_code)
+    tag = parse_tags(res.text, normalize_code=instruments.normalize_code)
     return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
 
 

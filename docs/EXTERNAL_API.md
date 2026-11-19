@@ -43,7 +43,7 @@ Authorization: Bearer <API 金鑰>
 | 限制 | 超過時 | 何時恢復 |
 |---|---|---|
 | 每分鐘請求數 | 429 `api_rate_limited` | 等 `Retry-After` 標頭的秒數 |
-| 每日請求數（台北時間的日曆日） | 429 `api_quota_exceeded` | 台北時間 0 點（UTC 16:00）重置，`Retry-After` 是距重置的秒數 |
+| 每日請求數（{TIME_ZONE_LABEL}時間的日曆日） | 429 `api_quota_exceeded` | {TIME_ZONE_LABEL}時間 0 點（時區 `{TIME_ZONE}`）重置，`Retry-After` 是距重置的秒數 |
 
 上限依金鑰而定，請向管理員確認。通過每分鐘限流的請求不論成功與否都計入每日額度。收到 429 請依 `Retry-After` 等待後再送，不要立刻重送。
 
@@ -186,7 +186,7 @@ curl -sS -X POST -H "Authorization: Bearer $API_KEY" -H "Content-Type: applicati
 | `uploaded_at` | 收到的時刻 |
 | `updated_at` | `status` 最後變動的時刻 |
 
-同一份檔案（內容相同）已經收過，回 409 `upload_duplicate`；不必重送。每日上傳份數另有上限（台北時間的日曆日），超過回 429 `upload_quota_exceeded`。
+同一份檔案（內容相同）已經收過，回 409 `upload_duplicate`；不必重送。每日上傳份數另有上限（{TIME_ZONE_LABEL}時間的日曆日），超過回 429 `upload_quota_exceeded`。
 
 ### GET /external/v1/uploads/{upload_id}
 
@@ -226,8 +226,8 @@ curl -sS -X POST -H "Authorization: Bearer $API_KEY" -H "Content-Type: applicati
 | 422 | `upload_rejected` | 這份檔案先前已被拒收 | 不需重試 |
 | 422 | `validation_error` | 參數不符規定（例如 `limit` 大於 20），`detail` 是逐欄的錯誤清單 | 修正參數 |
 | 429 | `api_rate_limited` | 超過每分鐘上限 | 依 `Retry-After` 等待後重試 |
-| 429 | `api_quota_exceeded` | 今日額度已用完 | 台北時間 0 點後再試 |
-| 429 | `upload_quota_exceeded` | 今日上傳份數已達上限 | 台北時間 0 點後再試 |
+| 429 | `api_quota_exceeded` | 今日額度已用完 | {TIME_ZONE_LABEL}時間 0 點後再試 |
+| 429 | `upload_quota_exceeded` | 今日上傳份數已達上限 | {TIME_ZONE_LABEL}時間 0 點後再試 |
 | 503 | `api_auth_unavailable` | 認證服務暫時無法使用 | 稍後重試 |
 | 503 | `api_client_misconfigured` | 金鑰的設定有誤 | 聯絡管理員 |
 | 503 | `original_unavailable` | 原檔暫時無法提供 | 稍後重試 |

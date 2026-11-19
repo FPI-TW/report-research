@@ -102,13 +102,14 @@ class BrandingEndpointTests(AcmeProfileCase):
         body = r.json()
         self.assertEqual(set(body), {"institution_name", "product_name", "short_name", "logo_light_url",
                                      "logo_dark_url", "favicon_url", "colors", "institution_name_en",
-                                     "product_name_en", "short_name_en", "locale"})
+                                     "product_name_en", "short_name_en", "locale", "timezone"})
         self.assertEqual((body["institution_name"], body["product_name"], body["short_name"]),
                          ("艾克米", "艾克米研究平台", "艾克米研報"))
         # 沒給英文名稱：英文介面沿用原名；[locale] 缺席＝兩種語系、預設中文。
         self.assertEqual((body["institution_name_en"], body["product_name_en"], body["short_name_en"]),
                          ("艾克米", "艾克米研究平台", "艾克米研報"))
         self.assertEqual(body["locale"], {"default": "zh-Hant", "available": ["zh-Hant", "en"]})
+        self.assertEqual(body["timezone"], {"name": "Asia/Taipei", "label": "台北", "label_en": "Taipei"})
         self.assertEqual(body["colors"], {"light": {"accent_strong": "#1f5fbf", "accent_text": "#174a96"},
                                           "dark": {"accent_strong": "rgba(120, 170, 255, 0.9)"}})
         self.assertTrue(body["logo_light_url"].startswith("/api/branding/assets/logo.png?v="))

@@ -127,7 +127,7 @@ docker compose up -d
 
 ## systemd timer 對照表
 
-`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。框架排程在容器的 `TZ`（預設 Asia/Taipei）下解讀；預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
+`deploy/systemd/` 的每一支 timer 都有歸屬（`deploy/container/scheduler.py`，`tests/test_container_deploy.py` 對帳這張表、也逐支比對排程時間與 timer 的 OnCalendar）。框架排程在容器的 `TZ` 下解讀，排程時間是 profile 業務時區（`[locale].timezone`）的鐘點：`TZ` 沒設（compose 的預設）時 entrypoint 以 profile 的時區補上，設了而與它不同時 scheduler 拒絕啟動、其他角色只警告（`deploy/container/entrypoint.py` 的 `resolve_tz`）。日界一律由程式依 profile 決定，與 `TZ` 無關；postgres 容器讀不到 profile，`TZ` 沒設時是 UTC（只影響 DB 端的 `current_date` 與日誌）。預設關的工作以 `SCHEDULER_ENABLE` 開啟，預設開的以 `SCHEDULER_DISABLE` 關掉（逗號分隔的工作名，打錯名字 scheduler 拒絕啟動）。
 
 | Timer | 歸屬 | 容器裡 |
 |---|---|---|
@@ -171,7 +171,7 @@ docker compose up -d
 | 工作 | 排程 | 說明 |
 |---|---|---|
 | `connectors` | `*/15 * * * *` | 預設開。`scripts/connector_sync.py`：profile `[connectors].enabled` 的連接器到了輪詢時間（各自的 `poll_minutes`，預設 180 分鐘）才跑一輪「落地新檔 → 入庫 → 摘要／標題／摘錄（`--hashes-file`）→ 訊號（`--limit`）→ 簡報 → 標題積壓（`--limit`）」，步驟與參數同 sync 鏈第 4 段起，差異只有分層回填（摘要、標題、摘錄只收本輪第二層的新研報，訊號與標題積壓帶 `--min-report-date`，見 `docs/WORKFLOW.md`「首次導入」）；沒有啟用的連接器、或都沒到期就是 no-op。設定、側檔格式與落地資料夾見 `docs/WORKFLOW.md`「資料來源連接器」 |
-| `backfill-tiers` | `50 * * * *` | 預設開，但 profile 的 `[backfill].background_enabled` 預設 `false`＝no-op（開關在 profile，不在 `SCHEDULER_ENABLE`）。`scripts/backfill_tiers.py --tier 3 --scheduled`：首次導入的第三層背景補齊（`report_date` 早於 `[backfill].recent_months` 個月、或為 NULL 的研報，補摘要、標題、摘錄、訊號），每輪最多 `max_reports_per_round` 份、每個台北日最多 `daily_token_limit` token，到上限就停、下一輪再續；以 `nice` 降低優先權，各批次照舊取 LLM 批次鎖（撞鎖就停）。帳在 `data/backfill/state.json`。步驟見 `docs/WORKFLOW.md`「首次導入」 |
+| `backfill-tiers` | `50 * * * *` | 預設開，但 profile 的 `[backfill].background_enabled` 預設 `false`＝no-op（開關在 profile，不在 `SCHEDULER_ENABLE`）。`scripts/backfill_tiers.py --tier 3 --scheduled`：首次導入的第三層背景補齊（`report_date` 早於 `[backfill].recent_months` 個月、或為 NULL 的研報，補摘要、標題、摘錄、訊號），每輪最多 `max_reports_per_round` 份、每個業務日最多 `daily_token_limit` token，到上限就停、下一輪再續；以 `nice` 降低優先權，各批次照舊取 LLM 批次鎖（撞鎖就停）。帳在 `data/backfill/state.json`。步驟見 `docs/WORKFLOW.md`「首次導入」 |
 
 連接器的資料夾要讓 web 與 scheduler 在**同一個路徑**看得到：入庫後 `research_report.file_path` 指向落地的檔案，`OBJECT_STORAGE_MODE=local` 時 web 從那裡交原檔。`s3`／`plugin` 的預設落地資料夾在 `data/connectors/<名稱>/`（`data` volume，已共用）；`folder` 監看的是部署方自己掛上的目錄（SMB／NFS 由主機掛載，框架不做 mount），以 compose 的 override 檔（與 docker-compose.yml 同目錄的 docker-compose.override.yml）把它以唯讀 bind 掛進 web 與 scheduler，`profile.toml` 的 `path` 寫容器裡的路徑：
 
@@ -330,7 +330,7 @@ groups:
 
 ## 示範環境
 
-在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小、個股代號另收美股 ticker（`[instruments]`）、發行機構用自己的虛構名單（`profiles/demo/sources.toml`）、每日簡報不等早上 9 時（`[brief].after_hour = 0`）。
+在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小、個股代號另收美股 ticker（`[instruments]`）、發行機構用自己的虛構名單（`profiles/demo/sources.toml`）、每日簡報不等早上 9 時（`[brief].after_hour = 0`）、檔名判定行政文件的關鍵字換成自己的清單（`[filenames]`）。
 
 | 元件 | 示範環境 | 換成真的 |
 |---|---|---|
@@ -371,7 +371,7 @@ uv run python scripts/e2e_compose.py --image report-mark:e2e --corpus /srv/demo-
 驗證項目：空庫 `migrate`、`create-admin --password-stdin`、`connector_sync.py --force` 的入庫份數、側檔欄位（`title`／`source`／`market`）生效、沒有側檔的研報由 profile 名單從檔名推得發行機構、標註出的個股代號依 profile 格式保留（含美股 ticker）、`research.report_metadata`、錯誤側檔進失敗清單與 `last_stats` 的 `sidecar_invalid`、第二層的摘要／錨定的摘錄／訊號（含美股標的）、每日簡報、`backfill_tiers.py --tier 3` 補上第三層、`/readyz`、`/api/branding` 是示範品牌、登入、`/api/markets` 只有子集、`/api/search` 有結果且發行機構顯示名單的名稱、`/api/radar/instruments?market=US` 有美股標的、`/api/brief/latest` 有簡報、未啟用的市場回 422、`/api/ask` 的 SSE 走完且引用只落在來源編號內（無效編號在串流中被替換）、閱讀頁 `/text`、容器內 loopback 的 `/metrics`。退出碼 0 全過、1 有失敗、2 環境不符。
 
 - web 預設關 rerank（`ASK_RERANK_ENABLED=0`，省約 2 GB 記憶體；`--rerank` 打開）。峰值約 4 GB（入庫時一份嵌入模型、web 一份，不同時）。
-- 真實 LLM 版本：`--real-llm`，設定取自 `E2E_LLM_PROVIDER`（預設 `openai`）、`E2E_LLM_API_KEY`、`E2E_LLM_MODEL`、`E2E_LLM_BASE_URL`（選填），只寫進暫存目錄的 `.env`（0600）。workflow 的 `workflow_dispatch` 勾 `real_llm` 才跑，repo 沒設 `E2E_LLM_API_KEY`／`E2E_LLM_MODEL` secret 就跳過。真實模型的回答不是決定性的，所以不檢查無效引用標記；標註 prompt 只要求 4 碼代碼，美股 ticker 與美股訊號、雷達的檢查也只在假 LLM 時做。
+- 真實 LLM 版本：`--real-llm`，設定取自 `E2E_LLM_PROVIDER`（預設 `openai`）、`E2E_LLM_API_KEY`、`E2E_LLM_MODEL`、`E2E_LLM_BASE_URL`（選填），只寫進暫存目錄的 `.env`（0600）。workflow 的 `workflow_dispatch` 勾 `real_llm` 才跑，repo 沒設 `E2E_LLM_API_KEY`／`E2E_LLM_MODEL` secret 就跳過。真實模型的回答不是決定性的，所以不檢查無效引用標記；標註出的美股 ticker 與美股訊號、雷達也不保證逐份出現，這幾項檢查只在假 LLM 時做。
 - CI 的映像層快取在 GitHub Actions cache（`mode=min`）；未命中時 build 要下載約 4.5 GB 權重。repo 的快取額度（10 GB）被擠掉時只是變慢，不會失敗。
 
 ## 從主機部署遷入

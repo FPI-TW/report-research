@@ -42,6 +42,7 @@ system_name_en = "Demo Research"
 # 只啟用子集：篩選帶其他標準代碼（例如 HK）回 422 market_disabled；標到未啟用市場的研報照常可見。
 enabled = ["TW", "US", "MACRO"]
 
+# 顯示名稱：介面用；每日簡報素材的市場標籤也跟著這三個（沒宣告的代碼照用簡報自己的詞表，例如 FX「匯市」）。
 [markets.display_names]
 TW = "台股"
 US = "美股"
@@ -72,6 +73,7 @@ max_reports_per_round = 10
 [instruments]
 # 個股代號格式（標註結果 stock_targets 的驗證規則，各市場格式的聯集）：台股 4～6 碼數字（含 00878 這類 ETF），
 # 美股 1～5 個大寫字母（含 BRK.B 這類股別後綴；小寫會轉大寫）。廷豐只收 4 碼數字。
+# 標註 prompt 的各市場說明、stock_targets 的格式要求與訊號擷取的代碼欄位都依這份格式產生。
 [instruments.code_formats.TW]
 kind = "digits"
 min_length = 4
@@ -87,6 +89,15 @@ share_class = true
 # 虛構發行機構的名單（檔名 token、顯示名稱）；沒有側檔的研報由檔名推得發行機構。
 catalog = "sources.toml"
 
+# [locale] 沒宣告：兩種語系、預設中文，業務時區是預設的 Asia/Taipei（合成語料的日期錨點與端到端測試的容器 TZ 都取自
+# 這裡，見 scripts/demo_corpus.py 的 demo_tz）。別的時區的宣告方式見 app/profile.py 的模組 docstring「語系」。
+
 [brief]
 # 示範環境隨時可產生當日簡報（廷豐等到 9 時，因為券商早報上午才進來）；端到端測試因此不受執行時刻影響。
 after_hour = 0
+
+[filenames]
+# 檔名判定行政文件的關鍵字（不分大小寫的子字串）。去掉廷豐專屬的部位限制（期交所公告）與施工、清洗（辦公大樓
+# 公告），加上英文的組織圖與假期表。英文只收不會出現在研報標題的詞組：announcement、notice 這類單字會命中
+# 「earnings announcement」之類的研報檔名，命中的研報整份不入庫。
+admin_keywords = ["人事異動", "晉升", "組織架構", "行事曆", "連續假期", "公告", "通知", "webcast", "flyer", "org chart", "holiday schedule"]

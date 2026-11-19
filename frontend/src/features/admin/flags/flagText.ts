@@ -1,7 +1,7 @@
 import type {
   FlagExportOverride, FlagImportChange, FlagItem, FlagOverrideView, FlagUpdateRequest,
 } from '../../../lib/generated/adminApi'
-import { t } from '@/i18n'
+import { businessDate, t } from '@/i18n'
 
 /** 功能開關頁的文字（純函式，測試直接驗）。後端語意在 app/services/feature_flags.py。 */
 
@@ -46,10 +46,9 @@ export const IMPORT_ACTION_LABELS: Record<FlagImportChange['action'], string> = 
   get unchanged() { return t('admin.flags.flagText.unchanged') },
 }
 
-/** 匯出檔名：report-mark-flags-<環境>-<YYYYMMDD>.json（台北時間的日期）。 */
+/** 匯出檔名：report-mark-flags-<環境>-<YYYYMMDD>.json（業務時區的日期）。 */
 export function exportFilename(environment: string | null | undefined, now: Date = new Date()): string {
-  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(now).replaceAll('-', '')
+  const day = businessDate(now).replaceAll('-', '')
   const env = (environment ?? '').replace(/[^a-z0-9_-]/gi, '') || 'unknown'
   return `report-mark-flags-${env}-${day}.json`
 }

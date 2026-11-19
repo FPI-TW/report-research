@@ -136,8 +136,8 @@ ENV PATH=/app/.venv/bin:${PATH} \
     LOG_FORMAT=json \
     EXTRACTOR=pdfplumber \
     REPORT_MARK_BACKUP_DIR=/app/backups \
-    REPORT_MARK_BACKUP_MOUNT=/app/backups \
-    TZ=Asia/Taipei
+    REPORT_MARK_BACKUP_MOUNT=/app/backups
+# TZ 刻意不設：entrypoint 以 profile 的 [locale].timezone 補上（deploy/container/entrypoint.py 的 resolve_tz）。
 
 USER app:app
 

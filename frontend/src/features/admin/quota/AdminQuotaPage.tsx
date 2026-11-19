@@ -14,7 +14,7 @@ import { QuotaLimitDialog } from './QuotaLimitDialog'
 import type { QuotaChange } from './quotaPlan'
 import { useQuotaOverview, useQuotaStats, useSetQuotaOverride } from './useQuota'
 import styles from './Quota.module.css'
-import { t } from '@/i18n'
+import { t, timeZoneLabel } from '@/i18n'
 
 const STATS_RANGES = ['7', '14', '30'] as const
 type StatsRange = (typeof STATS_RANGES)[number]
@@ -107,7 +107,7 @@ function StatsCard() {
             </table>
           </div>
           <div className={`${c.cardFoot} ${styles.foot}`}>
-            <span>{t('admin.quota.adminQuotaPage.taipeiTime', { since_day: q.data.since_day, until_day: q.data.until_day })}</span>
+            <span>{t('admin.quota.adminQuotaPage.zoneTime', { zone: timeZoneLabel(), since_day: q.data.since_day, until_day: q.data.until_day })}</span>
             <span>{t('admin.quota.adminQuotaPage.demandCountedCallsAttemptsOver')}</span>
           </div>
         </>
@@ -140,7 +140,7 @@ function UsersCard({ data }: { data: QuotaOverview }) {
   }
 
   return (
-    <Card title={t('admin.quota.adminQuotaPage.usagePerUserToday')} labelledBy="quota-users-title" right={<span className={c.mono}>{t('admin.quota.adminQuotaPage.taipeiTime2', { day: data.day })}</span>}>
+    <Card title={t('admin.quota.adminQuotaPage.usagePerUserToday')} labelledBy="quota-users-title" right={<span className={c.mono}>{t('admin.quota.adminQuotaPage.zoneTime2', { zone: timeZoneLabel(), day: data.day })}</span>}>
       {data.users.length === 0 ? (
         <p className={c.empty}>{t('admin.quota.adminQuotaPage.noAccountsYet')}</p>
       ) : (
@@ -210,7 +210,7 @@ function QuotaContent() {
       <PageHeader summary={summary}
         actions={canSeeFlags && <Link className={c.btn} to="/admin/flags">{t('admin.quota.adminQuotaPage.goToFeatureFlags')}</Link>}
         help={<>
-          {t('admin.quota.adminQuotaPage.dailyQuotasFollowTaipeiCalendar')}{' '}<code>QUOTA_ENFORCE</code>{t('admin.quota.adminQuotaPage.capabilityCeilingAndTheFeature')}{' '}<code>quota.enforce</code>{' '}{t('admin.quota.adminQuotaPage.areOnIsTheQuota')}
+          {t('admin.quota.adminQuotaPage.dailyQuotasFollowZoneCalendar', { zone: timeZoneLabel() })}{' '}<code>QUOTA_ENFORCE</code>{t('admin.quota.adminQuotaPage.capabilityCeilingAndTheFeature')}{' '}<code>quota.enforce</code>{' '}{t('admin.quota.adminQuotaPage.areOnIsTheQuota')}
         </>} />
       {q.isPending ? (
         <p className={c.empty}>{t('admin.quota.adminQuotaPage.loading')}</p>

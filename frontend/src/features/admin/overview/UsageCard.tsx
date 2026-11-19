@@ -5,7 +5,7 @@ import type { AnalyticsOverviewResponse } from '../../../lib/generated/adminApi'
 import { fmtInt, shortDay } from '../analytics/analyticsFormat'
 import { USAGE_DAYS, useOverviewUsage } from './overviewData'
 import styles from '../Overview.module.css'
-import { t } from '@/i18n'
+import { t, timeZoneLabel } from '@/i18n'
 
 function messageOf(err: unknown): string {
   return err instanceof Error && err.message ? err.message : t('admin.overview.usageCard.couldnTLoadTryAgain')
@@ -18,11 +18,11 @@ function latency(ms: number | null | undefined): { v: string; u?: string } {
 }
 
 function Usage({ d }: { d: AnalyticsOverviewResponse }) {
-  // 今天那一格：範圍的最後一天就是後端的「今天」（台北時間）；對不上（跨日瞬間）就不硬湊。
+  // 今天那一格：範圍的最後一天就是後端的「今天」（業務時區）；對不上（跨日瞬間）就不硬湊。
   const today = d.daily.find(p => p.day === d.range.today)
   const p95 = latency(d.latency.p95_ms)
   const stats: { l: string; v: string; u?: string; s: string }[] = [
-    { l: t('admin.overview.usageCard.qA'), v: fmtInt(today?.questions), s: t('admin.overview.usageCard.todayTaipeiTime') },
+    { l: t('admin.overview.usageCard.qA'), v: fmtInt(today?.questions), s: t('admin.overview.usageCard.todayZoneTime', { zone: timeZoneLabel() }) },
     { l: t('admin.overview.usageCard.activeUsers'), v: fmtInt(today?.active_users), s: t('admin.overview.usageCard.today') },
     { l: t('admin.overview.usageCard.latencyP95'), ...p95, s: t('admin.overview.usageCard.lastDays', { USAGE_DAYS }) },
     { l: t('admin.overview.usageCard.reading'), v: fmtInt(today?.reading), s: t('admin.overview.usageCard.todaySuccessfulOpens') },

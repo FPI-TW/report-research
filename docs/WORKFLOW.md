@@ -105,6 +105,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 - 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7；兩者的預設來自 profile 的 `[brief]`，括號內是廷豐的值），用 `created_at` 界定；`--force` 重寫已有的列時沿用該列存的窗期；補過去的日子時，終點是目標日結束（本地時間）與下一份的 `window_start` 取早的，窗期長度為零就不寫列。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
 - `--date`、`--after-hour`（預設 profile 的 `[brief].after_hour`，廷豐 9；未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
+- 素材的市場標籤用簡報自己的詞表（`app/services/brief.py` 的 `_MARKET_ZH`：「匯市」「總體與債市」「全球與商品」「加密資產」，刻意與介面的顯示名稱不同）；profile 在 `[markets.display_names]` 明確宣告的代碼覆寫它，沒宣告的照用詞表（廷豐沒有宣告）。
 
 ### LLM 批次互斥：`scripts/_claude_lock.py`
 
@@ -225,7 +226,7 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
 | 第二層 | `report_date` 在最近 `[backfill].recent_months` 個月內（預設 12，含窗期起點當天） | 摘要、標題、摘錄、訊號 | `scripts/backfill_tiers.py --tier 2`，一次跑完 |
 | 第三層 | 其餘：`report_date` 早於窗期，**或為 NULL** | 同第二層 | 背景補齊 `scripts/backfill_tiers.py --tier 3`（scheduler 的 `backfill-tiers`），每日上限內慢慢補 |
 
-- **`report_date` 為 NULL 歸第三層**：沒有日期的多半是檔名、內文、mtime 都推不出日期的舊檔，歸第二層會把它們當新檔付費。訊號擷取本來就不收無日期的研報。「最近 N 個月」是今天（台北時間）往前推 N 個曆月的同一天（月底夾到該月最後一天）。
+- **`report_date` 為 NULL 歸第三層**：沒有日期的多半是檔名、內文、mtime 都推不出日期的舊檔，歸第二層會把它們當新檔付費。訊號擷取本來就不收無日期的研報。「最近 N 個月」是今天（業務時區）往前推 N 個曆月的同一天（月底夾到該月最後一天）。
 - **讀取路徑維持零 LLM**：第三層還沒補到的研報，閱讀頁照常顯示原文、沒有摘錄；不會在使用者打開時即時生成。
 - **不重複付費**：`backfill_tiers.py` 不另寫派生的實作，只挑出待補的研報、分批寫成 hashes 檔，再依序叫 `generate_summaries`、`generate_titles`、`extract_takeaways`（`--hashes-file`）與 `extract_signals`（`--hashes-file`＋`--limit`）。各批次照舊各自判斷已完成（`summary IS NULL`、`title IS NULL`、摘錄的版本與 `text_sha256`、訊號的子集與版本）、套跳過名單、取 LLM 批次鎖，所以中斷、重跑都不會重付。挑候選時也套同一份跳過名單（每項任務各一段 `llm_failures.skip_clause_sql`），內容型失敗的研報不會每輪重排。規則全文在 `app/services/backfill_tiers.py` 的模組 docstring。
 - 挑候選只看摘要、標題、摘錄；訊號只在同一份研報有其他派生要補時順帶跑（子集外的研報永遠不會有訊號列，拿它挑會讓同一批研報每輪重排）。擷取版本升級後的重跑走各批次的 `--reextract`，不經分層回填。
@@ -247,13 +248,13 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
    token 以字元比例估（CJK 字 ×0.8、其他非空白字元 ÷3.5，加上各任務的 prompt 開銷，每項只算它實際送出的內文前綴）。係數沒有對真實 tokenizer 量過，**未校正時請當成 ±30% 的量級**；輸出 token 與每次秒數沒有實測時用保守的預設值（表上標「預設」）。要更準就先小跑一批（下面第 4 步的 `--max-reports 50`），再帶用量檔重估：`--usage-log`（預設 `data/llm_usage.jsonl`）以同一批研報的實測 ÷ 估計得出每項任務的輸入倍率，輸出與秒數改用實測平均（每項至少 20 筆）。
 3. **客戶簽字**後跑第一層：有 metadata 側檔時走連接器（`uv run python scripts/ingest_connectors.py --force`，側檔齊全的不呼叫標註 LLM；全語料三支的 `ingest_all.py` 不讀側檔），否則 `tag_all_cli.py`＋`ingest_all.py`（「完整重跑指令」）。也可以直接讓 scheduler 的連接器輪詢（`connectors` 工作）匯入：它是分層的——本輪新研報只把第二層交給摘要、標題、摘錄，訊號與標題積壓也只補第二層（見下方「連接器排程的分層」）——但第二層的派生會跟著每一輪匯入一起跑、費用分散在匯入期間；想要「先全部匯入、看過第二層的估價再開跑」就在首次導入期間設 `SCHEDULER_DISABLE=connectors`、手動跑匯入。
 4. **第二層**：`uv run python scripts/backfill_tiers.py --tier 2 --dry-run` 先看會排入幾份、估計多少 token（不呼叫 LLM、不取鎖），再去掉 `--dry-run` 開跑。可加 `--max-reports N`、`--token-limit N` 設上限、`--chunk N`（每批份數，預設 50；批與批之間放開 LLM 批次鎖，sync 擠得進來）、`--workers N`（傳給各批次）。也可以 `make estimate ESTIMATE_ARGS="--source db …"` 對已入庫的語料重估（只計還沒做的）。
-5. **第三層（背景）**：profile 設 `[backfill].background_enabled = true`（改 profile 後重啟 scheduler），scheduler 的 `backfill-tiers` 每小時 :50 跑一輪：每輪最多 `max_reports_per_round` 份（預設 100）、每個台北日最多 `daily_token_limit` token（預設 2,000,000；輸入＋輸出），新的先、NULL 日期最後，以 `nice` 降低優先權。到上限就停、下一輪再續，換日歸零。之後開回連接器輪詢接新研報。
+5. **第三層（背景）**：profile 設 `[backfill].background_enabled = true`（改 profile 後重啟 scheduler），scheduler 的 `backfill-tiers` 每小時 :50 跑一輪：每輪最多 `max_reports_per_round` 份（預設 100）、每個業務日最多 `daily_token_limit` token（預設 2,000,000；輸入＋輸出），新的先、NULL 日期最後，以 `nice` 降低優先權。到上限就停、下一輪再續，換日歸零。之後開回連接器輪詢接新研報。
 
 ```toml
 [backfill]
 recent_months = 12            # 第二層窗期（1..240）
 background_enabled = false    # 第三層背景補齊（預設關；廷豐 profile 關）
-daily_token_limit = 2000000   # 每個台北日的 token 上限（輸入＋輸出）
+daily_token_limit = 2000000   # 每個業務日（[locale].timezone 的日曆日）的 token 上限（輸入＋輸出）
 max_reports_per_round = 100   # 每輪最多幾份
 ```
 
@@ -270,7 +271,7 @@ max_reports_per_round = 100   # 每輪最多幾份
 ### 查進度、中止與續跑
 
 - **進度**：`make backfill-status`（唯讀、零 LLM）印各層的份數與各項待補數，以及今天的背景用量。背景每輪的紀錄在 scheduler 的日誌（`docker compose logs scheduler`）。
-- **每日帳**：`data/backfill/state.json`（台北日、已用 token、已處理份數）。每批跑完以 `data/llm_usage.jsonl` 裡這批研報的實測 token 入帳（重試的每一次都算）；讀不到用量檔時以估計值入帳（寧可多算），`make backfill-status` 會標出來。帳壞掉或被刪掉時視為當天還沒用。
+- **每日帳**：`data/backfill/state.json`（業務日、已用 token、已處理份數）。每批跑完以 `data/llm_usage.jsonl` 裡這批研報的實測 token 入帳（重試的每一次都算）；讀不到用量檔時以估計值入帳（寧可多算），`make backfill-status` 會標出來。帳壞掉或被刪掉時視為當天還沒用。
 - **中止**：Ctrl-C、`kill`、停 scheduler 都可以。已完成的派生已落庫，重跑同一個指令就從還沒補的接著補（各批次再判斷一次已完成，不重付）。
 - **退出碼**：0 跑完或碰到上限而停；75 鎖被佔用（另一個分層回填正在跑——編排鎖 `data/backfill/.lock`——或子批次撞上 LLM 批次鎖，本輪停下、下次再續）；2 子批次帳號／環境型中止（例如額度用完、金鑰錯）：本批 hashes 保留成 `data/backfill/retained_*.txt` 並印出各批次的 `--hashes-file` 補跑指令，排除原因後照印的指令補跑，或直接重跑 `backfill_tiers.py`（會重新挑出這批）。其他非零退出碼 best-effort：記一行、照常往下，沒補成的下次再挑。
 - 編排入口本身不呼叫 LLM、不持有 LLM 批次鎖（子批次取的是同一把，持有它會讓每個子批次撞鎖），但照 LLM 入口的規矩在取鎖前預檢金鑰（`--dry-run` 不檢）。
@@ -311,7 +312,7 @@ max_reports_per_round = 100   # 每輪最多幾份
 1. 請求是 raw body（`Content-Type: application/pdf`），不是 multipart：一次串流裡同時限長、算 hash、寫進隔離區，不另外暫存。`filename` 是原始檔名，`last_modified` 是瀏覽器 `File.lastModified`（毫秒），存成 `client_mtime`（之後 worker 用它當 `report_date` 的回退）。
 2. 依序擋：旗標（503）→ Content-Type（415）→ 檔名清理（`app/services/upload_intake.py` 的 `sanitize_filename`：去路徑成分、控制與格式字元，NFC，強制小寫 `.pdf`，≤255 字元；副檔名不對 415、清完沒主檔名 400 `invalid_filename`）→ `Content-Length` 超過 `UPLOAD_MAX_BYTES`（413）→ 隔離區可用且剩餘空間扣掉這次大小後不低於 `UPLOAD_MIN_FREE_MB`（503 `quarantine_unavailable`）→ 配額快查（429）。
 3. 落地（`app/services/quarantine.py`）：以 `O_EXCL`／`O_NOFOLLOW` 寫 `<隔離區>/incoming/<upload_id>.part`（目錄 0700、檔案 0600），邊寫邊算 SHA-256、邊計長，超過上限中止並刪 `.part`（413）；前 1024 bytes 要有 `%PDF-1.`／`%PDF-2.`、最後 1024 bytes 要有 `%%EOF`（415）；fsync 後 rename 成 `<隔離區>/<upload_id>.bin`。檔名只有 upload_id，不用使用者檔名、不帶 `.pdf`。隔離區預設 `data/quarantine/`（`UPLOAD_QUARANTINE_DIR`）。**web 不解析 PDF 內容、不連 clamd**：主動內容與加密的檢查、掃毒都是 worker 的事。
-4. 同一筆交易（`upload_intake.create_upload`，先取 `pg_advisory_xact_lock` 讓配額精確）：語料已有同 hash → 409 `upload_duplicate`（帶 `file_hash` 與它是 `hidden`／`draft`／`published`）；已有進行中的上傳 → 409 `upload_duplicate`（`existing: upload`；並發時靠 partial unique index `idx_report_upload_active_hash` 擋，撞 index 也轉成 409）；曾判感染 → 422 `upload_known_infected`；每人每日（台北時間日曆日，`UPLOAD_DAILY_QUOTA`）或全站處理中（quarantined／scanning／clean／processing，`UPLOAD_MAX_IN_FLIGHT`）超過 → 429 `upload_quota_exceeded`；INSERT `report_upload`（state `quarantined`）並寫稽核 `upload.create`（detail 只有 upload_id、檔名、大小、狀態）。任何一步失敗就 rollback 並刪掉 `.bin`；成功回 202 與上傳紀錄。
+4. 同一筆交易（`upload_intake.create_upload`，先取 `pg_advisory_xact_lock` 讓配額精確）：語料已有同 hash → 409 `upload_duplicate`（帶 `file_hash` 與它是 `hidden`／`draft`／`published`）；已有進行中的上傳 → 409 `upload_duplicate`（`existing: upload`；並發時靠 partial unique index `idx_report_upload_active_hash` 擋，撞 index 也轉成 409）；曾判感染 → 422 `upload_known_infected`；每人每日（業務時區日曆日，`UPLOAD_DAILY_QUOTA`）或全站處理中（quarantined／scanning／clean／processing，`UPLOAD_MAX_IN_FLIGHT`）超過 → 429 `upload_quota_exceeded`；INSERT `report_upload`（state `quarantined`）並寫稽核 `upload.create`（detail 只有 upload_id、檔名、大小、狀態）。任何一步失敗就 rollback 並刪掉 `.bin`；成功回 202 與上傳紀錄。
 
 `GET /api/admin/uploads?state=&limit=&offset=` 列上傳紀錄，附 `scanner` 摘要（待掃件數、掃描中件數、最舊的等待、等待中的列最近一次 `scan_last_error`），全部由 DB 推導，web 不連 clamd。`GET /api/admin/uploads/{upload_id}` 是單筆詳情，另帶語料裡同 hash 的研報與抽取品質（還沒入庫時 null）。
 
@@ -366,7 +367,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | `LEGACY_TO_FINDB` | 台股→TW、美股→US、港股→HK、陸股→CN、外匯→FX、期貨→WTX、總體經濟→MACRO、多元配置→GLOBAL、債券→MACRO、原物料→GLOBAL |
 | `instrument_types` | `equity`、`index`、`futures`、`options`、`etf`、`bond`、`fx`、`commodity`、`crypto` |
 | `futures_targets` | 台指期、小型台指、電子期、金融期、個股期貨、其他 |
-| `stock_targets` | 個股代號，最多 8 個，去重保序。格式由 profile 的 `[instruments]` 宣告（`[instruments.code_formats.<市場>]`：`kind = "digits"` 純數字或 `"letters"` 大寫字母 ticker，加長度；字母代號轉大寫），標註結果只留符合其一者（各市場格式的聯集，不看研報的市場）。廷豐 profile（與 section 缺席時）只收正好 4 碼數字。標註 prompt 不變、只要求 4 碼代碼；側檔的 `stock_targets` 不經這道驗證（是來源方宣告的值） |
+| `stock_targets` | 個股代號，最多 8 個，去重保序。格式由 profile 的 `[instruments]` 宣告（`[instruments.code_formats.<市場>]`：`kind = "digits"` 純數字或 `"letters"` 大寫字母 ticker，加長度；字母代號轉大寫），標註結果只留符合其一者（各市場格式的聯集，不看研報的市場）。廷豐 profile（與 section 缺席時）只收正好 4 碼數字。標註 prompt 的代號說明（各市場的格式與範例、`stock_targets` 的格式要求、輸出格式的範例代號）由同一份格式產生（`tagging.tag_instruction`），其餘文字固定、profile 不能覆寫，廷豐渲染出的全文與框架化之前逐字相同（`tests/test_instrument_prompts.py`）；側檔的 `stock_targets` 不經這道驗證（是來源方宣告的值） |
 | `doc_type`（文件類型，`research_report.doc_type`） | 標註器產生 `research`（`is_research=true`）、`non_research`（`is_research=false`）（`tagging.DOC_TYPE_RESEARCH`／`DOC_TYPE_NON_RESEARCH`）。詞彙與各類型啟用的功能由 profile 的 `[doc_types]` 宣告（`app/profile.py`；功能清單 `DOC_FEATURES`，各功能管到哪些查詢見 `app/services/doc_types.py` docstring），DB 只限形狀 `^[a-z][a-z0-9_]{0,31}$`。廷豐 profile：`research` 全開、`non_research` 全關 |
 | `source`（發行機構） | 名單由 profile 的 `[sources].catalog` 提供（廷豐：`profiles/tingfong/sources.toml`，代碼如 `kgi`、`masterlink`、`sinopac`、`yuanta`、`morgan_stanley`）：`filename_tokens` 由檔名代碼正規化、`text_signatures`／`fallback_signatures` 從內文補、`display` 給顯示名；判定順序是 `filename.resolve_source`（內文指紋 → 檔名 token → fallback 指紋）。沒有名單的 profile 不從檔名或內文推斷（只靠側檔的 `source`），顯示名稱就是代碼本身 |
 | `report_type` | 檔名解析 |
@@ -415,7 +416,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | 401 | `api_key_invalid` | 不是 `Bearer <key>` 形式、格式不符、查無、已停用、已輪替掉的舊金鑰——刻意同一個回應 |
 | 403 | `api_scope_missing` | 金鑰沒有該端點要的 scope |
 | 429 | `api_rate_limited` | 超過每分鐘上限（`Retry-After`：補到一個名額的秒數） |
-| 429 | `api_quota_exceeded` | 超過每日額度（`Retry-After`：到台北隔日 0 點的秒數） |
+| 429 | `api_quota_exceeded` | 超過每日額度（`Retry-After`：到業務時區隔日 0 點的秒數） |
 | 404 | `report_not_found` | file-url：查無、被隱藏、草稿、不在授權範圍、`report_id` 不是 UUID——刻意同一個回應 |
 | 404 | `original_not_found` | file-url：研報沒有原檔物件，或站台不是物件儲存模式（local 不產生對外 URL） |
 | 503 | `original_unavailable` | file-url：物件指標或 sha256 對不上、物件儲存無法使用 |
@@ -427,7 +428,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 **上傳**：`POST /external/v1/uploads` 的檔案進上一節的上傳流程（隔離區 → 預檢與 ClamAV → worker 入庫成草稿 → 管理員發布），不直接入庫；收檔步驟與 `POST /api/admin/uploads` 相同，差別是上傳者記成 API 用戶端（`report_upload.api_client_id`，`uploaded_by` 為 NULL；管理後台的上傳清單顯示「API：<用戶端名稱>」）、每日份數依用戶端計（`UPLOAD_DAILY_QUOTA`，帳號的個人覆寫不適用）、重複的檔案一律 409 `upload_duplicate`（不說它在語料裡是已發布、草稿還是隱藏）。`GET /external/v1/uploads/{upload_id}` 只查得到同一個用戶端收進來的上傳，狀態收斂成 `processing`／`pending_review`／`published`／`rejected`（`web/routers/external.py` 的 `EXTERNAL_UPLOAD_STATUS`），不回掃描特徵、失敗細節與決策原因。對外上傳不收 metadata 側檔（側檔只走輪詢型連接器）。
 
-**限流與額度**：每分鐘上限是每個用戶端一個 token bucket（容量＝`rate_limit_per_min`，每秒補 1/60），狀態在 web 行程記憶體、重啟即滿；管理員調低上限下一個請求就生效。被限流擋下的請求不碰 DB、不計入每日額度。每日額度（`daily_quota`）以**台北時間的日曆日**計，台北 0 點（UTC 16:00）重置；通過限流的請求不論結果都計入當日計數（含額度用完後被拒的那幾次）。
+**限流與額度**：每分鐘上限是每個用戶端一個 token bucket（容量＝`rate_limit_per_min`，每秒補 1/60），狀態在 web 行程記憶體、重啟即滿；管理員調低上限下一個請求就生效。被限流擋下的請求不碰 DB、不計入每日額度。每日額度（`daily_quota`）以**業務時區（profile 的 `[locale].timezone`）的日曆日**計，該時區 0 點重置；通過限流的請求不論結果都計入當日計數（含額度用完後被拒的那幾次）。
 
 **授權範圍（entitlement）**：allowlist、fail-closed。`market` 必填；`source`／`report_type`／`instrument_type` 沒設定＝不限；維度內 OR、維度間 AND；研報在有設定的維度為 NULL 一律不符。用戶端看得到的研報＝可見（未隱藏、已發布）**且**在授權範圍內，兩個條件都在 SQL 裡（dense 與字面兩路都下推，不在 Python 事後過濾）。搜尋請求帶的 `market`／`source`／`report_type`／`instrument_type` 各是一個值，只能把該維度縮小成那一個值、且該值必須在授權清單內（`instrument_type` 也一樣，不靠陣列重疊放寬）；任一維度交集為空直接回空結果，不打檢索。file-url 不信任先前的搜尋結果，每次重新以可見性＋授權範圍查那一篇。
 

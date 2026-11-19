@@ -10,7 +10,7 @@
    在第 29 份時不會都過）。鎖只包這一小段 SQL，交易一 commit 就放。
 2. 重複檢查：語料已有同 hash → `DuplicateInCorpusError`（409，帶它目前是隱藏／草稿／已發布）；
    已有進行中的上傳 → `UploadInProgressError`（409）；曾判感染 → `KnownInfectedError`（422）。
-3. 配額：每人每日（台北時間的日曆日，所有狀態都算；個人覆寫在 `research.user_quota`）、全站處理中
+3. 配額：每人每日（業務時區的日曆日，`business_time`；所有狀態都算；個人覆寫在 `research.user_quota`）、全站處理中
    （`uploads.IN_FLIGHT_STATES`）。
 4. INSERT（state `quarantined`）。同一個 file_hash 的進行中上傳由 partial unique index
    `idx_report_upload_active_hash` 擋：上面的檢查之外，任何別的路徑（例如日後審核 API 的 retry
@@ -35,11 +35,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import uploads
+from app.services import business_time, uploads
 
 FILENAME_MAX_CHARS = 255
 PDF_SUFFIX = ".pdf"
-TZ_NAME = "Asia/Taipei"  # 每日配額的「一天」
 # pg_advisory_xact_lock 的鍵：固定常數（"uploadin" 的 ASCII），全庫唯一即可。
 INTAKE_LOCK_KEY = int.from_bytes(b"uploadin", "big")
 ACTIVE_INDEX = "idx_report_upload_active_hash"
@@ -95,7 +94,7 @@ class KnownInfectedError(IntakeError):
 class QuotaExceededError(IntakeError):
     def __init__(self, scope: str, limit: int, used: int):
         if scope == "daily":
-            message = f"今天（台北時間）已上傳 {used} 份，已達每人每日上限 {limit} 份"
+            message = f"今天（{business_time.label()}時間）已上傳 {used} 份，已達每人每日上限 {limit} 份"
         else:
             message = f"全站處理中的上傳已有 {used} 份，已達上限 {limit} 份，請稍後再試"
         super().__init__(message)
@@ -246,7 +245,8 @@ async def check_quota(
                 "count(*) FILTER (WHERE state = ANY(CAST(:in_flight AS text[]))) "
                 "FROM research.report_upload"
             ),
-            {"uid": actor_id, "cid": api_client_id, "tz": TZ_NAME, "in_flight": list(uploads.IN_FLIGHT_STATES)},
+            {"uid": actor_id, "cid": api_client_id, "tz": business_time.tz_name(),
+             "in_flight": list(uploads.IN_FLIGHT_STATES)},
         )
     ).one()
     today, in_flight = int(row[0]), int(row[1])

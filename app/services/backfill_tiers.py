@@ -16,7 +16,7 @@
   N 個曆月（月底夾到該月最後一天，例如 2026-03-31 往前 1 個月是 2026-02-28）。日期未來的研報也算第二層。
 - **`report_date` 為 NULL 歸第三層**：沒有日期的多半是檔名、內文、mtime 都推不出日期的舊檔，歸第二層會把
   它們當新檔付費；第三層由背景在上限內補，不會漏。訊號擷取本來就排除無日期的研報（`extract_signals`）。
-- 今天以台北時間（`llm_usage.TZ`）計，與用量檔切日一致。
+- 今天以業務時區（profile 的 `[locale].timezone`，`business_time`）計，與用量檔切日一致。
 
 ## 待補判斷（重用各批次的「已完成」與跳過名單）
 
@@ -48,7 +48,7 @@
 
 ## 每日上限的帳（背景補齊）
 
-`BudgetState`（`data/backfill/state.json`；目錄 `BACKFILL_DIR` 只給測試用）記「台北日 → 已用 token、
+`BudgetState`（`data/backfill/state.json`；目錄 `BACKFILL_DIR` 只給測試用）記「業務日 → 已用 token、
 已處理份數」。每批跑完以用量檔裡這批研報的實測 token 入帳，讀不到用量檔時以估計值入帳（寧可多算）。
 換日自動歸零。
 """
@@ -65,9 +65,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from app.services import llm_failures
+from app.services import business_time, llm_failures
 from app.services.doc_types import doc_type_enabled_sql
-from app.services.llm_usage import TZ
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -90,8 +89,9 @@ TIER_OLDER = 3
 # ── 分層 ────────────────────────────────────────────────────────────────
 
 
-def today_taipei(now: datetime | None = None) -> date:
-    return (now or datetime.now(TZ)).astimezone(TZ).date()
+def local_today(now: datetime | None = None) -> date:
+    """業務時區的今天（`now` 預設現在）。"""
+    return business_time.today(now)
 
 
 def recent_cutoff(today: date, months: int) -> date:
@@ -390,7 +390,7 @@ def state_path() -> Path:
 
 @dataclass
 class BudgetState:
-    day: str = ""  # 台北日 YYYY-MM-DD
+    day: str = ""  # 業務日 YYYY-MM-DD
     tokens: int = 0  # 當日背景補齊已用（輸入＋輸出）
     reports: int = 0  # 當日背景補齊已處理份數
     measured: bool = True  # 當日的帳全部來自用量檔實測（有任何一批以估計入帳就是 False）

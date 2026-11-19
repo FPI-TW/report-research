@@ -70,6 +70,10 @@ class DemoProfileTests(unittest.TestCase):
         self.assertFalse(set(d.sources.display) & set(t.sources.display))
         self.assertEqual({s for _, s in d.sources.filename_tokens}, set(demo_corpus.BROKERS))
         self.assertEqual((d.brief.after_hour, t.brief.after_hour), (0, 9))
+        self.assertNotEqual(d.filenames.admin_keywords, t.filenames.admin_keywords)
+        # 合成語料的檔名一份都不能被判成行政文件（會在標註前被略過、端到端少入庫）。
+        files = [r.file.lower() for r in demo_corpus.plan(ANCHOR)]
+        self.assertEqual([f for f in files if any(k.lower() in f for k in d.filenames.admin_keywords)], [])
 
     def test_corpus_filenames_resolve_to_their_broker(self):
         """沒有側檔的研報靠檔名推得發行機構；檔名裡的美股 ticker 不被當成發行機構。"""

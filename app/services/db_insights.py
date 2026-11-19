@@ -29,8 +29,9 @@
 
 1. 寫一列 `granularity='hour'`（`taken_at`＝整點，UTC；同一小時已有就不寫——冪等）。`stats` 只放數字：
    `gauges`（當下值）、`counters`（`pg_stat_database` 的累計值）、`tables`（前 `SNAPSHOT_TOP_TABLES` 大的表）。
-2. 每日彙總：台北時間的「已結束、還在逐時保留期內、有逐時列、卻沒有每日列」的每一天各寫一列 `granularity='day'`
-   （`taken_at`＝該日台北零時）。所以「每天第一次執行」自然就會補前一天，漏跑幾天也會補齊；重跑是 no-op
+2. 每日彙總：業務時區（profile 的 `[locale].timezone`）的「已結束、還在逐時保留期內、有逐時列、卻沒有每日列」的
+   每一天各寫一列 `granularity='day'`（`taken_at`＝該日業務時區零時）。所以「每天第一次執行」自然就會補前一天，
+   漏跑幾天也會補齊；重跑是 no-op
    （UNIQUE (granularity, taken_at) ＋ ON CONFLICT DO NOTHING）。gauges 存 avg／min／max／last，counters 存
    當日最後一個累計值（相鄰兩天相減＝那一天的量）。
 3. 保留期刪除：逐時超過 `DB_SNAPSHOT_HOURLY_RETENTION_DAYS`（30）、每日超過 `DB_SNAPSHOT_DAILY_RETENTION_DAYS`
@@ -44,7 +45,7 @@ counter 取相鄰兩點的差、換算成「每小時／每日」（中間缺點
 
 ## 事件與批次趨勢（`incident_trends`、`job_failure_rates`）
 
-不新表，直接查 `incident`／`job_execution`（revision 0005、0006）。週以台北時間的週一為起點；MTTR 與持續時間
+不新表，直接查 `incident`／`job_execution`（revision 0005、0006）。週以業務時區的週一為起點；MTTR 與持續時間
 p50／p90 只算 `resolved`（`lost` 不知道何時結束，另計件數、不納入）；失敗＝`finished` 而 systemd Result 不是
 `success`（SuccessExitStatus 放行的退出碼本來就是 success），失敗率分母是 finished（`lost`／`running` 另列）。
 """
@@ -55,18 +56,16 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services import business_time
 
 logger = logging.getLogger(__name__)
 
-TZ_NAME = "Asia/Taipei"
-TZ = ZoneInfo(TZ_NAME)
 UTC = timezone.utc
 
 OVERVIEW_STATEMENT_TIMEOUT_MS = 5000
@@ -507,8 +506,8 @@ def rollup_day(day: date, hourly: list[dict]) -> dict:
 
 
 def day_start(day: date) -> datetime:
-    """台北時間某日零時（timestamptz，UTC 表示）。"""
-    return datetime.combine(day, time(0), tzinfo=TZ).astimezone(UTC)
+    """業務時區某日零時（timestamptz，UTC 表示）。"""
+    return business_time.day_start(day).astimezone(UTC)
 
 
 def retention_days() -> tuple[int, int]:
@@ -536,8 +535,9 @@ async def write_hourly(session, stats: dict, *, now: datetime) -> bool:
 
 async def rollup_daily(session, *, now: datetime, hourly_days: int) -> list[date]:
     """把已結束、還在逐時保留期內、有逐時列而沒有每日列的每一天彙總成一列。回寫入的日子。"""
-    today = now.astimezone(TZ).date()
-    first = (now - timedelta(days=hourly_days)).astimezone(TZ).date()
+    zone = business_time.tz()
+    today = now.astimezone(zone).date()
+    first = (now - timedelta(days=hourly_days)).astimezone(zone).date()
     rows = (await session.execute(text("""
         SELECT taken_at, stats FROM research.db_stat_snapshot
         WHERE granularity = 'hour' AND taken_at >= :lo AND taken_at < :hi
@@ -545,14 +545,14 @@ async def rollup_daily(session, *, now: datetime, hourly_days: int) -> list[date
     """), {"lo": day_start(first), "hi": day_start(today)})).mappings().all()
     by_day: dict[date, list[dict]] = {}
     for r in rows:
-        by_day.setdefault(r["taken_at"].astimezone(TZ).date(), []).append(_loads(r["stats"]))
+        by_day.setdefault(r["taken_at"].astimezone(zone).date(), []).append(_loads(r["stats"]))
     if not by_day:
         return []
     existing = {r[0] for r in (await session.execute(text("""
         SELECT taken_at FROM research.db_stat_snapshot
         WHERE granularity = 'day' AND taken_at = ANY(CAST(:starts AS timestamptz[]))
     """), {"starts": [day_start(d) for d in by_day]})).all()}
-    existing_days = {ts.astimezone(TZ).date() for ts in existing}
+    existing_days = {ts.astimezone(zone).date() for ts in existing}
     written: list[date] = []
     for d in sorted(by_day):
         if d in existing_days:
@@ -711,7 +711,7 @@ def _stats_row(r) -> dict:
 
 async def incident_trends(session, *, since: datetime, until: datetime) -> dict:
     """開場時間落在 [since, until] 的事件：每週×元件×嚴重度件數、整體與各元件的 MTTR／p50／p90、常見 reason。"""
-    params = {"since": since, "until": until, "tz": TZ_NAME}
+    params = {"since": since, "until": until, "tz": business_time.tz_name()}
     where = "i.opened_at >= :since AND i.opened_at <= :until"
     weeks = (await session.execute(text(f"""
         SELECT to_char(date_trunc('week', i.opened_at AT TIME ZONE :tz), 'YYYY-MM-DD') AS week_start,

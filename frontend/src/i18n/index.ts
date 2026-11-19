@@ -294,9 +294,78 @@ export function sentences(...parts: string[]): string {
   return parts.join(current === 'en' ? ' ' : '')
 }
 
-// ── Intl 格式化（時區語意固定台北，與改動前相同；只有語系跟著介面） ─────────────
+// ── 業務時區（profile 的 `[locale].timezone`，經 `/api/branding` 的 `timezone` 下發） ─────────────
+//
+// 日期格式化與「今天」一律用它，不用瀏覽器的時區：後端以同一個時區切日（每日配額、用量、分析）。抓到之前與抓不到時
+// 是 `DEFAULT_TIME_ZONE`（profile 缺席時後端的預設也是它）。`lib/branding.ts` 的 `loadBranding()` 呼叫 `setTimeZone`；
+// 畫面上看得到的東西（時區或目前語系的地名）真的變了才通知，`LocaleBoundary` 以語系＋`zoneVersion` 為 key 重掛，
+// 已畫出的日期跟著換；預設 profile 的值與抓到之前相同，所以不會多重掛一次。
 
-export const TIME_ZONE = 'Asia/Taipei'
+export const DEFAULT_TIME_ZONE = 'Asia/Taipei'
+
+export interface TimeZoneSetting {
+  /** IANA 名稱。 */
+  name?: string | null
+  /** 介面裡的地名（「{label}時間」）；英文介面先用 `labelEn`。 */
+  label?: string | null
+  labelEn?: string | null
+}
+
+let timeZone = DEFAULT_TIME_ZONE
+let zoneLabels: { zh: string; en: string } = { zh: '', en: '' }
+/** 時區或地名每變一次加一（`LocaleBoundary` 的 key）。 */
+let zoneVersion = 0
+const zoneListeners = new Set<() => void>()
+
+function validTimeZone(name: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: name })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 目前的業務時區（IANA 名稱）。在呼叫時取值，不要在模組頂層存成常數。 */
+export function getTimeZone(): string {
+  return timeZone
+}
+
+/** 寫入業務時區；名稱不合法（瀏覽器認不得）時退回預設。傳 null 還原成預設（測試用）。 */
+export function setTimeZone(next: TimeZoneSetting | null): void {
+  const name = next?.name && validTimeZone(next.name) ? next.name : DEFAULT_TIME_ZONE
+  const named = name === next?.name
+  const before = `${timeZone}|${timeZoneLabel()}`
+  timeZone = name
+  zoneLabels = { zh: (named && next?.label?.trim()) || '', en: (named && next?.labelEn?.trim()) || '' }
+  if (`${timeZone}|${timeZoneLabel()}` === before) return
+  zoneVersion += 1
+  zoneListeners.forEach(l => l())
+}
+
+/**
+ * 介面裡的時區地名（「今日・{zone}時間」的 zone）：profile 給的地名；沒給時預設時區是「台北」，其他是 IANA 名稱。
+ * `locale` 預設目前語系；中文文件（對外 API 說明）固定取中文的地名。
+ */
+export function timeZoneLabel(locale: Locale = current): string {
+  const label = locale === 'en' ? zoneLabels.en || zoneLabels.zh : zoneLabels.zh
+  if (label) return label
+  if (timeZone !== DEFAULT_TIME_ZONE) return timeZone
+  const dict = dicts[locale].app ?? dicts[DEFAULT_LOCALE].app
+  const fallback = dict?.['i18n.defaultTimeZoneLabel']
+  return typeof fallback === 'string' ? fallback : t('i18n.defaultTimeZoneLabel')
+}
+
+function subscribeZone(cb: () => void): () => void {
+  zoneListeners.add(cb)
+  return () => zoneListeners.delete(cb)
+}
+
+function getZoneSnapshot(): number {
+  return zoneVersion
+}
+
+// ── Intl 格式化（時區是業務時區；語系跟著介面） ─────────────
 
 /** 介面語系 → Intl 的 locale tag（數字分位、日期月份名稱）。 */
 export function intlLocale(locale: Locale = current): string {
@@ -310,7 +379,12 @@ export function formatNumber(n: number, opts?: Intl.NumberFormatOptions): string
 export function formatDate(value: Date | string | number, opts: Intl.DateTimeFormatOptions): string {
   const d = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(d.getTime())) return ''
-  return new Intl.DateTimeFormat(intlLocale(), { timeZone: TIME_ZONE, ...opts }).format(d)
+  return new Intl.DateTimeFormat(intlLocale(), { timeZone, ...opts }).format(d)
+}
+
+/** 業務時區的日期（`YYYY-MM-DD`，預設今天）：後端以同一個時區切日，「今天」要對得上。 */
+export function businessDate(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
 }
 
 /**
@@ -326,8 +400,9 @@ export function compareText(a: string, b: string): number {
   return a.localeCompare(b, current === 'en' ? 'en' : 'zh-Hant')
 }
 
-/** 以語系為 key 重掛整棵樹：切換語系後每個元件重新 render、重新呼叫 `t()`。 */
+/** 以語系（與業務時區）為 key 重掛整棵樹：切換後每個元件重新 render、重新呼叫 `t()` 與日期格式化。 */
 export function LocaleBoundary({ children }: { children: ReactNode }) {
   const locale = useLocale()
-  return createElement(Fragment, { key: locale }, children)
+  const zone = useSyncExternalStore(subscribeZone, getZoneSnapshot, () => 0)
+  return createElement(Fragment, { key: `${locale}|${zone}` }, children)
 }

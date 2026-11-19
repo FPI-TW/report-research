@@ -20,6 +20,10 @@ export type Block =
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'table'; head: string[]; rows: string[][] }
 
+/** 業務時區的佔位字：地名（「台北」）與 IANA 名稱（`Asia/Taipei`），交出去前代入 profile 的值。 */
+export const TIME_ZONE_LABEL_PLACEHOLDER = '{TIME_ZONE_LABEL}'
+export const TIME_ZONE_PLACEHOLDER = '{TIME_ZONE}'
+
 /** 文件裡的站台網址佔位字換成實際網址（後台以目前站台的 origin 代入）。 */
 export function withBaseUrl(md: string, baseUrl: string): string {
   return md.split(BASE_URL_PLACEHOLDER).join(baseUrl)
@@ -28,6 +32,11 @@ export function withBaseUrl(md: string, baseUrl: string): string {
 /** 文件裡的產品名佔位字換成 profile 的產品名（後台以 `useBranding().productName` 代入）。 */
 export function withProductName(md: string, productName: string): string {
   return md.split(PRODUCT_NAME_PLACEHOLDER).join(productName)
+}
+
+/** 文件裡的時區佔位字換成 profile 的業務時區（後台以 `timeZoneLabel('zh-Hant')`、`getTimeZone()` 代入）。 */
+export function withTimeZone(md: string, label: string, name: string): string {
+  return md.split(TIME_ZONE_LABEL_PLACEHOLDER).join(label).split(TIME_ZONE_PLACEHOLDER).join(name)
 }
 
 const FENCE = /^```(\S*)\s*$/

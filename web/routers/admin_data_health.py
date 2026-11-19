@@ -4,7 +4,7 @@
   `scripts/check_batch_freshness.py` 同一組函式與門檻）；資料完整性稽核與 R2 對帳讀兩支腳本最後一次寫的結果檔
   （`app/services/data_health.py`，`data/health/*.json`）——那兩個檢查太重，刻意不在 web 裡跑。整份回應
   TTL 快取 60 秒（`web/ttl_cache.py`）。
-- **LLM 用量**：讀 `data/llm_usage.jsonl`（批次的費用歸因依據），依日期（台北時間）／任務／模型彙總 token 與
+- **LLM 用量**：讀 `data/llm_usage.jsonl`（批次的費用歸因依據），依日期（業務時區）／任務／模型彙總 token 與
   呼叫次數。只回彙總，不含 prompt 雜湊、file_hash、report_id；讀檔有位元組與行數上限，檔案不存在回空結果。
   在 thread 裡讀（不卡 event loop），快取鍵帶檔案大小與 mtime。Admin v2 另附 `online`（線上呼叫，
   `research.llm_usage_daily` 的日彙總，不出個人維度；讀不到時 `available=false`）與 `combined`（兩者合計）。
@@ -164,7 +164,7 @@ class LlmUsageSource(BaseModel):
 
 
 class LlmUsageOnline(BaseModel):
-    """線上 LLM 用量（`research.llm_usage_daily`，台北日粒度；窗期頭尾兩天整天計入）。"""
+    """線上 LLM 用量（`research.llm_usage_daily`，業務日粒度；窗期頭尾兩天整天計入）。"""
 
     available: bool
     error: str | None = None

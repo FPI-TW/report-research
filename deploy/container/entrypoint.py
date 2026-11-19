@@ -18,6 +18,10 @@ SCHEMA_GATE_WAIT_SECONDS 秒內重試——compose 的 depends_on 只保證 post
 驗證過的全庫備份、必須由人逐字確認目標（app/services/schema_migrations.py）。升級一律是明確的一步
 `docker compose run --rm migrate`。
 
+── 時區（web／worker／scheduler／create-admin）─────────────────────────────────
+`TZ` 沒設時以 profile 的 `[locale].timezone` 補上；設了但與它不同時 scheduler 拒起（cron 在 `TZ` 下解讀），其他角色
+只警告。規則與理由在 `resolve_tz`。
+
 ── migrate ────────────────────────────────────────────────────────────────
   一致（ok）        已在 head，不做任何事（不備份）。
   空庫（unversioned 且 research schema 沒有物件）
@@ -89,6 +93,36 @@ def config_problems(role: str, env: Mapping[str, str]) -> list[str]:
                 "（產生方式：openssl rand -hex 32）"
             )
     return problems
+
+
+# ───────────────────────── 時區 ─────────────────────────
+
+def resolve_tz(role: str, env: Mapping[str, str]) -> tuple[str | None, str | None]:
+    """容器的 `TZ` 與 profile 業務時區（`[locale].timezone`）的關係；回 (要用的 TZ, 拒絕啟動的理由)。
+
+    日界（每日配額、切日、簡報鐘點）一律由程式依 profile 決定，與 `TZ` 無關；`TZ` 只決定 scheduler 的 cron 在哪個時區
+    解讀（`deploy/container/scheduler.py` 的排程時間是業務時區的鐘點：analytics-rollup 要在業務日結束之後跑，備份要
+    落在離峰時段）與日誌的牆鐘。所以：
+
+    - `TZ` 沒設（或空字串）→ 以 profile 為準（compose 預設就是空：一份設定，不必兩邊對齊）。
+    - `TZ` 與 profile 不同 → scheduler 拒絕啟動（排程會整段平移，而且沒有任何錯誤訊息）；其他角色只記一行警告。
+    - profile 本身載入失敗 → 拒絕啟動（web 的 lifespan 反正也會拒絕，這裡提早說）。
+    """
+    from app.profile import ProfileError, load_profile, resolve_profile_dir
+
+    try:
+        profile_tz = load_profile(resolve_profile_dir(env.get("PROFILE_DIR", ""))).locale.timezone
+    except ProfileError as exc:
+        return None, str(exc)
+    current = (env.get("TZ") or "").strip()
+    if not current:
+        return profile_tz, None
+    if current != profile_tz:
+        mismatch = f"TZ={current} 與 profile 的業務時區 [locale].timezone={profile_tz} 不同"
+        if role == "scheduler":
+            return None, (f"{mismatch}：排程在 TZ 下解讀，會整段平移。把 TZ 留空（以 profile 為準）或設成 {profile_tz}")
+        log(f"注意：{mismatch}（日界一律依 profile，只有日誌的牆鐘不同）")
+    return current, None
 
 
 # ───────────────────────── schema 閘門 ─────────────────────────
@@ -304,7 +338,8 @@ def run_worker(env: Mapping[str, str], *, runner=subprocess.run, sleep: Callable
         signal.signal(signal.SIGINT, _stop)
     done = 0
     while not _Stop.requested and (rounds is None or done < rounds):
-        rc = runner(["bash", str(REPO_ROOT / "scripts" / "process_uploads.sh")], cwd=REPO_ROOT).returncode
+        rc = runner(["bash", str(REPO_ROOT / "scripts" / "process_uploads.sh")], cwd=REPO_ROOT,
+                    env=dict(env)).returncode
         log(f"上傳 worker 一輪結束 rc={rc}")
         done += 1
         if rounds is not None and done >= rounds:
@@ -340,6 +375,11 @@ def main(argv: list[str], env: Mapping[str, str] | None = None, *, execvpe=os.ex
         print(msg)
         return rc
 
+    tz, problem = resolve_tz(role, env)
+    if problem:
+        log(f"拒絕啟動：{problem}")
+        return EXIT_REFUSED
+    env["TZ"] = tz  # exec 的角色與 worker 每一輪的殼都拿這份 env
     rc = (gate or schema_gate)(env)
     if rc != EXIT_OK:
         return rc

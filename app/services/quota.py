@@ -14,8 +14,9 @@ web 層一律經 `web.deps.quota`（本模組物件）呼叫——測試注入�
 
 **計數是一句原子 SQL**（`_CHARGE_SQL`）：`INSERT … ON CONFLICT DO UPDATE SET count = count + 1 WHERE count < :limit
 RETURNING count`。沒有回傳任何列＝超額；兩個請求同時在第 99 次時只有一個拿得到第 100 次（ON CONFLICT 在列鎖上
-對最新版本重判 WHERE），不需要先讀再寫。上限 0 時 INSERT 那條路也不插入（`WHERE :limit > 0`）。日期是台北時間的
-日曆日（與上傳配額、`usage_events` 一致）。配額不 COUNT `qa_log`：使用者可以硬刪自己的歷史。
+對最新版本重判 WHERE），不需要先讀再寫。上限 0 時 INSERT 那條路也不插入（`WHERE :limit > 0`）。日期是業務時區
+（profile 的 `[locale].timezone`，`business_time`）的日曆日（與上傳配額、`usage_events` 一致）；SQL 端的時區一律是
+綁定參數 `:tz`。配額不 COUNT `qa_log`：使用者可以硬刪自己的歷史。
 
 **影子模式（使用者定案 5）**：正式阻擋要兩道開關**同時**開——環境變數 `QUOTA_ENFORCE`（能力上限，預設關）AND
 DB 旗標 `quota.enforce`（`feature_flags.is_enabled`，registry 預設關；寫入 UI 屬 Flags lane）。旗標讀取失敗時
@@ -26,7 +27,7 @@ DB 旗標 `quota.enforce`（`feature_flags.is_enabled`，registry 預設關；�
   每人每日的真實需求（`<kind>` 封頂在上限、`<kind>_over` 是超出的部分，兩者相加＝實際嘗試次數），兩週後的
   P50／P95 才算得出來；journald 的保留期與查詢都不適合當這個依據。另外印一行結構化 log `quota_over`
   （kind、user_id、上限、是否阻擋；沒有問題內容）方便即時追。
-- 正式阻擋時路由回 429 `quota_exceeded`，`Retry-After`＝距台北午夜的秒數（`retry_after_seconds`）。
+- 正式阻擋時路由回 429 `quota_exceeded`，`Retry-After`＝距業務時區午夜的秒數（`retry_after_seconds`）。
 
 **DB 寫入失敗＝放行並記 WARNING**（`Decision.error`）。配額是費用控管不是安全邊界；DB 真的掛掉時 session 查驗
 早就回 503。沒有登入身分（開發模式免登入的 `DEV_USER`）不計數、不阻擋。
@@ -44,21 +45,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.services import feature_flags
+from app.services import business_time, feature_flags
 from app.services.db import SessionFactory
 
 logger = logging.getLogger(__name__)
-
-TZ = timezone(timedelta(hours=8))
-TZ_NAME = "Asia/Taipei"
 
 KIND_ASK = "ask"
 KIND_EXPORT = "export"
@@ -105,19 +102,17 @@ class QuotaPermissionDenied(QuotaError):
 # ── 時間 ────────────────────────────────────────────────────────────────
 
 
-def taipei_now(now: datetime | None = None) -> datetime:
-    return (now or datetime.now(timezone.utc)).astimezone(TZ)
+def local_day(now: datetime | None = None) -> date:
+    """配額的「今天」：業務時區（profile 的 `[locale].timezone`）的日曆日。"""
+    return business_time.today(now)
 
 
-def taipei_day(now: datetime | None = None) -> date:
-    return taipei_now(now).date()
+taipei_day = local_day  # 舊名：預設業務時區是台北時，呼叫端與測試沿用
 
 
 def retry_after_seconds(now: datetime | None = None) -> int:
-    """距下一個台北午夜的秒數（無條件進位、至少 1）：429 的 `Retry-After`。"""
-    local = taipei_now(now)
-    midnight = datetime.combine(local.date() + timedelta(days=1), time(0), tzinfo=TZ)
-    return max(1, math.ceil((midnight - local).total_seconds()))
+    """距下一個業務時區午夜的秒數（無條件進位、至少 1）：429 的 `Retry-After`。"""
+    return business_time.seconds_until_midnight(now)
 
 
 def default_limit(kind: str, settings=None) -> int:
@@ -154,7 +149,7 @@ class Decision:
     limit: int | None = None  # 這個人這一類的上限；None＝不限或未知
     count: int | None = None  # 計入後今天的次數
     error: bool = False  # DB 寫入失敗而放行
-    retry_after: int | None = None  # 被擋時距台北午夜的秒數
+    retry_after: int | None = None  # 被擋時距業務時區午夜的秒數
 
 
 _LIMIT_SQL = "SELECT daily_limit FROM research.user_quota WHERE user_id = CAST(:uid AS uuid) AND kind = :kind"
@@ -200,7 +195,7 @@ async def charge(user, kind: str, *, session_factory=None, now: datetime | None 
     uid = getattr(user, "id", None)
     if uid is None or not _valid_uuid(uid):
         return Decision(kind=kind, allowed=True)
-    day = taipei_day(now)
+    day = local_day(now)
     factory = session_factory or SessionFactory
     try:
         async with factory() as session:
@@ -226,7 +221,7 @@ async def charge(user, kind: str, *, session_factory=None, now: datetime | None 
 
 def exceeded_message(decision: Decision) -> str:
     label = {KIND_ASK: "問答", KIND_EXPORT: "匯出"}.get(decision.kind, decision.kind)
-    return f"今天（台北時間）的{label}次數已達上限 {decision.limit} 次，午夜後重置"
+    return f"今天（{business_time.label()}時間）的{label}次數已達上限 {decision.limit} 次，午夜後重置"
 
 
 # ── 狀態與用量 ──────────────────────────────────────────────────────────
@@ -248,8 +243,8 @@ async def enforcement_status() -> dict:
 
 def _upload_window_sql(alias: str = "") -> str:
     col = f"{alias}uploaded_at"
-    return (f"{col} >= (CAST(:d0 AS date)::timestamp AT TIME ZONE '{TZ_NAME}') "
-            f"AND {col} < ((CAST(:d1 AS date) + 1)::timestamp AT TIME ZONE '{TZ_NAME}')")
+    return (f"{col} >= (CAST(:d0 AS date)::timestamp AT TIME ZONE :tz) "
+            f"AND {col} < ((CAST(:d1 AS date) + 1)::timestamp AT TIME ZONE :tz)")
 
 
 async def _today_counts(session, day: date, user_id: str | None = None) -> dict[tuple[str, str], int]:
@@ -265,7 +260,7 @@ async def _today_counts(session, day: date, user_id: str | None = None) -> dict[
     ups = (await session.execute(text(
         "SELECT uploaded_by::text, count(*) FROM research.report_upload "
         f"WHERE uploaded_by IS NOT NULL AND {_upload_window_sql()}{up_user} GROUP BY 1"
-    ), {"d0": day, "d1": day, "uid": user_id})).all()
+    ), {"d0": day, "d1": day, "uid": user_id, "tz": business_time.tz_name()})).all()
     for uid, n in ups:
         out[(uid, KIND_UPLOAD)] = int(n)
     return out
@@ -304,7 +299,7 @@ def _item(kind: str, uid: str, counts: dict, overrides: dict, settings) -> dict:
 
 async def me_usage(user, *, session_factory=None, now: datetime | None = None) -> dict:
     """目前使用者今天各類的次數與上限。一般使用者只有 ask（匯出與上傳是管理功能）。"""
-    day = taipei_day(now)
+    day = local_day(now)
     uid = getattr(user, "id", None)
     kinds = KINDS if getattr(user, "is_admin", False) else (KIND_ASK,)
     settings = get_settings()
@@ -321,7 +316,7 @@ async def me_usage(user, *, session_factory=None, now: datetime | None = None) -
         items.append({k: item[k] for k in ("kind", "used", "over", "limit", "remaining")})
     return {
         "day": day.isoformat(),
-        "timezone": TZ_NAME,
+        "timezone": business_time.tz_name(),
         "resets_in_seconds": retry_after_seconds(now),
         "enforced": await enforcement_active(user),
         "items": items,
@@ -330,7 +325,7 @@ async def me_usage(user, *, session_factory=None, now: datetime | None = None) -
 
 async def admin_overview(*, session_factory=None, now: datetime | None = None) -> dict:
     """每位（未刪除）使用者今天的各類次數、上限與覆寫，以及今天的線上 LLM 呼叫與 token。"""
-    day = taipei_day(now)
+    day = local_day(now)
     settings = get_settings()
     async with (session_factory or SessionFactory)() as session:
         users = (await session.execute(text(
@@ -360,7 +355,7 @@ async def admin_overview(*, session_factory=None, now: datetime | None = None) -
         })
     return {
         "day": day.isoformat(),
-        "timezone": TZ_NAME,
+        "timezone": business_time.tz_name(),
         "resets_in_seconds": retry_after_seconds(now),
         "defaults": {kind: default_limit(kind, settings) for kind in KINDS},
         "enforcement": await enforcement_status(),
@@ -387,7 +382,7 @@ FROM d
 
 _UPLOAD_STATS_SQL = f"""
 WITH d AS (
-    SELECT uploaded_by AS user_id, (uploaded_at AT TIME ZONE '{TZ_NAME}')::date AS day, count(*) AS used
+    SELECT uploaded_by AS user_id, (uploaded_at AT TIME ZONE :tz)::date AS day, count(*) AS used
     FROM research.report_upload
     WHERE uploaded_by IS NOT NULL AND {_upload_window_sql()}
     GROUP BY 1, 2
@@ -401,21 +396,22 @@ FROM d
 
 
 async def usage_stats(days: int = STATS_DEFAULT_DAYS, *, session_factory=None, now: datetime | None = None) -> dict:
-    """最近 `days` 個台北日（含今天）每人每日需求的 P50／P95（給「兩週後是否正式阻擋」用）。
+    """最近 `days` 個業務日（含今天）每人每日需求的 P50／P95（給「兩週後是否正式阻擋」用）。
 
     需求＝`<kind>`＋`<kind>_over`（影子模式下超出上限的嘗試也算）；只統計**有使用的人日**（當天這一類至少一次），
     沒用的日子不算 0，否則十幾個人的小團隊 P50 永遠是 0。upload 來自 `report_upload`（被拒的上傳不留紀錄，
     所以沒有 over）。
     """
     days = max(1, min(int(days), STATS_MAX_DAYS))
-    d1 = taipei_day(now)
+    d1 = local_day(now)
     d0 = d1 - timedelta(days=days - 1)
     settings = get_settings()
     kinds = []
     async with (session_factory or SessionFactory)() as session:
         for kind in KINDS:
             if kind == KIND_UPLOAD:
-                r = (await session.execute(text(_UPLOAD_STATS_SQL), {"d0": d0, "d1": d1})).one()
+                r = (await session.execute(text(_UPLOAD_STATS_SQL),
+                                           {"d0": d0, "d1": d1, "tz": business_time.tz_name()})).one()
             else:
                 r = (await session.execute(text(_COUNTED_STATS_SQL),
                                            {"d0": d0, "d1": d1, "kind": kind, "over": over_kind(kind)})).one()
@@ -426,7 +422,8 @@ async def usage_stats(days: int = STATS_DEFAULT_DAYS, *, session_factory=None, n
                 "max": int(r[4]) if r[4] is not None else None,
                 "over_user_days": int(r[5] or 0), "over_events": int(r[6] or 0),
             })
-    return {"since_day": d0.isoformat(), "until_day": d1.isoformat(), "days": days, "timezone": TZ_NAME,
+    return {"since_day": d0.isoformat(), "until_day": d1.isoformat(), "days": days,
+            "timezone": business_time.tz_name(),
             "kinds": kinds}
 
 
@@ -515,6 +512,6 @@ async def set_override(user_id: str, kind: str, *, mode: str, daily_limit: int |
                         "previous_daily_limit": prev_limit, "has_reason": clean_reason is not None},
             )
             await session.commit()
-        counts = await _today_counts(session, taipei_day(), user_id)
+        counts = await _today_counts(session, local_day(), user_id)
         overrides = await _overrides(session, user_id)
     return {"changed": changed, "item": _item(kind, user_id, counts, overrides, get_settings())}

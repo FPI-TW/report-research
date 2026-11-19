@@ -4,7 +4,7 @@
 （`user_quota.daily_limit` NULL）與調整 super admin 的配額只有 super admin（規則寫在服務層，CLI 也受約束）；
 同交易寫稽核 `quota.update`（detail 只有類別、模式、上限與先前值，不含理由全文與帳號名稱）。
 
-- `GET /api/admin/quota`：每位使用者今天（台北時間）的 ask／export／upload 次數、上限、覆寫與「超出上限」次數，
+- `GET /api/admin/quota`：每位使用者今天（業務時區）的 ask／export／upload 次數、上限、覆寫與「超出上限」次數，
   今天的線上 LLM 呼叫與 token；影子模式狀態。
 - `GET /api/admin/quota/stats?days=14`：最近 N 天（1–90）每人每日需求的 P50／P95、最大值、超額人日與次數
   （給「兩週後是否正式阻擋」用）。
@@ -147,7 +147,7 @@ async def get_quota_overview():
 
 
 @router.get("/api/admin/quota/stats", response_model=QuotaStats)
-async def get_quota_stats(days: int = Query(14, ge=1, le=90, description="最近幾個台北日（含今天）")):
+async def get_quota_stats(days: int = Query(14, ge=1, le=90, description="最近幾個業務日（含今天）")):
     """每人每日需求（含超出上限的嘗試）的 P50／P95：只統計有使用的人日。"""
     return QuotaStats(**await deps.quota.usage_stats(days))
 

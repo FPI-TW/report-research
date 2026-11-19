@@ -8,7 +8,7 @@
 每輪三步（SQL 與保證在 `app/services/db_insights.py` 的 `run_snapshot`）：
 1. 寫一列 `research.db_stat_snapshot`（granularity=hour、taken_at＝整點）：庫大小、連線數、dead tuple 比例、
    未使用索引、`pg_stat_database` 的累計計數器、前 20 大表。同一小時已有就不寫（冪等）。
-2. 每天第一次執行時把前一天（台北時間）彙總成一列 granularity=day；漏跑的日子只要逐時列還在也會補上，重跑是 no-op。
+2. 每天第一次執行時把前一天（業務時區）彙總成一列 granularity=day；漏跑的日子只要逐時列還在也會補上，重跑是 no-op。
 3. 刪除逐時超過 30 天、每日超過 400 天的列（`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`／`_DAILY_`，使用者定案 14：
    這只是監控統計，不是 DB dump，所以不備份）。
 

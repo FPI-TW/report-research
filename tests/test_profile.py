@@ -74,6 +74,7 @@ class TingfongProfileTests(unittest.TestCase):
         # 全部標準市場啟用；顯示名稱就是標準名稱（零回歸）。
         self.assertEqual(set(prof.markets.enabled), set(MARKETS))
         self.assertEqual(dict(prof.markets.display_names), MARKET_DISPLAY)
+        self.assertEqual(dict(prof.markets.declared_names), {})
         # 強調色明確宣告鎏金（框架預設是中性色票）；廷豐畫面逐變數不變由 tests/test_brand_accent.py 比對。
         self.assertEqual((prof.branding.colors_light["accent_strong"], prof.branding.colors_dark["accent_strong"]),
                          ("#ae7415", "#d4a64a"))
@@ -135,6 +136,7 @@ class DefaultsTests(_TmpCase):
         self.assertEqual(prof.markets.enabled, ("US", "TW"))
         self.assertEqual(prof.markets.label("TW"), "臺股")
         self.assertEqual(prof.markets.label("HK"), MARKET_DISPLAY["HK"])  # 未覆寫的取標準名稱
+        self.assertEqual(dict(prof.markets.declared_names), {"TW": "臺股"})  # 只有明確宣告的（簡報用）
         self.assertFalse(prof.markets.is_enabled("HK"))
         self.assertEqual(prof.prompt.system_name_en, "ACME Research")
 
@@ -480,6 +482,36 @@ class BriefSectionTests(_TmpCase):
         self.assertRejected(MINIMAL + "[brief]\nafter_hour = \"9\"\n", "[brief].after_hour", "整數")
         self.assertRejected(MINIMAL + "[brief]\nmax_lookback_days = 0\n", "[brief].max_lookback_days", "介於")
         self.assertRejected(MINIMAL + "[brief]\ntimezone = \"UTC\"\n", "[brief].timezone", "未知的鍵")
+
+
+class FilenamesSectionTests(_TmpCase):
+    """[filenames]：檔名判定行政文件的關鍵字（app/services/filename.py 的 is_admin_doc）。"""
+
+    # 框架化之前寫死在 app/services/filename.py 的清單（golden）。
+    PRE_FRAMEWORK = ("人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
+                     "施工", "清洗", "webcast", "flyer", "公告", "通知")
+
+    def test_default_and_tingfong_are_the_pre_framework_list(self):
+        self.assertEqual(self.load(MINIMAL).filenames.admin_keywords, self.PRE_FRAMEWORK)
+        self.assertEqual(P.load_profile(REPO / "profiles" / "tingfong").filenames, P.Filenames())
+        self.assertEqual(P.Filenames().admin_keywords, self.PRE_FRAMEWORK)
+
+    def test_values(self):
+        prof = self.load(MINIMAL + '[filenames]\nadmin_keywords = ["Org Chart", "人事異動"]\n')
+        self.assertEqual(prof.filenames.admin_keywords, ("Org Chart", "人事異動"))
+        self.assertEqual(self.load(MINIMAL + "[filenames]\nadmin_keywords = []\n").filenames.admin_keywords, ())
+
+    def test_rejections(self):
+        def reject(value, *needles):
+            self.assertRejected(MINIMAL + f"[filenames]\nadmin_keywords = {value}\n", *needles)
+
+        reject('[""]', "[filenames].admin_keywords[0]", "非空")
+        reject('[" 公告"]', "[filenames].admin_keywords[0]", "空白")
+        reject('["公告", "flyer", "Flyer"]', "[filenames].admin_keywords[2]", "重複")
+        reject('["a\\tb"]', "[filenames].admin_keywords[0]", "控制字元")
+        reject('[1]', "[filenames].admin_keywords[0]", "字串")
+        reject('"公告"', "[filenames].admin_keywords", "陣列")
+        self.assertRejected(MINIMAL + '[filenames]\nreport_types = ["週報"]\n', "[filenames].report_types", "未知的鍵")
 
 
 class ContractTests(unittest.TestCase):

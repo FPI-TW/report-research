@@ -12,15 +12,16 @@ import csv
 import io
 import json
 from collections.abc import Iterable, Iterator, Sequence
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from fastapi.responses import StreamingResponse
+
+from app.services import business_time
 
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 BOM = "﻿"
 _CHUNK_ROWS = 500
-# 檔名的日期用台北時間（UTC+8，無日光節約）：管理員看到的是「今天」的匯出。
-_TZ = timezone(timedelta(hours=8))
+# 檔名的日期用業務時區（profile 的 `[locale].timezone`）：管理員看到的是「今天」的匯出。
 
 
 class CsvResponse(StreamingResponse):
@@ -64,7 +65,7 @@ def _encode(columns: Sequence[str], rows: Iterable[dict]) -> Iterator[bytes]:
 
 
 def filename(kind: str, now: datetime | None = None) -> str:
-    day = (now or datetime.now(timezone.utc)).astimezone(_TZ).strftime("%Y%m%d")
+    day = (now or datetime.now(timezone.utc)).astimezone(business_time.tz()).strftime("%Y%m%d")
     return f"report-mark-{kind}-{day}.csv"
 
 

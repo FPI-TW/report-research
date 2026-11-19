@@ -51,6 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.services import backfill_tiers as bt  # noqa: E402
+from app.services import business_time  # noqa: E402
 
 TIER_TAG = 1
 TIERS = (TIER_TAG, bt.TIER_RECENT, bt.TIER_OLDER)
@@ -262,8 +263,8 @@ def render(est: Estimate, *, source: str) -> str:
     cal = est.calibration
     cur = est.rates.currency if est.rates else ""
     lines = [
-        f"估價：來源 {source}，{est.reports:,} 份；今天 {est.today}（台北），第二層＝report_date ≥ {est.cutoff}，"
-        "第三層＝更早與 report_date 為 NULL",
+        f"估價：來源 {source}，{est.reports:,} 份；今天 {est.today}（{business_time.label()}），"
+        f"第二層＝report_date ≥ {est.cutoff}，第三層＝更早與 report_date 為 NULL",
         "",
         f"{'層':<4}{'任務':<10}{'呼叫數':>10}{'輸入 token':>16}{'輸出 token':>14}{'時間(時)':>10}"
         + (f"{'金額(' + cur + ')':>14}" if est.rates else ""),
@@ -473,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         from app.services.llm_usage import usage_log_path
 
         usage = read_usage(args.usage_log or usage_log_path())
-    est = estimate(items, today=args.today or bt.today_taipei(), months=args.recent_months or bf.recent_months,
+    est = estimate(items, today=args.today or bt.local_today(), months=args.recent_months or bf.recent_months,
                    daily_limit=bf.daily_token_limit, rates=rates, usage_rows=usage, workers=args.workers,
                    tag_workers=args.tag_workers)
     if args.json:

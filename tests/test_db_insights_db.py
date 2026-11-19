@@ -31,6 +31,7 @@ from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services import business_time  # noqa: E402
 from app.services import db_insights as di  # noqa: E402
 
 UTC = timezone.utc
@@ -259,7 +260,7 @@ class SnapshotDbTests(unittest.TestCase):
         self.assertNotIn("dead_tuple_ratio", mine[0]["gauges"], "失敗的段落不留假值")
         # 每日：d1、d2 與 kept_hour 那天各一列（今天還沒結束不彙總）；重跑不再寫、內容不變
         self.assertEqual(first.rolled_up[-2:], [d1, d2])
-        self.assertNotIn(NOW.astimezone(di.TZ).date(), first.rolled_up)
+        self.assertNotIn(business_time.today(NOW), first.rolled_up)
         self.assertEqual(second.rolled_up, [])
         self.assertEqual(days1, days2)
         self.assertEqual(hours1, hours2)

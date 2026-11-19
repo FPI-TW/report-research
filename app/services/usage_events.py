@@ -27,8 +27,8 @@ DB 掛掉時 session 查驗早就回 503，這裡不會無限堆積。
 這裡**不寫**那三類（否則重複計數）；middleware 只寫 `reading`／`report_file`／`search`。`usage_daily` 的
 `ask` 只有總量（主題是空字串）。
 
-日期一律台北時間的日曆日（與上傳配額、`llm_usage.py` 一致）。`users` 是下限：web 重啟後集合歸零，
-以 GREATEST 合併（`usage_daily.users` 的註解）。
+日期一律業務時區（profile 的 `[locale].timezone`，`business_time`）的日曆日（與上傳配額、`llm_usage.py` 一致）。
+`users` 是下限：web 重啟後集合歸零，以 GREATEST 合併（`usage_daily.users` 的註解）。
 """
 
 from __future__ import annotations
@@ -38,16 +38,15 @@ import logging
 import re
 import threading
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 
 from sqlalchemy import text
 
 from app import request_context
+from app.services import business_time
 from app.services.db import SessionFactory
 
 logger = logging.getLogger(__name__)
-
-TZ = timezone(timedelta(hours=8))
 
 # usage_daily.kind 與 usage_counter.kind 的詞彙（DB 只限形狀，唯一定義在這裡）。
 KIND_READING = "reading"
@@ -69,7 +68,7 @@ _MAX_USERS_PER_CELL = 10_000
 
 
 def today() -> date:
-    return datetime.now(TZ).date()
+    return business_time.today()
 
 
 def _uuid_or_none(value) -> str | None:

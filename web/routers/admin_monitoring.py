@@ -348,7 +348,7 @@ async def get_incident_trends(
     since: datetime | None = Query(None),
     until: datetime | None = Query(None),
 ):
-    """事件趨勢：開場時間落在區間內的事件（預設最近 90 天、最多 366 天）每週（台北時間週一起）依元件與嚴重度的
+    """事件趨勢：開場時間落在區間內的事件（預設最近 90 天、最多 366 天）每週（業務時區週一起）依元件與嚴重度的
     件數；整體與各元件的件數、MTTR、持續時間 p50／p90（只算 resolved；`lost` 結束時間不明，只計件數）；最常見的
     10 個 reason。另附各 unit 在 `until` 前 90 天內的執行次數與失敗率（finished 而 Result 不是 success 算失敗，
     分母是 finished；lost／running 另列）。範圍顛倒或過長 400 `invalid_params`。"""

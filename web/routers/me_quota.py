@@ -40,7 +40,7 @@ class MyQuota(BaseModel):
 
 @router.get("/api/me/quota", response_model=MyQuota)
 async def get_my_quota(user: User = Depends(authz.current_user)):
-    """今天（台北時間）自己的各類次數與上限。"""
+    """今天（業務時區）自己的各類次數與上限。"""
     try:
         data = await deps.quota.me_usage(user)
     except Exception as exc:  # noqa: BLE001 — 查詢失敗只影響這個顯示，回 503 讓前端說人話

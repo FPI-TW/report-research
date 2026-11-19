@@ -12,8 +12,9 @@
 判斷「今天要不要跑」：
 
 - 當日已有列 → 直接 no-op 退出（唯一的冪等依據是 report_brief 的 UNIQUE(brief_date)）
-- 本地時間未到 --after-hour（預設取 profile 的 `[brief].after_hour`，預設 profile 是 9 時）→ 不跑。券商早報上午才
-  進來，太早跑的簡報會漏掉當天大半內容，而一天只寫一列、寫了就不會再改
+- 業務時區（profile 的 `[locale].timezone`）未到 --after-hour（預設取 profile 的 `[brief].after_hour`，預設 profile
+  是 9 時）→ 不跑。券商早報上午才進來，太早跑的簡報會漏掉當天大半內容，而一天只寫一列、寫了就不會再改。
+  訊息裡的「本地時間」指的就是業務時區，與主機的 `TZ` 無關
 - 窗期內既無新研報也無評等變動 → **不寫列**，下一輪再看。寫一列「今天沒事」會讓
   當天稍晚真的有素材時再也補不上（UNIQUE 擋著），而「今天沒事」對讀者沒有價值
 
@@ -28,7 +29,7 @@
 - 目標日已有列（--force）：沿用該列存的窗期，不重算。素材與該份簡報當初看到的是同一段，
   前後的簡報也不受影響。
 - 補過去的日子（目標日還沒有列）：起點是目標日之前最近一份的 window_end；終點是目標日之後
-  最近一份的 window_start 與目標日結束（本地時間）取早的。窗期長度為零時不寫列、不呼叫 LLM：
+  最近一份的 window_start 與目標日結束（業務時區）取早的。窗期長度為零時不寫列、不呼叫 LLM：
   窗期首尾相接，缺的那天的研報已經在後面那份簡報裡。
 
 用法：
@@ -63,6 +64,7 @@ load_llm_env()
 
 from app.profile import get_profile  # noqa: E402
 from app.services import brief as brief_service  # noqa: E402
+from app.services import business_time  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
@@ -199,12 +201,12 @@ def resolve_window(
 
 
 def end_of_local_day(target: date_cls) -> datetime:
-    """目標日結束的時間點（隔天 00:00，本地時區，與預設目標日同一個基準），以 UTC 表示。
+    """目標日結束的時間點（隔天 00:00，業務時區，與預設目標日同一個基準），以 UTC 表示。
 
     一律轉 UTC：`fetch_signal_changes` 以 `end.date()` 算新鮮度下限，帶 +08:00 的值落庫後
     再讀回來是 UTC，日期會差一天，同一個窗期重跑的結果就不同了。
     """
-    return datetime.combine(target + timedelta(days=1), datetime.min.time()).astimezone(timezone.utc)
+    return business_time.day_start(target + timedelta(days=1)).astimezone(timezone.utc)
 
 
 def plan_window(
@@ -234,10 +236,10 @@ def plan_window(
 async def generate(args) -> int:
     now = datetime.now(timezone.utc)
     target = (
-        date_cls.fromisoformat(args.date) if args.date else datetime.now().date()
+        date_cls.fromisoformat(args.date) if args.date else business_time.today(now)
     )
 
-    if not args.force and datetime.now().hour < args.after_hour:
+    if not args.force and business_time.now(now).hour < args.after_hour:
         print(
             f"[brief] 本地時間未到 {args.after_hour} 時 → 今天先不產生"
             "（券商早報多在上午進來）"
@@ -363,13 +365,13 @@ async def generate(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", help="產生哪一天的簡報（預設今天，本地時區）")
+    ap.add_argument("--date", help="產生哪一天的簡報（預設今天，業務時區）")
     ap.add_argument("--model", default=MODEL)
     ap.add_argument(
         "--after-hour",
         type=int,
         default=None,
-        help="本地時間到這個鐘點之後才產生（預設 profile 的 [brief].after_hour；--force 可繞過）",
+        help="業務時區到這個鐘點之後才產生（預設 profile 的 [brief].after_hour；--force 可繞過）",
     )
     ap.add_argument("--max-lookback-days", type=int, default=None,
                     help="回看上限（天；預設 profile 的 [brief].max_lookback_days）")

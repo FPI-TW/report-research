@@ -23,7 +23,8 @@ x-app: &app
     REPORT_MARK_DB_URL: ${REPORT_MARK_DB_URL:-postgresql+asyncpg://research:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}@postgres:5432/research}
     PROFILE_DIR: /app/profile
     CLAMD_HOST: ${CLAMD_HOST:-clamav}
-    TZ: ${TZ:-Asia/Taipei}
+    # 空＝entrypoint 以 profile 的 [locale].timezone 補上；設了而與它不同時 scheduler 拒絕啟動（cron 在 TZ 下解讀）。
+    TZ: ${TZ:-}
   volumes:
     - data:/app/data
     # 備份落點（每日備份、migrate 前的全庫備份、稽核錨點、刪帳 tombstone）。主機目錄必須先存在且
@@ -58,7 +59,8 @@ services:
       POSTGRES_USER: research
       POSTGRES_DB: research
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 必填}
-      TZ: ${TZ:-Asia/Taipei}
+      # postgres 讀不到 profile：只影響 DB 端的 current_date 與日誌（程式的日界一律以 AT TIME ZONE 帶 profile 的時區）。
+      TZ: ${TZ:-Etc/UTC}
     # HNSW 建索引與平行查詢用 /dev/shm；Docker 預設 64 MB 會讓大批入庫以 "could not resize shared memory" 失敗。
     shm_size: ${POSTGRES_SHM_SIZE:-1g}
     volumes:

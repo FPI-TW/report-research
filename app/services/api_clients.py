@@ -16,7 +16,8 @@
 4. **稽核與變更同一筆交易**（`accounts.record_audit`）。detail 可含名稱、prefix、變更前後的設定，
    絕不含原始金鑰或 `key_hash`。
 
-每日額度以台北時間的日曆日計（`consume_quota`），被拒絕的請求也計入當天的計數。
+每日額度以業務時區（profile 的 `[locale].timezone`，`business_time`）的日曆日計（`consume_quota`），被拒絕的請求
+也計入當天的計數。
 """
 
 from __future__ import annotations
@@ -27,13 +28,14 @@ import re
 import secrets
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.profile import get_profile
+from app.services import business_time
 from app.services.accounts import record_audit
 from app.services.db import SessionFactory
 
@@ -55,8 +57,6 @@ DAILY_QUOTA_RANGE = (1, 1_000_000)
 KEY_PREFIX = "rmk"
 # rmk_<8 個小寫 hex>_<secrets.token_urlsafe(32)：43 個 base64url 字元>
 _KEY_RE = re.compile(r"^rmk_([0-9a-f]{8})_([A-Za-z0-9_-]{43})$")
-# 每日額度的「一天」：台北時間（UTC+8，無日光節約），同 llm_usage。
-TZ = timezone(timedelta(hours=8))
 # key_prefix 撞到既有的（8 個 hex，機率極低）時重新產生的次數。
 _PREFIX_RETRIES = 5
 
@@ -269,7 +269,7 @@ async def consume_quota(client_id: int, *, today: date | None = None) -> tuple[b
     """當日計數原子 +1 並更新 last_used_at；回 (計數 ≤ daily_quota, 計數)。用戶端不存在回 (False, 0)。"""
     if not _valid_id(client_id):
         return False, 0
-    day = today or datetime.now(TZ).date()
+    day = today or business_time.today()
     async with SessionFactory() as session:
         row = (await session.execute(
             text(

@@ -20,7 +20,7 @@ function fmtRate(v: number | null | undefined): string {
   return v == null ? '—' : `${(v * 100).toFixed(1)}%`
 }
 
-/** 每週（台北時間週一起）依嚴重度堆疊的長條；元件合併計算，元件別的數字看下面的表。 */
+/** 每週（業務時區週一起）依嚴重度堆疊的長條；元件合併計算，元件別的數字看下面的表。 */
 function WeeklyBars({ weeks }: { weeks: IncidentTrendsResponse['weeks'] }) {
   const byWeek = new Map<string, { critical: number; warning: number }>()
   for (const w of weeks) {

@@ -1,6 +1,7 @@
 """檔名解析服務。
 
-僅用於：分層抽樣分桶、輔助 metadata（股票代碼/券商/日期/報告類型）。
+僅用於：分層抽樣分桶、輔助 metadata（股票代碼/券商/日期/報告類型）。代號格式依 profile 的 `[instruments]`、
+發行機構名單依 `[sources]`（見下方各段註解）。
 市場標籤本身由 Claude 讀 PDF 判定，不在此決定。
 """
 
@@ -12,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-from app.profile import Sources, get_profile
+from app.profile import Instruments, Sources, get_profile
 
 # 發行機構（研報的 source）名單由 profile 提供（`[sources].catalog`，`app/profile.py` 的 `Sources`）：檔名 token、
 # 內文指紋與顯示名稱都是機構專屬的資料（預設 profile 的名單在它目錄裡的 sources.toml），本模組只放比對規則。
@@ -33,16 +34,6 @@ REPORT_TYPE_KEYWORDS = [
     "雙週報", "週報", "月報", "速報", "策略", "評析", "報告", "snapshot", "memo",
 ]
 
-# 行政/活動檔關鍵字（檔名即可判定的非研究檔）
-ADMIN_KEYWORDS = [
-    "人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
-    "施工", "清洗", "webcast", "flyer", "公告", "通知",
-]
-
-# regex（依優先序）
-RE_NAME_CODE = re.compile(r"([一-鿿]{2,10})\s*\((\d{4})\)")        # 鴻海(2317)
-RE_CODE_NAME = re.compile(r"^(\d{4})\s*([一-鿿]{2,10})")            # 1102亞泥
-RE_CODE_TT = re.compile(r"^(\d{4})\s+TT\b", re.IGNORECASE)                  # 1216 TT
 RE_SOURCE_DATE = re.compile(r"-([A-Z]{2,8})(\d{8})")                        # -MS20240314
 
 # 檔名日期（依信心序）。年份明確者才在此決定；只有 MMDD / 6 位數歧義者回 None，
@@ -50,6 +41,78 @@ RE_SOURCE_DATE = re.compile(r"-([A-Z]{2,8})(\d{8})")                        # -M
 RE_YMD = re.compile(r"(?<!\d)(20\d{2})[._\-/]?(\d{2})[._\-/]?(\d{2})(?!\d)")  # 2025_05_04 / 20250504 / 2025-05-04
 RE_MDY8 = re.compile(r"(?<!\d)(\d{2})(\d{2})(20\d{2})(?!\d)")                # 03252025（MMDDYYYY）
 RE_D6 = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)")                    # 240510 / 093024（6 位數）
+
+
+# ── 檔名裡的個股代號 ─────────────────────────────────────────────────────────
+# 代號格式依 profile 的 `[instruments]`（`app/profile.py` 的 `Instruments`）。認得的寫法（依優先序，第一個抓到且通過
+# 格式驗證者勝）：
+#
+# - NAME_CODE「鴻海(2317)」、CODE_NAME「1102亞泥」：中文名＋純數字代號，長度取所有純數字格式的範圍
+#   （`digit_lengths`；預設 profile 正好 4 碼）。沒有純數字格式就不認這兩種。
+# - CODE_TT「1216 TT」：Bloomberg 的台股交易所碼，只在宣告了 TW 純數字格式時認、長度取 TW 的格式。
+# - CODE_US「NVDA US」：Bloomberg 的美股寫法，只在宣告了 US 字母格式時認；只認檔名開頭、大小寫敏感（「the us
+#   economy」不會變成代號 THE）。股別後綴收 BRK.B 與 Bloomberg 的 BRK/B，存成 BRK.B。
+#
+# 抓到的值一律再經 `normalize_code`：純數字的長度範圍是各格式的聯集，個別格式不收的長度在這裡擋掉。
+# 刻意不認的：檔名中段或沒有交易所碼的字母代號（AI、EV、GDP、ESG 這類縮寫與英文單字誤中面積太大），
+# 以及 HK、CN 等其他交易所碼的寫法（語料沒有這種檔名，規則量不出誤判率）。
+
+
+@dataclass(frozen=True)
+class _CodePatterns:
+    instruments: Instruments
+    name_code: Optional[re.Pattern[str]]  # 鴻海(2317)
+    code_name: Optional[re.Pattern[str]]  # 1102亞泥
+    code_tt: Optional[re.Pattern[str]]  # 1216 TT
+    code_us: Optional[re.Pattern[str]]  # NVDA US
+
+
+def _span(lo: int, hi: int) -> str:
+    return f"{{{lo}}}" if lo == hi else f"{{{lo},{hi}}}"
+
+
+def _build_code_patterns(instruments: Instruments) -> _CodePatterns:
+    digits = instruments.digit_lengths()
+    tw = next((f for f in instruments.code_formats if f.market == "TW" and f.kind == "digits"), None)
+    us = next((f for f in instruments.code_formats if f.market == "US" and f.kind == "letters"), None)
+    d = _span(*digits) if digits else ""
+    return _CodePatterns(
+        instruments=instruments,
+        name_code=re.compile(rf"([一-鿿]{{2,10}})\s*\((\d{d})\)") if digits else None,
+        code_name=re.compile(rf"^(\d{d})\s*([一-鿿]{{2,10}})") if digits else None,
+        code_tt=(re.compile(rf"^(\d{_span(tw.min_length, tw.max_length)})\s+TT\b", re.IGNORECASE) if tw else None),
+        code_us=(re.compile(rf"^([A-Z]{_span(us.min_length, us.max_length)}"
+                            + (r"(?:[./][A-Z])?" if us.share_class else "") + r")\s+US\b") if us else None),
+    )
+
+
+_CODE_PATTERNS: Optional[_CodePatterns] = None
+
+
+def _code_patterns() -> _CodePatterns:
+    """目前 profile 的代號寫法；同一份 `Instruments` 只編譯一次（換 profile 就重算）。"""
+    global _CODE_PATTERNS
+    instruments = get_profile().instruments
+    if _CODE_PATTERNS is None or _CODE_PATTERNS.instruments is not instruments:
+        _CODE_PATTERNS = _build_code_patterns(instruments)
+    return _CODE_PATTERNS
+
+
+def _match_stock_code(stem: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """(代號, 中文名, 寫法標籤)；檔名裡沒有通過格式驗證的代號回 (None, None, None)。"""
+    pats = _code_patterns()
+    norm = pats.instruments.normalize_code
+    if pats.name_code:
+        for m in pats.name_code.finditer(stem):
+            if code := norm(m.group(2)):
+                return code, m.group(1), "NAME_CODE"
+    if pats.code_name and (m := pats.code_name.match(stem)) and (code := norm(m.group(1))):
+        return code, m.group(2), "CODE_NAME"
+    if pats.code_tt and (m := pats.code_tt.match(stem)) and (code := norm(m.group(1))):
+        return code, None, "CODE_TT"
+    if pats.code_us and (m := pats.code_us.match(stem)) and (code := norm(m.group(1).replace("/", "."))):
+        return code, None, "CODE_US"
+    return None, None, None
 
 
 @dataclass
@@ -131,8 +194,9 @@ def _normalize_source(token: str) -> Optional[str]:
 
 
 def is_admin_doc(file_name: str) -> bool:
+    """檔名即可判定的行政／活動檔（非研究檔）：含 profile 的 `[filenames].admin_keywords` 其一（不分大小寫）。"""
     low = file_name.lower()
-    return any(kw.lower() in low for kw in ADMIN_KEYWORDS)
+    return any(kw.lower() in low for kw in get_profile().filenames.admin_keywords)
 
 
 def parse_filename(file_name: str) -> FilenameMeta:
@@ -141,15 +205,10 @@ def parse_filename(file_name: str) -> FilenameMeta:
 
     meta.is_admin = is_admin_doc(file_name)
 
-    if (m := RE_NAME_CODE.search(stem)):
-        meta.company_name, meta.stock_code = m.group(1), m.group(2)
-        meta.matched_patterns.append("NAME_CODE")
-    elif (m := RE_CODE_NAME.match(stem)):
-        meta.stock_code, meta.company_name = m.group(1), m.group(2)
-        meta.matched_patterns.append("CODE_NAME")
-    elif (m := RE_CODE_TT.match(stem)):
-        meta.stock_code = m.group(1)
-        meta.matched_patterns.append("CODE_TT")
+    code, company, pattern = _match_stock_code(stem)
+    if pattern:
+        meta.stock_code, meta.company_name = code, company
+        meta.matched_patterns.append(pattern)
 
     if (m := RE_SOURCE_DATE.search(stem)):
         src = _normalize_source(m.group(1))

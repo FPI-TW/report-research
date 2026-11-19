@@ -20,7 +20,7 @@
 - 用 GET（下載網址可直接給瀏覽器）；回應 `Cache-Control: no-store`。
 - **每人每日配額**（Admin v2，`app/services/quota.py`，預設 `QUOTA_EXPORT_DAILY`＝20）：每次匯出在 `_finish`
   寫稽核**之前**計一次 `export`（權限與參數驗證沒過的請求到不了這裡，不扣次數）。影子模式照常匯出、記
-  `export_over`；兩道開關都開才回 429 `quota_exceeded`（`Retry-After`＝距台北午夜的秒數），不寫匯出稽核。
+  `export_over`；兩道開關都開才回 429 `quota_exceeded`（`Retry-After`＝距業務時區午夜的秒數），不寫匯出稽核。
   計數寫不進 DB 時放行。
 
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。

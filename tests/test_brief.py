@@ -27,6 +27,7 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 import generate_brief  # noqa: E402  (scripts/ 已在 sys.path)
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import profile as P  # noqa: E402
 from app.services.brief import (  # noqa: E402
     SIGNAL_MAX_REPORT_AGE_DAYS,
     BriefReport,
@@ -565,6 +566,41 @@ class LabelTests(unittest.TestCase):
     def test_unknown_codes_pass_through_instead_of_disappearing(self):
         self.assertEqual(rating_zh("weird"), "weird")
         self.assertEqual(market_zh("ZZ"), "ZZ")
+
+    def test_tingfong_uses_the_brief_vocabulary(self):
+        """廷豐沒有覆寫顯示名稱：簡報照用自己的詞表（刻意與介面的 MARKET_DISPLAY 不同，素材逐字不變）。"""
+        self.assertEqual({c: market_zh(c) for c in ("TW", "FX", "MACRO", "GLOBAL", "CRYPTO", "tw")},
+                         {"TW": "台股", "FX": "匯市", "MACRO": "總體與債市", "GLOBAL": "全球與商品",
+                          "CRYPTO": "加密資產", "tw": "台股"})
+        self.assertEqual(market_zh(None), "未分類")
+
+
+class ProfileMarketLabelTests(unittest.TestCase):
+    """`[markets.display_names]` 明確宣告的代碼覆寫簡報的市場標籤；沒宣告的照用簡報詞表。"""
+
+    def _with_profile(self, root: Path):
+        env = mock.patch.dict(os.environ, {"PROFILE_DIR": str(root)})
+        env.start()
+        P.reset_profile_cache()
+        self.addCleanup(P.reset_profile_cache)
+        self.addCleanup(env.stop)
+
+    def test_demo_overrides_only_what_it_declares(self):
+        self._with_profile(REPO_ROOT / "profiles" / "demo")
+        self.assertEqual({c: market_zh(c) for c in ("TW", "US", "MACRO", "FX", "GLOBAL")},
+                         {"TW": "台股", "US": "美股", "MACRO": "總體經濟", "FX": "匯市", "GLOBAL": "全球與商品"})
+        report = BriefReport(report_id="r", file_hash="h", file_name="a.pdf", title="標題", market="MACRO",
+                             source=None, report_date=None, summary=None)
+        self.assertIn("- [總體經濟] 標題", build_material([report], [], total_reports=1))
+
+    def test_declared_name_equal_to_ui_default_still_wins(self):
+        """宣告值剛好等於介面預設（FX＝外匯）也算宣告：簡報跟著 profile，不退回「匯市」。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "profile.toml").write_text(
+                '[institution]\nname = "測試"\nproduct_name = "測試平台"\n'
+                '[markets.display_names]\nFX = "外匯"\n', encoding="utf-8")
+            self._with_profile(Path(tmp))
+            self.assertEqual((market_zh("FX"), market_zh("MACRO")), ("外匯", "總體與債市"))
 
 
 # ── 端點 ──────────────────────────────────────────────────────────

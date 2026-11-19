@@ -7,7 +7,7 @@ import { dailyAxis, dailyCalls, dayIn } from './data/usageSeries'
 import { OpsQueryError } from './OpsShared'
 import { useLlmUsage } from './useOps'
 import styles from './data/Data.module.css'
-import { t } from '@/i18n'
+import { t, timeZoneLabel } from '@/i18n'
 
 const RANGES: readonly SegOption<string>[] = [
   { value: '7', get label() { return t('admin.ops.opsLlmUsagePage.7Days') } },
@@ -131,7 +131,7 @@ function BatchSection({ d }: { d: LlmUsageResponse }) {
         <h2 id="llm-batch-title" className={styles.sectionTitle}>{t('admin.ops.opsLlmUsagePage.batch')}</h2>
         {d.source.exists && (
           <p className={c.meta}>
-            <span>{t('admin.ops.opsLlmUsagePage.range')}{' '}<b>{fmtDateTime(d.since)}</b>{' '}{t('admin.ops.opsLlmUsagePage.text')}{' '}<b>{fmtDateTime(d.until)}</b>{t('admin.ops.opsLlmUsagePage.daysCutInTaipeiTime')}</span>
+            <span>{t('admin.ops.opsLlmUsagePage.range')}{' '}<b>{fmtDateTime(d.since)}</b>{' '}{t('admin.ops.opsLlmUsagePage.text')}{' '}<b>{fmtDateTime(d.until)}</b>{t('admin.ops.opsLlmUsagePage.daysCutInZoneTime', { zone: timeZoneLabel() })}</span>
             <span>{t('admin.ops.opsLlmUsagePage.inRange')}{' '}<b>{fmtInt(d.source.lines_in_range)}</b>{' '}{t('admin.ops.opsLlmUsagePage.lines')}</span>
             {d.source.lines_invalid > 0 && <span>{t('admin.ops.opsLlmUsagePage.unparseable')}{' '}<b>{fmtInt(d.source.lines_invalid)}</b>{' '}{t('admin.ops.opsLlmUsagePage.linesSkipped')}</span>}
           </p>
@@ -160,7 +160,7 @@ function BatchSection({ d }: { d: LlmUsageResponse }) {
   )
 }
 
-/** 線上（web 行程的問答、忠實度抽查…）：research.llm_usage_daily 的台北日彙總，只有 metadata、不出個人維度。 */
+/** 線上（web 行程的問答、忠實度抽查…）：research.llm_usage_daily 的業務日彙總，只有 metadata、不出個人維度。 */
 function OnlineSection({ online }: { online: LlmUsageOnline | null | undefined }) {
   return (
     <section className={styles.section} aria-labelledby="llm-online-title">
@@ -168,7 +168,7 @@ function OnlineSection({ online }: { online: LlmUsageOnline | null | undefined }
         <h2 id="llm-online-title" className={styles.sectionTitle}>{t('admin.ops.opsLlmUsagePage.onlineQAFaithfulnessSpot')}</h2>
         {online?.available && (
           <p className={c.meta}>
-            <span>{t('admin.ops.opsLlmUsagePage.taipeiDaysFirstAndLast', { since_day: online.since_day, until_day: online.until_day })}</span>
+            <span>{t('admin.ops.opsLlmUsagePage.zoneDaysFirstAndLast', { zone: timeZoneLabel(), since_day: online.since_day, until_day: online.until_day })}</span>
             <span>{t('admin.ops.opsLlmUsagePage.attributedTo')}{' '}<b>{fmtInt(online.attributed_users)}</b>{' '}{t('admin.ops.opsLlmUsagePage.users')}</span>
             {online.unattributed_calls > 0 && <span>{t('admin.ops.opsLlmUsagePage.unattributed')}{' '}<b>{fmtInt(online.unattributed_calls)}</b>{' '}{t('admin.ops.opsLlmUsagePage.calls3')}</span>}
           </p>
@@ -209,7 +209,7 @@ function Usage({ d }: { d: LlmUsageResponse }) {
 
 /**
  * LLM 用量：批次（`data/llm_usage.jsonl`，摘要、標題、摘錄、訊號、簡報、標註…）與線上（`research.llm_usage_daily`，
- * 問答與忠實度抽查，Admin v2）兩個來源，依任務、模型、日期（台北時間）。費用真值看供應商後台，這裡是歸因。
+ * 問答與忠實度抽查，Admin v2）兩個來源，依任務、模型、日期（業務時區）。費用真值看供應商後台，這裡是歸因。
  * 個人用量只在配額頁。
  */
 export default function OpsLlmUsagePage() {
@@ -218,10 +218,10 @@ export default function OpsLlmUsagePage() {
   return (
     <>
       <PageHeader
-        summary={t('admin.ops.opsLlmUsagePage.tokenTotalsOfBatchAnd')}
+        summary={t('admin.ops.opsLlmUsagePage.tokenTotalsOfBatchAnd', { zone: timeZoneLabel() })}
         help={(
           <>
-            {t('admin.ops.opsLlmUsagePage.twoSourcesBatch')}<code>data/llm_usage.jsonl</code>{t('admin.ops.opsLlmUsagePage.summariesTitlesTakeawaysSignalsBriefs')}
+            {t('admin.ops.opsLlmUsagePage.twoSourcesBatch')}<code>data/llm_usage.jsonl</code>{t('admin.ops.opsLlmUsagePage.summariesTitlesTakeawaysSignalsBriefs', { zone: timeZoneLabel() })}
           </>
         )}
         actions={<Segmented label={t('admin.ops.opsLlmUsagePage.range')} options={RANGES} value={days} onChange={setDays} />}

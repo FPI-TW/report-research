@@ -41,7 +41,8 @@
 `scripts/analyze_qa_log.py` 的 `percentiles`（nearest-rank：`ceil(p·n) − 1`）逐值相同。多日的百分位不能由
 每日百分位合併，所以範圍層級的 p50／p95 只算即時那一段，每日的點則兩段都有。
 
-日期一律台北時間的日曆日（與 `usage_events`、上傳配額一致）；週以週一起算（PostgreSQL `date_trunc('week')`）。
+日期一律業務時區（profile 的 `[locale].timezone`，`business_time`）的日曆日（與 `usage_events`、上傳配額一致）；
+週以週一起算（PostgreSQL `date_trunc('week')`）；SQL 端的時區是綁定參數 `:tz`。
 **刻意不 import 檢索、嵌入、LLM 模組**（`tests/test_analytics.py` 以子行程確認不會載入 torch）。
 """
 
@@ -50,16 +51,14 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import text
 
+from app.services import business_time
 from app.services.judge_schema import CURRENT_JUDGE_SQL, judge_identity
 from app.services.llm_models import judge_lineage
 from app.services.tagging import MARKET_DISPLAY, MARKETS
-
-TZ = timezone(timedelta(hours=8))
-TZ_NAME = "Asia/Taipei"
 
 SOURCE_LIVE = "live"
 SOURCE_ROLLUP = "rollup"
@@ -142,12 +141,12 @@ class MetricRow:
 
 
 def today() -> date:
-    return datetime.now(TZ).date()
+    return business_time.today()
 
 
 def day_start(d: date) -> datetime:
-    """台北時間 d 的 00:00（tz-aware）。"""
-    return datetime.combine(d, time(0), TZ)
+    """業務時區 d 的 00:00（tz-aware）。"""
+    return business_time.day_start(d)
 
 
 def week_start(d: date) -> date:
@@ -177,7 +176,7 @@ class RangeError(ValueError):
 
 def plan_range(since: date | None, until: date | None, *, today_: date, live_days: int,
                default_days: int = DEFAULT_RANGE_DAYS, max_days: int = MAX_RANGE_DAYS) -> Plan:
-    """[since, until]（含兩端、台北日期）。until 預設今天、晚於今天時截到今天；since 預設往前 default_days 天。"""
+    """[since, until]（含兩端、業務時區的日期）。until 預設今天、晚於今天時截到今天；since 預設往前 default_days 天。"""
     until = min(until or today_, today_)
     since = since or (until - timedelta(days=default_days - 1))
     if since > until:
@@ -198,8 +197,8 @@ def range_info(plan: Plan, params: Params) -> dict:
     if plan.live:
         spans.append({"since": plan.live[0].isoformat(), "until": plan.live[1].isoformat(), "source": SOURCE_LIVE})
     return {"since": plan.since.isoformat(), "until": plan.until.isoformat(), "today": plan.today.isoformat(),
-            "live_since": plan.live_since.isoformat(), "timezone": TZ_NAME, "min_users": params.min_users,
-            "spans": spans}
+            "live_since": plan.live_since.isoformat(), "timezone": business_time.tz_name(),
+            "min_users": params.min_users, "spans": spans}
 
 
 def _days(start: date, end: date) -> list[date]:
@@ -318,7 +317,8 @@ def top_list(merged: dict[str, tuple[float, int | None]], *, k: int, limit: int,
 
 # ── SQL ──────────────────────────────────────────────────────────────────────
 
-_DAY = f"(q.created_at AT TIME ZONE '{TZ_NAME}')::date"
+# 業務時區的日期；時區是綁定參數 :tz（_bind 與 operations 的 bind 都帶）。
+_DAY = "(q.created_at AT TIME ZONE :tz)::date"
 _RANGE = "q.created_at >= :start_ts AND q.created_at < :end_ts"
 # 與 web/stats_snapshot.py 的 _EVAL_SCORE_SQL／_EVAL_NOT_DEGRADED_SQL 同義。
 _SCORE = ("CASE WHEN jsonb_typeof(q.evaluation->'faithfulness_score') = 'number' "
@@ -419,7 +419,7 @@ _HOT_METRIC = {"report": M_HOT_REPORT, "market": M_HOT_MARKET, "target": M_HOT_T
 def _bind(start: date, end: date, params: Params) -> dict:
     return {"start_ts": day_start(start), "end_ts": day_start(end + timedelta(days=1)), "start_day": start,
             "end_day": end, "judge_model": judge_identity(params.judge_model, judge_lineage(params.judge_model)),
-            "fmin": params.faithfulness_min}
+            "fmin": params.faithfulness_min, "tz": business_time.tz_name()}
 
 
 def _qa_rows(r, judge: str) -> list[MetricRow]:
@@ -780,7 +780,7 @@ async def top(session, plan: Plan, params: Params, limit: int) -> dict:
     }
 
 
-_WEEK = f"date_trunc('week', {{col}} AT TIME ZONE '{TZ_NAME}')::date"
+_WEEK = "date_trunc('week', {col} AT TIME ZONE :tz)::date"
 
 _OPS_SQL = f"""
 SELECT 'received' AS k, {_WEEK.format(col='uploaded_at')} AS w, count(*) AS n FROM research.report_upload
@@ -810,7 +810,7 @@ _OPS_FIELDS = {"received": "uploads_received", "published": "uploads_published",
 async def operations(session, plan: Plan, params: Params) -> dict:
     """上傳與審核量（週）＋範圍內各稽核 action 的次數。兩張表都永久保存，整段即時查。總量，不設門檻。"""
     bind = {"start_ts": day_start(plan.since), "end_ts": day_start(plan.until + timedelta(days=1)),
-            "actions": list(AUDIT_ACTIONS)}
+            "actions": list(AUDIT_ACTIONS), "tz": business_time.tz_name()}
     rows = (await session.execute(text(_OPS_SQL), bind)).all()
     weeks: dict[date, dict[str, int]] = {week_start(d): {} for d in _days(plan.since, plan.until)}
     actions = dict.fromkeys(AUDIT_ACTIONS, 0)

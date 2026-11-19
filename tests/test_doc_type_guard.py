@@ -48,7 +48,7 @@ _FILTER_RE = re.compile(
 # (相對路徑, 單位名稱) → 為什麼可以寫 is_research 過濾。
 _FILTER_EXEMPT = {
     ("scripts/db_audit.py", "CHECKS"): "is_research_null：稽核舊欄位本身（baseline 收斂成 NOT NULL 之前的庫）",
-    ("app/services/tagging.py", "TAG_INSTRUCTION"): "標註 prompt 的輸出格式說明（不是 SQL；test_tagging 逐字釘住）",
+    ("app/services/tagging.py", "_TAG_TEMPLATE"): "標註 prompt 的輸出格式說明（不是 SQL；golden 逐字釘住）",
 }
 
 # (相對路徑, 單位名稱) → 為什麼可以讀 .is_research。

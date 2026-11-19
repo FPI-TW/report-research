@@ -4,7 +4,7 @@
 
 同一份程式服務每一家券商：機構專屬的東西放在 **profile**（`profiles/<名稱>/`），祕密與部署層設定（金鑰、DB URL、LLM 端點）走環境變數。
 
-- **profile**：`profile.toml`（機構名、品牌與強調色、prompt 注入的稱謂、啟用的標準市場子集、文件類型與功能、資料來源連接器、語系、個股代號格式、發行機構名單、簡報作息；啟動時嚴格驗證，錯了拒起）、`assets/`（logo、favicon）、`plugins/`（插件連接器）、`eval/`（凍結題集與上線驗收設定）。以 `PROFILE_DIR` 指定，預設 `profiles/tingfong`。格式見 `app/profile.py` 的模組 docstring。
+- **profile**：`profile.toml`（機構名、品牌與強調色、prompt 注入的稱謂、啟用的標準市場子集、文件類型與功能、資料來源連接器、語系、個股代號格式、發行機構名單、簡報作息、檔名判定行政文件的關鍵字；啟動時嚴格驗證，錯了拒起）、`assets/`（logo、favicon）、`plugins/`（插件連接器）、`eval/`（凍結題集與上線驗收設定）。以 `PROFILE_DIR` 指定，預設 `profiles/tingfong`。格式見 `app/profile.py` 的模組 docstring。
 - **導入**：寫好 profile → 首次導入（先估價，再分層回填，見[首次導入](#首次導入分層回填)）→ 草擬並凍結 profile 的評測題集、跑上線驗收（`make eval-gate`，`docs/WORKFLOW.md`「導入驗收」）。
 - **部署**：一份容器映像＋docker compose，除了 LLM 端點以外零外連，見[容器部署](#容器部署docker-compose)與 `docs/CONTAINER_DEPLOYMENT.md`。`profiles/demo/`（虛構的示範券商）是可以直接起的示範環境。
 - **框架與主機層**：`deploy/`、`scripts/`、`ops_agent/` 每個檔案的歸屬（框架、廷豐主機層）列在 `deploy/OWNERSHIP.toml`。
@@ -292,7 +292,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | `127.0.0.1/32,::1/128` | 可信代理網段；走 Cloudflare Tunnel 時必填（WSL 的 docker 網段） |
 | `REPORT_MARK_EDGE_SECRET` | 空（停用） | 邊緣共享祕密，與 `deploy/.env` 的 `EDGE_SECRET` 逐字相同；與 CIDR 是 OR |
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | 唯一留在 `app/services/db.py` 的 getenv |
-| `PROFILE_DIR` | `profiles/tingfong` | 部署 profile 的目錄（相對路徑以 repo 根為基準）：機構名（含英文介面用的名稱）、品牌（logo、favicon、強調色）、介面語系（預設與可選的語系）、prompt 注入的稱謂、使用者端啟用的市場子集與顯示名稱、TOTP 發行者、個股代號格式、發行機構名單、每日簡報的作息。web 在 lifespan 第一步載入並嚴格驗證（未知 section 或鍵、型別錯、引用不存在的 asset、非標準市場代碼、目錄不存在都拒絕啟動）；改了要重啟 web。格式見 `app/profile.py` 的 docstring 與 `profiles/tingfong/profile.toml`。換稱謂會讓系統提示與評測基準線不同，也會讓舊稱謂的婉拒列在歷史重播時認不得 |
+| `PROFILE_DIR` | `profiles/tingfong` | 部署 profile 的目錄（相對路徑以 repo 根為基準）：機構名（含英文介面用的名稱）、品牌（logo、favicon、強調色）、介面語系（預設與可選的語系）、prompt 注入的稱謂、使用者端啟用的市場子集與顯示名稱、TOTP 發行者、個股代號格式、發行機構名單、每日簡報的作息、檔名判定行政文件的關鍵字。web 在 lifespan 第一步載入並嚴格驗證（未知 section 或鍵、型別錯、引用不存在的 asset、非標準市場代碼、目錄不存在都拒絕啟動）；改了要重啟 web。格式見 `app/profile.py` 的 docstring 與 `profiles/tingfong/profile.toml`。換稱謂會讓系統提示與評測基準線不同，也會讓舊稱謂的婉拒列在歷史重播時認不得 |
 | `LOG_LEVEL` | `INFO` | 調到 WARNING 會失去登入成功稽核、`qa_timing`、`/api/*` 請求耗時與檢索遙測。每行帶 `rid=`，與回應的 `X-Request-Id` 相同 |
 | `LOG_FORMAT` | `text`（容器映像為 `json`） | `json`＝web 每行一個 JSON 物件到 stdout（`ts`、`level`、`logger`、`request_id`、`message`，有例外另加 `exc_type`、`exc`），祕密、URL 查詢字串與 SQL bind 參數遮成 `[redacted]`，uvicorn access log 去掉查詢字串與對端位址（`app/logging_setup.py`）；`text` 是現行格式。未知值退回 `text` |
 | `METRICS_ENABLED`、`METRICS_ALLOWED_CIDRS` | `1`、`127.0.0.1/32,::1/128` | `/metrics` 的總開關與允許的對端（逗號分隔 CIDR；無效項目略過，全部無效＝誰都不收）。帶代理 header 的請求一律不收（`web/metrics.py`） |

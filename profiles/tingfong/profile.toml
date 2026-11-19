@@ -53,6 +53,8 @@ system_name_en = "廷豐研報"
 # 標準市場代碼全部啟用；順序＝使用者端選單的顯示順序。
 # 代碼與 findb 的 instruments.market 對齊，是廷豐的跨 repo 契約（tests/test_tagging.py 逐字釘住標準詞彙）。
 enabled = ["TW", "US", "HK", "CN", "WTX", "FX", "MACRO", "GLOBAL", "CRYPTO"]
+# 顯示名稱不覆寫：介面用標準名稱（tagging.MARKET_DISPLAY），每日簡報用簡報自己的詞表（「匯市」「總體與債市」…）。
+# 在 [markets.display_names] 宣告的代碼兩邊都會換掉，簡報素材就與現在不同。
 
 [security]
 totp_issuer = "廷豐智能研報"
@@ -101,7 +103,8 @@ available = ["zh-Hant", "en"]
 
 [instruments]
 # 個股代號格式：標註結果的 stock_targets 只留符合其一的代號（各市場格式的聯集，不看研報的市場）。
-# 廷豐只收 4 碼數字（框架化之前的規則，也是標註 prompt 要求的格式）；放寬會讓既有研報與新研報的標的口徑不一。
+# 標註與訊號擷取 prompt 的代號說明也由這裡產生（廷豐：「4 碼代碼如 1102、2317」，與框架化之前的 prompt 逐字相同，
+# tests/test_instrument_prompts.py 釘住）。廷豐只收 4 碼數字；放寬會讓既有研報與新研報的標的口徑不一。
 [instruments.code_formats.TW]
 kind = "digits"
 min_length = 4
@@ -116,3 +119,9 @@ catalog = "sources.toml"
 after_hour = 9
 default_lookback_hours = 24
 max_lookback_days = 7
+
+[filenames]
+# 檔名含其一（不分大小寫的子字串）就判為行政文件：入庫在標註前略過，管理員上傳記成 admin_file 失敗。
+# 這份是框架化之前寫死在程式裡的清單（也是 section 缺席時的框架預設）；部位限制是期交所的部位限制公告，
+# 施工、清洗是辦公大樓的公告。加字之前先確認不會命中研報的檔名，命中的研報會整份不入庫。
+admin_keywords = ["人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制", "施工", "清洗", "webcast", "flyer", "公告", "通知"]

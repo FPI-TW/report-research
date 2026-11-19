@@ -330,7 +330,7 @@ groups:
 
 ## 示範環境
 
-在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小、個股代號另收美股 ticker（`[instruments]`）、發行機構用自己的虛構名單（`profiles/demo/sources.toml`）、每日簡報不等早上 9 時（`[brief].after_hour = 0`）。
+在一台機器上把虛構的示範券商（`profiles/demo`）跑起來給客戶看：同一份映像、同一份 compose，多疊一個 override（`deploy/demo/docker-compose.demo.yml`），多兩個服務——假 LLM（`deploy/demo/fake_llm.py`）與 S3 測試伺服器（moto，Apache-2.0；刻意不用 MinIO：AGPL，與授權守門衝突）。預設完全離線、零費用。示範 profile 與廷豐的差異：機構與產品名（虛構）、自製 logo、青綠強調色、市場只開台股／美股／總體經濟、研報由 S3 bucket＋metadata 側檔送進來、背景補齊開著且上限小、個股代號另收美股 ticker（`[instruments]`）、發行機構用自己的虛構名單（`profiles/demo/sources.toml`）、每日簡報不等早上 9 時（`[brief].after_hour = 0`）、檔名判定行政文件的關鍵字換成自己的清單（`[filenames]`）。
 
 | 元件 | 示範環境 | 換成真的 |
 |---|---|---|
@@ -371,7 +371,7 @@ uv run python scripts/e2e_compose.py --image report-mark:e2e --corpus /srv/demo-
 驗證項目：空庫 `migrate`、`create-admin --password-stdin`、`connector_sync.py --force` 的入庫份數、側檔欄位（`title`／`source`／`market`）生效、沒有側檔的研報由 profile 名單從檔名推得發行機構、標註出的個股代號依 profile 格式保留（含美股 ticker）、`research.report_metadata`、錯誤側檔進失敗清單與 `last_stats` 的 `sidecar_invalid`、第二層的摘要／錨定的摘錄／訊號（含美股標的）、每日簡報、`backfill_tiers.py --tier 3` 補上第三層、`/readyz`、`/api/branding` 是示範品牌、登入、`/api/markets` 只有子集、`/api/search` 有結果且發行機構顯示名單的名稱、`/api/radar/instruments?market=US` 有美股標的、`/api/brief/latest` 有簡報、未啟用的市場回 422、`/api/ask` 的 SSE 走完且引用只落在來源編號內（無效編號在串流中被替換）、閱讀頁 `/text`、容器內 loopback 的 `/metrics`。退出碼 0 全過、1 有失敗、2 環境不符。
 
 - web 預設關 rerank（`ASK_RERANK_ENABLED=0`，省約 2 GB 記憶體；`--rerank` 打開）。峰值約 4 GB（入庫時一份嵌入模型、web 一份，不同時）。
-- 真實 LLM 版本：`--real-llm`，設定取自 `E2E_LLM_PROVIDER`（預設 `openai`）、`E2E_LLM_API_KEY`、`E2E_LLM_MODEL`、`E2E_LLM_BASE_URL`（選填），只寫進暫存目錄的 `.env`（0600）。workflow 的 `workflow_dispatch` 勾 `real_llm` 才跑，repo 沒設 `E2E_LLM_API_KEY`／`E2E_LLM_MODEL` secret 就跳過。真實模型的回答不是決定性的，所以不檢查無效引用標記；標註 prompt 只要求 4 碼代碼，美股 ticker 與美股訊號、雷達的檢查也只在假 LLM 時做。
+- 真實 LLM 版本：`--real-llm`，設定取自 `E2E_LLM_PROVIDER`（預設 `openai`）、`E2E_LLM_API_KEY`、`E2E_LLM_MODEL`、`E2E_LLM_BASE_URL`（選填），只寫進暫存目錄的 `.env`（0600）。workflow 的 `workflow_dispatch` 勾 `real_llm` 才跑，repo 沒設 `E2E_LLM_API_KEY`／`E2E_LLM_MODEL` secret 就跳過。真實模型的回答不是決定性的，所以不檢查無效引用標記；標註出的美股 ticker 與美股訊號、雷達也不保證逐份出現，這幾項檢查只在假 LLM 時做。
 - CI 的映像層快取在 GitHub Actions cache（`mode=min`）；未命中時 build 要下載約 4.5 GB 權重。repo 的快取額度（10 GB）被擠掉時只是變慢，不會失敗。
 
 ## 從主機部署遷入

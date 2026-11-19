@@ -26,7 +26,7 @@ load_llm_env()
 from app.profile import get_profile  # noqa: E402
 from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from app.services.rating_index import strip_rating_index  # noqa: E402
-from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
+from app.services.tagging import parse_tags, tag_instruction  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, CliResult, is_retryable, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
@@ -50,7 +50,7 @@ def build_prompt(file_name: str, text: str, excerpt: int) -> str:
     # 與 sync 的行內標註同一套前處理（scripts/_ingest_core.py 的 _tag_via_cli）
     body = strip_rating_index(text)[:excerpt]
     return (
-        f"{TAG_INSTRUCTION}\n\n"
+        f"{tag_instruction(get_profile().instruments.code_formats)}\n\n"
         f"檔名：{file_name}\n"
         f"報告內文（前 {excerpt} 字摘錄）：\n{body}\n\n"
         f"請依上述規則只輸出單一 JSON 物件。"

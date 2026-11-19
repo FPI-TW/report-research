@@ -40,6 +40,8 @@
 
 市場代碼是框架固定的**標準市場代碼**（`app/services/tagging.py` 的 `MARKETS`，標註 prompt 與 `tests/test_tagging.py`
 逐字釘住）。profile 只能選子集（`[markets].enabled`，順序＝使用者端選單的顯示順序）與改顯示名稱，不能新增代碼。
+顯示名稱沒覆寫的取 `tagging.MARKET_DISPLAY`；每日簡報素材的市場標籤另有自己的預設詞表（`brief._MARKET_ZH`，
+例如「匯市」「總體與債市」），只有 `[markets.display_names]` 明確宣告的代碼覆寫它（`Markets.declared_names`）。
 個別 profile 與機構既有系統的代碼對齊（例如預設 profile 與 findb）是該 profile 的跨 repo 契約，不是框架的。
 
 ## 語系
@@ -55,19 +57,31 @@ SQL 端由 `app/services/doc_types.py` 的 `doc_type_enabled_sql` 依這份設�
 `research` 全開、`non_research` 全關（等同改動前的 `is_research` true／false）。標註器會產生的類型
 （`tagging.TAGGER_DOC_TYPES`）必須全部宣告：漏宣告的類型所有功能都關，那類文件會靜默消失。
 
-## 個股代號、發行機構、簡報作息
+## 個股代號、發行機構、簡報作息、檔名規則
 
-這三項原本寫死在程式裡、對所有 profile 生效，其實是第一個導入機構的假設；改由 profile 宣告後，預設 profile
-宣告原值（零回歸）。
+這幾項是機構的假設，由 profile 宣告；預設 profile 宣告的是框架化之前寫死在程式裡的值（零回歸）。`[instruments]`、
+`[brief]`、`[filenames]` 缺席時的框架預設就是這些值；`[sources]` 缺席是空名單（名單是機構專屬的資料，框架不帶）。
 
 - `[instruments]`：個股代號格式（`[instruments.code_formats.<標準市場代碼>]`，`kind` 是 `CODE_FORMAT_KINDS` 之一＋
-  長度）。標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`；`tagging` 不 import
-  本模組，規則由呼叫端傳入 `get_profile().instruments.normalize_code`）；總覽題從問句抓代號也依純數字格式的長度。
-  標註 prompt 不變（它只要求 4 碼代碼），section 缺席＝只收 4 碼數字。
+  長度；資料形狀 `CodeFormat` 與框架預設 `DEFAULT_CODE_FORMATS` 在 `app/services/tagging.py`，因為 `tagging` 不
+  import 本模組）。用在：
+  - 標註結果的 `stock_targets` 只留符合其一的代號（`tagging.normalize_stock_targets`，規則由呼叫端傳入
+    `get_profile().instruments.normalize_code`）。
+  - 標註 prompt 的代號說明：各市場說明裡的格式與範例、`stock_targets` 的格式要求、輸出範例的代號
+    （`tagging.tag_instruction(code_formats)`）；訊號擷取 prompt 的 `instrument_code` 說明
+    （`signal_extract.signal_instruction`）。只有這些片段由格式推導，其餘文字固定，profile 不能覆寫。
+  - 總覽題從問句抓代號，依純數字格式的長度。
+  - 檔名抓個股代號（`app/services/filename.py`）：中文名＋數字依純數字格式的長度，`1216 TT` 只在宣告了 TW 純數字
+    格式時認，`NVDA US` 只在宣告了 US 字母格式時認；抓到的值再經 `normalize_code`。
+  section 缺席＝只收 4 碼數字；預設 profile 宣告同一份格式，prompt 與框架化之前逐字相同
+  （`tests/test_instrument_prompts.py` 對 golden）。
 - `[sources]`：`catalog` 引用 profile 目錄裡的名單檔（例如預設 profile 的 `sources.toml`），內容是檔名 token、
   內文指紋與顯示名稱；比對規則在 `app/services/filename.py`。section 缺席＝空名單：不從檔名或內文推斷發行機構
   （只靠側檔的 `source`），顯示名稱就是代碼本身。名單檔同樣嚴格驗證，錯誤訊息指向名單檔。
 - `[brief]`：每日簡報幾點後才產生、回看窗與回看上限（`scripts/generate_brief.py`；命令列參數仍可覆寫）。
+- `[filenames]`：`admin_keywords` 是檔名判定行政文件的關鍵字（不分大小寫的子字串，`filename.is_admin_doc`）：
+  命中的檔在標註前就略過、管理員上傳記成 `admin_file` 失敗。空清單＝不從檔名判定；section 缺席＝
+  `DEFAULT_ADMIN_FILENAME_KEYWORDS`。
 """
 
 from __future__ import annotations
@@ -83,7 +97,15 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from app.services.tagging import DOC_TYPE_RESEARCH, MARKET_DISPLAY, MARKETS, TAGGER_DOC_TYPES
+from app.services.tagging import (
+    CODE_FORMAT_KINDS,
+    DEFAULT_CODE_FORMATS,
+    DOC_TYPE_RESEARCH,
+    MARKET_DISPLAY,
+    MARKETS,
+    TAGGER_DOC_TYPES,
+    CodeFormat,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR_ENV = "PROFILE_DIR"
@@ -154,6 +176,8 @@ class PromptParams:
 class Markets:
     enabled: tuple[str, ...]  # 使用者端啟用的標準市場代碼，順序＝顯示順序
     display_names: Mapping[str, str]  # 全部標準代碼 → 顯示名稱（未覆寫者取 tagging.MARKET_DISPLAY）
+    # 只含 `[markets.display_names]` 明確宣告的代碼。有自己預設詞表的地方（每日簡報的市場標籤）只讓這幾個覆寫。
+    declared_names: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def is_enabled(self, code: str | None) -> bool:
         return code in self.enabled
@@ -260,26 +284,9 @@ class Backfill:
     max_reports_per_round: int = 100  # 背景補齊每輪最多處理幾份研報
 
 
-# 個股代號格式的種類（框架固定的詞彙）：digits＝純數字（台股、港股、陸股），letters＝大寫英文字母（美股 ticker，
-# `share_class` 另收「.A」這種一個字母的股別後綴，例如 BRK.B）。只給種類與長度、不收任意 regex：同一份規則要能
-# 安全地在每份研報的標註結果上執行，也要講得清楚它收什麼。
-CODE_FORMAT_KINDS = ("digits", "letters")
+# 個股代號格式的資料形狀（`CodeFormat`）、種類詞彙（`CODE_FORMAT_KINDS`）與框架預設（`DEFAULT_CODE_FORMATS`）在
+# `app/services/tagging.py`：標註 prompt 的代號說明由它產生，而 tagging 不 import 本模組。這裡只做驗證與長度上限。
 _CODE_LENGTH_MAX = {"digits": 12, "letters": 10}
-
-
-@dataclass(frozen=True)
-class CodeFormat:
-    market: str  # 這個格式屬於哪個標準市場（說明與對帳用；驗證是所有格式的聯集，見 Instruments）
-    kind: str  # CODE_FORMAT_KINDS 之一
-    min_length: int
-    max_length: int
-    share_class: bool = False  # letters：另收一個字母的股別後綴（BRK.B）
-
-    def regex(self) -> str:
-        span = f"{{{self.min_length},{self.max_length}}}"
-        if self.kind == "digits":
-            return rf"\d{span}"
-        return rf"[A-Z]{span}" + (r"(?:\.[A-Z])?" if self.share_class else "")
 
 
 @dataclass(frozen=True)
@@ -287,10 +294,11 @@ class Instruments:
     """個股代號的格式（`[instruments.code_formats.<市場>]`）：標註結果的 `stock_targets` 只留符合其一的代號。
 
     驗證是所有格式的**聯集**、不看研報的市場：台股的報告常重點討論美股標的（反之亦然），按市場切會把它們丟掉。
-    section 缺席＝只收 4 碼數字（框架化之前的規則；標註 prompt 也只要求 4 碼代碼）。
+    標註 prompt 的代號說明、訊號擷取 prompt 的代碼欄位與檔名抓代號也依這份格式（見模組 docstring）。
+    section 缺席＝只收 4 碼數字（`tagging.DEFAULT_CODE_FORMATS`，框架化之前的規則）。
     """
 
-    code_formats: tuple[CodeFormat, ...] = (CodeFormat(market="TW", kind="digits", min_length=4, max_length=4),)
+    code_formats: tuple[CodeFormat, ...] = DEFAULT_CODE_FORMATS
 
     @cached_property
     def _pattern(self) -> re.Pattern[str]:
@@ -338,6 +346,24 @@ class Brief:
     max_lookback_days: int = 7  # 任何情況下的回看上限（--max-lookback-days 可覆寫）
 
 
+# 檔名判定行政文件的關鍵字的框架預設（`[filenames]` 缺席時）：第一個導入機構的行政檔用語，預設 profile 也宣告同一份。
+DEFAULT_ADMIN_FILENAME_KEYWORDS: tuple[str, ...] = (
+    "人事異動", "晉升", "組織架構", "行事曆", "連續假期", "部位限制",
+    "施工", "清洗", "webcast", "flyer", "公告", "通知",
+)
+
+
+@dataclass(frozen=True)
+class Filenames:
+    """從檔名判讀的規則（`app/services/filename.py`）。
+
+    `admin_keywords`：檔名含其一（不分大小寫的子字串）就判為行政文件（`FilenameMeta.is_admin`）——入庫在標註
+    之前就略過，管理員上傳記成 `admin_file` 失敗。空清單＝不從檔名判定行政文件（照樣由標註判斷是不是研報）。
+    """
+
+    admin_keywords: tuple[str, ...] = DEFAULT_ADMIN_FILENAME_KEYWORDS
+
+
 @dataclass(frozen=True)
 class Profile:
     root: Path
@@ -354,6 +380,7 @@ class Profile:
     instruments: Instruments = field(default_factory=Instruments)
     sources: Sources = field(default_factory=Sources)
     brief: Brief = field(default_factory=Brief)
+    filenames: Filenames = field(default_factory=Filenames)
 
 
 # ── 驗證輔助 ─────────────────────────────────────────────────────────────
@@ -548,12 +575,13 @@ def _parse_markets(table: dict, ctx: _Ctx) -> Markets:
             raise ctx.error(f"enabled[{i}]", f"重複的市場代碼：{code!r}")
         seen.add(code)
     overrides = ctx.table(table, "display_names")
-    names = dict(MARKET_DISPLAY)
+    declared: dict[str, str] = {}
     for code in sorted(overrides):
         if code not in standard:
             raise ctx.error(f"display_names.{code}", f"不是標準市場代碼（可用：{' '.join(MARKETS)}）")
-        names[code] = ctx.string(overrides, code, max_len=20, key_label=f"display_names.{code}")
-    return Markets(enabled=tuple(enabled), display_names=MappingProxyType(names))
+        declared[code] = ctx.string(overrides, code, max_len=20, key_label=f"display_names.{code}")
+    return Markets(enabled=tuple(enabled), display_names=MappingProxyType({**MARKET_DISPLAY, **declared}),
+                   declared_names=MappingProxyType(declared))
 
 
 @_section("security")
@@ -852,6 +880,25 @@ def _parse_brief(table: dict, ctx: _Ctx) -> Brief:
         max_lookback_days=_int_in(ctx, table, "max_lookback_days", defaults.max_lookback_days, 1, 60,
                                   "max_lookback_days"),
     )
+
+
+@_section("filenames")
+def _parse_filenames(table: dict, ctx: _Ctx) -> Filenames:
+    ctx.reject_unknown(table, {"admin_keywords"})
+    keywords = ctx.string_list(table, "admin_keywords")
+    if keywords is None:
+        return Filenames()
+    seen: set[str] = set()
+    for i, keyword in enumerate(keywords):
+        label = f"admin_keywords[{i}]"
+        # 比對是子字串：前後空白會讓關鍵字靜默失效，空字串會讓每個檔名都變成行政文件。
+        if (not keyword or keyword != keyword.strip() or len(keyword) > 40
+                or any(ord(c) < 0x20 or ord(c) == 0x7F for c in keyword)):
+            raise ctx.error(label, f"關鍵字必須是 40 字以內的非空字串、前後不留空白、不含控制字元：{keyword!r}")
+        if keyword.lower() in seen:
+            raise ctx.error(label, f"重複的關鍵字（不分大小寫）：{keyword!r}")
+        seen.add(keyword.lower())
+    return Filenames(admin_keywords=tuple(keywords))
 
 
 # ── 載入與快取 ───────────────────────────────────────────────────────────

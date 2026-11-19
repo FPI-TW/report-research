@@ -315,7 +315,7 @@ def corpus_checks(c: Checks, compose: Compose, expected: dict, *, real_llm: bool
     bad_fn_sources = [f for f, s in expected.get("filename_sources", {}).items()
                       if by_name.get(Path(f).name, ("",) * 3)[2] != s]
     c.check("沒有側檔的研報由 profile 名單從檔名推得發行機構", not bad_fn_sources, f"不符：{bad_fn_sources[:3]}")
-    if not real_llm:  # 真實 LLM 照標註 prompt 只給 4 碼代碼，美股 ticker 不保證出現
+    if not real_llm:  # 真實 LLM 不是決定性的：不保證每份都標出美股 ticker
         missing_targets = [f for f, code in expected.get("tagged_stock_targets", {}).items()
                            if code not in by_name.get(Path(f).name, ("",) * 5)[4].split(";")]
         c.check("標註出的個股代號依 profile 格式保留（含美股 ticker）", not missing_targets,

@@ -252,7 +252,7 @@ class FreezeCliTests(_ProfileDir):
 
     def test_legacy_profile_is_not_frozen_by_the_tool(self):
         (self.profile / "eval" / pe.CONFIG_FILE).write_text(
-            '[questions]\nlegacy_repo_path = "eval/ragas_questions.json"\n', encoding="utf-8")
+            '[questions]\nlegacy_repo_path = "tests/fixtures/eval_questions_synthetic.json"\n', encoding="utf-8")
         rc, out = self._cli(_draft())
         self.assertEqual(rc, dq.EXIT_INPUT)
         self.assertIn("沿用 repo 內的凍結題集", out)

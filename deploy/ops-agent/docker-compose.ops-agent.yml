@@ -1,0 +1,16 @@
+# 讓 web 容器連得到主機上的維運代理：疊在 deploy/compose/docker-compose.yml 之後。安裝見
+# docs/CONTAINER_DEPLOYMENT.md「維運代理（選配）」。
+#
+#   docker compose -f docker-compose.yml -f ../ops-agent/docker-compose.ops-agent.yml up -d web
+#
+# 代理的 socket 在主機的 /run/report-mark-ops/agent.sock（目錄 0750、socket 0660，群組 report-mark-ops）。web 容器
+# 掛進同一個路徑（web 端的路徑是固定的，app/config.py 的 _OPS_SOCKETS），並以那個群組的 gid 加入補充群組；
+# 代理那端再以 catalog 的 allowed_uids（映像的 UID 10001）核對連線者。
+services:
+  web:
+    environment:
+      OPS_AGENT_ENVIRONMENT: production
+    group_add:
+      - "${OPS_AGENT_GID:?OPS_AGENT_GID 必填：主機上 report-mark-ops 群組的 gid（getent group report-mark-ops）}"
+    volumes:
+      - /run/report-mark-ops:/run/report-mark-ops

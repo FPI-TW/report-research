@@ -48,9 +48,10 @@ LIVING_DOCS = (
     "docs/WORKFLOW.md",
     "docs/ARCHITECTURE.md",
     "docs/EXTRACTION.md",
-    "docs/DEPLOYMENT_STATUS.md",
+    "docs/DEPLOYMENT_STATUS.md",  # export-omit
     "docs/EXTERNAL_API.md",
     "docs/CONTAINER_DEPLOYMENT.md",
+    "docs/FRAMEWORK_EXPORT.md",  # export-omit
 )
 
 # 走訪檔案系統時整棵剪掉的目錄（產物、相依、快取、唯讀來源）。
@@ -72,8 +73,8 @@ _TOP_DIRS = (
     "frontend/", "docs/", ".github/",
 )
 
-# 任何文件都可以合法提到、但樹裡不會有的路徑：建置產物與執行期產物。
-# `frontend/dist` 刻意留在 _PRUNE 裡而不是靠實際存在與否判斷——否則這支測試
+# 任何文件都可以合法提到、但樹裡不會有的路徑：建置產物與執行期產物（條目可以是 fnmatch 樣式，與文件裡的
+# 字串比對）。`frontend/dist` 刻意留在 _PRUNE 裡而不是靠實際存在與否判斷——否則這支測試
 # 會變成「本機建過就綠、CI 沒建就紅」的環境相依測試，本專案已經被這種東西
 # 咬過一次（研報 PDF 內容測試依賴 CJK 字型）。
 _GLOBAL_ALLOW = {
@@ -159,7 +160,7 @@ class DocPathsExist(unittest.TestCase):
             allowed = _GLOBAL_ALLOW | _DOC_ALLOW.get(doc, set())
             for m in _BACKTICK.finditer(text):
                 cand = _path_candidate(m.group(1))
-                if cand is None or cand in allowed or cand.rstrip("/") in allowed:
+                if cand is None or any(fnmatch.fnmatch(cand.rstrip("/"), a) for a in allowed):
                     continue
                 if not _resolves(cand):
                     line = text.count("\n", 0, m.start()) + 1

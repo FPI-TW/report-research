@@ -235,9 +235,11 @@ class MakefileTargetTests(unittest.TestCase):
     def setUp(self):
         self.mk = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
+    # export-omit:begin
     def test_freshness_target_exists(self):
         self.assertIn("\nfreshness:", self.mk)
         self.assertIn("scripts/check_batch_freshness.py", self.mk)
+    # export-omit:end
 
     def test_db_audit_target_exists(self):
         self.assertIn("\ndb-audit:", self.mk)

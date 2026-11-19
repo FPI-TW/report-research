@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
+from pathlib import Path  # export-omit
 
 from app.services.ops_topology import build_topology, external_health, service_health
 
@@ -215,6 +215,7 @@ class BuildTopologyTests(unittest.TestCase):
         self.assertEqual(nodes["a"]["impacted_by"], [])
         self.assertEqual(g["root_causes"], ["a"])  # 上游（b）沒有 down
 
+    # export-omit:begin
     def test_repo_catalogs_build_without_errors(self):
         """真的三份 catalog 走一遍（狀態全部假裝正常）：每個節點都在、邊數與 catalog 一致。"""
         from ops_agent.catalog import load_catalog
@@ -229,6 +230,7 @@ class BuildTopologyTests(unittest.TestCase):
                 self.assertEqual(len(g["nodes"]), len(cat.services) + len(cat.externals))
                 self.assertEqual(len(g["edges"]), sum(len(n.depends_on) for n in (*cat.services, *cat.externals)))
                 self.assertEqual(g["down"], [])
+    # export-omit:end
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import { RequireScope } from '../RequireScope'
 import { RANGES, sinceForDays, type RangeDays } from './analyticsFormat'
 import { OperationsSection, OverviewSection, QualitySection, RoutesSection, TopSection } from './AnalyticsSections'
 import type { AnalyticsQuery } from './useAnalytics'
-import { t } from '@/i18n'
+import { t, timeZoneLabel } from '@/i18n'
 
 // 後端的 ANALYTICS_MIN_USERS 預設 3；各區塊的「<k」以回應的 range.min_users 為準，這裡只用在說明文字。
 const MIN_USERS_HINT = 3
@@ -19,7 +19,7 @@ function AnalyticsContent() {
         summary={t('admin.analytics.adminAnalyticsPage.aggregatesOfQAVolume')}
         help={
           <>
-            {t('admin.analytics.adminAnalyticsPage.theLast90DaysAre', { MIN_USERS_HINT })}
+            {t('admin.analytics.adminAnalyticsPage.theLast90DaysAre', { zone: timeZoneLabel(), MIN_USERS_HINT })}
           </>
         }
         actions={<Segmented label={t('admin.analytics.adminAnalyticsPage.range')} value={range} onChange={setRange} options={RANGES} />}

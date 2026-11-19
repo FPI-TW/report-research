@@ -144,6 +144,7 @@ class ImportGuardTests(unittest.TestCase):
         self.assertFalse(loaded & forbidden, sorted(loaded & forbidden))
 
 
+# export-omit:begin
 class UnitFileTests(unittest.TestCase):
     def test_service_failure_semantics(self):
         self.assertEqual(_directives(SERVICE, "OnFailure"), ["report-mark-alert@%n.service"])
@@ -159,6 +160,7 @@ class UnitFileTests(unittest.TestCase):
         minute = int(cal.split(":")[1])
         self.assertNotIn(minute, (0, 20, 30), "整點是 sync（每 3 小時）、:20 是監控聚合、:30 有其他批次")
         self.assertEqual(_directives(TIMER, "Persistent"), [])
+# export-omit:end
 
 
 if __name__ == "__main__":

@@ -359,6 +359,7 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(offenders, [], "線上路徑取批次鎖會被長批次鎖死：" + ", ".join(offenders))
 
 
+# export-omit:begin
 class SyncShellVisibilityTests(unittest.TestCase):
     """排程殼的 best-effort 分支必須把失敗寫進 data/unit_failures.log。
 
@@ -418,6 +419,7 @@ class SyncShellVisibilityTests(unittest.TestCase):
     def test_lock_busy_code_matches_python(self):
         """殼層寫死的 75 與 Python 的 EXIT_LOCK_BUSY 漂移了，分支就永遠不成立。"""
         self.assertIn(f"LOCK_BUSY_RC={EXIT_LOCK_BUSY}", self.src)
+# export-omit:end
 
 
 if __name__ == "__main__":

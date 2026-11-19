@@ -145,6 +145,7 @@ class DockerDetectionRuntimeTests(unittest.TestCase):
         self.assertIn("info", live)
         self.assertNotIn("--version", live)
 
+    # export-omit:begin
     def test_explicit_docker_bin_still_wins(self) -> None:
         """偵測是便利功能，不該奪走覆寫權（非標準安裝位置仍要能指定）。"""
         for name, path in (("db_backup.sh", BACKUP_SH), ("ingest_lowio.sh", LOWIO_SH)):
@@ -154,6 +155,7 @@ class DockerDetectionRuntimeTests(unittest.TestCase):
                     live, r'DOCKER_BIN[:=]?[^\n]*\$\{DOCKER_BIN',
                     f"{name} 必須讓既有的 DOCKER_BIN 優先於偵測",
                 )
+    # export-omit:end
 
 
 class ConfigResolutionRuntimeTests(unittest.TestCase):
@@ -237,6 +239,7 @@ class ConfigResolutionRuntimeTests(unittest.TestCase):
         self.assertIn(str(defaults), got.stderr, "訊息應指出落點取自哪個檔")
 
 
+# export-omit:begin
 class MountHelperTests(unittest.TestCase):
     """掛載腳本的兩條契約，都來自 2026-07-30 的實測。
 
@@ -279,8 +282,10 @@ class MountHelperTests(unittest.TestCase):
         for key in ("NAS_BACKUP_UNC", "REPORT_MARK_BACKUP_MOUNT"):
             with self.subTest(key=key):
                 self.assertIn(key, self.live, "主機專屬值不該寫死在 repo")
+# export-omit:end
 
 
+# export-omit:begin
 class BackupDestinationTests(unittest.TestCase):
     """環境檔範例必須指向一個實際寫得進去的 share，且標明落點是臨時的。"""
 
@@ -307,8 +312,10 @@ class BackupDestinationTests(unittest.TestCase):
                 self.text,
                 "落點在會被清掉的暫存區時，環境檔必須明寫這是臨時安排",
             )
+# export-omit:end
 
 
+# export-omit:begin
 class BackupUnitTests(unittest.TestCase):
     """`report-mark-backup.service` / `.timer` 的形狀。"""
 
@@ -376,6 +383,7 @@ class BackupUnitTests(unittest.TestCase):
             "少了 Persistent=true，機器關著錯過的那次就永遠不補跑——而缺一天沒有任何訊號",
         )
         self.assertIn("WantedBy=timers.target", text, "timer 缺 [Install] 就 enable 不起來")
+# export-omit:end
 
 
 class BackupScriptTests(unittest.TestCase):
@@ -414,6 +422,7 @@ class BackupScriptTests(unittest.TestCase):
                 f"docker exec 不可配 TTY（會弄壞二進位 dump）：{line.strip()}",
             )
 
+    # export-omit:begin
     def test_both_scripts_share_the_single_docker_detection(self) -> None:
         """兩支腳本必須共用 `scripts/_docker_bin.sh`，不得各自寫一份偵測。
 
@@ -431,6 +440,7 @@ class BackupScriptTests(unittest.TestCase):
                     "command -v docker ||", live,
                     f"{name} 不該再自帶弱版偵測（只看檔案存不存在）",
                 )
+    # export-omit:end
 
     def test_destination_falls_back_through_defaults_file(self) -> None:
         """腳本自己要讀 /etc/default/report-mark-sync。
@@ -530,6 +540,7 @@ class ShellExitCodeCaptureTests(unittest.TestCase):
         )
 
 
+# export-omit:begin
 class IngestLowIoBackupGateTests(unittest.TestCase):
     """`make ingest-lowio` 在關掉 fsync 之前必須先確認有近期備份。"""
 
@@ -586,6 +597,7 @@ class IngestLowIoBackupGateTests(unittest.TestCase):
             self.text,
             "檔頭應說明現況：這座 DB 裝著 qa_log 等重建不回來的資料",
         )
+# export-omit:end
 
 
 class MakefileTargetTests(unittest.TestCase):
@@ -603,6 +615,7 @@ class MakefileTargetTests(unittest.TestCase):
         self.assertIn("db-backup", phony.group(1).split())
 
 
+# export-omit:begin
 class BackupDocsTests(unittest.TestCase):
     """沒演練過的備份不算備份——還原步驟必須寫下來。"""
 
@@ -614,6 +627,7 @@ class BackupDocsTests(unittest.TestCase):
             text,
             "備份章節必須包含實際的還原指令，不能只寫『有備份』",
         )
+# export-omit:end
 
 
 if __name__ == "__main__":

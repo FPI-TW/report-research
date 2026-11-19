@@ -6,7 +6,7 @@ import { KIND_LABELS, KINDS, LIMIT_MAX, REASON_MAX, fmtInt, limitText, messageOf
 import { currentOf, draftOf, planChanges, type Draft, type QuotaChange } from './quotaPlan'
 import type { QuotaKind, QuotaMode } from './useQuota'
 import styles from './Quota.module.css'
-import { t } from '@/i18n'
+import { t, timeZoneLabel } from '@/i18n'
 
 /**
  * 「調整上限」表單：問答／匯出／上傳各一列（上限＋設定），加一個備註。
@@ -42,7 +42,7 @@ export function QuotaLimitDialog({ user, isSuper, onClose, onSave }: {
 
   return (
     <FormDialog open title={t('admin.quota.quotaLimitDialog.adjustDailyLimitsFor', { username: user.username })} submitLabel={t('admin.quota.quotaLimitDialog.save')} busy={busy} error={error}
-      body={t('admin.quota.quotaLimitDialog.affectsOnlyThisAccountResets')}
+      body={t('admin.quota.quotaLimitDialog.affectsOnlyThisAccountResets', { zone: timeZoneLabel() })}
       submitDisabled={!plan.error && plan.changes.length === 0}
       onSubmit={() => { void submit() }} onClose={onClose}>
       {KINDS.map(kind => {

@@ -413,6 +413,7 @@ def resolve_dataset(profile: str | None, env=None) -> Path:
     active = profile_eval.active_profile_dir(env)
     if profile_eval.own_questions_path(active) is not None:
         return profile_eval.load_profile_dataset(active).path
+    profile_eval.require_default_dataset(rr.DATASET_REL)  # 沒有預設題集時拋錯，說明改帶 --profile
     return rr.DATASET
 
 

@@ -13,8 +13,8 @@ dev_mode 也不作用），認證**只**由這裡的 dependency 負責；反過�
 4. 每分鐘限流（每個用戶端一個記憶體 token bucket，容量＝`rate_limit_per_min`）→ 429 `api_rate_limited`。
    在每日額度之前：被限流擋下的請求不碰 DB、也不吃額度。狀態是 per-process（web 單一 worker，
    見 `web/concurrency.py`），重啟即清空；`tests/conftest.py` 每題前後呼叫 `reset_state()`。
-5. 每日額度 `deps.api_clients.consume_quota` → 429 `api_quota_exceeded`。額度以台北時間的日曆日計
-   （`api_clients.TZ`），`Retry-After` 算到台北隔日 0 點（UTC 16:00），與實際重置時點一致。
+5. 每日額度 `deps.api_clients.consume_quota` → 429 `api_quota_exceeded`。額度以業務時區（profile 的
+   `[locale].timezone`，`business_time`）的日曆日計，`Retry-After` 算到該時區的隔日 0 點，與實際重置時點一致。
 
 401 一律帶 `WWW-Authenticate: Bearer`；429 一律帶 `Retry-After`（秒）。通過後用戶端放在
 `request.state.api_client`。日誌只記 client id 與 `key_prefix`，**絕不記原始金鑰**（也不記 hash）。
@@ -26,11 +26,11 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import Request
 
-from app.services.api_clients import TZ as QUOTA_TZ
+from app.services import business_time
 from web import deps
 from web.errors import AppError
 
@@ -83,10 +83,8 @@ def _take_token(client_id: int, per_min: int) -> float | None:
 
 
 def seconds_until_quota_reset(now: datetime) -> int:
-    """到下一個台北時間 0 點的秒數（無條件進位、至少 1）。`now` 必須帶時區。"""
-    local = now.astimezone(QUOTA_TZ)
-    next_midnight = datetime.combine(local.date() + timedelta(days=1), datetime.min.time(), tzinfo=QUOTA_TZ)
-    return max(1, math.ceil((next_midnight - local).total_seconds()))
+    """到下一個業務時區 0 點的秒數（無條件進位、至少 1）。`now` 必須帶時區。"""
+    return business_time.seconds_until_midnight(now)
 
 
 def _unauthorized(code: str, message: str, *, invalid: bool) -> AppError:
@@ -139,7 +137,7 @@ def require_api_client(scope: str):
                 "對外 API 每日額度用罄 client_id=%s key_prefix=%s count=%s", client.id, client.key_prefix, count,
             )
             raise AppError(
-                429, "api_quota_exceeded", "今日 API 額度已用完（台北時間 0 點重置）",
+                429, "api_quota_exceeded", f"今日 API 額度已用完（{business_time.label()}時間 0 點重置）",
                 headers={"Retry-After": str(seconds_until_quota_reset(_utcnow()))},
             )
         request.state.api_client = client

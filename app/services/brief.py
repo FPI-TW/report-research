@@ -31,6 +31,7 @@ from typing import Optional, Sequence
 from sqlalchemy import TextClause, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.profile import get_profile
 from app.services.doc_types import doc_type_enabled_id_sql, doc_type_enabled_sql
 from app.services.visibility import visible_report_id_sql, visible_report_sql
 
@@ -317,6 +318,9 @@ _RATING_ZH = {
     "unknown": "未提供",
 }
 
+# 簡報素材的市場標籤。刻意與介面的顯示名稱（`tagging.MARKET_DISPLAY`）不同：簡報依市場分段，「匯市」「總體與
+# 債市」「全球與商品」把歸到該代碼的類別（債券歸 MACRO、原物料歸 GLOBAL）也說出來。profile 在
+# `[markets.display_names]` 明確宣告的代碼覆寫這裡（`market_zh`），沒宣告的照用這份。
 _MARKET_ZH = {
     "TW": "台股",
     "US": "美股",
@@ -335,7 +339,9 @@ def rating_zh(code: Optional[str]) -> str:
 
 
 def market_zh(code: Optional[str]) -> str:
-    return _MARKET_ZH.get((code or "").upper(), code or "未分類")
+    key = (code or "").upper()
+    declared = get_profile().markets.declared_names.get(key)
+    return declared or _MARKET_ZH.get(key, code or "未分類")
 
 
 def _fmt_target(value: Optional[float], currency: Optional[str]) -> str:

@@ -16,9 +16,12 @@ import re
 import statistics
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Iterable, Optional
+from string import Template
+from typing import Iterable, Optional, Sequence
 
+from app.profile import get_profile
 from app.services.llm_models import TASK_SIGNAL, resolve_model
+from app.services.tagging import DEFAULT_CODE_FORMATS, CodeFormat, code_length_phrase
 from app.services.zh_hant import lookup_key, to_traditional
 
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
@@ -240,7 +243,9 @@ def eps_comparable(a: dict, b: dict) -> bool:
 
 
 # ── LLM 必須回傳的固定 JSON schema（供 prompt 與解析對齊）──
-SIGNAL_INSTRUCTION = """你是金融研報結構化擷取助手。閱讀以下券商研報內文，針對指定的標的清單，
+# instrument_code 欄位的格式說明由 profile 的 `[instruments]` 推導（`signal_instruction`），其餘逐字固定：profile 不能
+# 覆寫 prompt 文字。預設 profile 渲染出的全文與框架化之前的常數逐字相同（`tests/test_instrument_prompts.py`）。
+_SIGNAL_TEMPLATE = Template("""你是金融研報結構化擷取助手。閱讀以下券商研報內文，針對指定的標的清單，
 擷取每個標的的「評等、目標價、EPS 預估、四維論點」。
 
 嚴格規則（違反會被系統丟棄）：
@@ -255,14 +260,14 @@ SIGNAL_INSTRUCTION = """你是金融研報結構化擷取助手。閱讀以下�
 6. 只針對「指定標的清單」中的代碼輸出；清單以外的代碼不要輸出。
    某標的研報中完全沒有可擷取內容時，該標的可整個省略。
 7. 目標價只取研報明確標示為「目標價」「Target Price」「TP」「PT」的數字，**現價、收盤價、市值都不是目標價**：
-   - 內文括號標記如「台達電 (2308 TT，NT$1,355，增加持股)」裡的 NT$ 是現價，不是目標價。
+   - 內文括號標記如「台達電 (2308 TT，NT$$1,355，增加持股)」裡的 NT$$ 是現價，不是目標價。
    - 表格要依欄名對應數字，不要依位置猜；看不出哪一欄是目標價就填 null。
 
 JSON 格式：
 {
   "signals": [
     {
-      "instrument_code": "<4 碼代碼，須在指定清單內>",
+      "instrument_code": "<${code_label}代碼，須在指定清單內>",
       "rating": {"raw": "<研報原文評等或 null>", "evidence": "<原句或 null>"},
       "target_price": {"value": <數字或 null>, "currency": "<TWD/USD/HKD/CNY…>",
                         "horizon": "<如 12M/年底 或 null>", "evidence": "<原句或 null>"},
@@ -285,7 +290,17 @@ JSON 格式：
 - risk（風險）：easing（趨緩）/ stable（持平）/ rising（升高）
 - valuation（估值）：attractive（偏低）/ fair（合理）/ stretched（偏高）
 任一維度找不到明確論點或附不出 evidence，就整個維度省略（不要硬填）。
-"""
+""")
+
+
+def signal_instruction(code_formats: Sequence[CodeFormat]) -> str:
+    """訊號擷取 prompt 的規則全文。只有一種代號格式時 instrument_code 寫出長度（預設 profile：「4 碼代碼」），
+    多種格式時只寫「代碼」：代碼本來就限定在指定清單內，清單由同一份格式驗證過的 stock_targets 而來。"""
+    return _SIGNAL_TEMPLATE.substitute(code_label=code_length_phrase(code_formats))
+
+
+# 預設 profile（`tagging.DEFAULT_CODE_FORMATS`）的版本；`build_signal_prompt` 一律在呼叫時依 profile 渲染。
+SIGNAL_INSTRUCTION = signal_instruction(DEFAULT_CODE_FORMATS)
 
 
 def build_signal_prompt(
@@ -294,8 +309,13 @@ def build_signal_prompt(
     broker: Optional[str],
     requested_codes: list[str],
     body_excerpt: str,
+    *,
+    code_formats: Optional[Sequence[CodeFormat]] = None,
 ) -> str:
-    """組裝擷取 prompt（仿 generate_summaries.build_prompt）。"""
+    """組裝擷取 prompt（仿 generate_summaries.build_prompt）。代號格式沒傳就取目前的 profile
+    （`get_profile().instruments.code_formats`），在呼叫時讀、不在 import 期定值。"""
+    if code_formats is None:
+        code_formats = get_profile().instruments.code_formats
     codes = "、".join(requested_codes)
     meta = [f"檔名：{file_name}"]
     if report_date:
@@ -305,7 +325,7 @@ def build_signal_prompt(
     meta.append(f"指定標的清單（只擷取這些代碼）：{codes}")
     header = "\n".join(meta)
     return (
-        f"{SIGNAL_INSTRUCTION}\n\n"
+        f"{signal_instruction(code_formats)}\n\n"
         f"{header}\n\n"
         f"研報內文：\n{body_excerpt}\n\n"
         f"請依上述 schema 只輸出單一 JSON 物件。"
@@ -406,6 +426,8 @@ _INLINE_PRICE_RE = re.compile(
 )
 # 凱基策略報告表格：「代碼 TT｜評等｜目標價 市值 現價」。其他凱基表格是「現價 目標價 潛在空間」，
 # 目標價落在第二個數字，不會被這條擋（語料實測：取到第三欄的 8 筆全是這個版型，潛在空間可驗算）。
+# 兩條都是特定券商版面的確定性修正：只在命中時丟棄目標價，不驗證代碼格式（代碼只看指定清單，清單由 profile 的
+# [instruments] 驗證過），其他版面與其他 profile 不命中就是 no-op。
 _TABLE_ROW_RE = re.compile(
     r"[0-9]{4}\s*TT\s+[^\s\d]{1,12}\s+([0-9][0-9,]*(?:\.[0-9]+)?)\s+[0-9][0-9,]*(?:\.[0-9]+)?\s+([0-9][0-9,]*(?:\.[0-9]+)?)"
 )

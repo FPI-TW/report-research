@@ -1,7 +1,7 @@
 """上線驗收（`scripts/eval_gate.py`）：退出碼是結論——0 通過／1 有未豁免的指標沒過／2 不完整或不可比。
 
-結果檔一律是測試裡合成的（不讀 `eval/baselines/`：那是別的 lane 會換的檔）；廷豐的題集與豁免讀 repo 的
-`profiles/tingfong/eval/eval.toml`，其他情境的 profile 建在 tempfile 裡。
+結果檔一律是測試裡合成的（不讀 `eval/baselines/`：那是別的 lane 會換的檔）；其他情境的 profile 建在 tempfile 裡。
+預設 profile 的題集與豁免讀 repo 的 `profiles/tingfong/eval/eval.toml`。  # export-omit
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
-import json
+import json  # export-omit
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,7 +18,7 @@ from eval import profile_eval as pe
 from scripts import eval_gate as gate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TINGFONG_SET = REPO_ROOT / "eval" / "ragas_questions.json"
+DEFAULT_SET = REPO_ROOT / "eval" / "ragas_questions.json"
 
 
 def _result(*, f=0.95, cp=0.85, ar=0.65, n=18, sha=None, lineage="gpt-6-luna-2026-11", **summary) -> dict:
@@ -34,7 +34,7 @@ def _result(*, f=0.95, cp=0.85, ar=0.65, n=18, sha=None, lineage="gpt-6-luna-202
         base.pop("judge_lineage")
     return {
         "summary": base,
-        "config": {"queryset_sha256": sha or hashlib.sha256(TINGFONG_SET.read_bytes()).hexdigest(),
+        "config": {"queryset_sha256": sha or hashlib.sha256(DEFAULT_SET.read_bytes()).hexdigest(),
                    "limit": None, "scope": None, "judge": {"lineage": "gpt-6-luna-2026-11"}},
     }
 
@@ -57,6 +57,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(tuple(gate.THRESHOLDS), pe.GATE_METRICS)
 
 
+# export-omit:begin
 class TingfongGateTests(unittest.TestCase):
     def test_all_pass_is_0(self):
         res = _evaluate(_result())
@@ -119,8 +120,10 @@ class TingfongGateTests(unittest.TestCase):
         res = _evaluate({"summary": {"hit_rate": 0.9, "n_cases": 10}})
         self.assertEqual(res.exit_code, 2)
         self.assertEqual(res.metrics, [])
+# export-omit:end
 
 
+# export-omit:begin
 class LatestBaselineTests(unittest.TestCase):
     def test_latest_baseline_named_in_agents_md_passes_the_tingfong_gate(self):
         """AGENTS.md「最新基準線」指名的那份，對廷豐的上線驗收必須是 0（CP 以豁免通過）。"""
@@ -132,6 +135,7 @@ class LatestBaselineTests(unittest.TestCase):
         doc = json.loads((REPO_ROOT / m.group(1)).read_text(encoding="utf-8"))
         res = _evaluate(doc)
         self.assertEqual(res.exit_code, 0, (res.undecidable, [(x.metric, x.status) for x in res.metrics]))
+# export-omit:end
 
 
 class OtherProfileGateTests(unittest.TestCase):
@@ -161,6 +165,7 @@ class OtherProfileGateTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    # export-omit:begin
     def _main(self, doc: dict | None, *args: str) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "result.json"
@@ -170,7 +175,9 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 rc = gate.main(["--profile", "tingfong", "--result", str(path), *args])
         return rc, out.getvalue()
+    # export-omit:end
 
+    # export-omit:begin
     def test_exit_codes_through_main(self):
         self.assertEqual(self._main(_result())[0], 0)
         self.assertEqual(self._main(_result(ar=0.1))[0], 1)
@@ -178,12 +185,15 @@ class CliTests(unittest.TestCase):
         rc, out = self._main(None)
         self.assertEqual(rc, 2)
         self.assertIn("讀不到檔案", out)
+    # export-omit:end
 
+    # export-omit:begin
     def test_json_output(self):
         rc, out = self._main(_result(cp=0.7), "--json")
         payload = json.loads(out)
         self.assertEqual(rc, payload["exit_code"])
         self.assertEqual([m["metric"] for m in payload["metrics"]], list(gate.THRESHOLDS))
+    # export-omit:end
 
     def test_bad_profile_config_is_2(self):
         with tempfile.TemporaryDirectory() as td:

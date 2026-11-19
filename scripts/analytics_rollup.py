@@ -8,7 +8,7 @@
     uv run python scripts/analytics_rollup.py --day 2026-10-06    # 只重算這一天（覆寫）
     uv run python scripts/analytics_rollup.py --dry-run           # 只計算、印出筆數，不寫
 
-把一個台北日曆日的指標（`app/services/analytics.py` 的 `compute_daily`：問答量、延遲、路由分布、忠實度與回饋、
+把一個業務時區的日曆日的指標（`app/services/analytics.py` 的 `compute_daily`：問答量、延遲、路由分布、忠實度與回饋、
 熱門標的／研報／市場、活躍人數）寫進 `research.analytics_daily`。web 的分析頁最近 90 天即時查 `qa_log`，更早的日子讀
 這張表——所以每一天都必須在離開即時窗期（`ANALYTICS_LIVE_WINDOW_DAYS`）前彙總過：預設模式除了昨天，也補齊窗期內
 缺標記的日子（機器關機錯過幾晚也能追上）。
@@ -43,7 +43,7 @@ load_env_file(REPO_ROOT / ".env")
 
 from sqlalchemy.exc import InterfaceError, OperationalError  # noqa: E402
 
-from app.services import analytics  # noqa: E402
+from app.services import analytics, business_time  # noqa: E402
 
 EXIT_OK, EXIT_FAILED, EXIT_DB = 0, 1, 2
 MAX_BACKFILL_DAYS = 3660
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--backfill 必須介於 1 與 {MAX_BACKFILL_DAYS}", file=sys.stderr)
         return EXIT_FAILED
     if args.day is not None and args.day >= today:
-        print(f"--day 必須早於今天（{today}，台北時間）：今天還沒結束", file=sys.stderr)
+        print(f"--day 必須早於今天（{today}，{business_time.label()}時間）：今天還沒結束", file=sys.stderr)
         return EXIT_FAILED
     return run(args, today=today)
 

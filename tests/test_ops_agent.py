@@ -30,7 +30,7 @@ NOW = datetime(2026, 10, 6, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _uid(_name: str) -> int:
-    return 4242  # CI 沒有 kashionz 這個使用者：catalog 測試不依賴本機帳號
+    return 4242  # CI 沒有 catalog 列的帳號：catalog 測試不依賴本機帳號
 
 
 def _raw(environment="production", services=None, **agent) -> dict:
@@ -95,6 +95,7 @@ def _req(op, service=None, env="production", **params) -> bytes:
 # ── catalog ──────────────────────────────────────────────────────────────
 
 
+# export-omit:begin
 class CatalogFileTests(unittest.TestCase):
     def test_repo_catalogs_load(self):
         prod = load_catalog(PROD_TOML, resolve_user=_uid)
@@ -128,6 +129,7 @@ class CatalogFileTests(unittest.TestCase):
         for svc in dev.services:
             self.assertTrue(svc.target.startswith("report-mark-dev"), svc.target)
         self.assertIn("report-mark-devdb", {s.target for s in dev.services})
+# export-omit:end
 
 
 class CatalogValidationTests(unittest.TestCase):
@@ -221,10 +223,12 @@ class BindingTests(unittest.TestCase):
         with self.assertRaisesRegex(CatalogError, "拒絕以 development 的 socket"):
             validate_binding(prod, protocol.CANONICAL_SOCKETS["development"])
 
+    # export-omit:begin
     def test_prod_socket_with_dev_catalog_refused(self):
         dev = load_catalog(DEV_TOML, resolve_user=_uid)
         with self.assertRaisesRegex(CatalogError, "拒絕以 production 的 socket"):
             validate_binding(dev, protocol.CANONICAL_SOCKETS["production"])
+    # export-omit:end
 
     def test_prod_socket_cannot_be_overridden(self):
         prod = parse_catalog(_raw("production"))
@@ -232,12 +236,15 @@ class BindingTests(unittest.TestCase):
             validate_binding(prod, "/tmp/somewhere.sock")
         validate_binding(prod, protocol.CANONICAL_SOCKETS["production"])
 
+    # export-omit:begin
     def test_dev_may_use_temporary_socket(self):
         dev = load_catalog(DEV_TOML, resolve_user=_uid)
         validate_binding(dev, "/tmp/rmops-test/agent.sock")
         with self.assertRaises(CatalogError):
             validate_binding(dev, "relative.sock")
+    # export-omit:end
 
+    # export-omit:begin
     def test_cli_refuses_to_start_on_cross_binding(self):
         from ops_agent import server
 
@@ -250,8 +257,10 @@ class BindingTests(unittest.TestCase):
                               "--check"])
             self.assertEqual(rc, 2)
             self.assertEqual(server.main(["--catalog", str(toml), "--check"]), 0)
+    # export-omit:end
 
 
+# export-omit:begin
 class StagingCatalogTests(unittest.TestCase):
     """EC2（正式環境；catalog 檔名沿用 staging）：RDS（不是容器）、沒有 NAS、apt 的 nginx。
 
@@ -301,6 +310,7 @@ class StagingCatalogTests(unittest.TestCase):
         prod = parse_catalog(_raw("production"))
         with self.assertRaisesRegex(CatalogError, "拒絕以 staging 的 socket"):
             validate_binding(prod, protocol.CANONICAL_SOCKETS["staging"])
+# export-omit:end
 
 
 def _svc(name, deps=(), **extra) -> dict:
@@ -317,6 +327,7 @@ class DependencyGraphTests(unittest.TestCase):
             raw["externals"] = externals
         return parse_catalog(raw)
 
+    # export-omit:begin
     def test_repo_catalogs_declare_dependencies(self):
         prod = load_catalog(PROD_TOML, resolve_user=_uid)
         self.assertEqual(set(prod.get("web").depends_on), {"postgres", "r2", "llm"})
@@ -327,7 +338,9 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertEqual(dev.get("dev-web").depends_on, ("devdb",))
         staging = load_catalog(STAGING_TOML, resolve_user=_uid)
         self.assertEqual(set(staging.get("web").depends_on), {"rds", "r2", "llm"})
+    # export-omit:end
 
+    # export-omit:begin
     def test_web_probe_exit_codes_follow_the_probe_priority(self):
         """scripts/check_web_health.sh 的優先序是 8→6：被蓋住的那項判斷不出來。5、7 已退役，沒有依賴認得它們。"""
         expected = {  # 退出碼 → (r2, llm)
@@ -352,6 +365,7 @@ class DependencyGraphTests(unittest.TestCase):
             for code, (r2, llm) in expected.items():
                 with self.subTest(catalog=toml.name, code=code):
                     self.assertEqual((judge(exts["r2"], code), judge(exts["llm"], code)), (r2, llm))
+    # export-omit:end
 
     def test_valid_graph_with_externals(self):
         cat = self._parse([_svc("web", ["r2"]), _svc("health")],
@@ -427,6 +441,7 @@ class DependencyGraphTests(unittest.TestCase):
             raw["externals"] = {"name": "r2"}
             parse_catalog(raw)
 
+    # export-omit:begin
     def test_check_cli_reports_graph_size_and_rejects_cycles(self):
         import contextlib
         import io
@@ -448,6 +463,7 @@ class DependencyGraphTests(unittest.TestCase):
             with contextlib.redirect_stderr(err):
                 self.assertEqual(server.main(["--catalog", str(toml), "--check"]), 2)
             self.assertIn("依賴圖有環", err.getvalue())
+    # export-omit:end
 
 
 # ── 參數邊界 ─────────────────────────────────────────────────────────────
@@ -930,6 +946,7 @@ class StdlibOnlyTests(unittest.TestCase):
                 offenders += [f"{path.name}: {n}" for n in names if n.split(".")[0] not in allowed_roots]
         self.assertEqual(offenders, [])
 
+    # export-omit:begin
     def test_runs_with_system_python_without_venv(self):
         """系統的 python3（有的話）以隔離模式 `-I` 照樣能 --check 一份 catalog——不靠 .venv 的任何套件。"""
         import subprocess
@@ -948,6 +965,7 @@ class StdlibOnlyTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("environment=development", proc.stdout)
+    # export-omit:end
 
 
 if __name__ == "__main__":

@@ -82,6 +82,8 @@ def _main() -> None:
     try:
         if args.profile is None:
             path = args.dataset or "eval/ragas_questions.json"
+            if args.dataset is None and not Path(path).is_file():
+                parser.exit(2, f"沒有預設題集 {path}：帶 --profile <名稱> 或指定題集路徑\n")
         else:
             import sys
 

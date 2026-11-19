@@ -3,7 +3,7 @@ import type { LlmUsageDay } from '../../../../lib/generated/adminApi'
 
 const DAY_MS = 86_400_000
 
-/** 時間點在某個時區是哪一天（`YYYY-MM-DD`）；後端的 `by_day` 用同一個時區切日（台北）。 */
+/** 時間點在某個時區是哪一天（`YYYY-MM-DD`）；後端的 `by_day` 用同一個時區切日（業務時區）。 */
 export function dayIn(iso: string, timeZone: string): string | null {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) return null

@@ -1,0 +1,48 @@
+/* -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*- */
+// 研報平台 維運代理（report-mark-ops-agent）的寫入權限範本。
+//
+// 只有 catalog 有寫入類 action（kind = "systemd" 的 restart／run）時才需要安裝：
+//   sudo install -o root -g root -m 0644 deploy/ops-agent/10-report-mark-ops.rules /etc/polkit-1/rules.d/
+// 範本 catalog（deploy/ops-agent/services.example.toml）只列容器、全部唯讀，所以下面的 ALLOW 是空的：代理的使用者
+// 對 org.freedesktop.systemd1.* 的任何動作一律 NO。
+//
+// 為什麼是 polkit 而不是 sudoers：代理的 unit 是 NoNewPrivileges=yes、CapabilityBoundingSet= 空，setuid 的 sudo
+// 在裡面無法提權。systemctl start／restart 是經 D-Bus 請 systemd 做事，systemd 以 polkit 的
+// org.freedesktop.systemd1.manage-units 檢查呼叫端並附上 unit 與 verb，這裡就能把授權限定在「哪個使用者、哪個
+// 動詞、哪個 unit」。
+//
+// 加寫入類 action 時，ALLOW 要與 catalog 一致（restart → "restart"，run → "start"），使用者要與代理 unit 的 User=
+// 一致；例：{"report-mark-ops": {"start": ["report-mark-backup.service"]}}。restart 只開放 Web 的 unit
+// （ops_agent/protocol.py 的 RESTARTABLE_UNITS），PostgreSQL、nginx、docker 等一律不可寫。
+// 標記之間的內容必須是合法 JSON（tests/test_ops_agent_template.py 直接解析）。
+
+(function () {
+    // BEGIN ALLOW
+    var ALLOW = {
+        "report-mark-ops": {}
+    };
+    // END ALLOW
+
+    function has(obj, key) {
+        return Object.prototype.hasOwnProperty.call(obj, key);
+    }
+
+    polkit.addRule(function (action, subject) {
+        if (!has(ALLOW, subject.user)) {
+            return polkit.Result.NOT_HANDLED;
+        }
+        if (action.id.indexOf("org.freedesktop.systemd1.") !== 0) {
+            return polkit.Result.NOT_HANDLED;
+        }
+        if (action.id === "org.freedesktop.systemd1.manage-units") {
+            var verbs = ALLOW[subject.user];
+            var verb = action.lookup("verb");
+            var unit = action.lookup("unit");
+            if (typeof verb === "string" && typeof unit === "string" && has(verbs, verb) &&
+                    verbs[verb].indexOf(unit) !== -1) {
+                return polkit.Result.YES;
+            }
+        }
+        return polkit.Result.NO;
+    });
+})();

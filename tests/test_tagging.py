@@ -111,7 +111,7 @@ class NormalizeInstrumentsTests(unittest.TestCase):
 
 
 class NormalizeStockTargetsTests(unittest.TestCase):
-    """廷豐：「正好 4 碼數字」是防呆，擋日期與頁碼被誤當股票代碼。"""
+    """預設 profile（正好 4 碼數字）是防呆，擋日期與頁碼被誤當股票代碼。"""
 
     def test_keeps_four_digit_codes_only(self):
         self.assertEqual(
@@ -133,8 +133,8 @@ class NormalizeStockTargetsTests(unittest.TestCase):
     def test_non_list_returns_empty(self):
         self.assertEqual(normalize_stock_targets("2330", normalize_code=TF), [])
 
-    def test_tingfong_drops_tickers_exactly_as_before(self):
-        """廷豐的結果與框架化之前逐字相同：字母 ticker、5 碼港股、全形以外的雜訊一律丟掉。"""
+    def test_default_rule_drops_tickers_exactly_as_before(self):
+        """預設 profile 的結果與框架化之前逐字相同：字母 ticker、5 碼港股、全形以外的雜訊一律丟掉。"""
         raw = ["2330", "NVDA", "nvda", "00700", "0700", "BRK.B", " 2317 ", "2330.TW", "", None, "0209"]
         self.assertEqual(normalize_stock_targets(raw, normalize_code=TF), ["2330", "0700", "2317", "0209"])
 

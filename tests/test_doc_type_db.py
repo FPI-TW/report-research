@@ -3,13 +3,13 @@
 `tests/test_doc_type_guard.py` 只保證每條使用者讀取 SQL 都呼叫了類型片段；這裡驗片段本身真的有效，
 以及 revision 0012 的兩條 CHECK：
 
-- 廷豐 profile：兩篇研報（含 chunk 與訊號）把其一改成 `non_research`（等同改動前的 is_research=false）之後，
+- 預設 profile：兩篇研報（含 chunk 與訊號）把其一改成 `non_research`（等同改動前的 is_research=false）之後，
   混合檢索、檢索頁瀏覽、問答選篇、閱讀頁、相似研報、觀點雷達、總覽、每日簡報與原檔 presign 都看不到它；
   改回 `research` 全部回來。讀取路徑與 `tests/test_report_visibility_db.py` 的同一份 `_snapshot`。
 - 自訂 profile（`non_research` 只開閱讀）：閱讀頁、原檔看得到，檢索、雷達、簡報、總覽看不到——
   功能是逐項開關，不是整份文件一起。
 - `upsert_report` 由 doc_type 推得 is_research；兩欄不一致、類型名稱形狀不對都被 DB 拒絕。
-- 庫裡既有的每一列（在測試環境就是真實語料）：廷豐 profile 下各功能的片段與改動前的
+- 庫裡既有的每一列（在測試環境就是真實語料）：預設 profile 下各功能的片段與改動前的
   `is_research IS NOT FALSE` 選到同一批（零回歸的直接證據；只讀）。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0012）就 skip。**一律 rollback、絕不 commit**。
@@ -177,8 +177,8 @@ class DocTypeDbTests(unittest.TestCase):
         # 舊版程式只寫 is_research（入庫閘只放行研報）：DEFAULT 'research' 讓它照樣通過同步約束。
         self.assertEqual(default, ("'research'::text", "NO"))
 
-    def test_tingfong_fragments_select_the_same_rows_as_before(self):
-        """庫裡既有的每一列：廷豐 profile 下每個功能的片段與 `is_research IS NOT FALSE` 一致（只讀）。"""
+    def test_default_profile_fragments_select_the_same_rows_as_before(self):
+        """庫裡既有的每一列：預設 profile 下每個功能的片段與 `is_research IS NOT FALSE` 一致（只讀）。"""
 
         async def fn(session):
             out = {}

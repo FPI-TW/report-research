@@ -1,0 +1,31 @@
+# 測試 profile 的發行機構名單：只放交付版測試會用到的幾家（格式與比對規則見 app/profile.py 的 Sources 與
+# app/services/filename.py）。不是任何部署的名單；部署方的名單放在自己的 profile 目錄。
+
+filename_tokens = [
+  { token = "MS", source = "morgan_stanley" },
+  { token = "FUBON", source = "fubon" },
+  { token = "國泰", source = "cathay" },
+  { token = "凱基", source = "kgi" },
+  { token = "元大", source = "yuanta" },
+  { token = "元富", source = "masterlink" },
+  { token = "富邦", source = "fubon" },
+]
+
+text_signatures = [
+  { source = "kgi", markers = ["凱基投顧", "kgisia"] },
+  { source = "masterlink", markers = ["元富投顧", "masterlink"] },
+  { source = "fubon", markers = ["富邦投顧"] },
+  { source = "yuanta", markers = ["元大投顧"] },
+]
+
+fallback_signatures = [
+  { source = "morgan_stanley", markers = ["morgan stanley research"] },
+]
+
+[display]
+morgan_stanley = "摩根士丹利"
+fubon = "富邦"
+cathay = "國泰"
+kgi = "凱基"
+yuanta = "元大"
+masterlink = "元富"

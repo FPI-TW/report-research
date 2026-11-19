@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import sys
 import unittest
-from argparse import Namespace
+from argparse import Namespace  # export-omit
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import ops_rollup as orl  # noqa: E402
-from scripts import rollup_observations as ro  # noqa: E402
+from scripts import rollup_observations as ro  # noqa: E402  # export-omit
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 6, 12, 30, 45, tzinfo=UTC)
@@ -71,6 +71,7 @@ class ResolutionTests(unittest.TestCase):
         self.assertIn(":hosts", orl._move_sql("raw", ["h"]))
 
 
+# export-omit:begin
 class ScriptTests(unittest.TestCase):
     def test_db_unavailable_returns_2(self):
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -82,9 +83,11 @@ class ScriptTests(unittest.TestCase):
     def test_rejects_non_positive_limits(self):
         self.assertEqual(ro.main(["--max-slices", "0"]), ro.EXIT_FAILED)
         self.assertEqual(ro.main(["--batch-size", "-1"]), ro.EXIT_FAILED)
+# export-omit:end
 
 
 
+# export-omit:begin
 class RollupUnitAlertingTests(unittest.TestCase):
     """rc=1（核對不符／SQL 錯誤）要告警；rc=2（DB 不可用，P5 已告警）與 rc=75（撞鎖）不得告警。"""
 
@@ -96,6 +99,7 @@ class RollupUnitAlertingTests(unittest.TestCase):
         self.assertIn("OnFailure=report-mark-alert@%n.service", directives)
         success = next(ln for ln in directives if ln.startswith("SuccessExitStatus="))
         self.assertEqual(set(success.split("=", 1)[1].split()), {"2", "75"})
+# export-omit:end
 
 
 if __name__ == "__main__":

@@ -396,6 +396,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(exposed - documented, set(), "指標沒寫進 docs/CONTAINER_DEPLOYMENT.md「監控對接」")
         self.assertEqual(documented - exposed, set(), "文件列了不存在的指標")
 
+    # export-omit:begin
     def test_bundled_reverse_proxies_always_forward_x_forwarded_for(self):
         """`/metrics` 靠「帶代理 header 就拒絕」擋經反向代理進來的請求；repo 裡的 nginx 每個 proxy_pass 都必須帶它。"""
         import re
@@ -408,6 +409,7 @@ class ContractTests(unittest.TestCase):
             for block in proxied:
                 with self.subTest(conf=name, block=block.strip().splitlines()[0]):
                     self.assertIn("proxy_set_header X-Forwarded-For", block)
+    # export-omit:end
 
 
 if __name__ == "__main__":

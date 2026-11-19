@@ -37,11 +37,13 @@ import os
 import random
 import sys
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+ROOT = Path(__file__).resolve().parents[1]
+DEMO_PROFILE_DIR = ROOT / "profiles" / "demo"
 DEFAULT_SEED = 20261110
-TAIPEI = timezone(timedelta(hours=8))
 DISCLAIMER = "本報告為程式產生的虛構內容，機構、分析師與所有數字均為虛構，僅供系統示範，不構成任何投資建議。"
 
 # 虛構的發行機構（source 代碼 → 顯示名稱）。名稱刻意帶「虛構」，不模仿任何真實機構。
@@ -298,19 +300,29 @@ def expected(reports: list[Report], anchor: date) -> dict:
     }
 
 
+def demo_tz() -> ZoneInfo:
+    """示範 profile 的業務時區（`[locale].timezone`）：日期錨點與檔案時間都以它為準。"""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from app.profile import load_profile
+
+    return ZoneInfo(load_profile(DEMO_PROFILE_DIR).locale.timezone)
+
+
 def write(out: Path, reports: list[Report], anchor: date, seed: int, *, render: bool = True) -> None:
     corpus = out / "corpus"
     corpus.mkdir(parents=True, exist_ok=True)
     if render:
         from weasyprint import HTML  # dev 相依；只在渲染時才需要
+        tz = demo_tz()
 
     for r in reports:
         pdf = corpus / r.file
         pdf.parent.mkdir(parents=True, exist_ok=True)
         if render:
             HTML(string=render_html(r, seed)).write_pdf(str(pdf), metadata={"creator": "report-mark demo_corpus"})
-            # 檔案時間設成報告日（台北中午）：連接器以物件 metadata 的 mtime 還原，日期推不出來時是最後的退路。
-            ts = datetime(r.report_date.year, r.report_date.month, r.report_date.day, 12, tzinfo=TAIPEI).timestamp()
+            # 檔案時間設成報告日（業務時區中午）：連接器以物件 metadata 的 mtime 還原，日期推不出來時是最後的退路。
+            ts = datetime(r.report_date.year, r.report_date.month, r.report_date.day, 12, tzinfo=tz).timestamp()
             os.utime(pdf, (ts, ts))
         side = sidecar_bytes(r)
         if side is not None:
@@ -324,10 +336,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", required=True, help="輸出資料夾（corpus/ 是要上傳的內容，expected.json 是預期值）")
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    ap.add_argument("--anchor-date", default=None, help="日期錨點 YYYY-MM-DD（預設今天，台北時間）")
+    ap.add_argument("--anchor-date", default=None, help="日期錨點 YYYY-MM-DD（預設今天，示範 profile 的業務時區）")
     ap.add_argument("--plan-only", action="store_true", help="不渲染 PDF（只寫側檔、清單與 expected.json）")
     args = ap.parse_args(argv)
-    anchor = date.fromisoformat(args.anchor_date) if args.anchor_date else datetime.now(TAIPEI).date()
+    anchor = date.fromisoformat(args.anchor_date) if args.anchor_date else datetime.now(demo_tz()).date()
     reports = plan(anchor, args.seed)
     write(Path(args.out), reports, anchor, args.seed, render=not args.plan_only)
     print(f"demo_corpus：{len(reports)} 份（預期入庫 {sum(r.ingests for r in reports)}）→ {args.out}")

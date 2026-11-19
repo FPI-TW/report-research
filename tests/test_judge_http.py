@@ -27,6 +27,8 @@ from unittest import mock
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# 測試用的合成題集：入口的流程測試不依賴 repo 的預設題集（交付給其他券商的版本不帶它）。
+SYNTHETIC_SET = str(REPO_ROOT / "tests" / "fixtures" / "eval_questions_synthetic.json")
 sys.path.insert(0, str(REPO_ROOT))
 
 import eval.run_ragas as rr  # noqa: E402
@@ -447,7 +449,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
             saved, old = rr.run, sys.argv
             try:
                 rr.run = fake_run
-                sys.argv = ["run_ragas.py", "--out", str(out)]
+                sys.argv = ["run_ragas.py", "--dataset", SYNTHETIC_SET, "--out", str(out)]
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err), mock.patch.object(rr, "require_llm_key"), \
                         self.assertRaises(SystemExit) as cm:
@@ -467,7 +469,7 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
             saved, old = rr.run, sys.argv
             try:
                 rr.run = fake_run
-                sys.argv = ["run_ragas.py", "--out", str(out)]
+                sys.argv = ["run_ragas.py", "--dataset", SYNTHETIC_SET, "--out", str(out)]
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err), mock.patch.object(rr, "require_llm_key"), \
                         self.assertRaises(SystemExit) as cm:

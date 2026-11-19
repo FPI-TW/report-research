@@ -1,6 +1,6 @@
 """示範券商（profiles/demo）、合成語料與示範 compose 的靜態對帳。
 
-示範 profile 的存在理由是證明框架不依賴廷豐的設定：這裡釘住它真的「每一項都不同」、合成語料的側檔組合真的
+示範 profile 的存在理由是證明框架不依賴預設 profile 的設定：這裡釘住它真的「每一項都不同」、合成語料的側檔組合真的
 涵蓋連接器的各條路徑（含故意寫錯的那幾份），以及 compose override 把每一個 LLM 任務都指到假 LLM 宣告過的
 模型名——少一個旋鈕，那個任務在端到端測試裡就會打到不存在的模型、以 config 失敗，而且多半被 fail-open 吞掉。
 不跑 docker（那是 `scripts/e2e_compose.py` 的事）。
@@ -28,7 +28,8 @@ from deploy.demo import fake_llm  # noqa: E402
 from scripts import demo_corpus  # noqa: E402
 
 DEMO = REPO_ROOT / "profiles" / "demo"
-TINGFONG = REPO_ROOT / "profiles" / "tingfong"
+# 對照組：預設 profile（示範 profile 每一項都要與它不同）。
+REFERENCE = REPO_ROOT / "profiles" / "tingfong"
 DEMO_COMPOSE = REPO_ROOT / "deploy" / "demo" / "docker-compose.demo.yml"
 REAL_LLM_COMPOSE = REPO_ROOT / "deploy" / "demo" / "docker-compose.real-llm.yml"
 E2E_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "e2e.yml"
@@ -40,16 +41,16 @@ class DemoProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.demo = load_profile(DEMO)
-        cls.tf = load_profile(TINGFONG)
+        cls.tf = load_profile(REFERENCE)
 
-    def test_everything_differs_from_tingfong(self):
+    def test_everything_differs_from_the_reference(self):
         d, t = self.demo, self.tf
         self.assertNotEqual(d.institution, t.institution)
         self.assertNotEqual(d.prompt, t.prompt)
         self.assertNotEqual(d.security.totp_issuer, t.security.totp_issuer)
         self.assertNotEqual({a.sha256 for a in d.branding.assets().values()},
                             {a.sha256 for a in t.branding.assets().values()})
-        self.assertTrue(d.branding.colors_light and d.branding.colors_dark)  # 廷豐沿用預設色票
+        self.assertTrue(d.branding.colors_light and d.branding.colors_dark)  # 宣告了自己的色票
         self.assertLess(set(d.markets.enabled), set(t.markets.enabled))
         self.assertEqual(d.markets.enabled, ("TW", "US", "MACRO"))
         self.assertEqual([s.kind for s in d.connectors.enabled_specs()], ["s3"])
@@ -59,7 +60,7 @@ class DemoProfileTests(unittest.TestCase):
         self.assertLess(d.backfill.max_reports_per_round, t.backfill.max_reports_per_round)
         self.assertLess(d.backfill.daily_token_limit, t.backfill.daily_token_limit)
 
-    def test_generic_assumptions_differ_from_tingfong(self):
+    def test_generic_assumptions_differ_from_the_reference(self):
         """fw-generic：代號格式、發行機構名單、簡報作息都是 profile 的設定；示範券商開美股 ticker、用自己的名單。"""
         d, t = self.demo, self.tf
         rule = d.instruments.normalize_code
@@ -70,6 +71,10 @@ class DemoProfileTests(unittest.TestCase):
         self.assertFalse(set(d.sources.display) & set(t.sources.display))
         self.assertEqual({s for _, s in d.sources.filename_tokens}, set(demo_corpus.BROKERS))
         self.assertEqual((d.brief.after_hour, t.brief.after_hour), (0, 9))
+        self.assertNotEqual(d.filenames.admin_keywords, t.filenames.admin_keywords)
+        # 合成語料的檔名一份都不能被判成行政文件（會在標註前被略過、端到端少入庫）。
+        files = [r.file.lower() for r in demo_corpus.plan(ANCHOR)]
+        self.assertEqual([f for f in files if any(k.lower() in f for k in d.filenames.admin_keywords)], [])
 
     def test_corpus_filenames_resolve_to_their_broker(self):
         """沒有側檔的研報靠檔名推得發行機構；檔名裡的美股 ticker 不被當成發行機構。"""

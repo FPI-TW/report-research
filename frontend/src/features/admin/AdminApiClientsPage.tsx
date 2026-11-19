@@ -6,7 +6,7 @@ import {
 import c from '../../components/console/Console.module.css'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import type { ApiClientEntitlements, CreateApiClientRequest } from '../../lib/generated/adminApi'
-import { endpointsOf, parseMarkdown, withBaseUrl, withProductName } from './apiClients/apiDoc'
+import { endpointsOf, parseMarkdown, withBaseUrl, withProductName, withTimeZone } from './apiClients/apiDoc'
 import { ApiDocView } from './apiClients/ApiDocView'
 import { ApiTester } from './apiClients/ApiTester'
 import { ClientDrawer, type ClientAction } from './apiClients/ClientDrawer'
@@ -20,7 +20,7 @@ import {
   useApiClientActions, useApiClients, type AdminApiClient, type ApiClientPatch, type ApiClientScope,
 } from './useAdminApiClients'
 import local from './ApiClients.module.css'
-import { t } from '@/i18n'
+import { getTimeZone, t, timeZoneLabel } from '@/i18n'
 import { useBranding } from '@/lib/branding'
 
 type TabKey = 'clients' | 'docs' | 'try'
@@ -53,11 +53,15 @@ function ApiClients() {
   const [openId, setOpenId] = useQueryParam('client')
   const [tabParam, setTabParam] = useQueryParam('tab')
   const tab = TABS.find(item => item.value === tabParam)?.value ?? 'clients'
-  // 文件裡的 {BASE_URL} 代入目前站台：在哪個環境下載，交出去的就是那個環境的網址；{PRODUCT_NAME} 代入 profile 的產品名。
+  // 文件裡的 {BASE_URL} 代入目前站台：在哪個環境下載，交出去的就是那個環境的網址；{PRODUCT_NAME} 代入 profile 的產品名；
+  // {TIME_ZONE_LABEL}／{TIME_ZONE} 代入 profile 的業務時區（文件是中文，地名取中文的）。
   const baseUrl = window.location.origin
   const { productName } = useBranding()
+  const zoneLabel = timeZoneLabel('zh-Hant')
+  const zoneName = getTimeZone()
   const docMarkdown = useMemo(
-    () => withProductName(withBaseUrl(EXTERNAL_API_MD, baseUrl), productName), [baseUrl, productName])
+    () => withTimeZone(withProductName(withBaseUrl(EXTERNAL_API_MD, baseUrl), productName), zoneLabel, zoneName),
+    [baseUrl, productName, zoneLabel, zoneName])
   const endpoints = useMemo(() => endpointsOf(parseMarkdown(docMarkdown)), [docMarkdown])
   const [form, setForm] = useState<Form | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
@@ -136,7 +140,7 @@ function ApiClients() {
       <PageHeader summary={t('admin.adminApiClientsPage.keysRateLimitsDailyQuotas')}
         actions={<Button variant="primary" onClick={() => setForm({ kind: 'create' })}>{t('admin.adminApiClientsPage.createClient')}</Button>}
         help={<>
-          {t('admin.adminApiClientsPage.eachApiClientHasOne')}{' '}<code>Authorization: Bearer</code>{' '}{t('admin.adminApiClientsPage.noSessionIsCheckedOr')}
+          {t('admin.adminApiClientsPage.eachApiClientHasOne')}{' '}<code>Authorization: Bearer</code>{' '}{t('admin.adminApiClientsPage.noSessionIsCheckedOr', { zone: timeZoneLabel() })}
         </>} />
       <Tabs label={t('admin.adminApiClientsPage.apiClientTabs')} tabs={TABS} value={tab} onChange={v => setTabParam(v === 'clients' ? null : v)} />
       {tab === 'docs' && <ApiDocView markdown={docMarkdown} baseUrl={baseUrl} />}

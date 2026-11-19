@@ -83,6 +83,7 @@ class ImportHygieneTests(unittest.TestCase):
         self.assertEqual(p.stdout.strip(), "")
 
 
+# export-omit:begin
 class RetentionUnitTests(unittest.TestCase):
     def test_service(self):
         self.assertEqual(_directives(SERVICE, "Type"), ["oneshot"])
@@ -96,6 +97,7 @@ class RetentionUnitTests(unittest.TestCase):
         anchor = _directives(SYSTEMD_DIR / "report-mark-audit-anchor.timer", "OnCalendar")[0]
         self.assertLess(backup.split()[-1], "04:45:00")
         self.assertLess(anchor.split()[-1], "04:45:00")
+# export-omit:end
 
 
 if __name__ == "__main__":

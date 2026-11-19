@@ -7,7 +7,7 @@ import {
 export const ANALYTICS_KEY = ['admin', 'analytics'] as const
 export const TOP_LIMIT = 15
 
-/** 範圍：台北日期（含兩端）；until 省略＝後端的今天。 */
+/** 範圍：業務時區的日期（含兩端）；until 省略＝後端的今天。 */
 export interface AnalyticsQuery {
   since: string
   until?: string

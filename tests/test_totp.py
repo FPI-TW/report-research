@@ -81,8 +81,8 @@ class SecretAndUriTests(unittest.TestCase):
         uri = totp.otpauth_uri("ABCDEFGH", "alice@x")
         parts = urlsplit(uri)
         self.assertEqual((parts.scheme, parts.netloc), ("otpauth", "totp"))
-        # 發行者取自 profile 的 [security].totp_issuer；預設的廷豐 profile 與改動前的字面值相同。
-        self.assertEqual(totp.current_issuer(), "廷豐智能研報")
+        # 發行者取自 profile 的 [security].totp_issuer；預設的廷豐 profile 與改動前的字面值相同。  # export-omit
+        self.assertEqual(totp.current_issuer(), "廷豐智能研報")  # export-omit
         self.assertEqual(unquote(parts.path), f"/{totp.current_issuer()}:alice@x")
         q = parse_qs(parts.query)
         self.assertEqual(q["secret"], ["ABCDEFGH"])

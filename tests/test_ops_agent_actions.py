@@ -10,7 +10,7 @@ import asyncio
 import fcntl
 import json
 import os
-import re
+import re  # export-omit
 import subprocess
 import sys
 import tempfile
@@ -524,6 +524,7 @@ class CatalogWriteRuleTests(unittest.TestCase):
         self._bad(_service(), "development", pattern="development catalog 只能列")
 
 
+# export-omit:begin
 class RepoCatalogWriteTests(unittest.TestCase):
     def test_prod_write_actions_are_exactly_the_decided_whitelist(self):
         prod = load_catalog(PROD_TOML, resolve_user=_uid)
@@ -593,6 +594,7 @@ class RepoCatalogWriteTests(unittest.TestCase):
     def test_restart_delay_present(self):
         for path in (PROD_TOML, DEV_TOML):
             self.assertGreater(load_catalog(path, resolve_user=_uid).agent.restart_delay, 0)
+# export-omit:end
 
 
 class CheckFunctionTests(unittest.TestCase):

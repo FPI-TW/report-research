@@ -11,10 +11,10 @@
 from __future__ import annotations
 
 import os
-import re
+import re  # export-omit
 import unittest
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path  # export-omit
 
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
@@ -239,6 +239,7 @@ class ExternalRouteStructureTests(unittest.TestCase):
 
 
 
+# export-omit:begin
 class EdgeNginxAuthorizationTests(unittest.TestCase):
     """邊緣 nginx 對 `Authorization` 的處理：只有 `/external/` 透傳，其餘 location 一律清空。
 
@@ -269,6 +270,7 @@ class EdgeNginxAuthorizationTests(unittest.TestCase):
                     # 不轉給 App 的 location（例如 nginx 直接回的靜態檔）沒有東西可以透傳。
                     if loc != "^~ /external/" and "proxy_pass" in body:
                         self.assertIn('proxy_set_header Authorization "";', body, f"{rel} 的 location {loc} 要清空")
+# export-omit:end
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import importlib.util
-import json
+import json  # export-omit
 import sys
 from pathlib import Path
 
@@ -122,6 +122,7 @@ def test_aggregate_is_pair_weighted_not_case_mean():
     assert s["tp_coverage"] is None and s["hallucination_rate"] is None
 
 
+# export-omit:begin
 def test_dataset_shape_and_files_exist():
     doc = json.loads(DATASET.read_text(encoding="utf-8"))
     assert doc["version"].startswith("extraction-golden-")
@@ -139,6 +140,7 @@ def test_dataset_shape_and_files_exist():
             assert tp is None or ("value" in tp and "currency" in tp), c["id"]
         if c["annotation_status"] != "prefilled":
             assert len(c["order"]) >= 8, f"{c['id']} 順序層少於 8 條"
+# export-omit:end
 
 
 def test_score_order_ignores_markdown_table_pipes():

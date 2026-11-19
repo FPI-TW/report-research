@@ -13,10 +13,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import json  # export-omit
 import os
 import sys
-import tempfile
+import tempfile  # export-omit
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -27,7 +27,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import ops_monitoring as om  # noqa: E402
-from scripts import load_observations as lo  # noqa: E402
+from scripts import load_observations as lo  # noqa: E402  # export-omit
 
 INV_A, INV_B = "a" * 32, "b" * 32
 UNIT = "report-mark-sync.service"
@@ -96,6 +96,7 @@ class OpsMonitoringDbTests(unittest.TestCase):
             "WHERE host = :h ORDER BY started_at"), {"h": self.host})
         return [tuple(r) for r in rows]
 
+    # export-omit:begin
     def test_same_spool_imported_twice_does_not_duplicate(self):
         with tempfile.TemporaryDirectory() as tmp:
             spool = Path(tmp)
@@ -120,6 +121,7 @@ class OpsMonitoringDbTests(unittest.TestCase):
         self.assertEqual(first.rejected, 0)
         self.assertEqual(n_obs, 5, "2 個數值＋1 個狀態，加上 fs 的 1 個數值＋1 個狀態")
         self.assertEqual((n_obs2, n_jobs, n_jobs2), (5, 1, 1))
+    # export-omit:end
 
     def test_job_running_finishes_and_never_goes_back(self):
         start, end = "2026-10-06T09:00:00+08:00", "2026-10-06T09:10:00+08:00"
@@ -239,6 +241,7 @@ class IncidentProjectionDbTests(unittest.TestCase):
             "FROM research.incident WHERE host = :h ORDER BY opened_at"), {"h": self.host})
         return [tuple(r) for r in rows]
 
+    # export-omit:begin
     def test_same_event_spool_imported_twice_does_not_duplicate(self):
         t0 = 1791252000
         with tempfile.TemporaryDirectory() as tmp:
@@ -278,6 +281,7 @@ class IncidentProjectionDbTests(unittest.TestCase):
         self.assertEqual(n_events, 3)
         self.assertEqual(first[0][1:], ("resolved", "WARNING", "probe_exit_7", "FIRING 說明", 3, True))
         self.assertEqual(excerpt, "boom token=<redacted>\n")
+    # export-omit:end
 
     def test_status_is_recomputed_regardless_of_import_order(self):
         t0 = 1791252000

@@ -7,7 +7,7 @@ import {
   NAME_MAX, SCOPE_ORDER, dimTextOf, entitlementsOf, limitsError, messageOf, sameEntitlements, sameList, type DimText,
 } from './clientFields'
 import { DimFields, LimitFields, MarketChecks, NoteField, ScopeChecks } from './ClientFormParts'
-import { t } from '@/i18n'
+import { t, timeZoneLabel } from '@/i18n'
 
 /** 表單送出的共同流程：忙碌狀態、後端錯誤顯示在表單裡；重新驗證被取消不算錯誤。 */
 function useSubmit() {
@@ -90,7 +90,7 @@ export function LimitsDialog({ client, onClose, onSave }: {
   }
 
   return (
-    <FormDialog open title={t('admin.apiClients.clientDialogs.adjustRateLimitAndQuota', { name: client.name })} body={t('admin.apiClients.clientDialogs.takesEffectOnTheNext')}
+    <FormDialog open title={t('admin.apiClients.clientDialogs.adjustRateLimitAndQuota', { name: client.name })} body={t('admin.apiClients.clientDialogs.takesEffectOnTheNext', { zone: timeZoneLabel() })}
       submitLabel={t('admin.apiClients.clientDialogs.save')} submitDisabled={unchanged} busy={busy} error={error} onSubmit={submit} onClose={onClose}>
       <LimitFields rate={rate} quota={quota} onRate={setRate} onQuota={setQuota} />
     </FormDialog>

@@ -358,13 +358,16 @@ class RequireTests(_EnvFileCase):
             self.assertEqual(code, 2, name)
             self.assertIn("不在白名單", out)
 
-    def test_permission_error_rc2_hints_kashionz_without_leaking_key(self):
+    def test_permission_error_rc2_hints_the_file_group_without_leaking_key(self):
+        """提示帶出檔案實際的擁有群組（stat 讀得到），不寫死任何帳號名。"""
+        import grp
+
         self.write(f"OPENAI_API_KEY={FAKE_KEY}\n")
         with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
             le.load_llm_env()
         code, out = self.require(["gpt-6-luna"])
         self.assertEqual(code, 2)
-        self.assertIn("kashionz", out)
+        self.assertIn(f"檔案的群組是 {grp.getgrgid(os.stat(self.path).st_gid).gr_name}", out)
         self.assertNotIn(FAKE_KEY, out)
 
     def test_empty_env_value_blocks_file_and_hints_unset(self):

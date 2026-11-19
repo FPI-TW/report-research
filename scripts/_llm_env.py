@@ -2,7 +2,7 @@
 
 ## 為什麼需要這支
 
-LLM 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 root:kashionz），
+LLM 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640、root 擁有、群組是跑批次的帳號），
 **只有** `report-mark-sync.service` 與 `report-mark-upload.service`（上傳 worker）以 `EnvironmentFile=`
 載入它——讓「環境變數裡有金鑰的行程」從十幾支 unit 縮到兩支（白名單由 tests/test_deploy_units.py 釘住）。
 手動跑批次（`make summaries`、`uv run python scripts/…`）不經過 systemd，所以每個會呼叫 LLM 的入口要自己讀
@@ -32,7 +32,7 @@ LLM 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 r
   - 本段任務的推理旋鈕（`llm_models.TASK_REASONING_ENV`，例如 `SUMMARY_REASONING`）拼錯：`run_claude` 也會整批
     rc=2，這裡先擋（`llm_models.reasoning_problems`；只看傳進來的任務，模型名清單形式的評測入口不檢查）。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
-    kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
+    該檔群組的帳號執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
     評測（`stream_completion`）走同一個供應商，所以兩種入口同一套規則。
   - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
@@ -176,9 +176,14 @@ def load_llm_env() -> None:
 
 def _configure_llm_identity() -> None:
     """送給 LLM 供應商的自報身分取 profile 的 `[institution].website`（LLM 呼叫層是葉模組、不讀 profile）。"""
-    from app.profile import get_profile
+    from app.profile import ProfileError, get_profile
 
-    llm_models.set_identity_url(get_profile().institution.website)
+    try:
+        profile = get_profile()
+    except ProfileError as exc:  # 沒設 PROFILE_DIR（沒有預設時）或 profile 寫錯：拒跑，與 web 的 lifespan 一致
+        print(f"錯誤：{exc}", file=sys.stderr)
+        raise SystemExit(RC_CONFIG) from None
+    llm_models.set_identity_url(profile.institution.website)
 
 
 def _load_llm_env_file() -> None:
@@ -264,6 +269,23 @@ def _warn_if_not_deploy_root() -> None:
         )
 
 
+def _group_of(path: Path | str) -> str | None:
+    """檔案的擁有群組名稱（讀不到內容時 stat 通常還拿得到）；查不到回 None。"""
+    try:
+        import grp
+
+        return grp.getgrgid(os.stat(path).st_gid).gr_name
+    except (ImportError, KeyError, OSError):
+        return None
+
+
+def _permission_hint(path: Path | str) -> str:
+    group = _group_of(path)
+    if group is None:
+        return "以能讀該檔的帳號執行，或加入該檔的群組"
+    return f"檔案的群組是 {group}：以 {group} 群組的帳號執行，或加入該群組"
+
+
 def _missing_key_hint(path: Path) -> str:
     err = _STATE.get("error")
     key = _key_name()
@@ -271,7 +293,7 @@ def _missing_key_hint(path: Path) -> str:
     if preset_empty and key in (_STATE.get("file_keys") or []):
         return f"環境裡已有空的 {key}，它擋住了 {path} 的值（只補不存在的鍵）：先 `unset {key}` 再執行"
     if err == "permission":
-        return f"讀不到 {path}（PermissionError；檔案是 0640 root:kashionz）：以 kashionz 執行"
+        return f"讀不到 {path}（PermissionError）：{_permission_hint(path)}"
     if err == "missing":
         return f"{path} 不存在：依 {EXAMPLE} 檔頭的指令安裝後用 sudoedit 填金鑰"
     if err:
@@ -405,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             text = Path(p).read_text(encoding="utf-8")
         except PermissionError:
-            print(f"{p}  讀不到（PermissionError：以 kashionz 執行，或加入該檔的群組）")
+            print(f"{p}  讀不到（PermissionError：{_permission_hint(p)}）")
             texts[p] = None
             continue
         except OSError as exc:

@@ -1,6 +1,6 @@
 # 硬體用量量測（選型與容量旋鈕的證據基礎）
 
-本文件的量測方法適用任何部署；已量到的數字是廷豐 profile 的辦公室主機（測試環境）。
+本文件的量測方法適用任何部署；已量到的數字是廷豐 profile 的辦公室主機（測試環境）。 <!-- export-omit -->
 
 這份文件記兩件事：**怎麼量這套服務吃多少 vCPU／RAM／磁碟**，以及**已經量到的數字**——`ASK_RERANK_CANDIDATES`、`EMBED_TORCH_THREADS`、上傳 worker 與 ClamAV 的記憶體上限都是依這裡的實測定的，改之前先讀對應段落。
 
@@ -57,7 +57,7 @@ python3 scripts/analyze_resource_usage.py --bench data/metrics/bench-ask-<stamp>
 ```
 
 - 登入帳號讀 `REPORT_MARK_BENCH_USERNAME`／`REPORT_MARK_BENCH_PASSWORD`（建議開一個壓測專用的一般帳號，問答紀錄落在它名下）。
-- 與 `eval/run_ragas.py` 的分工：那支評品質、刻意直接呼叫函式不經 HTTP；這支評資源成本，必須走真實端點——併發閘（`/api/ask` 上限 3）、SSE 串流與認證中介層都在 HTTP 那一層。題目取自同一份凍結題集 `eval/ragas_questions.json`。
+- 與 `eval/run_ragas.py` 的分工：那支評品質、刻意直接呼叫函式不經 HTTP；這支評資源成本，必須走真實端點——併發閘（`/api/ask` 上限 3）、SSE 串流與認證中介層都在 HTTP 那一層。<!-- export-omit:begin -->題目取自同一份凍結題集 `eval/ragas_questions.json`。<!-- export-omit:end -->
 - **避開批次**：壓測撞上每 3 小時的 `report-mark-sync` 時數字看起來正常卻是錯的。2026-08-28 實測：撞上 sync 的那一輪單條成本 654 核心秒、延遲 p50 110.8s，乾淨窗期是 354.5 核心秒、93.5s（**高估 85%**）。分析器偵測到 `BATCH_COMPONENTS` 在窗期內活躍時會把 `reliable` 設為 False 並印警語。
 - 壓測期間把取樣間隔調細（取樣器的 `--interval 5`）：20 秒一筆時，一條 60 秒的問答只落在 3 筆樣本上。分析器在窗期樣本 <5 筆或基線 <3 筆時會標警語。
 

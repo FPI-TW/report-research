@@ -1,6 +1,4 @@
 """HTTP 層：另一份 profile（tempfile 建立）下的 /api/branding、asset 端點、登入頁、prompt 注入與市場子集。
-
-廷豐 profile 的對照放在每組的最後一題：預設 profile 的行為與改動前相同（名稱、logo、全部市場啟用）。
 """
 
 import os
@@ -24,6 +22,9 @@ from app.services import scope_router as sr  # noqa: E402
 from app.services.rows import ChunkRow  # noqa: E402
 from app.services.tagging import MARKETS  # noqa: E402
 from web.server import app  # noqa: E402
+
+# 預設 profile 的機構名：另一份 profile 的頁面與 prompt 都不得帶出它。
+DEFAULT_NAME = P.load_profile(P.resolve_profile_dir()).institution.name
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"acme-logo" * 8
 DARK_PNG = b"\x89PNG\r\n\x1a\n" + b"acme-dark" * 8
@@ -102,13 +103,14 @@ class BrandingEndpointTests(AcmeProfileCase):
         body = r.json()
         self.assertEqual(set(body), {"institution_name", "product_name", "short_name", "logo_light_url",
                                      "logo_dark_url", "favicon_url", "colors", "institution_name_en",
-                                     "product_name_en", "short_name_en", "locale"})
+                                     "product_name_en", "short_name_en", "locale", "timezone"})
         self.assertEqual((body["institution_name"], body["product_name"], body["short_name"]),
                          ("艾克米", "艾克米研究平台", "艾克米研報"))
         # 沒給英文名稱：英文介面沿用原名；[locale] 缺席＝兩種語系、預設中文。
         self.assertEqual((body["institution_name_en"], body["product_name_en"], body["short_name_en"]),
                          ("艾克米", "艾克米研究平台", "艾克米研報"))
         self.assertEqual(body["locale"], {"default": "zh-Hant", "available": ["zh-Hant", "en"]})
+        self.assertEqual(body["timezone"], {"name": "Asia/Taipei", "label": "台北", "label_en": "Taipei"})
         self.assertEqual(body["colors"], {"light": {"accent_strong": "#1f5fbf", "accent_text": "#174a96"},
                                           "dark": {"accent_strong": "rgba(120, 170, 255, 0.9)"}})
         self.assertTrue(body["logo_light_url"].startswith("/api/branding/assets/logo.png?v="))
@@ -162,7 +164,7 @@ class BrandingEndpointTests(AcmeProfileCase):
         self.assertIn('<div class="name">艾克米研究平台</div>', html)
         self.assertIn('<img class="glyph" src="/api/branding/assets/logo.png?v=', html)
         self.assertIn('<link rel="icon" href="/api/branding/assets/favicon.svg?v=', html)
-        self.assertNotIn("廷豐", html)
+        self.assertNotIn(DEFAULT_NAME, html)
         self.assertNotIn("{{", html)
 
     def test_login_page_without_logo(self):
@@ -240,7 +242,7 @@ class PromptInjectionHttpTests(AcmeProfileCase):
         self.assertEqual([k for k, _ in captured], ["route"])  # 離題不跑主答
         self.assertTrue(captured[0][1].startswith("你是「艾克米研報」投資問答系統的前置路由器。"))
         self.assertIn("這裡是艾克米研報的投資研究問答", body)
-        self.assertNotIn("廷豐", body)
+        self.assertNotIn(DEFAULT_NAME, body)
 
     def test_answer_system_prompt_uses_profile_name(self):
         captured: list = []
@@ -248,8 +250,8 @@ class PromptInjectionHttpTests(AcmeProfileCase):
         systems = dict(captured)
         self.assertIn("answer", systems, captured)  # 假物件簽章過期時會被 fail-open 吞掉，這裡先確認真的走到主答
         self.assertTrue(systems["answer"].startswith("你是「艾克米研報」的研究問答助理。"))
-        self.assertNotIn("廷豐", systems["answer"])
-        self.assertNotIn("廷豐", systems["route"])
+        self.assertNotIn(DEFAULT_NAME, systems["answer"])
+        self.assertNotIn(DEFAULT_NAME, systems["route"])
 
 
 class MarketSubsetHttpTests(AcmeProfileCase):
@@ -278,6 +280,7 @@ class MarketSubsetHttpTests(AcmeProfileCase):
         self.assertIn("HK", str(cm.exception))
 
 
+# export-omit:begin
 class TingfongDefaultTests(unittest.TestCase):
     def test_branding_and_markets_unchanged(self):
         body = _anon().get("/api/branding").json()
@@ -294,6 +297,7 @@ class TingfongDefaultTests(unittest.TestCase):
         self.assertIn('<div class="name">廷豐智能研報</div>', html)
         for code in MARKETS:
             api_clients.normalize_entitlements({"market": [code]})
+# export-omit:end
 
 
 if __name__ == "__main__":

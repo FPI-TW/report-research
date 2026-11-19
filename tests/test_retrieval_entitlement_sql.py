@@ -180,7 +180,7 @@ class HybridSearchForwardsEntitlementTests(unittest.IsolatedAsyncioTestCase):
 
 
 # 導入 entitlement 之前擷取（見模組 docstring）。revision 0012 刻意在可見性片段之後加了文件類型片段
-# （`doc_types.doc_type_enabled_sql("r", "search")`，廷豐 profile 下是 `r.doc_type IN ('research')`），只多這一段。
+# （`doc_types.doc_type_enabled_sql("r", "search")`，預設 profile 下是 `r.doc_type IN ('research')`），只多這一段。
 _GOLDEN = {'dense_filtered': [('SET LOCAL hnsw.ef_search = 600', None),
                     ('SET LOCAL hnsw.iterative_scan = relaxed_order', None),
                     ('\n'

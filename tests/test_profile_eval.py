@@ -1,9 +1,9 @@
-"""profile 範圍的評測設定（`eval/profile_eval.py`）：`eval.toml` 的 fail-closed 驗證、廷豐沿用 repo 題集、
+"""profile 範圍的評測設定（`eval/profile_eval.py`）：`eval.toml` 的 fail-closed 驗證、沿用 repo 題集的 profile、
 `--profile` 與預設行為、與其他模組逐字同值的常數。凍結流程本身見 `tests/test_eval_question_draft.py`。"""
 
 from __future__ import annotations
 
-import hashlib
+import hashlib  # export-omit
 import tempfile
 import unittest
 from datetime import date
@@ -12,7 +12,7 @@ from pathlib import Path
 from eval import profile_eval as pe
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TINGFONG = REPO_ROOT / "profiles" / "tingfong"
+TINGFONG = REPO_ROOT / "profiles" / "tingfong"  # export-omit
 
 
 def _write_config(profile: Path, body: str) -> None:
@@ -49,6 +49,7 @@ class ConstantsTests(unittest.TestCase):
         self.assertEqual(pe.GATE_METRICS, ("faithfulness", "context_precision", "answer_relevancy"))
 
 
+# export-omit:begin
 class TingfongTests(unittest.TestCase):
     def test_tingfong_keeps_the_repo_question_set(self):
         ds = pe.load_profile_dataset(TINGFONG)
@@ -80,20 +81,31 @@ class TingfongTests(unittest.TestCase):
         self.assertEqual(pe.active_profile_dir({}), REPO_ROOT / "profiles" / "tingfong")
         self.assertEqual(pe.active_profile_dir({"PROFILE_DIR": "/srv/p"}), Path("/srv/p"))
         self.assertEqual(pe.active_profile_dir({"PROFILE_DIR": "profiles/x"}), REPO_ROOT / "profiles" / "x")
+# export-omit:end
 
 
 class DatasetArgTests(unittest.TestCase):
     def test_without_profile_the_dataset_argument_is_passed_through_verbatim(self):
-        self.assertEqual(pe.dataset_arg(None, None), "eval/ragas_questions.json")
+        self.assertEqual(pe.dataset_arg(None, None), "eval/ragas_questions.json")  # export-omit
         self.assertEqual(pe.dataset_arg(None, "x/y.json"), "x/y.json")
 
     def test_profile_and_dataset_are_exclusive(self):
         with self.assertRaisesRegex(pe.EvalProfileError, "擇一"):
-            pe.dataset_arg("tingfong", "eval/ragas_questions.json")
+            pe.dataset_arg("demo", "eval/ragas_questions.json")
 
+    # export-omit:begin
     def test_profile_resolves_to_its_verified_set(self):
         path = Path(pe.dataset_arg("tingfong", None))
         self.assertEqual(path.resolve(), (REPO_ROOT / "eval" / "ragas_questions.json").resolve())
+    # export-omit:end
+
+    def test_missing_default_set_is_a_clear_error(self):
+        """這份原始碼沒帶預設題集時（交付給其他券商的版本），不帶 --profile／--dataset 要說清楚該怎麼做。"""
+        with self.assertRaisesRegex(pe.EvalProfileError, "--profile"):
+            pe.dataset_arg(None, None, default="eval/no-such-set.json")
+        with self.assertRaisesRegex(pe.EvalProfileError, "--dataset"):
+            pe.require_default_dataset("eval/no-such-set.json")
+        self.assertEqual(pe.dataset_arg(None, "x/y.json", default="eval/no-such-set.json"), "x/y.json")
 
     def test_profile_without_a_frozen_set_is_refused(self):
         with tempfile.TemporaryDirectory() as td:
@@ -141,7 +153,7 @@ class EvalConfigTests(unittest.TestCase):
                     pe.load_eval_config(self.profile)
 
     def test_legacy_and_own_set_together_is_ambiguous(self):
-        _write_config(self.profile, '[questions]\nlegacy_repo_path = "eval/ragas_questions.json"\n')
+        _write_config(self.profile, '[questions]\nlegacy_repo_path = "tests/fixtures/eval_questions_synthetic.json"\n')
         (self.profile / "eval" / pe.QUESTIONS_FILE).write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(pe.EvalProfileError, "不知道要用哪一份"):
             pe.load_eval_config(self.profile)

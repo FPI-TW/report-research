@@ -19,7 +19,7 @@ import os
 import sys
 import unittest
 import uuid
-from argparse import Namespace
+from argparse import Namespace  # export-omit
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -319,6 +319,7 @@ class OpsRollupDbTests(unittest.TestCase):
                          [(t(6, 11, 30), "active", "active", 0), (t(4, 12, 30), "active", "active", 2)])
         self.assertEqual(st[-1]["detail"], {"n": 3})
 
+    # export-omit:begin
     def test_second_runner_is_locked_out(self):
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -349,6 +350,7 @@ class OpsRollupDbTests(unittest.TestCase):
         except (OSError, ConnectionError) as exc:
             _skip_or_raise(exc, "連不上 PostgreSQL")
         self.assertEqual(rc, ro.EXIT_LOCKED)
+    # export-omit:end
 
 
 if __name__ == "__main__":

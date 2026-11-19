@@ -9,7 +9,7 @@
 - 批次：`data/llm_usage.jsonl`（`summarize`，同步、讀檔）。
 - 線上：`research.llm_usage_daily`（`summarize_online`，async、讀 DB）。web 行程的 LLM 呼叫經 `llm_http` 的
   observer → `usage_events` 累加器 → 每 60 秒 upsert（`web/server.py` 的 lifespan 註冊，本模組不寫）。只有
-  metadata（任務、模型、成敗、token、耗時），不記問題與答案。粒度是**台北日**：窗期的頭尾兩天整天計入；
+  metadata（任務、模型、成敗、token、耗時），不記問題與答案。粒度是**業務日**（業務時區的日曆日）：窗期的頭尾兩天整天計入；
   尚未 flush 的最後一分鐘看不到。這裡**不出個人維度**（只回歸因到的不重複人數與未歸因的呼叫數）——單一使用者的
   數字只在配額頁（`app/services/quota.py`）。讀取失敗＝`available=false`，不讓批次那段跟著失敗。
 - `combine`：兩個來源的總計與逐日合計（LLM 用量頁的「全部」）。
@@ -22,7 +22,7 @@
   實際涵蓋到的最早時間。任務／模型的相異值最多 `MAX_GROUPS` 個（其餘併成「(其他)」），日×任務×模型的
   明細最多 `MAX_ROWS` 列。檔案只增不減，這些上限讓一個長年累積的檔不會拖垮 web。
 - **檔案不存在＝空結果**，不是錯誤（新機器、或批次還沒跑過）。壞行（非 JSON、缺時間）只計數、略過。
-- 日期以台北時間（UTC+8，無日光節約）切日。
+- 日期以業務時區（profile 的 `[locale].timezone`，`business_time`）切日；回應的 `timezone` 是它的 IANA 名稱。
 - 費用：寫入端目前不記費用；若日後某些行帶數值 `cost` 欄，`cost` 會加總，否則為 null（`cost_available=false`）。
   刻意不在這裡內建價目表——價格會變，寫死的價目表會安靜地算錯。
 
@@ -42,12 +42,11 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services import business_time
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-TZ = timezone(timedelta(hours=8))
-TZ_NAME = "Asia/Taipei"
 
 DEFAULT_WINDOW = timedelta(days=30)
 MAX_WINDOW = timedelta(days=366)
@@ -186,6 +185,7 @@ def summarize(since: datetime, until: datetime, *, path: Path | None = None,
     by_model: dict[str, Totals] = {}
     rows: dict[tuple[date, str, str], Totals] = {}
     tasks, models = _Groups(), _Groups()
+    zone = business_time.tz()
     earliest: datetime | None = None
     latest: datetime | None = None
 
@@ -208,7 +208,7 @@ def summarize(since: datetime, until: datetime, *, path: Path | None = None,
         if not (since <= ts < until):
             continue
         src.lines_in_range += 1
-        day = ts.astimezone(TZ).date()
+        day = ts.astimezone(zone).date()
         task = tasks.label(row.get("task"))
         model = models.label(row.get("model_req") or row.get("model_resp"))
         totals.add(row)
@@ -224,7 +224,7 @@ def summarize(since: datetime, until: datetime, *, path: Path | None = None,
     return {
         "since": since.isoformat(),
         "until": until.isoformat(),
-        "timezone": TZ_NAME,
+        "timezone": business_time.tz_name(),
         "source": src.__dict__.copy(),
         "totals": totals.as_dict(),
         "by_day": [{"day": d.isoformat(), **t.as_dict()} for d, t in sorted(by_day.items())],
@@ -286,9 +286,9 @@ def _merge(a: Totals, b: Totals) -> Totals:
 
 
 def online_days(since: datetime, until: datetime) -> tuple[date, date]:
-    """`[since, until)` 涵蓋到的台北日（頭尾兩天整天計入：線上用量只有日彙總）。"""
-    d0 = since.astimezone(TZ).date()
-    d1 = (until - timedelta(microseconds=1)).astimezone(TZ).date()
+    """`[since, until)` 涵蓋到的業務日（頭尾兩天整天計入：線上用量只有日彙總）。"""
+    d0 = business_time.today(since)
+    d1 = business_time.today(until - timedelta(microseconds=1))
     return d0, max(d0, d1)
 
 
@@ -301,7 +301,7 @@ def _empty_online(d0: date, d1: date, *, available: bool, error: str | None = No
 
 
 async def summarize_online(since: datetime, until: datetime, *, session_factory=None) -> dict:
-    """線上 LLM 用量（DB）在 `[since, until)` 涵蓋的台北日之間的彙總。失敗回 `available=false`、不拋。"""
+    """線上 LLM 用量（DB）在 `[since, until)` 涵蓋的業務日之間的彙總。失敗回 `available=false`、不拋。"""
     d0, d1 = online_days(since, until)
     # 延遲 import：批次（scripts/_claude_cli 只要 usage_log_path）不必載 sqlalchemy 與 DB 連線設定。
     from sqlalchemy import text

@@ -146,3 +146,5 @@ data/ops_spool/
 /build_info.json
 # 通用 webhook 告警的冷卻狀態（app/services/alert_webhook.py）。
 data/.alert_webhook_state.json
+# 交付打包的輸出（scripts/export_framework.py 預設寫這裡；data/ 也不進映像的 build context）。
+data/export/

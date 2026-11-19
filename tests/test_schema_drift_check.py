@@ -365,6 +365,7 @@ def _directives(path: Path, key: str) -> list[str]:
     return out
 
 
+# export-omit:begin
 class SchemaCheckUnitTests(unittest.TestCase):
     """drift、落後、超前、清理失敗（1、2）要告警；只有「目標 DB 連不上」（3，P5 已告警）列為成功。"""
 
@@ -403,6 +404,7 @@ class SchemaCheckUnitTests(unittest.TestCase):
         (svc,) = [s for s in raw["services"] if s["name"] == "schema-check"]
         self.assertEqual((svc["unit"], svc["timer"]), (SERVICE.name, TIMER.name))
         self.assertEqual(svc["actions"], ["status", "logs"])
+# export-omit:end
 
 
 if __name__ == "__main__":

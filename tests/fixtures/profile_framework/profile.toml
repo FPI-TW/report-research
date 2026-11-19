@@ -1,0 +1,12 @@
+# 交付版測試套件用的 profile：交付版的 tests/conftest.py 把 PROFILE_DIR 指到這裡（源頭 repo 的測試照舊用預設 profile）。
+# 只宣告必填的 [institution] 與一份測試用的小發行機構名單（sources.toml），其餘 section 全部缺席＝框架預設
+# （全部標準市場、research 全開、只收 4 碼數字代號、背景補齊關、兩種語系…）：不針對特定 profile 的測試在交付版
+# 看到的就是框架預設的行為。要驗別的設定的測試照舊在 tempfile 建自己的 profile。
+
+[institution]
+name = "測試證券"
+product_name = "測試研報平台"
+short_name = "測試研報"
+
+[sources]
+catalog = "sources.toml"

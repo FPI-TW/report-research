@@ -266,6 +266,7 @@ class RollupScriptTests(unittest.TestCase):
         self.assertNotIn("scripts/analytics_rollup.py", le._scanned_files())
 
 
+# export-omit:begin
 class RollupUnitTests(unittest.TestCase):
     SYSTEMD = REPO_ROOT / "deploy" / "systemd"
 
@@ -293,6 +294,7 @@ class RollupUnitTests(unittest.TestCase):
         self.assertNotEqual(mm, 0)            # sync 在每 3 小時的整點
         self.assertNotIn(hh, (3, 4))          # 備份 03:30、稽核錨定 04:15、回放刪除 04:30
         self.assertEqual(d["Persistent"], ["true"])
+# export-omit:end
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { curlCommand, endpointsOf, parseInline, parseMarkdown, requestPath, withBaseUrl, withProductName, type ApiEndpoint } from './apiDoc'
+import { curlCommand, endpointsOf, parseInline, parseMarkdown, requestPath, withBaseUrl, withProductName, withTimeZone, type ApiEndpoint } from './apiDoc'
 import { EXTERNAL_API_MD } from './externalApiDoc'
 
 describe('parseMarkdown', () => {
@@ -59,6 +59,15 @@ describe('docs/EXTERNAL_API.md', () => {
     const md = withProductName(EXTERNAL_API_MD, '艾克米研究平台')
     expect(md).not.toContain('{PRODUCT_NAME}')
     expect(md.split('\n')[0]).toBe('# 艾克米研究平台 對外 API 說明（v1）')
+  })
+
+  it('業務時區只寫佔位字（文件屬於框架），交出去前代入 profile 的地名與 IANA 名稱', () => {
+    expect(EXTERNAL_API_MD).toContain('{TIME_ZONE_LABEL}')
+    expect(EXTERNAL_API_MD).not.toMatch(/台北|Asia\/Taipei/)
+    const md = withTimeZone(EXTERNAL_API_MD, '香港', 'Asia/Hong_Kong')
+    expect(md).not.toMatch(/\{TIME_ZONE(_LABEL)?\}/)
+    expect(md).toContain('香港時間 0 點（時區 `Asia/Hong_Kong`）重置')
+    expect(md).toContain('每日上傳份數另有上限（香港時間的日曆日）')
   })
 
   it('站台網址只寫佔位字，交出去前代入；整份文件只用渲染器支援的語法', () => {

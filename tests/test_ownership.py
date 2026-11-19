@@ -5,7 +5,7 @@
 - 新檔案沒有歸類就紅（逐檔列出、不用萬用字元，歸類是一個要寫下來的決定）；列了但不存在的也紅。
 - 一個檔案只能有一個歸屬。
 - 框架不依賴主機層：容器排程（`deploy/container/scheduler.py` 的 `JOBS`）與 entrypoint 只呼叫框架的腳本，
-  框架的 Python（`app/`、`web/`、`deploy/container/`、框架的 `scripts/`）不 import 主機層的腳本。
+  框架的 Python（`app/`、`web/`、`deploy/container/`、框架的 `scripts/`）不 import 主機層的腳本與 `ops_agent` 模組。
 
 掃的是 git 索引（`git ls-files`）：還沒 `git add` 的新檔不在範圍內，CI 上照樣會被抓到。
 """
@@ -112,6 +112,20 @@ class FrameworkIndependenceTests(unittest.TestCase):
             used = _imported_scripts((REPO_ROOT / f).read_text(encoding="utf-8")) & host_modules
             offenders += [f"{f} → scripts/{m}.py" for m in sorted(used)]
         self.assertFalse(offenders, "框架的程式 import 了廷豐主機層的腳本：" + "、".join(offenders))
+
+    def test_framework_python_does_not_import_host_ops_agent_modules(self):
+        """web 與代理共用的 ops_agent 模組歸 framework；代理的常駐行程與動作（主機層）框架不 import。"""
+        host_modules = {f[:-3].replace("/", ".") for f in self.host if f.startswith("ops_agent/") and f.endswith(".py")}
+        offenders = []
+        for f in _framework_python_files(self.manifest):
+            for node in ast.walk(ast.parse((REPO_ROOT / f).read_text(encoding="utf-8"))):
+                names: list[str] = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                    names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+                offenders += [f"{f} → {n}" for n in names if n in host_modules]
+        self.assertFalse(offenders, "框架的程式 import 了主機層的 ops_agent 模組：" + "、".join(offenders))
 
 
 if __name__ == "__main__":

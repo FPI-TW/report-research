@@ -467,6 +467,7 @@ class ProfileAndBuildTests(unittest.TestCase):
         self.assertIsInstance(connectors.build(prof.connectors.sources["i"], environ=env), s3.S3Connector)
 
 
+# export-omit:begin
 class TingfongProfileTests(unittest.TestCase):
     def test_tingfong_declares_current_sources_but_polls_nothing(self):
         prof = load_profile(Path(__file__).resolve().parents[1] / "profiles" / "tingfong")
@@ -483,6 +484,7 @@ class TingfongProfileTests(unittest.TestCase):
         prof = load_profile(Path(__file__).resolve().parents[1] / "profiles" / "tingfong")
         self.assertEqual(prof.connectors.sources["r2-inbox"].prefix, r2_inbox.INBOX_PREFIX)
         self.assertEqual(prof.connectors.sources["r2-inbox"].landing, r2_inbox.LOCAL_MIRROR)
+# export-omit:end
 
 
 class SidecarJsonRoundTripTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Service Catalog：每台主機一份 TOML（`deploy/ops/services.prod.toml`、`deploy/ops/services.dev.toml`）。
+"""Service Catalog：每台主機一份 TOML（容器部署的範本是 `deploy/ops-agent/services.example.toml`）。
 
 代理只對 catalog 列出的服務動作；名稱不在 catalog 一律拒絕。格式：
 
@@ -7,7 +7,7 @@
     socket_path = "/run/report-mark-ops/agent.sock" # 必須等於該環境的固定路徑
 
     [agent]
-    allowed_users = ["kashionz"]   # 只接受這些使用者（SO_PEERCRED 的 uid）連線；也可寫 allowed_uids
+    allowed_users = ["report-mark"]   # 只接受這些使用者（SO_PEERCRED 的 uid）連線；也可寫 allowed_uids
     request_timeout = 15           # 整個請求的期限（秒）
     command_timeout = 8            # 單一子行程的期限（秒）
     max_response_bytes = 262144    # 一行回應的上限（logs 超過時從舊的那端截掉）

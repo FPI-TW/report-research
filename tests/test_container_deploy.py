@@ -3,7 +3,7 @@
 
 守的是「壞了不會自己出聲」的幾件事：
 - 映像不帶祕密與資料（.dockerignore）、執行期離線（HF_HUB_OFFLINE=1）、非 root、相依與鎖檔一致。
-- 每一支 systemd timer 都有歸屬，框架排程的時間與 timer 相同，文件的對照表與程式清單一致。
+- 每一支 systemd timer 都有歸屬，框架排程的時間與 timer 相同，文件的對照表與程式清單一致。  # export-omit
 - web／worker／scheduler 共用同一個 data volume（LLM 批次鎖與上傳 worker 整輪鎖是 data/ 底下的 flock）。
 - schema 閘門只放行「版本一致」，migrate 在備份與確認都成立之前絕不升級。
 """
@@ -170,9 +170,11 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(self.services["web"]["ports"], ["${WEB_PUBLISH:-127.0.0.1:8097}:8097"])
         self.assertIn("/readyz", " ".join(self.services["web"]["healthcheck"]["test"]))
 
+    # export-omit:begin
     def test_does_not_touch_the_edge_compose(self):
         edge = yaml.safe_load((REPO_ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
         self.assertEqual(set(edge["services"]), {"nginx", "cloudflared"})
+    # export-omit:end
 
     def test_env_example_has_required_keys_without_values(self):
         text = COMPOSE_ENV_EXAMPLE.read_text(encoding="utf-8")
@@ -187,9 +189,11 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(values["OBJECT_STORAGE_MODE"], "local")
         self.assertEqual(values["UPLOAD_ENABLED"], "0")
 
+    # export-omit:begin
     def test_compose_env_file_is_gitignored(self):
         rc = subprocess.run(["git", "check-ignore", "-q", "deploy/compose/.env"], cwd=REPO_ROOT).returncode
         self.assertEqual(rc, 0, "deploy/compose/.env 必須被 .gitignore 擋住")
+    # export-omit:end
 
 
 # ───────────────────────── 排程 ─────────────────────────
@@ -216,12 +220,15 @@ def _timers() -> dict[str, str]:
 
 
 class SchedulerInventoryTests(unittest.TestCase):
+    # export-omit:begin
     def test_every_timer_has_exactly_one_home(self):
         timers = set(_timers())
         homes = [j.unit for j in sch.JOBS if j.unit] + list(sch.WORKER_UNITS) + list(sch.HOST_LAYER)
         self.assertEqual(len(homes), len(set(homes)), "同一支 timer 被歸到兩個地方")
         self.assertEqual(set(homes), timers, "deploy/systemd 的 timer 與 scheduler.py 的歸屬不一致")
+    # export-omit:end
 
+    # export-omit:begin
     def test_job_schedules_match_their_timers(self):
         timers = _timers()
         for job in sch.JOBS:
@@ -229,6 +236,7 @@ class SchedulerInventoryTests(unittest.TestCase):
                 continue
             with self.subTest(job=job.name):
                 self.assertEqual(job.cron, _on_calendar_to_cron(timers[job.unit]))
+    # export-omit:end
 
     def test_job_commands_point_at_existing_scripts(self):
         for job in sch.JOBS:
@@ -236,6 +244,7 @@ class SchedulerInventoryTests(unittest.TestCase):
             with self.subTest(job=job.name):
                 self.assertTrue((REPO_ROOT / script).is_file(), script)
 
+    # export-omit:begin
     def test_job_commands_match_the_units(self):
         """容器裡的指令與 unit 的 ExecStart 跑同一支腳本、同一組參數。"""
         for job in sch.JOBS:
@@ -246,7 +255,9 @@ class SchedulerInventoryTests(unittest.TestCase):
             tail = " ".join(job.command[1:])
             with self.subTest(job=job.name):
                 self.assertIn(tail, exec_line)
+    # export-omit:end
 
+    # export-omit:begin
     def test_doc_table_matches_inventory(self):
         text = DOC.read_text(encoding="utf-8")
         rows = re.findall(r"^\| `(report-mark-[\w-]+\.timer)` \| ([^|]+?) \| ([^|]+?) \|$", text, re.M)
@@ -263,6 +274,7 @@ class SchedulerInventoryTests(unittest.TestCase):
             self.assertEqual(by_unit[unit][0], "worker")
         for unit in sch.HOST_LAYER:
             self.assertEqual(by_unit[unit][0], "廷豐主機層")
+    # export-omit:end
 
     def test_framework_only_jobs_are_documented(self):
         """沒有對應 timer 的框架專屬工作，列在文件的另一張表（`| \`工作名\` | 排程 | 說明 |`）。"""
@@ -276,9 +288,13 @@ class SchedulerInventoryTests(unittest.TestCase):
                 self.assertEqual(rows[name], job.cron)
 
 
+# 排程判斷「profile 有沒有自帶凍結題集」要讀 PROFILE_DIR（容器裡一律有設）；指向沒有題集的測試 profile。
+_PROFILE_ENV = {"PROFILE_DIR": "tests/fixtures/profile_framework"}
+
+
 class SchedulerSelectionTests(unittest.TestCase):
     def test_defaults(self):
-        names = [j.name for j in sch.selected_jobs({})]
+        names = [j.name for j in sch.selected_jobs(dict(_PROFILE_ENV))]
         self.assertIn("backup", names)
         self.assertNotIn("retrieval-regression", names)
         self.assertNotIn("r2-reconcile", names)
@@ -292,14 +308,14 @@ class SchedulerSelectionTests(unittest.TestCase):
         self.assertEqual(job.command, ("python", "scripts/backfill_tiers.py", "--tier", "3", "--scheduled"))
 
     def test_enable_and_disable(self):
-        names = [j.name for j in sch.selected_jobs({sch.ENABLE_ENV: "retrieval-regression",
+        names = [j.name for j in sch.selected_jobs({**_PROFILE_ENV, sch.ENABLE_ENV: "retrieval-regression",
                                                      sch.DISABLE_ENV: "backfill, db-audit"})]
         self.assertIn("retrieval-regression", names)
         self.assertNotIn("backfill", names)
         self.assertNotIn("db-audit", names)
 
     def test_retrieval_regression_follows_the_profile_question_set(self):
-        """profile 自帶凍結題集（eval/questions.json）時自動排入；廷豐的題集在 repo 的 eval/，照舊不排。"""
+        """profile 自帶凍結題集（eval/questions.json）時自動排入；沒有（含沿用 repo 內題集的）照舊不排。"""
         with tempfile.TemporaryDirectory() as td:
             env = {"PROFILE_DIR": td}
             self.assertNotIn("retrieval-regression", [j.name for j in sch.selected_jobs(env)])
@@ -308,8 +324,8 @@ class SchedulerSelectionTests(unittest.TestCase):
             self.assertIn("retrieval-regression", [j.name for j in sch.selected_jobs(env)])
             disabled = sch.selected_jobs({**env, sch.DISABLE_ENV: "retrieval-regression"})
             self.assertNotIn("retrieval-regression", [j.name for j in disabled])
-        tingfong = sch.selected_jobs({"PROFILE_DIR": "profiles/tingfong"})
-        self.assertNotIn("retrieval-regression", [j.name for j in tingfong])
+        tingfong = sch.selected_jobs({"PROFILE_DIR": "profiles/tingfong"})  # export-omit
+        self.assertNotIn("retrieval-regression", [j.name for j in tingfong])  # export-omit
         flagged = [j.name for j in sch.JOBS if j.enabled_by_profile_questions]
         self.assertEqual(flagged, ["retrieval-regression"])
 
@@ -484,8 +500,10 @@ _PW = "fixed-test-secret-" + "dbpw"
 
 
 class MainTests(unittest.TestCase):
+    # compose 一律設 PROFILE_DIR（/app/profile）；這裡指向框架預設的測試 profile，不依賴 repo 的預設 profile。
     ENV = {"REPORT_MARK_DB_URL": f"postgresql+asyncpg://research:{_PW}@postgres:5432/research",
-           "REPORT_MARK_SESSION_SECRET": "fixed-test-secret-" + "b" * 32}
+           "REPORT_MARK_SESSION_SECRET": "fixed-test-secret-" + "b" * 32,
+           "PROFILE_DIR": "tests/fixtures/profile_framework"}
 
     def setUp(self):
         self.execs = []

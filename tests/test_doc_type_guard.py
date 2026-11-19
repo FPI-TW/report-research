@@ -2,7 +2,7 @@
 
 `is_research`（revision 0012 之前唯一的類型旗標）v1 仍保留在表上，但它只是舊版程式與備份還原的相容欄位：
 寫入由 `doc_type` 推得、讀取一律走 `doc_type_enabled_sql`／`doc_type_enabled_id_sql`。漏掉的後果是**靜默的**——
-廷豐 profile 下兩種寫法今天結果相同，要等第二種文件類型上線才會有一頁多出或少掉文件。
+預設 profile 下兩種寫法今天結果相同，要等第二種文件類型上線才會有一頁多出或少掉文件。
 
 四組守門：
 
@@ -48,7 +48,7 @@ _FILTER_RE = re.compile(
 # (相對路徑, 單位名稱) → 為什麼可以寫 is_research 過濾。
 _FILTER_EXEMPT = {
     ("scripts/db_audit.py", "CHECKS"): "is_research_null：稽核舊欄位本身（baseline 收斂成 NOT NULL 之前的庫）",
-    ("app/services/tagging.py", "TAG_INSTRUCTION"): "標註 prompt 的輸出格式說明（不是 SQL；test_tagging 逐字釘住）",
+    ("app/services/tagging.py", "_TAG_TEMPLATE"): "標註 prompt 的輸出格式說明（不是 SQL；golden 逐字釘住）",
 }
 
 # (相對路徑, 單位名稱) → 為什麼可以讀 .is_research。

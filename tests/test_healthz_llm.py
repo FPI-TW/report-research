@@ -12,7 +12,7 @@ import asyncio
 import dataclasses
 import inspect
 import os
-import re
+import re  # export-omit
 import time
 import unittest
 from pathlib import Path
@@ -553,6 +553,7 @@ class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests), 1)
 
 
+# export-omit:begin
 class DeadlineOrderTests(unittest.TestCase):
     def test_fetch_timeout_below_wait_below_probe_curl_timeout(self):
         """FETCH_TIMEOUT < WAIT < 探針的 HEALTH_TIMEOUT：端點一定在探針的 curl 放棄前回答（否則 curl 逾時
@@ -561,6 +562,7 @@ class DeadlineOrderTests(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertLess(llm_health.FETCH_TIMEOUT, llm_health.WAIT)
         self.assertLess(llm_health.WAIT, int(m.group(1)))
+# export-omit:end
 
 
 class QuotaHookTests(unittest.IsolatedAsyncioTestCase):

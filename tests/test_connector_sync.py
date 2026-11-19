@@ -3,11 +3,12 @@
 與殼刻意不同的只有分層回填（`cs.FRAMEWORK_ONLY_DIFFERENCES`，白名單式對帳）：本輪新研報只把第二層交給摘要、
 標題、摘錄，訊號與標題積壓帶 `--min-report-date`。
 
-不跑任何子行程：`run_round` 的 `run` 換成記錄器。步驟與 `scripts/sync_new_reports.sh` 的對帳以文字比對殼裡的呼叫。
+不跑任何子行程：`run_round` 的 `run` 換成記錄器。
+步驟與 `scripts/sync_new_reports.sh` 的對帳以文字比對殼裡的呼叫。  # export-omit
 """
 from __future__ import annotations
 
-import re
+import re  # export-omit
 import sys
 import tempfile
 import unittest
@@ -60,6 +61,7 @@ class DownstreamStepTests(unittest.TestCase):
         self.assertIn("7", steps["generate_titles_backlog"])
         self.assertEqual(steps["generate_summaries"][-2:], ("--workers", "3"))
 
+    # export-omit:begin
     def test_steps_match_the_tingfong_shell(self):
         """sync 殼第 4 段起呼叫的腳本與順序，這裡一支不少（殼是廷豐主機層、這支是框架，兩邊同步改）。"""
         text = SYNC_SH.read_text(encoding="utf-8")
@@ -69,6 +71,7 @@ class DownstreamStepTests(unittest.TestCase):
         self.assertEqual(mine, shell)
         self.assertIn("SIGNAL_LIMIT=${SYNC_SIGNAL_LIMIT:-100}", text)
         self.assertIn("TITLE_BACKLOG_LIMIT=${SYNC_TITLE_BACKLOG_LIMIT:-60}", text)
+    # export-omit:end
 
 
 class FrameworkOnlyDifferenceTests(unittest.TestCase):
@@ -97,9 +100,11 @@ class FrameworkOnlyDifferenceTests(unittest.TestCase):
         self.assertEqual(whitelisted, {"extract_signals", "generate_titles_backlog"})
         self.assertIn("hash 步驟的清單只含第二層", cs.FRAMEWORK_ONLY_DIFFERENCES)
 
+    # export-omit:begin
     def test_the_shell_does_not_tier(self):
         """廷豐的 sync 殼不分層（廷豐已全量跑完派生）：白名單的旗標只出現在框架這一邊。"""
         self.assertNotIn("--min-report-date", SYNC_SH.read_text(encoding="utf-8"))
+    # export-omit:end
 
     def test_signals_still_always_limited_when_tiered(self):
         steps = {s.name: s.argv for s in cs.downstream_steps(self.H, False, {}, min_report_date=self.CUT)}

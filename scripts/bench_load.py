@@ -120,7 +120,8 @@ def load_questions(limit: int | None, path: Path = QUESTION_SET) -> list[str]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise RuntimeError(f"讀不到題集 {path}：{exc}") from None
+        hint = "；這份原始碼沒有預設題集時帶 --profile <名稱>" if path == QUESTION_SET else ""
+        raise RuntimeError(f"讀不到題集 {path}：{exc}{hint}") from None
     qs = [q["question"] for q in payload.get("questions", []) if q.get("question")]
     if not qs:
         raise RuntimeError("題集是空的")

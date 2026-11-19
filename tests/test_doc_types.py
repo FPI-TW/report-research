@@ -1,4 +1,4 @@
-"""app/services/doc_types.py：類型片段的形狀、呼叫時依 profile 渲染、入庫閘，以及廷豐 profile 下與改動前等價。
+"""app/services/doc_types.py：類型片段的形狀、呼叫時依 profile 渲染、入庫閘，以及預設 profile 下與改動前等價。
 
 不連 DB。SQL 片段在真的 PostgreSQL 上是否把類型關掉的文件從各路徑排除，由 `tests/test_doc_type_db.py` 驗；
 沒有漏帶片段由 `tests/test_doc_type_guard.py` 守。
@@ -55,8 +55,8 @@ class _ProfileCase(unittest.TestCase):
         self._tmp.cleanup()
 
 
-class TingfongEquivalenceTests(unittest.TestCase):
-    """廷豐 profile（預設）：每個功能都只開給 research，片段等同改動前的 `is_research IS NOT FALSE`。
+class DefaultProfileEquivalenceTests(unittest.TestCase):
+    """預設 profile：每個功能都只開給 research，片段等同改動前的 `is_research IS NOT FALSE`。
 
     等價的理由：revision 0012 之後 `is_research` NOT NULL 且由 CHECK 綁成 `is_research = (doc_type = 'research')`，
     所以 `doc_type IN ('research')` ⇔ `is_research` ⇔ `is_research IS NOT FALSE`。
@@ -68,7 +68,7 @@ class TingfongEquivalenceTests(unittest.TestCase):
                 self.assertEqual(doc_types.enabled_types(feature), ("research",))
                 self.assertEqual(doc_types.doc_type_enabled_sql("r", feature), "r.doc_type IN ('research')")
 
-    def test_tingfong_declares_both_tagger_types(self):
+    def test_default_profile_declares_both_tagger_types(self):
         features = dict(P.get_profile().doc_types.features)
         self.assertEqual(features, {"research": frozenset(P.DOC_FEATURES), "non_research": frozenset()})
 
@@ -81,8 +81,8 @@ class TingfongEquivalenceTests(unittest.TestCase):
                     bool(is_research and market),
                 )
 
-    def test_section_absent_is_the_same_as_tingfong(self):
-        """沒寫 [doc_types] 的 profile 走框架預設，與廷豐的明確設定相同。"""
+    def test_section_absent_is_the_same_as_default_profile(self):
+        """沒寫 [doc_types] 的 profile 走框架預設，與預設 profile 的設定相同。"""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "bare"
             root.mkdir()

@@ -27,9 +27,8 @@ DATA_SUFFIXES = (".json", ".jsonl")
 ALLOWED: dict[str, tuple[int, str]] = {
     "app/profile.py": (2, "預設 profile 的目錄 `profiles/tingfong`（`DEFAULT_PROFILE_DIR` 與說明它的 docstring）"
                           "是已定案的共識"),
-    "eval/profile_eval.py": (8, "預設 profile 的題集沿用 repo 內 `eval/ragas_questions.json` 的相容路徑："
-                                "同名常數與逐條說明（`profiles/tingfong/eval/eval.toml` 的 `legacy_repo_path`"
-                                "指回它）"),
+    "eval/profile_eval.py": (1, "與 `app/profile.py` 同值的 `DEFAULT_PROFILE_DIR`（這裡不 import app.profile，"
+                                "`tests/test_profile_eval.py` 釘住兩者相同）"),
     "deploy/compose/.env.example": (1, "`PROFILE_HOST_DIR` 的範例值與程式的預設 profile 一致"
                                        "（標【必填】，部署方換成自己的）"),
 }

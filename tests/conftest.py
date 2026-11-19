@@ -159,7 +159,7 @@ for _knob in _OIDC_KNOBS:
 # **用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
 # 要驗寫入的測試自己給假的 session factory（tests/test_usage_events.py）。
 os.environ["USAGE_EVENTS_ENABLED"] = "0"
-# profile（app/profile.py）：一律用預設的廷豐 profile（空值＝預設）。**用賦值**：部署目錄 .env 或執行者 shell 若指向
+# profile（app/profile.py）：一律用預設 profile（空值＝預設）。**用賦值**：部署目錄 .env 或執行者 shell 若指向
 # 別的 profile，既有測試的品牌、prompt 與市場斷言都會失準。要驗別的 profile 的測試在 tempfile 建一份、自己設
 # PROFILE_DIR 並 reset_profile_cache()（下方 fixture 每題前後都會清快取）。
 os.environ["PROFILE_DIR"] = ""

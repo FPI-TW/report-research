@@ -1,7 +1,7 @@
 """登入頁的中英介面（web/static/login.html＋login.i18n.json，web/routers/auth_pages.py 的伺服器端注入）。
 
 語系依序取 `?lang=` → `tf_locale` cookie（SPA 寫的偏好）→ profile 的 `[locale].default`；不看 Accept-Language。
-廷豐 profile 的中文頁除了語言切換連結以外與改動前相同（test_branding_api.py 的 TingfongDefaultTests 釘名稱）。
+預設 profile 的中文頁除了語言切換連結以外與改動前相同（名稱另由 test_branding_api.py 的預設 profile 對照釘住）。
 """
 
 import json
@@ -62,7 +62,7 @@ class RenderTests(unittest.TestCase):
     def test_default_is_profile_default_chinese(self):
         html = _anon().get("/login").text
         self.assertIn('<html lang="zh-Hant">', html)
-        self.assertIn("<title>登入 · 廷豐智能研報</title>", html)
+        self.assertIn(f"<title>登入 · {P.get_profile().institution.product_name}</title>", html)
         self.assertIn('<label for="username">帳號</label>', html)
         self.assertIn('totp: "驗證碼不正確或已使用過，請輸入驗證器目前顯示的碼。"', html)
         self.assertNotIn("{{", html)
@@ -80,10 +80,11 @@ class RenderTests(unittest.TestCase):
         self.assertIn("Sign in with the account issued by an administrator.", html)
         self.assertIn('hreflang="zh-Hant" lang="zh-Hant">中文</a>', html)
         self.assertNotIn("{{", html)
-        # 英文頁只剩品牌名稱（廷豐 profile 沒給英文名，沿用原名）與語言切換的「中文」是中文。
+        # 英文頁只剩品牌名稱（預設 profile 沒給英文名，沿用原名）與語言切換的「中文」是中文。
+        name = P.get_profile().institution.product_name
         leftovers = [line for line in _visible(html).splitlines() if CJK.search(line)]
         for line in leftovers:
-            self.assertTrue("廷豐智能研報" in line or ">中文<" in line, line)
+            self.assertTrue(name in line or ">中文<" in line, line)
 
     def test_cookie_preference_is_used_and_unknown_values_ignored(self):
         client = _anon()

@@ -1,6 +1,6 @@
 # 券商研報平台運作流程
 
-券商研報從資料來源進來（profile 的 `[connectors]`；廷豐的主機部署是 `研報自動匯入/` 這個 NAS 唯讀鏡像，下圖以它為例），經過抽文字 → LLM（`gpt-6-luna`）多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
+券商研報從資料來源進來（profile 的 `[connectors]`<!-- export-omit:begin -->；廷豐的主機部署是 `研報自動匯入/` 這個 NAS 唯讀鏡像，下圖以它為例<!-- export-omit:end -->），經過抽文字 → LLM（`gpt-6-luna`）多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
 
 ## 全景流程圖
 
@@ -27,7 +27,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 檢索 /api/search ── 問答 /api/ask ── 閱讀 /api/reading ── 雷達 /api/radar ── 簡報 /api/brief
 ```
 
-部署主機上的增量由 `report-mark-sync.timer` 每 3 小時觸發 `scripts/sync_new_reports.sh`，把上面 ① 到 ⑧ 串成一輪（見「生產同步鏈」）；管理員上傳是第二個入口（見「研報上傳」）。全語料三支（`extract_all` → `tag_all_cli` → `ingest_all`）只在初次建庫或補歷史時跑。
+<!-- export-omit:begin -->部署主機上的增量由 `report-mark-sync.timer` 每 3 小時觸發 `scripts/sync_new_reports.sh`，把上面 ① 到 ⑧ 串成一輪（見「生產同步鏈」）；<!-- export-omit:end -->管理員上傳是第二個入口（見「研報上傳」）。全語料三支（`extract_all` → `tag_all_cli` → `ingest_all`）只在初次建庫或補歷史時跑。
 
 ## 責任分工
 
@@ -50,7 +50,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `data/extracted/` | 抽取快取 `<file_hash>.json`（`app/services/extraction/cache.py`） | 否 |
 | `data/tags/` | 標註結果 `<file_hash>.json`，resume 依據；`/api/progress`（管線分頁）的 `scandir` 熱點 | 否 |
 | `data/metrics/` | 硬體用量取樣 JSONL | 否 |
-| `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 |
+| `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 <!-- export-omit --> |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |
 | `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state`、`data/.sync_feed_state` | 執行期日誌、心跳、本輪狀態、來源段結果（掛載／rsync／inbox 推送；主機信標讀它） | 否 |
 | `research.*`（Postgres ＋ pgvector；測試環境是容器 `report-mark-postgres`、host port 5436，正式環境是 RDS） | 由 Alembic migration 管理（`db/migrations/`），`db/schema.sql` 是凍結的 baseline；各表見 `docs/ARCHITECTURE.md` §8。`research_report.doc_type`（revision 0012）是文件類型，舊欄位 `is_research` 保留且由 CHECK 與它同步，讀取不再用它 | 是 |
@@ -75,7 +75,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### ③ 嵌入入庫：`scripts/ingest_all.py`
 
-- 輸入 `data/extracted/` ＋ `data/tags/`，輸出 `research.research_report` 與 `research.report_chunk`。閘：`doc_types.ingest_gate`——文件類型（tag 的 `is_research` 映射：true→`research`、false→`non_research`）在 profile 的 `[doc_types]` 至少開一個功能，且開了 `tagging_markets` 時 `market` 非空（廷豐 profile 下等同 `is_research` 且 `market` 非空）；寫入 `research_report.doc_type`，舊欄位 `is_research` 由它推得。`is_admin`、`scanned`、`not_research`（閘不過）、`extract_error` 各寫一列 `extraction_log`。`--limit`、`--batch-size`（預設 32）。
+- 輸入 `data/extracted/` ＋ `data/tags/`，輸出 `research.research_report` 與 `research.report_chunk`。閘：`doc_types.ingest_gate`——文件類型（tag 的 `is_research` 映射：true→`research`、false→`non_research`）在 profile 的 `[doc_types]` 至少開一個功能，且開了 `tagging_markets` 時 `market` 非空<!-- export-omit:begin -->（廷豐 profile 下等同 `is_research` 且 `market` 非空）<!-- export-omit:end -->；寫入 `research_report.doc_type`，舊欄位 `is_research` 由它推得。`is_admin`、`scanned`、`not_research`（閘不過）、`extract_error` 各寫一列 `extraction_log`。`--limit`、`--batch-size`（預設 32）。
 - 切塊 `app/services/chunk.py`（600 字元、80 重疊，段落邊界），嵌入 `app/services/embed.py`（BGE-M3，CPU），`store.upsert_report` 依 `file_hash` 先刪後插。
 - 收尾 `ANALYZE research.report_chunk`（可能久於 60 秒，走 `relax_statement_timeout`）。
 - `make ingest-lowio` 會關 `fsync`，SIGKILL 後不還原；處置 `make restore-durability`。除非使用者明講不要跑（走 `docker exec`，RDS 不適用）。
@@ -103,12 +103,17 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### ⑧ 每日簡報：`scripts/generate_brief.py`（LLM，簡報頁用）
 
-- 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7；兩者的預設來自 profile 的 `[brief]`，括號內是廷豐的值），用 `created_at` 界定；`--force` 重寫已有的列時沿用該列存的窗期；補過去的日子時，終點是目標日結束（本地時間）與下一份的 `window_start` 取早的，窗期長度為零就不寫列。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
-- `--date`、`--after-hour`（預設 profile 的 `[brief].after_hour`，廷豐 9；未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
+- 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7；兩者的預設來自 profile 的 `[brief]`<!-- export-omit:begin -->，括號內是廷豐的值<!-- export-omit:end -->），用 `created_at` 界定；`--force` 重寫已有的列時沿用該列存的窗期；補過去的日子時，終點是目標日結束（本地時間）與下一份的 `window_start` 取早的，窗期長度為零就不寫列。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
+- `--date`、`--after-hour`（預設 profile 的 `[brief].after_hour`，框架預設 9；未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
+- 素材的市場標籤用簡報自己的詞表（`app/services/brief.py` 的 `_MARKET_ZH`：「匯市」「總體與債市」「全球與商品」「加密資產」，刻意與介面的顯示名稱不同）；profile 在 `[markets.display_names]` 明確宣告的代碼覆寫它，沒宣告的照用詞表<!-- export-omit:begin -->（廷豐沒有宣告）<!-- export-omit:end -->。
 
 ### LLM 批次互斥：`scripts/_claude_lock.py`
 
 呼叫 LLM 的批次（`tag_all_cli`、`sync_new_reports`、`generate_summaries`、`generate_titles`、`extract_takeaways`、`extract_signals`、`generate_brief`；權威清單是 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS`）取 `data/.claude_cli.lock` 的 flock（檔名與「claude 鎖」的叫法是刻意沿用的舊名，鎖的是所有 LLM 批次）；除 `generate_brief` 只包那一次 LLM 呼叫外，都在 main 進入點取鎖。撞鎖 rc=75 是「不跑」不是「跑壞」，sync 殼不把它計入異常。互斥防的是重複計費、摘錄 DELETE+INSERT 互撞與 DB 連線數。`app/services/llm.py` 刻意不在鎖範圍內（`tests/test_claude_lock.py` 釘住）。從 worktree 跑批次不與主 checkout 互斥。
+
+### LLM 批次的跳過名單：`research.llm_task_failure`
+
+摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。逾時這類環境型失敗不記。審查擋下、截斷、空回應、400、已吐字後逾時（`timeout_streamed`，期限型截斷：連續 3 輪才跳過、計入斷路器、可重放）也照原因記入（`API[...]` 錯誤不在腳本層重試）；行內標註被審查擋下的研報不入庫、計 `skip_blocked`（異常）、被 `max_tokens` 截斷的計 `skip_truncated`（異常），兩者 `failures_to_delta.py` 預設都不撈（期限型截斷記 `skip_untagged`、會撈），由人處置<!-- export-omit:begin -->（`docs/production_resilience.md`「LLM 批次的失敗處置」）<!-- export-omit:end -->。sync 鏈、連接器排程（`scripts/connector_sync.py`）與上傳 worker 的下游批次都套用同一份名單。
 
 ### 編排與離線工具
 
@@ -119,7 +124,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `scripts/build_boilerplate.py`（`make boilerplate`） | 跨文件樣板段落字典 → `data/boilerplate/<source>.json`，入庫切塊前剔除（`docs/EXTRACTION.md` §12）；字典不在就不剔除 |
 | `scripts/lost_anchors_to_delta.py` | 回填後摘錄錨點失效的研報 → hashes 檔，餵 `scripts/extract_takeaways.py --hashes-file … --reextract` |
 | `scripts/backfill_traditional.py`、`scripts/backfill_report_dates.py`、`scripts/backfill_report_sources.py`、`scripts/backfill_full_text.py` | 一次性回填，預設試跑 |
-| `scripts/align_findb_markets.py`（`make align`） | 舊中文市場標籤重映射為標準市場代碼（廷豐 profile 與 findb 對齊），冪等 |
+| `scripts/align_findb_markets.py`（`make align`） | 舊中文市場標籤重映射為標準市場代碼<!-- export-omit:begin -->（廷豐 profile 與 findb 對齊）<!-- export-omit:end -->，冪等 |
 | `scripts/profile_corpus.py`、`scripts/compare_extractors.py`、`scripts/review_extraction_golden.py` | 抽取層唯讀分析與 golden set 覆核 |
 | `scripts/select_sample.py`、`scripts/extract_batch.py`、`scripts/make_worklist.py`、`scripts/run_ingest.py` | 抽樣原型路徑（`make prep`、`make ingest`） |
 | `scripts/search.py`（`make search`） | CLI 檢索驗證 |
@@ -138,6 +143,7 @@ uv run python eval/qa_adversarial.py --live --out /tmp/qa-adversarial-live.json
 
 離線模式只檢查輸入答案，供假 LLM 或人工候選答案重播；`--live` 會預檢生成模型金鑰，使用與問答主答相同的 `SYSTEM_PROMPT`、`build_user_prompt`、`stream_completion` 和 token 上限，逐題把固定片段送給模型。正式問答會在串流與落庫前，把不存在的數字引用換成「無效引用」標記；`--live` 同樣處理後再評分，`summary` 代表使用者可見答案，`raw_summary`、逐題 `raw_answer` 與 `raw_failures` 保留模型原始輸出的缺陷。它刻意隔離檢索、路由、證據帳本與資料庫，所以結果只代表「已提供此片段時的生成行為」。沒有金鑰時預檢以 rc=2 結束，不產生正式模型結果。逐題答案與失敗原因、題集和離線答案檔的 SHA256 存在結果 JSON；所有規則通過為 rc=0，有失敗為 rc=1。檢查器能抓到指定錯誤數值、洩漏誘導字串、虛構來源及事實旁缺正確引用；正規表示式無法完整判斷語意、否定句或其他未列出的幻覺，正式結果仍須人工複核。這套分數與 `run_ragas` 的 F／CP／AR 量尺不同，勿送進 `eval-compare` 比較。
 
+<!-- export-omit:begin -->
 ## 生產同步鏈：`scripts/sync_new_reports.sh`
 
 兩個環境各跑一份，`report-mark-sync.timer` 每 3 小時（`OnCalendar=*-*-* 00/3:00:00`，`Persistent=false` 刻意不補跑）觸發，PID lock `data/.sync_new_reports.lock`。來源段不同：辦公室主機（測試環境）`SYNC_SOURCE=nas`（預設）從 NAS rsync，設了 `SYNC_INBOX_PUSH=1` 所以再把新檔推到 R2 `inbox/`；EC2（正式環境）`SYNC_SOURCE=r2-inbox` 從 `inbox/` 拉；第 4 段起相同。
@@ -153,16 +159,17 @@ uv run python eval/qa_adversarial.py --live --out /tmp/qa-adversarial-live.json
 7. 簡報（無參數；沒有自己的 timer 是刻意的，要讀當輪剛擷取的評等變動）。
 8. 標題積壓 `--limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`，補一年以上舊檔（永遠不會進 `--hashes-file`）。
 
-第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪第 5 段剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。逾時這類環境型失敗不記。審查擋下、截斷、空回應、400、已吐字後逾時（`timeout_streamed`，期限型截斷：連續 3 輪才跳過、計入斷路器、可重放）也照原因記入（`API[...]` 錯誤不在腳本層重試）；行內標註被審查擋下的研報不入庫、計 `skip_blocked`（異常）、被 `max_tokens` 截斷的計 `skip_truncated`（異常），兩者 `failures_to_delta.py` 預設都不撈（期限型截斷記 `skip_untagged`、會撈），由人處置（`docs/production_resilience.md`「LLM 批次的失敗處置」）。批次斷路器的標記綁定 sync 輪次（殼每輪 export `SYNC_ROUND_ID`）：只擋同一輪後面呼叫 LLM 的段。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（讓 unit 找得到 `uv`）、`EXTRACTOR`、備份與 R2 變數、`SYNC_SOURCE`／`SYNC_INBOX_PUSH`；DB 不在本機時另設 `REPORT_MARK_DB_URL` 與 `PGSSLROOTCERT`（批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
+第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。跳過名單的規則見「LLM 批次的跳過名單」。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪第 5 段剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。批次斷路器的標記綁定 sync 輪次（殼每輪 export `SYNC_ROUND_ID`）：只擋同一輪後面呼叫 LLM 的段。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（讓 unit 找得到 `uv`）、`EXTRACTOR`、備份與 R2 變數、`SYNC_SOURCE`／`SYNC_INBOX_PUSH`；DB 不在本機時另設 `REPORT_MARK_DB_URL` 與 `PGSSLROOTCERT`（批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
+<!-- export-omit:end -->
 
 ## 資料來源連接器（框架的導入路徑）：`scripts/ingest_connectors.py`
 
-給其他券商「快速導入」：在 profile 的 `[connectors]` 接上自己的研報來源，之後的去重、抽取、標註、入庫與下游批次全部共用。連接器只負責**把新檔落地到本機資料夾、附上 metadata 側檔**（`app/services/connectors/`）；之後逐篇交給 `scripts/_ingest_core.py` 的 `ingest_one`（與 sync、上傳 worker 同一份），以 `file_hash` 去重。廷豐的來源仍由上面的 sync 殼執行，廷豐 profile 只宣告對應（`enabled = []`），sync 鏈第 4 段起不變。
+給其他券商「快速導入」：在 profile 的 `[connectors]` 接上自己的研報來源，之後的去重、抽取、標註、入庫與下游批次全部共用。連接器只負責**把新檔落地到本機資料夾、附上 metadata 側檔**（`app/services/connectors/`）；之後逐篇交給 `scripts/_ingest_core.py` 的 `ingest_one`（與 sync、上傳 worker 同一份），以 `file_hash` 去重。<!-- export-omit:begin -->廷豐的來源仍由上面的 sync 殼執行，廷豐 profile 只宣告對應（`enabled = []`），sync 鏈第 4 段起不變。<!-- export-omit:end -->
 
 | 類型 | 從哪裡來 | 落地 | 非祕密參數（`[connectors.sources.<名稱>]`） | 祕密 |
 |---|---|---|---|---|
 | `folder` | 本機資料夾（券商自己的 SMB／NFS 由主機或 compose volume 掛上，框架不做 mount） | 原地（`path`） | `path` | — |
-| `s3` | S3 相容 bucket 的 prefix（R2、MinIO、AWS S3）；廷豐的 R2 inbox 是它的一個實例（`scripts/r2_inbox.py pull` 共用 `app/services/connectors/s3.py` 的 `pull`） | `landing`（預設 `data/connectors/<名稱>/`）；只拉研報檔、同名 JSON 與根目錄的 `_metadata.csv`，本地沒有或大小不同才拉，保留物件 metadata 的 mtime | `prefix`（以 `/` 結尾）、`env`（環境變數前綴）、`landing` | `<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`，選填 `<env>_ENDPOINT`、`<env>_REGION`（預設 `auto`） |
+| `s3` | S3 相容 bucket 的 prefix（R2、MinIO、AWS S3）<!-- export-omit:begin -->；廷豐的 R2 inbox 是它的一個實例（`scripts/r2_inbox.py pull` 共用 `app/services/connectors/s3.py` 的 `pull`）<!-- export-omit:end --> | `landing`（預設 `data/connectors/<名稱>/`）；只拉研報檔、同名 JSON 與根目錄的 `_metadata.csv`，本地沒有或大小不同才拉，保留物件 metadata 的 mtime | `prefix`（以 `/` 結尾）、`env`（環境變數前綴）、`landing` | `<env>_BUCKET`、`<env>_ACCESS_KEY_ID`、`<env>_SECRET_ACCESS_KEY`，選填 `<env>_ENDPOINT`、`<env>_REGION`（預設 `auto`） |
 | `plugin` | profile 的 `plugins/<plugin>.py`（只載入 profile 以名稱明確引用的那一個檔，不掃描目錄） | `landing`；plugin 的 `fetch(landing, params) -> FetchReport` 把新檔與側檔寫進去 | `plugin`、`landing`、`[...params]`（字串、數字、布林） | plugin 自己讀環境變數 |
 
 共用參數：`kind`、`poll_minutes`（兩次輪詢的最短間隔，預設 180、5..10080）、`settle_seconds`（mtime 距今未滿就先不收，預設 60）。`[connectors].enabled` 是要輪詢的連接器（順序＝輪詢順序），空＝不輪詢。名稱、類型、必填參數、`prefix` 形狀、plugin 檔存在與否都在啟動時嚴格驗證（`app/profile.py`）；s3 缺環境變數、plugin 載入失敗（語法錯、import 錯、缺 `fetch`）在那一輪報成 `connector_error`，該連接器不跑，其他照跑。
@@ -217,7 +224,7 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
 
 ## 首次導入：分層回填與事前估價（`scripts/estimate_backfill.py`、`scripts/backfill_tiers.py`）
 
-券商第一次導入時可能帶來數萬份歷史研報。每份跑完整的 LLM 派生（標註＋摘要＋標題＋摘錄＋訊號）要兩、三萬輸入 token（廷豐語料的實測平均：標註約 6.1k、摘要 5.9k、摘錄 6.7k、標題 2.6k、訊號 9.9k），所以分三層、開跑前先估價：
+券商第一次導入時可能帶來數萬份歷史研報。每份跑完整的 LLM 派生（標註＋摘要＋標題＋摘錄＋訊號）要兩、三萬輸入 token（實測平均：標註約 6.1k、摘要 5.9k、摘錄 6.7k、標題 2.6k、訊號 9.9k），所以分三層、開跑前先估價：
 
 | 層 | 範圍 | 做什麼 | 由誰跑 |
 |---|---|---|---|
@@ -225,7 +232,7 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
 | 第二層 | `report_date` 在最近 `[backfill].recent_months` 個月內（預設 12，含窗期起點當天） | 摘要、標題、摘錄、訊號 | `scripts/backfill_tiers.py --tier 2`，一次跑完 |
 | 第三層 | 其餘：`report_date` 早於窗期，**或為 NULL** | 同第二層 | 背景補齊 `scripts/backfill_tiers.py --tier 3`（scheduler 的 `backfill-tiers`），每日上限內慢慢補 |
 
-- **`report_date` 為 NULL 歸第三層**：沒有日期的多半是檔名、內文、mtime 都推不出日期的舊檔，歸第二層會把它們當新檔付費。訊號擷取本來就不收無日期的研報。「最近 N 個月」是今天（台北時間）往前推 N 個曆月的同一天（月底夾到該月最後一天）。
+- **`report_date` 為 NULL 歸第三層**：沒有日期的多半是檔名、內文、mtime 都推不出日期的舊檔，歸第二層會把它們當新檔付費。訊號擷取本來就不收無日期的研報。「最近 N 個月」是今天（業務時區）往前推 N 個曆月的同一天（月底夾到該月最後一天）。
 - **讀取路徑維持零 LLM**：第三層還沒補到的研報，閱讀頁照常顯示原文、沒有摘錄；不會在使用者打開時即時生成。
 - **不重複付費**：`backfill_tiers.py` 不另寫派生的實作，只挑出待補的研報、分批寫成 hashes 檔，再依序叫 `generate_summaries`、`generate_titles`、`extract_takeaways`（`--hashes-file`）與 `extract_signals`（`--hashes-file`＋`--limit`）。各批次照舊各自判斷已完成（`summary IS NULL`、`title IS NULL`、摘錄的版本與 `text_sha256`、訊號的子集與版本）、套跳過名單、取 LLM 批次鎖，所以中斷、重跑都不會重付。挑候選時也套同一份跳過名單（每項任務各一段 `llm_failures.skip_clause_sql`），內容型失敗的研報不會每輪重排。規則全文在 `app/services/backfill_tiers.py` 的模組 docstring。
 - 挑候選只看摘要、標題、摘錄；訊號只在同一份研報有其他派生要補時順帶跑（子集外的研報永遠不會有訊號列，拿它挑會讓同一批研報每輪重排）。擷取版本升級後的重跑走各批次的 `--reextract`，不經分層回填。
@@ -247,37 +254,39 @@ path = "/srv/research-inbox"  # 主機或 compose 掛上的目錄；web 也要�
    token 以字元比例估（CJK 字 ×0.8、其他非空白字元 ÷3.5，加上各任務的 prompt 開銷，每項只算它實際送出的內文前綴）。係數沒有對真實 tokenizer 量過，**未校正時請當成 ±30% 的量級**；輸出 token 與每次秒數沒有實測時用保守的預設值（表上標「預設」）。要更準就先小跑一批（下面第 4 步的 `--max-reports 50`），再帶用量檔重估：`--usage-log`（預設 `data/llm_usage.jsonl`）以同一批研報的實測 ÷ 估計得出每項任務的輸入倍率，輸出與秒數改用實測平均（每項至少 20 筆）。
 3. **客戶簽字**後跑第一層：有 metadata 側檔時走連接器（`uv run python scripts/ingest_connectors.py --force`，側檔齊全的不呼叫標註 LLM；全語料三支的 `ingest_all.py` 不讀側檔），否則 `tag_all_cli.py`＋`ingest_all.py`（「完整重跑指令」）。也可以直接讓 scheduler 的連接器輪詢（`connectors` 工作）匯入：它是分層的——本輪新研報只把第二層交給摘要、標題、摘錄，訊號與標題積壓也只補第二層（見下方「連接器排程的分層」）——但第二層的派生會跟著每一輪匯入一起跑、費用分散在匯入期間；想要「先全部匯入、看過第二層的估價再開跑」就在首次導入期間設 `SCHEDULER_DISABLE=connectors`、手動跑匯入。
 4. **第二層**：`uv run python scripts/backfill_tiers.py --tier 2 --dry-run` 先看會排入幾份、估計多少 token（不呼叫 LLM、不取鎖），再去掉 `--dry-run` 開跑。可加 `--max-reports N`、`--token-limit N` 設上限、`--chunk N`（每批份數，預設 50；批與批之間放開 LLM 批次鎖，sync 擠得進來）、`--workers N`（傳給各批次）。也可以 `make estimate ESTIMATE_ARGS="--source db …"` 對已入庫的語料重估（只計還沒做的）。
-5. **第三層（背景）**：profile 設 `[backfill].background_enabled = true`（改 profile 後重啟 scheduler），scheduler 的 `backfill-tiers` 每小時 :50 跑一輪：每輪最多 `max_reports_per_round` 份（預設 100）、每個台北日最多 `daily_token_limit` token（預設 2,000,000；輸入＋輸出），新的先、NULL 日期最後，以 `nice` 降低優先權。到上限就停、下一輪再續，換日歸零。之後開回連接器輪詢接新研報。
+5. **第三層（背景）**：profile 設 `[backfill].background_enabled = true`（改 profile 後重啟 scheduler），scheduler 的 `backfill-tiers` 每小時 :50 跑一輪：每輪最多 `max_reports_per_round` 份（預設 100）、每個業務日最多 `daily_token_limit` token（預設 2,000,000；輸入＋輸出），新的先、NULL 日期最後，以 `nice` 降低優先權。到上限就停、下一輪再續，換日歸零。之後開回連接器輪詢接新研報。
 
 ```toml
 [backfill]
 recent_months = 12            # 第二層窗期（1..240）
-background_enabled = false    # 第三層背景補齊（預設關；廷豐 profile 關）
-daily_token_limit = 2000000   # 每個台北日的 token 上限（輸入＋輸出）
+background_enabled = false    # 第三層背景補齊（預設關）
+daily_token_limit = 2000000   # 每個業務日（[locale].timezone 的日曆日）的 token 上限（輸入＋輸出）
 max_reports_per_round = 100   # 每輪最多幾份
 ```
 
 ### 連接器排程的分層（`scripts/connector_sync.py`）
 
-框架的連接器輪詢（scheduler 的 `connectors`）與廷豐的 sync 殼只差這裡（`connector_sync.FRAMEWORK_ONLY_DIFFERENCES`，`tests/test_connector_sync.py` 以白名單對帳）：
+框架的連接器輪詢（scheduler 的 `connectors`）與主機層的 sync 殼只差這裡（`connector_sync.FRAMEWORK_ONLY_DIFFERENCES`，`tests/test_connector_sync.py` 以白名單對帳）：
 
 - 本輪新入庫的研報只把 `report_date` 在窗期內的（第二層）以 `--hashes-file` 交給摘要、標題、摘錄；窗期外與 `report_date` 為 NULL 的留給第三層背景補齊。查不到本輪研報的日期（DB 錯誤）時退回不分層、照殼的行為跑，並記一行。
 - 訊號積壓（`--limit`）與標題積壓（`--limit`＋`--exclude-hashes-file` 排掉本輪全部新研報）另帶 `--min-report-date <窗期起點>`，只補第二層，不會繞過背景補齊的每日上限。
 - 所以背景補齊關著（`background_enabled = false`）時，日期早於窗期或沒有日期的新研報不會有摘要、標題、摘錄與訊號；要補就開背景補齊，或手動跑 `backfill_tiers.py --tier 3`。
 
-廷豐走 sync 殼（`scripts/sync_new_reports.sh`），不分層、行為不變。
+<!-- export-omit:begin -->廷豐走 sync 殼（`scripts/sync_new_reports.sh`），不分層、行為不變。<!-- export-omit:end -->
 
 ### 查進度、中止與續跑
 
 - **進度**：`make backfill-status`（唯讀、零 LLM）印各層的份數與各項待補數，以及今天的背景用量。背景每輪的紀錄在 scheduler 的日誌（`docker compose logs scheduler`）。
-- **每日帳**：`data/backfill/state.json`（台北日、已用 token、已處理份數）。每批跑完以 `data/llm_usage.jsonl` 裡這批研報的實測 token 入帳（重試的每一次都算）；讀不到用量檔時以估計值入帳（寧可多算），`make backfill-status` 會標出來。帳壞掉或被刪掉時視為當天還沒用。
+- **每日帳**：`data/backfill/state.json`（業務日、已用 token、已處理份數）。每批跑完以 `data/llm_usage.jsonl` 裡這批研報的實測 token 入帳（重試的每一次都算）；讀不到用量檔時以估計值入帳（寧可多算），`make backfill-status` 會標出來。帳壞掉或被刪掉時視為當天還沒用。
 - **中止**：Ctrl-C、`kill`、停 scheduler 都可以。已完成的派生已落庫，重跑同一個指令就從還沒補的接著補（各批次再判斷一次已完成，不重付）。
 - **退出碼**：0 跑完或碰到上限而停；75 鎖被佔用（另一個分層回填正在跑——編排鎖 `data/backfill/.lock`——或子批次撞上 LLM 批次鎖，本輪停下、下次再續）；2 子批次帳號／環境型中止（例如額度用完、金鑰錯）：本批 hashes 保留成 `data/backfill/retained_*.txt` 並印出各批次的 `--hashes-file` 補跑指令，排除原因後照印的指令補跑，或直接重跑 `backfill_tiers.py`（會重新挑出這批）。其他非零退出碼 best-effort：記一行、照常往下，沒補成的下次再挑。
 - 編排入口本身不呼叫 LLM、不持有 LLM 批次鎖（子批次取的是同一把，持有它會讓每個子批次撞鎖），但照 LLM 入口的規矩在取鎖前預檢金鑰（`--dry-run` 不檢）。
 
 ## 導入驗收：凍結題集、基準線與上線門檻（`scripts/draft_eval_questions.py`、`scripts/eval_gate.py`）
 
-每家券商導入時建**自己的**凍結題集，以該客戶的 LLM／judge 量出基準線，過門檻才上線。廷豐的題集 `eval/ragas_questions.json` 與基準線不搬家、不重做：`profiles/tingfong/eval/eval.toml` 以 `[questions].legacy_repo_path` 指回它，`--profile tingfong` 與不帶 `--profile` 讀到同一份檔、同一個 sha256。
+每家券商導入時建**自己的**凍結題集，以該客戶的 LLM／judge 量出基準線，過門檻才上線。<!-- export-omit:begin -->廷豐的題集 `eval/ragas_questions.json` 與基準線不搬家、不重做：`profiles/tingfong/eval/eval.toml` 以 `[questions].legacy_repo_path` 指回它，`--profile tingfong` 與不帶 `--profile` 讀到同一份檔、同一個 sha256。<!-- export-omit:end -->
+
+不帶 `--profile`／`--dataset`（`--queryset`）時，評測入口讀 repo 內建的預設題集；這份原始碼沒有內建題集時，入口直接拒絕並說明改帶 `--profile`（`eval/profile_eval.py` 的 `require_default_dataset`，`scripts/retrieval_regression.py`、`scripts/bench_load.py`、`scripts/eval_retrieval.py`、`eval/question_contract.py` 同一套），不以找不到檔案的例外收場。
 
 **profile 的評測檔**（規則在 `eval/profile_eval.py`）：
 
@@ -297,25 +306,25 @@ max_reports_per_round = 100   # 每輪最多幾份
 2. **研究員審**：逐題把 `review.status` 改成 `approved`／`rejected`／`modified`（`review.note` 自由填）。要改題目就直接改 `question`、`filters`、`category` 或 `supporting_reports` 並標 `modified`；`original` 是 LLM 原稿，不要改。改過卻標 `approved`、標 `modified` 卻沒改，凍結時都會被擋下（清單的 `edited` 才記得準）。`status --draft <待審檔>` 印進度與還缺什麼。
 3. **凍結**：`uv run python scripts/draft_eval_questions.py freeze --profile <名稱> --draft <待審檔>`。全部審完、題數與涵蓋達標才寫出凍結題集與清單；否則逐條說明缺什麼（還差幾題、哪一類不夠、哪一題不合契約），不寫任何檔。已有凍結題集時拒絕覆寫，換題要加 `--replace`，舊基準線隨之不可比。待審檔留著：參考答案要點只在那裡。
 4. **跑基準線**：`uv run python eval/run_ragas.py --profile <名稱> --corpus-id <語料快照> --complete-only --repeat 3 --checkpoint-dir <目錄> --out <結果.json>`。judge 是該客戶的模型；部署宣告的模型（Azure deployment、Anthropic、自架端點）自成量尺系譜 `declared:<模型>`，記在結果的 `summary.judge_lineage`，與其他系譜的結果 `eval_compare` 回 2。
-5. **上線驗收**：`make eval-gate PROFILE=<名稱> RESULT=<結果.json>`，**退出碼是結論**：0 通過（F>0.9、CP>0.8、AR>0.55 全過，或沒過的都在豁免清單）／1 有未豁免的指標沒過／2 不能下結論（結果有 error 或 judge 沒量到的題、題數不等於凍結題集、不是這份題集量的、跑了 `--limit`／`--scope`、judge 解讀規則版本不是現行的、量尺系譜不是 `[gate].judge_lineage`）。門檻數值是政策，profile 只能豁免、不能改數值；豁免的指標照樣印出數值與「未過（豁免）」。廷豐豁免 CP（使用者 2026-11-10 的決定，理由寫在廷豐的 `eval.toml`）。
+5. **上線驗收**：`make eval-gate PROFILE=<名稱> RESULT=<結果.json>`，**退出碼是結論**：0 通過（F>0.9、CP>0.8、AR>0.55 全過，或沒過的都在豁免清單）／1 有未豁免的指標沒過／2 不能下結論（結果有 error 或 judge 沒量到的題、題數不等於凍結題集、不是這份題集量的、跑了 `--limit`／`--scope`、judge 解讀規則版本不是現行的、量尺系譜不是 `[gate].judge_lineage`）。門檻數值是政策，profile 只能豁免、不能改數值；豁免的指標照樣印出數值與「未過（豁免）」。<!-- export-omit:begin -->廷豐豁免 CP（使用者 2026-11-10 的決定，理由寫在廷豐的 `eval.toml`）。<!-- export-omit:end -->
 6. **上線**：通過驗收的結果檔留作該客戶的基準線，之後改檢索或生成品質照舊前後各跑一次、`make eval-compare` 比。檢索回歸：profile 自帶凍結題集時，`scripts/retrieval_regression.py` 預設比那一份，容器 scheduler 的 `retrieval-regression` 工作也會自動排入——上線前先對這個部署擷取一次基準（`python scripts/retrieval_regression.py capture`），否則每日檢查回「還沒有基準」。
 
 `scripts/bench_load.py`、`eval/question_contract.py` 也接受 `--profile`（核對指紋後讀該 profile 的題集）。
 
 ## 研報上傳：收檔、worker 與審核（`UPLOAD_ENABLED` 預設關閉）
 
-管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`），兩個環境目前都沒開。開之前該主機要先裝好 worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器並走完上線步驟（`docs/production_resilience.md`「上傳 worker」；正式環境兩者都沒裝，各主機現況見 `docs/DEPLOYMENT_STATUS.md`）。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。
+管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`）<!-- export-omit:begin -->，兩個環境目前都沒開<!-- export-omit:end -->。開之前該主機要先裝好 worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器並走完上線步驟<!-- export-omit:begin -->（`docs/production_resilience.md`「上傳 worker」；正式環境兩者都沒裝，各主機現況見 `docs/DEPLOYMENT_STATUS.md`）<!-- export-omit:end -->。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。
 
 `POST /api/admin/uploads?filename=&last_modified=`（`web/routers/admin_uploads.py`，管理員＋`reports.manage`）：
 
 1. 請求是 raw body（`Content-Type: application/pdf`），不是 multipart：一次串流裡同時限長、算 hash、寫進隔離區，不另外暫存。`filename` 是原始檔名，`last_modified` 是瀏覽器 `File.lastModified`（毫秒），存成 `client_mtime`（之後 worker 用它當 `report_date` 的回退）。
 2. 依序擋：旗標（503）→ Content-Type（415）→ 檔名清理（`app/services/upload_intake.py` 的 `sanitize_filename`：去路徑成分、控制與格式字元，NFC，強制小寫 `.pdf`，≤255 字元；副檔名不對 415、清完沒主檔名 400 `invalid_filename`）→ `Content-Length` 超過 `UPLOAD_MAX_BYTES`（413）→ 隔離區可用且剩餘空間扣掉這次大小後不低於 `UPLOAD_MIN_FREE_MB`（503 `quarantine_unavailable`）→ 配額快查（429）。
 3. 落地（`app/services/quarantine.py`）：以 `O_EXCL`／`O_NOFOLLOW` 寫 `<隔離區>/incoming/<upload_id>.part`（目錄 0700、檔案 0600），邊寫邊算 SHA-256、邊計長，超過上限中止並刪 `.part`（413）；前 1024 bytes 要有 `%PDF-1.`／`%PDF-2.`、最後 1024 bytes 要有 `%%EOF`（415）；fsync 後 rename 成 `<隔離區>/<upload_id>.bin`。檔名只有 upload_id，不用使用者檔名、不帶 `.pdf`。隔離區預設 `data/quarantine/`（`UPLOAD_QUARANTINE_DIR`）。**web 不解析 PDF 內容、不連 clamd**：主動內容與加密的檢查、掃毒都是 worker 的事。
-4. 同一筆交易（`upload_intake.create_upload`，先取 `pg_advisory_xact_lock` 讓配額精確）：語料已有同 hash → 409 `upload_duplicate`（帶 `file_hash` 與它是 `hidden`／`draft`／`published`）；已有進行中的上傳 → 409 `upload_duplicate`（`existing: upload`；並發時靠 partial unique index `idx_report_upload_active_hash` 擋，撞 index 也轉成 409）；曾判感染 → 422 `upload_known_infected`；每人每日（台北時間日曆日，`UPLOAD_DAILY_QUOTA`）或全站處理中（quarantined／scanning／clean／processing，`UPLOAD_MAX_IN_FLIGHT`）超過 → 429 `upload_quota_exceeded`；INSERT `report_upload`（state `quarantined`）並寫稽核 `upload.create`（detail 只有 upload_id、檔名、大小、狀態）。任何一步失敗就 rollback 並刪掉 `.bin`；成功回 202 與上傳紀錄。
+4. 同一筆交易（`upload_intake.create_upload`，先取 `pg_advisory_xact_lock` 讓配額精確）：語料已有同 hash → 409 `upload_duplicate`（帶 `file_hash` 與它是 `hidden`／`draft`／`published`）；已有進行中的上傳 → 409 `upload_duplicate`（`existing: upload`；並發時靠 partial unique index `idx_report_upload_active_hash` 擋，撞 index 也轉成 409）；曾判感染 → 422 `upload_known_infected`；每人每日（業務時區日曆日，`UPLOAD_DAILY_QUOTA`）或全站處理中（quarantined／scanning／clean／processing，`UPLOAD_MAX_IN_FLIGHT`）超過 → 429 `upload_quota_exceeded`；INSERT `report_upload`（state `quarantined`）並寫稽核 `upload.create`（detail 只有 upload_id、檔名、大小、狀態）。任何一步失敗就 rollback 並刪掉 `.bin`；成功回 202 與上傳紀錄。
 
 `GET /api/admin/uploads?state=&limit=&offset=` 列上傳紀錄，附 `scanner` 摘要（待掃件數、掃描中件數、最舊的等待、等待中的列最近一次 `scan_last_error`），全部由 DB 推導，web 不連 clamd。`GET /api/admin/uploads/{upload_id}` 是單筆詳情，另帶語料裡同 hash 的研報與抽取品質（還沒入庫時 null）。
 
-辦公室主機對外經容器 nginx 時走 `deploy/nginx.conf` 的 `location = /api/admin/uploads`（`client_max_body_size 30m`、`proxy_request_buffering on`、讀寫逾時 120 秒）；其他路徑維持全域的 1m。改了 nginx 設定要 `make edge-reload` 才生效。
+辦公室主機對外經容器 nginx 時走 `deploy/nginx.conf` 的 `location = /api/admin/uploads`（`client_max_body_size 30m`、`proxy_request_buffering on`、讀寫逾時 120 秒）；其他路徑維持全域的 1m。改了 nginx 設定要 `make edge-reload` 才生效。 <!-- export-omit -->
 
 ### 上傳 worker（`scripts/process_uploads.sh`／`.py`＋`app/services/upload_worker.py`）
 
@@ -361,14 +370,14 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 | 維度 | 值（逐字） |
 |---|---|
-| `market` | `TW`、`US`、`HK`、`CN`、`FX`、`WTX`、`MACRO`、`GLOBAL`、`CRYPTO`（`tests/test_tagging.py` 逐字釘住的標準市場代碼；與 findb 對齊是廷豐 profile 的跨 repo 契約。profile 只能選使用者端的子集與改顯示名稱，見 `app/profile.py`） |
+| `market` | `TW`、`US`、`HK`、`CN`、`FX`、`WTX`、`MACRO`、`GLOBAL`、`CRYPTO`（`tests/test_tagging.py` 逐字釘住的標準市場代碼；<!-- export-omit:begin -->與 findb 對齊是廷豐 profile 的跨 repo 契約。<!-- export-omit:end -->profile 只能選使用者端的子集與改顯示名稱，見 `app/profile.py`） |
 | `MARKET_DISPLAY` | 台股、美股、港股、陸股、外匯、台指期、總經、全球、加密 |
 | `LEGACY_TO_FINDB` | 台股→TW、美股→US、港股→HK、陸股→CN、外匯→FX、期貨→WTX、總體經濟→MACRO、多元配置→GLOBAL、債券→MACRO、原物料→GLOBAL |
 | `instrument_types` | `equity`、`index`、`futures`、`options`、`etf`、`bond`、`fx`、`commodity`、`crypto` |
 | `futures_targets` | 台指期、小型台指、電子期、金融期、個股期貨、其他 |
-| `stock_targets` | 個股代號，最多 8 個，去重保序。格式由 profile 的 `[instruments]` 宣告（`[instruments.code_formats.<市場>]`：`kind = "digits"` 純數字或 `"letters"` 大寫字母 ticker，加長度；字母代號轉大寫），標註結果只留符合其一者（各市場格式的聯集，不看研報的市場）。廷豐 profile（與 section 缺席時）只收正好 4 碼數字。標註 prompt 不變、只要求 4 碼代碼；側檔的 `stock_targets` 不經這道驗證（是來源方宣告的值） |
-| `doc_type`（文件類型，`research_report.doc_type`） | 標註器產生 `research`（`is_research=true`）、`non_research`（`is_research=false`）（`tagging.DOC_TYPE_RESEARCH`／`DOC_TYPE_NON_RESEARCH`）。詞彙與各類型啟用的功能由 profile 的 `[doc_types]` 宣告（`app/profile.py`；功能清單 `DOC_FEATURES`，各功能管到哪些查詢見 `app/services/doc_types.py` docstring），DB 只限形狀 `^[a-z][a-z0-9_]{0,31}$`。廷豐 profile：`research` 全開、`non_research` 全關 |
-| `source`（發行機構） | 名單由 profile 的 `[sources].catalog` 提供（廷豐：`profiles/tingfong/sources.toml`，代碼如 `kgi`、`masterlink`、`sinopac`、`yuanta`、`morgan_stanley`）：`filename_tokens` 由檔名代碼正規化、`text_signatures`／`fallback_signatures` 從內文補、`display` 給顯示名；判定順序是 `filename.resolve_source`（內文指紋 → 檔名 token → fallback 指紋）。沒有名單的 profile 不從檔名或內文推斷（只靠側檔的 `source`），顯示名稱就是代碼本身 |
+| `stock_targets` | 個股代號，最多 8 個，去重保序。格式由 profile 的 `[instruments]` 宣告（`[instruments.code_formats.<市場>]`：`kind = "digits"` 純數字或 `"letters"` 大寫字母 ticker，加長度；字母代號轉大寫），標註結果只留符合其一者（各市場格式的聯集，不看研報的市場）。section 缺席時只收正好 4 碼數字。標註 prompt 的代號說明（各市場的格式與範例、`stock_targets` 的格式要求、輸出格式的範例代號）由同一份格式產生（`tagging.tag_instruction`），其餘文字固定、profile 不能覆寫<!-- export-omit:begin -->，廷豐渲染出的全文與框架化之前逐字相同（`tests/test_instrument_prompts.py`）<!-- export-omit:end -->；側檔的 `stock_targets` 不經這道驗證（是來源方宣告的值） |
+| `doc_type`（文件類型，`research_report.doc_type`） | 標註器產生 `research`（`is_research=true`）、`non_research`（`is_research=false`）（`tagging.DOC_TYPE_RESEARCH`／`DOC_TYPE_NON_RESEARCH`）。詞彙與各類型啟用的功能由 profile 的 `[doc_types]` 宣告（`app/profile.py`；功能清單 `DOC_FEATURES`，各功能管到哪些查詢見 `app/services/doc_types.py` docstring），DB 只限形狀 `^[a-z][a-z0-9_]{0,31}$`。section 缺席時 `research` 全開、`non_research` 全關 |
+| `source`（發行機構） | 名單由 profile 的 `[sources].catalog` 提供<!-- export-omit:begin -->（廷豐：`profiles/tingfong/sources.toml`，代碼如 `kgi`、`masterlink`、`sinopac`、`yuanta`、`morgan_stanley`）<!-- export-omit:end -->：`filename_tokens` 由檔名代碼正規化、`text_signatures`／`fallback_signatures` 從內文補、`display` 給顯示名；判定順序是 `filename.resolve_source`（內文指紋 → 檔名 token → fallback 指紋）。沒有名單的 profile 不從檔名或內文推斷（只靠側檔的 `source`），顯示名稱就是代碼本身 |
 | `report_type` | 檔名解析 |
 
 ## Web API 契約
@@ -387,7 +396,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 ### 健康端點 `GET /healthz/llm`（只回答本機直連）
 
-回 `{"llm": state}`；只給本機探針 `scripts/check_web_health.sh` 用（503 一律退出碼 8），經邊緣一律 404。打目前 `LLM_PROVIDER` 的模型清單端點（不計費；OpenAI 族 `GET /models`、Azure `GET /openai/models?api-version=…`、Anthropic `GET /v1/models`）：各家都沒有餘額 API，所以只判斷端點與金鑰，沒有「快用完」的預警（預算告警在各供應商後台設定）。
+回 `{"llm": state}`；<!-- export-omit:begin -->只給本機探針 `scripts/check_web_health.sh` 用（503 一律退出碼 8），<!-- export-omit:end -->經邊緣一律 404。打目前 `LLM_PROVIDER` 的模型清單端點（不計費；OpenAI 族 `GET /models`、Azure `GET /openai/models?api-version=…`、Anthropic `GET /v1/models`）：各家都沒有餘額 API，所以只判斷端點與金鑰，沒有「快用完」的預警（預算告警在各供應商後台設定）。
 
 | state | HTTP | 條件 |
 |---|---|---|
@@ -415,7 +424,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 | 401 | `api_key_invalid` | 不是 `Bearer <key>` 形式、格式不符、查無、已停用、已輪替掉的舊金鑰——刻意同一個回應 |
 | 403 | `api_scope_missing` | 金鑰沒有該端點要的 scope |
 | 429 | `api_rate_limited` | 超過每分鐘上限（`Retry-After`：補到一個名額的秒數） |
-| 429 | `api_quota_exceeded` | 超過每日額度（`Retry-After`：到台北隔日 0 點的秒數） |
+| 429 | `api_quota_exceeded` | 超過每日額度（`Retry-After`：到業務時區隔日 0 點的秒數） |
 | 404 | `report_not_found` | file-url：查無、被隱藏、草稿、不在授權範圍、`report_id` 不是 UUID——刻意同一個回應 |
 | 404 | `original_not_found` | file-url：研報沒有原檔物件，或站台不是物件儲存模式（local 不產生對外 URL） |
 | 503 | `original_unavailable` | file-url：物件指標或 sha256 對不上、物件儲存無法使用 |
@@ -427,7 +436,7 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 **上傳**：`POST /external/v1/uploads` 的檔案進上一節的上傳流程（隔離區 → 預檢與 ClamAV → worker 入庫成草稿 → 管理員發布），不直接入庫；收檔步驟與 `POST /api/admin/uploads` 相同，差別是上傳者記成 API 用戶端（`report_upload.api_client_id`，`uploaded_by` 為 NULL；管理後台的上傳清單顯示「API：<用戶端名稱>」）、每日份數依用戶端計（`UPLOAD_DAILY_QUOTA`，帳號的個人覆寫不適用）、重複的檔案一律 409 `upload_duplicate`（不說它在語料裡是已發布、草稿還是隱藏）。`GET /external/v1/uploads/{upload_id}` 只查得到同一個用戶端收進來的上傳，狀態收斂成 `processing`／`pending_review`／`published`／`rejected`（`web/routers/external.py` 的 `EXTERNAL_UPLOAD_STATUS`），不回掃描特徵、失敗細節與決策原因。對外上傳不收 metadata 側檔（側檔只走輪詢型連接器）。
 
-**限流與額度**：每分鐘上限是每個用戶端一個 token bucket（容量＝`rate_limit_per_min`，每秒補 1/60），狀態在 web 行程記憶體、重啟即滿；管理員調低上限下一個請求就生效。被限流擋下的請求不碰 DB、不計入每日額度。每日額度（`daily_quota`）以**台北時間的日曆日**計，台北 0 點（UTC 16:00）重置；通過限流的請求不論結果都計入當日計數（含額度用完後被拒的那幾次）。
+**限流與額度**：每分鐘上限是每個用戶端一個 token bucket（容量＝`rate_limit_per_min`，每秒補 1/60），狀態在 web 行程記憶體、重啟即滿；管理員調低上限下一個請求就生效。被限流擋下的請求不碰 DB、不計入每日額度。每日額度（`daily_quota`）以**業務時區（profile 的 `[locale].timezone`）的日曆日**計，該時區 0 點重置；通過限流的請求不論結果都計入當日計數（含額度用完後被拒的那幾次）。
 
 **授權範圍（entitlement）**：allowlist、fail-closed。`market` 必填；`source`／`report_type`／`instrument_type` 沒設定＝不限；維度內 OR、維度間 AND；研報在有設定的維度為 NULL 一律不符。用戶端看得到的研報＝可見（未隱藏、已發布）**且**在授權範圍內，兩個條件都在 SQL 裡（dense 與字面兩路都下推，不在 Python 事後過濾）。搜尋請求帶的 `market`／`source`／`report_type`／`instrument_type` 各是一個值，只能把該維度縮小成那一個值、且該值必須在授權清單內（`instrument_type` 也一樣，不靠陣列重疊放寬）；任一維度交集為空直接回空結果，不打檢索。file-url 不信任先前的搜尋結果，每次重新以可見性＋授權範圍查那一篇。
 
@@ -452,7 +461,7 @@ bucket 裡的前綴：
 | `inbox/` | 辦公室主機推給 EC2 的新檔（相對路徑＋mtime），可覆寫 | `scripts/r2_inbox.py push`；`originals/` 不能代替它（沒有檔名與 mtime） |
 | `beacons/` | 主機信標 `beacons/<名稱>.json`，每次發布整份取代 | `scripts/publish_host_beacon.py` |
 
-監控分兩層：`/healthz` 不探 R2，bucket／憑證層級的失效由健康探針經 `/healthz/storage` 偵測（`scripts/check_web_health.sh` 退出碼 6，約 5 分鐘內）；個別物件缺漏靠 `report-mark-r2-reconcile.timer`（每週一 07:00，`scripts/reconcile_object_storage.py`，唯讀）對帳並接告警鏈。
+監控分兩層：`/healthz` 不探 R2，bucket／憑證層級的失效由健康探針經 `/healthz/storage` 偵測<!-- export-omit:begin -->（`scripts/check_web_health.sh` 退出碼 6，約 5 分鐘內）<!-- export-omit:end -->；個別物件缺漏靠 `report-mark-r2-reconcile.timer`（每週一 07:00，`scripts/reconcile_object_storage.py`，唯讀）對帳並接告警鏈。
 
 對帳結果的判讀：`unkeyed`、`key_mismatch`、`errors` 讓退出碼為 1 並告警，其餘只計數（管理後台「資料健康」列為 warn）。orphan 掃描只看 `originals/` 前綴；`--limit` 會讓 orphan 判定略過（沒讀完全部 DB 列就不判 orphan）。
 
@@ -460,7 +469,7 @@ bucket 裡的前綴：
 - **`LOCAL_REPLACED`**（只印出、不計數）：券商以同檔名重發研報，新檔另成一篇研報（新 hash、自己的 key）。那個路徑上已不是這一列的內容，所以不拿它比對；R2 物件仍以 DB 的 `file_hash` 驗證。
 - **orphan**：指「這次連的 DB」沒有對應列。bucket 是兩個環境共用的，它可能是只有對方入庫的研報——兩邊各自同步，券商換版的時間差會讓兩邊入到不同版本。封存或刪除前要查過每一個寫這個 bucket 的 DB。
 
-瀏覽器端兩個前提：bucket 要設 CORS（只開 GET／HEAD；規則檔 `deploy/r2-cors-research.json`），沒設就閱讀頁 PDF 檢視器整頁靜默失敗、伺服器零錯誤；presign 一律帶 `filename`（key 是 hash，跨來源 302 後 `<a download>` 失效）。
+瀏覽器端兩個前提：bucket 要設 CORS<!-- export-omit:begin -->（只開 GET／HEAD；規則檔 `deploy/r2-cors-research.json`）<!-- export-omit:end -->，沒設就閱讀頁 PDF 檢視器整頁靜默失敗、伺服器零錯誤；presign 一律帶 `filename`（key 是 hash，跨來源 302 後 `<a download>` 失效）。
 
 ## 完整重跑指令
 
@@ -480,18 +489,18 @@ make summaries
 make titles
 make brief
 
-# 手動跑一輪同步（部署主機）：經 unit 才會載入 /etc/default/report-mark-sync
-sudo systemctl start report-mark-sync.service
-# make sync-once 直接跑殼、不載入那個環境檔（EXTRACTOR、SYNC_INBOX_PUSH、R2_* 都退回程式預設），不要拿來代替上面那一行
+# 手動跑一輪同步（部署主機）：經 unit 才會載入 /etc/default/report-mark-sync  # export-omit
+sudo systemctl start report-mark-sync.service  # export-omit
+# make sync-once 直接跑殼、不載入那個環境檔（EXTRACTOR、SYNC_INBOX_PUSH、R2_* 都退回程式預設），不要拿來代替上面那一行  # export-omit
 ```
 
 ## 排錯
 
 | 症狀 | 看哪裡 |
 |---|---|
-| 問答每題回「帳號異常」／「設定有誤」 | `/healthz/llm`（`scripts/check_web_health.sh` rc=8）與 web 日誌的啟動自檢（金鑰、白名單外的模型名、`ASK_ENABLE_WEB`）；處置見 `docs/production_resilience.md` |
-| 原檔下載／PDF 檢視全數 503，其餘正常 | R2 bucket 或憑證（repo root `.env` 與 `/etc/default/report-mark-sync` 兩份要逐字相同）；`scripts/check_web_health.sh` rc=6 就是這個，細節在 web 日誌的「healthz 物件儲存探測失敗」 |
-| 摘要、摘錄無聲漏跑 | `make llm-blocked`（跳過名單）與各批次 `*_failures.log`；LLM 帳號狀態看 `scripts/check_web_health.sh` rc=8 |
+| 問答每題回「帳號異常」／「設定有誤」 | `/healthz/llm`<!-- export-omit:begin -->（`scripts/check_web_health.sh` rc=8）<!-- export-omit:end -->與 web 日誌的啟動自檢（金鑰、白名單外的模型名、`ASK_ENABLE_WEB`）<!-- export-omit:begin -->；處置見 `docs/production_resilience.md`<!-- export-omit:end --> |
+| 原檔下載／PDF 檢視全數 503，其餘正常 | R2 bucket 或憑證<!-- export-omit:begin -->（repo root `.env` 與 `/etc/default/report-mark-sync` 兩份要逐字相同）；`scripts/check_web_health.sh` rc=6 就是這個，<!-- export-omit:end -->細節在 web 日誌的「healthz 物件儲存探測失敗」 |
+| 摘要、摘錄無聲漏跑 | `make llm-blocked`（跳過名單）與各批次 `*_failures.log`<!-- export-omit:begin -->；LLM 帳號狀態看 `scripts/check_web_health.sh` rc=8<!-- export-omit:end --> |
 | 批次 rc=75 | 撞 LLM 批次鎖，不是錯誤；`make freshness` 判是否停更 |
 | 每個查詢 500 但登入正常 | DB 沒起來（假活著），打 `/healthz` 不看 `systemctl is-active` |
 | `/api/progress` 回 422 | router 檔輔助函式夾在裝飾器與 handler 之間 |
@@ -500,5 +509,5 @@ sudo systemctl start report-mark-sync.service
 | 訊號大量 `rejected` | `data/signal_failures.log` 每列的原因：`API[<kind>]` 是呼叫失敗（逾時、過載多半是供應商端暫時的，下一輪會重打），「回應不是合法 JSON」之類是有回應但不能用（連續 3 輪進跳過名單，`make llm-blocked`）；不是資料壞 |
 | `make db-audit` 紅 | `fsync=off` 殘留（`make restore-durability`）、孤兒列、`content_norm` 漂移 |
 | 評測退出碼 3 | 新指標未在 `scripts/eval_compare.py` 的 `METRIC_SPECS` 補方向 |
-| 評測退出碼 2，訊息是「量尺只有 … 有記錄」 | 一邊是記錄量尺之前的舊結果檔（例如 `eval/baselines/baseline-2026-09-02.json`）；兩邊都用同一版 `eval/run_ragas.py` 重跑，不是放寬比較器 |
-| 正式環境沒有新研報但 sync rc=0 | 來源在辦公室主機：看 `/healthz/feed`（`scripts/check_feed_health.sh`）與管理後台「維運 → 來源主機」；處置見 `docs/production_resilience.md`「來源主機信標」 |
+| 評測退出碼 2，訊息是「量尺只有 … 有記錄」 | 一邊是記錄量尺之前的舊結果檔<!-- export-omit:begin -->（例如 `eval/baselines/baseline-2026-09-02.json`）<!-- export-omit:end -->；兩邊都用同一版 `eval/run_ragas.py` 重跑，不是放寬比較器 |
+| 正式環境沒有新研報但 sync rc=0 | 來源在辦公室主機：看 `/healthz/feed`（`scripts/check_feed_health.sh`）與管理後台「維運 → 來源主機」；處置見 `docs/production_resilience.md`「來源主機信標」 <!-- export-omit --> |

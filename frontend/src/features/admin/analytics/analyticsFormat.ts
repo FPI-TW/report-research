@@ -1,5 +1,5 @@
 import type { AnalyticsCell, AnalyticsSpan, AnalyticsTopList } from '../../../lib/generated/adminApi'
-import { t } from '@/i18n'
+import { businessDate, t } from '@/i18n'
 
 /** 範圍選項（天數，含今天；分段切換用，所以值是字串）。後端上限 731 天。 */
 export const RANGES = [
@@ -48,11 +48,13 @@ export function fmtScore(v: number | null | undefined): string {
   return v == null ? '—' : v.toFixed(3)
 }
 
-/** 台北時間的今天（YYYY-MM-DD）。後端也以台北日曆日切日。 */
-export function taipeiToday(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(now)
+/** 業務時區的今天（YYYY-MM-DD）。後端也以同一個時區的日曆日切日。 */
+export function businessToday(now: Date = new Date()): string {
+  return businessDate(now)
 }
+
+/** 舊名：預設業務時區是台北時沿用。 */
+export const taipeiToday = businessToday
 
 export function addDays(iso: string, delta: number): string {
   const d = new Date(`${iso}T00:00:00Z`)
@@ -61,7 +63,7 @@ export function addDays(iso: string, delta: number): string {
 }
 
 /** 最近 N 天（含今天）的 since；until 交給後端預設（今天）。 */
-export function sinceForDays(days: number, today: string = taipeiToday()): string {
+export function sinceForDays(days: number, today: string = businessToday()): string {
   return addDays(today, -(days - 1))
 }
 

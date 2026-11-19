@@ -11,7 +11,7 @@
 - 沒有任何依使用者拆分的視圖；回應不含 user_id、帳號名稱、問題或答案文字（`tests/test_analytics_db.py` 掃描
   序列化結果）。問答原文仍只能走待複核的 `qa_content.read` 逐筆路徑。
 
-**範圍**：`since`／`until` 是台北時間的日期（含兩端）；預設最近 30 天，最多 731 天，`until` 晚於今天時截到今天，
+**範圍**：`since`／`until` 是業務時區的日期（含兩端）；預設最近 30 天，最多 731 天，`until` 晚於今天時截到今天，
 顛倒或過長 400 `invalid_params`。最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，更早讀
 `analytics_daily`（`scripts/analytics_rollup.py` 每晚寫）；回應的 `range.spans` 標示每段的來源（`live`／`rollup`），
 彙總段沒有資料的日子 `has_data=false`。`usage_daily`、`report_upload`、`admin_audit_log` 永久保存，整段直接查。
@@ -227,8 +227,8 @@ async def _serve(name: str, since: date | None, until: date | None, model, compu
     return response
 
 
-_SINCE = Query(None, description="起始日（台北時間，含）；預設 until 往前 30 天")
-_UNTIL = Query(None, description="結束日（台北時間，含）；預設今天，晚於今天時截到今天")
+_SINCE = Query(None, description="起始日（業務時區，含）；預設 until 往前 30 天")
+_UNTIL = Query(None, description="結束日（業務時區，含）；預設今天，晚於今天時截到今天")
 
 
 @router.get("/api/admin/analytics/overview", response_model=AnalyticsOverviewResponse)

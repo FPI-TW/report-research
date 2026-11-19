@@ -1,0 +1,750 @@
+# deploy/EXPORT.toml —— 交付給其他券商的框架原始碼：哪些檔案進交付物、交付版怎麼改寫、交付物怎麼驗證（機器可讀）。
+#
+# 打包工具是 scripts/export_framework.py（make export），流程與產出見 docs/FRAMEWORK_EXPORT.md。
+# 交付物＝框架；不進交付物的是廷豐專屬的東西：profiles/tingfong/、廷豐主機層（deploy/OWNERSHIP.toml 的
+# tingfong_host）、只服務廷豐主機的文件與評測資產，以及只驗那些東西的測試。
+#
+# 規則（tests/test_export_manifest.py 守，打包工具也在打包前再核一次）：
+# - deploy/、scripts/、ops_agent/ 不在這裡列：沿用 deploy/OWNERSHIP.toml（framework 進、tingfong_host 不進）。
+# - 其餘每個受版控的檔案恰好被一條規則涵蓋：[paths] 的目錄規則（以 / 結尾、不巢狀）或逐檔列出（不用萬用字元，
+#   也不重複列已被目錄規則涵蓋的檔）。新增檔案沒有歸類就紅，歸類是一個要寫下來的決定；列了但不存在的也紅。
+# - repo 根的授權聲明（LICENSE、LICENSE.md、LICENSE.txt）一律進交付物，不必列。
+# - 進交付物的檔案不得出現 [verify].forbidden 的字樣；真的非寫不可的列進 [verify.allow]，逐檔釘行數與理由。
+#   紅了是改檔案（改寫成框架用語、加 export-omit 標記或排除），不是放寬白名單。
+
+[paths]
+# 整個目錄都是框架（tests/test_framework_branding.py 掃 app/、web/、frontend/src/ 的機構名）或都不是。
+include_dirs = [
+  "app/",
+  "web/",
+  "frontend/",
+  "db/",
+  "profiles/demo/",
+]
+exclude_dirs = [
+  # 廷豐的 profile
+  "profiles/tingfong/",
+  # 廷豐語料量出的評測基準線（結果檔帶研報內容與檔名）
+  "eval/baselines/",
+]
+
+include = [
+  # repo 根
+  ".dockerignore",
+  ".env.example",
+  ".gitattributes",
+  ".gitignore",
+  ".gitleaks.toml",
+  "AGENTS.md",
+  "alembic.ini",
+  "Makefile",
+  "pyproject.toml",
+  "README.md",
+  "uv.lock",
+  # CI（交付版的檢查流程；分支保護在 GitHub 設定、不在 repo）
+  ".github/workflows/ci.yml",
+  ".github/workflows/e2e.yml",
+  # 文件（只描述框架的 living docs 與容量量測；廷豐主機的段落以 export-omit 標記）
+  "docs/ARCHITECTURE.md",
+  "docs/CAPACITY.md",
+  "docs/CONTAINER_DEPLOYMENT.md",
+  "docs/EXTERNAL_API.md",
+  "docs/EXTRACTION.md",
+  "docs/WORKFLOW.md",
+  # 評測程式與合成的對抗集
+  "eval/__init__.py",
+  "eval/dataset.py",
+  "eval/judge.py",
+  "eval/profile_eval.py",
+  "eval/qa_adversarial.py",
+  "eval/qa_adversarial_cases.json",
+  "eval/question_contract.py",
+  "eval/question_draft.py",
+  "eval/ragas_metrics.py",
+  "eval/run_ragas.py",
+  # 測試
+  "tests/conftest.py",
+  "tests/external_fakes.py",
+  "tests/fake_accounts.py",
+  "tests/fake_feature_flags.py",
+  "tests/fake_ops_agent.py",
+  "tests/fixtures/profile_framework/profile.toml",
+  "tests/fixtures/profile_framework/sources.toml",
+  "tests/fixtures/sse_events.json",
+  "tests/pdf_samples.py",
+  "tests/test_account_security.py",
+  "tests/test_accounts_db.py",
+  "tests/test_admin_analytics_api.py",
+  "tests/test_admin_api.py",
+  "tests/test_admin_api_clients.py",
+  "tests/test_admin_bulk_api.py",
+  "tests/test_admin_client_generated.py",
+  "tests/test_admin_data_health_api.py",
+  "tests/test_admin_db_api.py",
+  "tests/test_admin_diagnostics_api.py",
+  "tests/test_admin_exports_api.py",
+  "tests/test_admin_flags_api.py",
+  "tests/test_admin_mfa.py",
+  "tests/test_admin_monitoring_api.py",
+  "tests/test_admin_ops_actions_api.py",
+  "tests/test_admin_ops_api.py",
+  "tests/test_admin_reports_api.py",
+  "tests/test_admin_retrieval_regression_api.py",
+  "tests/test_admin_security_api.py",
+  "tests/test_admin_upload_review_api.py",
+  "tests/test_admin_uploads_api.py",
+  "tests/test_admin_uploads_db.py",
+  "tests/test_agentic_qa.py",
+  "tests/test_alert_webhook.py",
+  "tests/test_analytics.py",
+  "tests/test_analytics_db.py",
+  "tests/test_analyze_qa_log.py",
+  "tests/test_answer.py",
+  "tests/test_answer_trusted.py",
+  "tests/test_api_clients.py",
+  "tests/test_api_clients_db.py",
+  "tests/test_api_status.py",
+  "tests/test_ask_llm_errors.py",
+  "tests/test_ask_regenerate_edit_forwarding.py",
+  "tests/test_ask_stop_endpoint.py",
+  "tests/test_ask_web_search.py",
+  "tests/test_audit_anchor.py",
+  "tests/test_auth.py",
+  "tests/test_auth_events.py",
+  "tests/test_auth_next.py",
+  "tests/test_authz.py",
+  "tests/test_backfill_extraction.py",
+  "tests/test_backfill_report_sources.py",
+  "tests/test_backfill_tiers.py",
+  "tests/test_backfill_tiers_db.py",
+  "tests/test_backfill_tiers_script.py",
+  "tests/test_batch_http_dispatch.py",
+  "tests/test_boilerplate.py",
+  "tests/test_branding_api.py",
+  "tests/test_brief.py",
+  "tests/test_build_info.py",
+  "tests/test_business_time.py",
+  "tests/test_chunk.py",
+  "tests/test_chunk_tables.py",
+  "tests/test_ci_db_contract.py",
+  "tests/test_citation_filter.py",
+  "tests/test_clamd.py",
+  "tests/test_claude_cli.py",
+  "tests/test_claude_lock.py",
+  "tests/test_concurrency_gate.py",
+  "tests/test_config.py",
+  "tests/test_connector_sync.py",
+  "tests/test_connectors.py",
+  "tests/test_container_deploy.py",
+  "tests/test_content_norm_equivalence.py",
+  "tests/test_conversations_db.py",
+  "tests/test_create_admin.py",
+  "tests/test_csrf_errors.py",
+  "tests/test_data_health.py",
+  "tests/test_db_audit.py",
+  "tests/test_db_backup.py",
+  "tests/test_db_engine.py",
+  "tests/test_db_insights.py",
+  "tests/test_db_insights_db.py",
+  "tests/test_db_snapshot.py",
+  "tests/test_deletion_scripts.py",
+  "tests/test_demo_profile.py",
+  "tests/test_dev_ergonomics.py",
+  "tests/test_dev_mode.py",
+  "tests/test_doc_type_db.py",
+  "tests/test_doc_type_guard.py",
+  "tests/test_doc_types.py",
+  "tests/test_docs_contract.py",
+  "tests/test_embed_threading.py",
+  "tests/test_endpoint_locale_forwarding.py",
+  "tests/test_entitlement.py",
+  "tests/test_env_loading.py",
+  "tests/test_estimate_backfill.py",
+  "tests/test_eval_dataset.py",
+  "tests/test_eval_extraction.py",
+  "tests/test_eval_gate.py",
+  "tests/test_eval_judge.py",
+  "tests/test_eval_question_draft.py",
+  "tests/test_eval_readpath.py",
+  "tests/test_eval_retrieval.py",
+  "tests/test_evidence.py",
+  "tests/test_evidence_wiring.py",
+  "tests/test_external_api.py",
+  "tests/test_external_api_db.py",
+  "tests/test_external_api_doc.py",
+  "tests/test_external_auth.py",
+  "tests/test_external_uploads.py",
+  "tests/test_extract_facade.py",
+  "tests/test_extract_signals_sql.py",
+  "tests/test_extract_takeaways_sql.py",
+  "tests/test_extraction_cache.py",
+  "tests/test_extraction_layout.py",
+  "tests/test_extraction_layout_v4.py",
+  "tests/test_extraction_log.py",
+  "tests/test_extraction_log_db.py",
+  "tests/test_extraction_model.py",
+  "tests/test_extraction_quality.py",
+  "tests/test_extraction_quality_v4.py",
+  "tests/test_failures_to_delta.py",
+  "tests/test_faithfulness.py",
+  "tests/test_faithfulness_qa.py",
+  "tests/test_fake_llm.py",
+  "tests/test_feature_flag_gates.py",
+  "tests/test_feature_flags.py",
+  "tests/test_feature_flags_db.py",
+  "tests/test_filename.py",
+  "tests/test_followups.py",
+  "tests/test_frontend_vocab_sync.py",
+  "tests/test_healthz.py",
+  "tests/test_healthz_feed.py",
+  "tests/test_healthz_llm.py",
+  "tests/test_healthz_security.py",
+  "tests/test_host_beacon.py",
+  "tests/test_ingest_all_object_storage.py",
+  "tests/test_ingest_connectors.py",
+  "tests/test_ingest_core.py",
+  "tests/test_ingest_core_db.py",
+  "tests/test_instrument_prompts.py",
+  "tests/test_json_logging.py",
+  "tests/test_judge_http.py",
+  "tests/test_judge_schema.py",
+  "tests/test_lexical_determinism_db.py",
+  "tests/test_license_guard.py",
+  "tests/test_llm.py",
+  "tests/test_llm_env_loading.py",
+  "tests/test_llm_failures.py",
+  "tests/test_llm_http.py",
+  "tests/test_llm_http_json.py",
+  "tests/test_llm_models.py",
+  "tests/test_llm_providers.py",
+  "tests/test_llm_startup_check.py",
+  "tests/test_locale.py",
+  "tests/test_logging_setup.py",
+  "tests/test_login_i18n.py",
+  "tests/test_login_page.py",
+  "tests/test_lost_anchors_to_delta.py",
+  "tests/test_measure_baseline.py",
+  "tests/test_metrics.py",
+  "tests/test_migrate_object_storage.py",
+  "tests/test_monitor_http.py",
+  "tests/test_object_storage.py",
+  "tests/test_oidc_login.py",
+  "tests/test_opencode_go.py",
+  "tests/test_ops_monitoring_db.py",
+  "tests/test_ops_rollup.py",
+  "tests/test_ops_rollup_db.py",
+  "tests/test_ops_topology.py",
+  "tests/test_original_file_url.py",
+  "tests/test_overview.py",
+  "tests/test_passwords.py",
+  "tests/test_pdf_preflight.py",
+  "tests/test_pre_split_guards.py",
+  "tests/test_presign_ttl.py",
+  "tests/test_profile.py",
+  "tests/test_profile_eval.py",
+  "tests/test_progress_authz.py",
+  "tests/test_qa_adversarial_eval.py",
+  "tests/test_qa_history_api.py",
+  "tests/test_qa_isolation.py",
+  "tests/test_qa_isolation_db.py",
+  "tests/test_quarantine.py",
+  "tests/test_query_planner.py",
+  "tests/test_quota.py",
+  "tests/test_quota_api.py",
+  "tests/test_quota_db.py",
+  "tests/test_radar_api.py",
+  "tests/test_radar_compute.py",
+  "tests/test_radar_contract.py",
+  "tests/test_radar_queries.py",
+  "tests/test_radar_scale.py",
+  "tests/test_ragas_metrics.py",
+  "tests/test_rating_index.py",
+  "tests/test_reading_anchor.py",
+  "tests/test_reading_api.py",
+  "tests/test_reading_queries.py",
+  "tests/test_readyz.py",
+  "tests/test_reconcile_object_storage.py",
+  "tests/test_repair_signal_values.py",
+  "tests/test_report_file_api.py",
+  "tests/test_report_visibility_db.py",
+  "tests/test_request_log.py",
+  "tests/test_rerank.py",
+  "tests/test_retrieval_cjk_fallback.py",
+  "tests/test_retrieval_entitlement_sql.py",
+  "tests/test_retrieval_pipeline.py",
+  "tests/test_retrieval_rank.py",
+  "tests/test_retrieval_regression.py",
+  "tests/test_review_api.py",
+  "tests/test_review_db.py",
+  "tests/test_review_extraction_golden.py",
+  "tests/test_router_helpers.py",
+  "tests/test_rows.py",
+  "tests/test_run_ingest_object_storage.py",
+  "tests/test_run_ragas.py",
+  "tests/test_schema_baseline.py",
+  "tests/test_schema_constraints.py",
+  "tests/test_schema_drift_check.py",
+  "tests/test_schema_migrations.py",
+  "tests/test_scope_router.py",
+  "tests/test_search_api.py",
+  "tests/test_secret_scan_config.py",
+  "tests/test_security_ops.py",
+  "tests/test_security_ops_db.py",
+  "tests/test_security_retention.py",
+  "tests/test_select_reports.py",
+  "tests/test_server_startup.py",
+  "tests/test_server_stats.py",
+  "tests/test_signal_extract.py",
+  "tests/test_spa_serving.py",
+  "tests/test_sql_bind_casts.py",
+  "tests/test_sql_index_hygiene.py",
+  "tests/test_sse_event_contract.py",
+  "tests/test_sse_heartbeat.py",
+  "tests/test_store.py",
+  "tests/test_store_sql.py",
+  "tests/test_stream_sentinel.py",
+  "tests/test_summary.py",
+  "tests/test_sync_ingested_hashes.py",
+  "tests/test_tagging.py",
+  "tests/test_takeaways_hashes_file.py",
+  "tests/test_titles.py",
+  "tests/test_totp.py",
+  "tests/test_trusted_market_data.py",
+  "tests/test_ttl_cache.py",
+  "tests/test_upload_review.py",
+  "tests/test_upload_review_db.py",
+  "tests/test_upload_worker.py",
+  "tests/test_upload_worker_db.py",
+  "tests/test_uploads_vocab.py",
+  "tests/test_usage_events.py",
+  "tests/test_usage_events_db.py",
+  "tests/test_v2_routers.py",
+  "tests/test_visibility_guard.py",
+  "tests/test_zh_hant.py",
+  "tests/test_zh_hant_streaming.py",
+  "tests/test_profile_required.py",
+  "tests/fixtures/eval_questions_synthetic.json",
+  "tests/test_ops_agent.py",
+  "tests/test_ops_agent_actions.py",
+  "tests/test_ops_agent_template.py",
+]
+
+exclude = [
+  # 源頭 repo 的 gitleaks 豁免：逐筆釘的是本 repo 歷史裡的 commit 指紋，交付物沒有這段歷史
+  ".gitleaksignore",
+  # 交付流程本身（源頭 repo 專用）
+  "docs/FRAMEWORK_EXPORT.md",
+  "tests/test_export_manifest.py",
+  # 廷豐主機的部署現況與維運程序
+  "docs/DEPLOYMENT_STATUS.md",
+  "docs/EXTERNAL_ACCESS.md",
+  "docs/LINEBOT_ALWAYS_ON.md",
+  "docs/nas_scheduled_sync_deployment.md",
+  "docs/production_resilience.md",
+  # 廷豐語料量出的抽取 golden set（逐字摘自研報）與檢索前後比較結果；基準線在上面的目錄規則
+  "eval/after.json",
+  "eval/before.json",
+  "eval/extraction_dataset.json",
+  # 廷豐的凍結題集與檢索標註集（不帶 --profile 時的預設題集）：交付版的入口沒有預設，要帶 --profile 或 --dataset／--queryset
+  "eval/queryset-entity.json",
+  "eval/queryset.json",
+  "eval/ragas_questions.json",
+  # 只驗廷豐主機層的測試（unit、探針、事件、主機的維運代理 unit 與 catalog、polkit、sync 殼、信標、R2 inbox、主機監控、歸屬清單）
+  "tests/test_alert_script.py",
+  "tests/test_batch_freshness.py",
+  "tests/test_clamav_deploy.py",
+  "tests/test_container_host_probes.py",
+  "tests/test_deploy_units.py",
+  "tests/test_edge_health_probe.py",
+  "tests/test_ensure_backup_mount.py",
+  "tests/test_feed_health_probe.py",
+  "tests/test_framework_branding.py",
+  "tests/test_incident_handler.py",
+  "tests/test_load_observations.py",
+  "tests/test_oneshot_verification.py",
+  "tests/test_ops_agent_units.py",
+  "tests/test_ops_polkit.py",
+  "tests/test_ownership.py",
+  "tests/test_pipeline_heartbeat.py",
+  "tests/test_publish_host_beacon.py",
+  "tests/test_r2_inbox.py",
+  "tests/test_resource_metrics.py",
+  "tests/test_security_health_probe.py",
+  "tests/test_sync_new_reports.py",
+  "tests/test_sync_replay.py",
+  "tests/test_sync_timer_persistence.py",
+  "tests/test_web_health_probe.py",
+  # 釘廷豐 profile 的值（prompt 全文、鎏金色票、發行機構名單、LLM 送出的身分與請求 golden）或廷豐評測資產的測試
+  "tests/fixtures/llm_wire_golden.json",
+  "tests/fixtures/instrument_prompts_tingfong.json",
+  "tests/fixtures/profile_prompts_tingfong.json",
+  "tests/fixtures/tingfong_sources_golden.json",
+  "tests/test_brand_accent.py",
+  "tests/test_eval_compare.py",
+  "tests/test_llm_identity.py",
+  "tests/test_profile_prompts.py",
+  "tests/test_source.py",
+  "tests/test_sources_catalog.py",
+  "tests/test_eval_question_contract.py",
+]
+
+[markers]
+# 交付版要刪掉的行、區塊或行內片段以 export-omit 註解標記（語法見 docs/FRAMEWORK_EXPORT.md）。
+# 有標記的檔案必須列在這裡、列在這裡的檔案必須有標記，兩邊對帳。
+files = [
+  "tests/test_ops_agent_actions.py",
+  "tests/test_ops_agent.py",
+  ".env.example",
+  "AGENTS.md",
+  "docs/ARCHITECTURE.md",
+  "docs/CAPACITY.md",
+  "docs/CONTAINER_DEPLOYMENT.md",
+  "docs/EXTRACTION.md",
+  "docs/WORKFLOW.md",
+  "Makefile",
+  "README.md",
+  "tests/test_analytics.py",
+  "tests/test_auth.py",
+  "tests/test_backfill_extraction.py",
+  "tests/test_branding_api.py",
+  "tests/test_claude_lock.py",
+  "tests/test_connector_sync.py",
+  "tests/test_connectors.py",
+  "tests/test_container_deploy.py",
+  "tests/test_db_audit.py",
+  "tests/test_db_backup.py",
+  "tests/test_db_snapshot.py",
+  "tests/test_docs_contract.py",
+  "tests/test_eval_extraction.py",
+  "tests/test_eval_gate.py",
+  "tests/test_external_auth.py",
+  "tests/test_healthz_llm.py",
+  "tests/test_ingest_core.py",
+  "tests/test_instrument_prompts.py",
+  "tests/test_llm_providers.py",
+  "tests/test_metrics.py",
+  "tests/test_ops_monitoring_db.py",
+  "tests/test_ops_rollup.py",
+  "tests/test_ops_rollup_db.py",
+  "tests/test_ops_topology.py",
+  "tests/test_profile.py",
+  "tests/test_profile_eval.py",
+  "tests/test_retrieval_regression.py",
+  "tests/test_run_ragas.py",
+  "tests/test_schema_drift_check.py",
+  "tests/test_security_retention.py",
+  "tests/test_takeaways_hashes_file.py",
+  "tests/test_totp.py",
+]
+
+# 交付版的逐字替換：每條的 old 在該檔裡必須恰好出現一次（對不上就拒絕打包）。
+[[rewrite]]
+file = ".env.example"
+old = """# (選用)部署 profile 的目錄(機構名、品牌、prompt 稱謂、市場子集;格式見 app/profile.py)。
+# 不設＝profiles/tingfong;"""
+new = """# (必填)部署 profile 的目錄(機構名、品牌、prompt 稱謂、市場子集;格式見 app/profile.py)。
+# 沒設 web 與批次都拒絕啟動（示範 profile 是 profiles/demo）;"""
+reason = "交付版沒有預設 profile，PROFILE_DIR 必填（與 app/profile.py 的改寫一致）"
+
+[[rewrite]]
+file = ".env.example"
+old = "# PROFILE_DIR=profiles/tingfong"
+new = "# PROFILE_DIR=profiles/<自己的 profile>"
+reason = "範例值換成部署方自己的 profile"
+
+[[rewrite]]
+file = "deploy/compose/.env.example"
+old = "PROFILE_HOST_DIR=../../profiles/tingfong"
+new = "PROFILE_HOST_DIR=../../profiles/demo"
+reason = "【必填】的範例值換成交付物裡的示範 profile（部署方換成自己的）"
+
+[[rewrite]]
+file = "Makefile"
+old = "例：make eval-gate PROFILE=tingfong RESULT=eval/candidate-ragas.json"
+new = "例：make eval-gate PROFILE=acme RESULT=eval/candidate-ragas.json"
+reason = "範例的 profile 名稱（交付物沒有源頭的 profile）"
+
+[[rewrite]]
+file = "app/profile.py"
+old = 'DEFAULT_PROFILE_DIR = "profiles/tingfong"'
+new = 'DEFAULT_PROFILE_DIR = ""'
+reason = "交付物沒有 profiles/tingfong，也不替部署方挑預設：空字串＝PROFILE_DIR 必填，沒設就拋 ProfileError（web 的 lifespan、LLM 批次的 load_llm_env、容器 entrypoint 都在第一步載入而拒絕啟動）"
+
+[[rewrite]]
+file = "app/profile.py"
+old = "讀 `PROFILE_DIR`（預設 `profiles/tingfong`，"
+new = "讀 `PROFILE_DIR`（必填、沒有預設，"
+reason = "同上，說明預設值的 docstring"
+
+[[rewrite]]
+file = "eval/profile_eval.py"
+old = 'DEFAULT_PROFILE_DIR = "profiles/tingfong"'
+new = 'DEFAULT_PROFILE_DIR = ""'
+reason = "與 app/profile.py 的預設同值（tests/test_profile_eval.py 在源頭 repo 釘住兩者相同）"
+
+[[rewrite]]
+file = "tests/conftest.py"
+old = 'os.environ["PROFILE_DIR"] = ""'
+new = 'os.environ["PROFILE_DIR"] = "tests/fixtures/profile_framework"'
+reason = "源頭 repo 的測試釘的是預設 profile 的行為；交付版的預設是示範 profile（每一項都刻意與框架預設不同），測試改用只宣告機構名稱、其餘全是框架預設的測試 profile"
+
+[[rewrite]]
+file = "tests/conftest.py"
+old = "# profile（app/profile.py）：一律用預設 profile（空值＝預設）。**用賦值**："
+new = "# profile（app/profile.py）：一律用測試 profile（目錄見下）。**用賦值**："
+reason = "同上，說明這一行的註解（指的是 tests/fixtures/profile_framework/profile.toml）"
+
+[[rewrite]]
+file = "tests/test_tagging.py"
+old = '''
+# 廷豐 profile 的代號規則（golden：框架化之前寫死的「正好 4 碼數字」）。直接讀 repo 的 profile 目錄、不經
+# PROFILE_DIR，這組斷言才永遠是廷豐的。
+TF = load_profile(REPO_ROOT / "profiles" / "tingfong").instruments.normalize_code
+'''
+new = '''
+# 框架預設的代號規則（正好 4 碼數字，框架化之前寫死的值）：讀測試 profile 的目錄、不經 PROFILE_DIR。
+TF = load_profile(REPO_ROOT / "tests" / "fixtures" / "profile_framework").instruments.normalize_code
+'''
+reason = "源頭 repo 以預設 profile 的規則當 golden；預設 profile 宣告的就是框架預設（tests/test_profile.py 釘住），交付版改讀沒有 [instruments] 的測試 profile"
+
+[[rewrite]]
+file = "tests/test_demo_profile.py"
+old = 'REFERENCE = REPO_ROOT / "profiles" / "tingfong"'
+new = 'REFERENCE = REPO_ROOT / "tests" / "fixtures" / "profile_framework"'
+reason = "示範 profile 要與對照組每一項都不同；交付版沒有源頭的預設 profile，對照組改成框架預設的測試 profile（同樣全市場、背景補齊關、4 碼代號）"
+
+[[rewrite]]
+file = "tests/test_eval_gate.py"
+old = 'def _evaluate(doc: dict, profile: str | Path = "tingfong") -> gate.GateResult:'
+new = "def _evaluate(doc: dict, profile: str | Path) -> gate.GateResult:"
+reason = "預設值只給源頭 repo 的預設 profile 驗收測試用（交付版以標記移除）；交付版的呼叫端都明確指定 profile"
+
+[[rewrite]]
+file = "README.md"
+old = "框架的官方部署形態是容器（下一節）；廷豐兩台主機的 systemd 部署見[廷豐 profile 與現行部署](#廷豐-profile-與現行部署)。兩種形態共用下面幾件事："
+new = "框架的官方部署形態是容器（下一節）。不論部署在哪裡，下面幾件事都相同："
+reason = "源頭 repo 的句子指向不交付的主機部署一節"
+
+[[rewrite]]
+file = "README.md"
+old = "| `PROFILE_DIR` | `profiles/tingfong` |"
+new = "| `PROFILE_DIR` | （必填） |"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
+
+[[rewrite]]
+file = "README.md"
+old = "格式見 `app/profile.py` 的 docstring 與 `profiles/tingfong/profile.toml`。"
+new = "格式見 `app/profile.py` 的 docstring 與 `profiles/demo/profile.toml`。"
+reason = "交付物裡的範例 profile"
+
+[[rewrite]]
+file = "README.md"
+old = "以 `PROFILE_DIR` 指定，預設 `profiles/tingfong`。"
+new = "以 `PROFILE_DIR` 指定（必填，沒設就拒絕啟動；示範 profile 是 `profiles/demo`）。"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
+
+[[rewrite]]
+file = "README.md"
+old = "檔名解析、標籤詞表（標準市場代碼；廷豐 profile 與 findb 對齊）"
+new = "檔名解析、標籤詞表（標準市場代碼）"
+reason = "專案結構是程式碼區塊，不能用 HTML 註解標記"
+
+[[rewrite]]
+file = "README.md"
+old = """deploy/                   部署真相來源：container/、compose/、demo/ 是框架的容器部署，ops-agent/ 是維運代理的範本；其餘是廷豐主機層
+                          （systemd unit、nginx、edge 的 docker-compose…），逐檔歸屬見 OWNERSHIP.toml
+                          deploy/ops/：維運代理的 Service Catalog（services.prod.toml＝辦公室主機、
+                                       services.staging.toml＝EC2、services.dev.toml＝開發；檔名是歷史命名）
+                          deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
+                          deploy/aws/：EC2／RDS 的 CloudFormation
+"""
+new = """deploy/                   容器部署：container/（映像、entrypoint、排程）、compose/（docker compose）、demo/（示範環境）、
+                          ops-agent/（選配的維運代理：unit、catalog 與 polkit 範本、compose override）
+"""
+reason = "同上（程式碼區塊）；交付物的 deploy/ 只有框架的容器部署"
+
+[[rewrite]]
+file = "README.md"
+old = "＋ plugins/（插件連接器）；預設 profiles/tingfong\n"
+new = "＋ plugins/（插件連接器）；PROFILE_DIR 必填（示範：profiles/demo）\n"
+reason = "同上（程式碼區塊）"
+
+
+[[rewrite]]
+file = "README.md"
+old = "eval/                     離線評測 harness 與基準線（刻意不進 CI）"
+new = "eval/                     離線評測 harness 與預設題集（刻意不進 CI；基準線由各 profile 自己量）"
+reason = "同上（程式碼區塊）；源頭的基準線不交付"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "（廷豐用 OpenAI 官方 API 或 OpenCode Go；框架另支援"
+new = "（內建 OpenAI 官方 API 與 OpenCode Go，另支援"
+reason = "源頭的句子以機構的用法舉例"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "讀 `PROFILE_DIR`（預設 `profiles/tingfong`）的"
+new = "讀 `PROFILE_DIR`（必填、沒有預設）的"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "兩個 profile：`profiles/tingfong`（預設、正式）與 `profiles/demo`（虛構的示範券商）。後者每一項都刻意與廷豐不同"
+new = "示範 profile：`profiles/demo`（虛構的示範券商，`PROFILE_DIR=profiles/demo` 就能起）。每一項都刻意與框架預設不同"
+reason = "交付物只有示範 profile"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "證明框架不依賴廷豐的設定"
+new = "證明框架不依賴任何一家機構的設定"
+reason = "同上"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "`scripts/load_observations.py` 把收集器（`scripts/collect_resource_usage.py`）與 P5（`scripts/incident_handler.sh`）寫的本機 spool"
+new = "主機層的匯入器把收集器與事件處理（P5）寫的本機 spool"
+reason = "這三支是不交付的主機層腳本；框架只帶匯入的函式本體"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "CLI `scripts/check_batch_freshness.py` 與 `GET /api/admin/data-health` 共用；設計理由在那支腳本的 docstring"
+new = "`GET /api/admin/data-health` 以它即時判讀"
+reason = "CLI 是不交付的主機層腳本"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "；`scripts/audit_anchor.py` 每日把鏈頭寫到 NAS 並比對先前所有錨點（只有辦公室主機有 NAS，正式環境沒有錨定）"
+new = "；`scripts/audit_anchor.py` 每日把鏈頭寫到備份落點並比對先前所有錨點"
+reason = "源頭的句子描述機構主機的 NAS"
+
+[[rewrite]]
+file = "docs/ARCHITECTURE.md"
+old = "`PROFILE_DIR`（預設 `profiles/tingfong`）刻意不進"
+new = "`PROFILE_DIR`（必填、沒有預設）刻意不進"
+reason = "交付版沒有預設 profile：PROFILE_DIR 必填"
+
+[[rewrite]]
+file = "docs/WORKFLOW.md"
+old = "| `beacons/` | 主機信標 `beacons/<名稱>.json`，每次發布整份取代 | `scripts/publish_host_beacon.py` |"
+new = "| `beacons/` | 主機信標 `beacons/<名稱>.json`，每次發布整份取代 | 主機層的發布端（不在交付物） |"
+reason = "表格儲存格只有不交付的腳本名"
+
+[[rewrite]]
+file = "docs/CONTAINER_DEPLOYMENT.md"
+old = "示範 profile 與廷豐的差異："
+new = "示範 profile 與框架預設的差異："
+reason = "交付物沒有源頭的預設 profile，對照組是框架預設"
+
+[[rewrite]]
+file = "tests/test_docs_contract.py"
+old = """    "worklist_batch*.json",          # data/ 底下的執行期分批檔
+"""
+new = """    "worklist_batch*.json",          # data/ 底下的執行期分批檔
+    "report-mark-*.service",         # systemd unit 名稱：交付物不含 unit 檔，文件以它對照排程
+    "report-mark-*.timer",
+"""
+reason = "交付版的文件以 unit 名稱對照容器排程（docs/CONTAINER_DEPLOYMENT.md 的對照表等），unit 檔本身是不交付的主機層；只放行這個命名樣式"
+
+[[rewrite]]
+file = "tests/test_filename.py"
+old = """class DefaultStockCodeTests(_WithProfile):
+    \"\"\"預設 profile（＝section 缺席的框架預設）：正好 4 碼數字，行為與框架化之前的寫死正則逐字相同。\"\"\"
+
+    PROFILE = REPO_ROOT / "profiles" / "tingfong"
+"""
+new = """class DefaultStockCodeTests(_WithProfile):
+    \"\"\"預設 profile（＝section 缺席的框架預設）：正好 4 碼數字，行為與框架化之前的寫死正則逐字相同。\"\"\"
+
+    PROFILE = REPO_ROOT / "tests" / "fixtures" / "profile_framework"
+"""
+reason = "源頭的預設 profile 宣告的就是框架預設；交付版改用沒有 [instruments] 的測試 profile"
+
+[[rewrite]]
+file = "tests/test_filename.py"
+old = """預設 profile 宣告的是框架預設（框架化之前寫死的清單）。\"\"\"
+
+    PROFILE = REPO_ROOT / "profiles" / "tingfong"
+"""
+new = """預設 profile 宣告的是框架預設（框架化之前寫死的清單）。\"\"\"
+
+    PROFILE = REPO_ROOT / "tests" / "fixtures" / "profile_framework"
+"""
+reason = "同上（沒有 [filenames] 的測試 profile）"
+
+[[rewrite]]
+file = "tests/test_business_time.py"
+old = 'for name in ("tingfong", "demo"):'
+new = 'for name in ("demo",):'
+reason = "交付物只帶示範 profile"
+
+[[rewrite]]
+file = "tests/test_eval_gate.py"
+old = 'DEFAULT_SET = REPO_ROOT / "eval" / "ragas_questions.json"'
+new = 'DEFAULT_SET = REPO_ROOT / "tests" / "fixtures" / "eval_questions_synthetic.json"'
+reason = "交付物不帶源頭的預設題集；結果檔的 queryset_sha256 改以測試用的合成題集計算"
+
+[[rewrite]]
+file = "tests/test_retrieval_regression.py"
+old = "DATASET_PATH = rr.DATASET\n"
+new = """DATASET_PATH = REPO_ROOT / "tests" / "fixtures" / "eval_questions_synthetic.json"
+"""
+reason = "檢索回歸的測試素材改用合成題集（交付物不帶源頭的預設題集；題數同為 18）"
+
+[[rewrite]]
+file = "README.md"
+old = "python3 eval/question_contract.py eval/ragas_questions.json  # 零 LLM：驗題集契約並印 sha256"
+new = "python3 eval/question_contract.py --profile <名稱>    # 零 LLM：驗 profile 凍結題集的契約並印 sha256"
+reason = "交付物不帶源頭的預設題集；評測入口一律帶 --profile（程式碼區塊不能用 HTML 註解標記）"
+
+[[rewrite]]
+file = "README.md"
+old = "uv run python eval/run_ragas.py --concurrency 1   # 探索性問答評測"
+new = "uv run python eval/run_ragas.py --profile <名稱> --concurrency 1   # 探索性問答評測"
+reason = "同上"
+
+[[rewrite]]
+file = "README.md"
+old = """  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --complete-only"""
+new = """  uv run python eval/run_ragas.py --profile <名稱> --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --complete-only"""
+reason = "同上（凍結基準線的指令）"
+
+[[rewrite]]
+file = "README.md"
+old = """  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --match-baseline"""
+new = """  uv run python eval/run_ragas.py --profile <名稱> --corpus-id "$SNAPSHOT_ID" \\
+    --generator-model gpt-6-luna --judge-model gpt-6-luna --concurrency 1 --repeat 3 --rerank-top-m 16 \\
+    --match-baseline"""
+reason = "同上（候選結果的指令）"
+
+[[rewrite]]
+file = "tests/test_ops_agent.py"
+old = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, load_catalog, parse_catalog, validate_binding"
+new = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, parse_catalog, validate_binding"
+reason = "load_catalog 只給讀源頭主機 catalog 的測試（交付版以標記移除）；容器部署的範本另由 tests/test_ops_agent_template.py 驗"
+
+[[rewrite]]
+file = "tests/test_ops_agent_actions.py"
+old = "from test_ops_agent import FakeRunner, _raw, _req, _uid"
+new = "from test_ops_agent import FakeRunner, _raw, _req"
+reason = "同上：_uid 與 load_catalog 只給讀源頭主機 catalog 的測試"
+
+[[rewrite]]
+file = "tests/test_ops_agent_actions.py"
+old = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, load_catalog, parse_catalog"
+new = "from ops_agent.catalog import AgentConfig, Catalog, CatalogError, Service, parse_catalog"
+reason = "同上"
+
+[verify]
+# 交付物裡不得出現的字樣（不分大小寫；檔名與內容都掃，二進位檔掃位元組）。
+forbidden = ["廷豐", "tingfong"]
+# 提示字樣：不擋打包，驗證時逐檔列出次數，交付前由人判斷（源頭的開發者帳號、GitHub 組織、主機的稱呼）。
+advisory = ["kashionz", "FPI-TW", "辦公室主機", "EC2"]
+
+[verify.allow]

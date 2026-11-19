@@ -2,8 +2,8 @@
 
 逐點釘住每個 provider 的對應規則（llm_http 模組 docstring「各 provider 的對應規則」）：請求組裝（網址、認證 header、
 body）、串流解析、錯誤分類、usage 正規化、JSON 模式、推理強度與 temperature、白名單（內建＋設定宣告）、端點設定錯誤，
-以及批次預檢與 `/healthz/llm` 認得新 provider。另以 golden 釘住廷豐現行兩條路徑（openai、opencode_go）送出的請求與
-加入其他 provider 之前逐字相同。
+以及批次預檢與 `/healthz/llm` 認得新 provider。
+另以 golden 釘住廷豐現行兩條路徑（openai、opencode_go）送出的請求與加入其他 provider 之前逐字相同。  # export-omit
 
 全程不連網：一律以 `httpx.MockTransport` 注入（`llm_http._transport`）；金鑰只用 `fixed-test-secret-` 開頭的假值，
 而且以 `mock.patch.dict` 限定在單一測試內（conftest 把每個 provider 的金鑰強制成空字串、端點指到不可達的本機埠）。
@@ -191,6 +191,7 @@ def _outcome(items: list) -> lh.ChatOutcome:
     return items[-1]
 
 
+# export-omit:begin
 # ── golden：廷豐兩條路徑逐字不變 ─────────────────────────────────────────────
 GOLDEN = json.loads((REPO_ROOT / "tests" / "fixtures" / "llm_wire_golden.json").read_text(encoding="utf-8"))
 # httpx 自己加的 header（版本或安裝的解壓縮套件一變就不同）不是我們送的內容，不比。
@@ -236,6 +237,7 @@ class GoldenWireTests(_Case):
                     expected = {k: v for k, v in GOLDEN[prov][name].items()}
                     expected["headers"] = {k: v for k, v in expected["headers"].items() if k not in _HTTPX_OWNED}
                     self.assertEqual(_wire(self.requests[0]), expected, f"{prov}/{name}")
+# export-omit:end
 
 
 # ── 請求組裝 ─────────────────────────────────────────────────────────────────

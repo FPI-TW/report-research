@@ -28,7 +28,9 @@ from scripts import retrieval_regression as script
 REPO_ROOT = Path(__file__).resolve().parents[1]
 T0 = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
 LATER = T0 + timedelta(days=2)
-QUESTIONS, _DIGEST = load_dataset(rr.DATASET)
+# 測試素材：預設題集（run_capture／run_check 一律明確收到這份路徑，不依賴它們的預設參數）。
+DATASET_PATH = rr.DATASET
+QUESTIONS, _DIGEST = load_dataset(DATASET_PATH)
 QID_BY_TEXT = {q["question"]: q["id"] for q in QUESTIONS}
 
 
@@ -132,7 +134,7 @@ class _Tmp(unittest.TestCase):
     def _deps(self, **over):
         d = dict(settings=_settings(), session_factory=self.corpus.session, embed_fn=self.corpus.embed,
                  search_fn=self.corpus.search, available_gib_fn=lambda: 16.0, sync_running_fn=lambda: False,
-                 now_fn=lambda: self.now)
+                 now_fn=lambda: self.now, dataset_path=DATASET_PATH)
         d.update(over)
         return d
 
@@ -278,7 +280,9 @@ class BaselineFileTests(_Tmp):
         self.assertEqual(self.capture(), script.EXIT_OK)
         doc = rr.load_baseline(self.baseline)
         self.assertEqual((doc["format"], doc["version"]), (rr.BASELINE_FORMAT, rr.BASELINE_VERSION))
-        self.assertEqual(doc["dataset"], {"path": rr.DATASET_REL, "sha256": _DIGEST, "count": 18})
+        from eval import profile_eval as pe
+
+        self.assertEqual(doc["dataset"], {"path": pe.display_path(DATASET_PATH), "sha256": _DIGEST, "count": 18})
         self.assertEqual(doc["params"]["k"], 10)
         self.assertEqual(doc["params"]["dense_scan"], 400)
         self.assertEqual(data_health.parse_time(doc["corpus_cutoff"]), T0)
@@ -453,6 +457,7 @@ class CheckTests(_Tmp):
 
     def test_unexpected_error_is_rc3_not_degraded(self):
         with mock.patch.object(script, "run_check", side_effect=KeyError("boom")), \
+                mock.patch.object(script, "resolve_dataset", return_value=DATASET_PATH), \
                 mock.patch.object(rr, "baseline_path", return_value=self.baseline), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(script.main(["check"]), script.EXIT_ERROR)
@@ -471,9 +476,11 @@ class ProbeTests(unittest.TestCase):
             pid_file.write_text("garbage")
             self.assertFalse(script.sync_running(pid_file))
 
+    # export-omit:begin
     def test_sync_pid_file_matches_sync_script(self):
         sh = (REPO_ROOT / "scripts" / "sync_new_reports.sh").read_text(encoding="utf-8")
         self.assertIn(f'LOCK="{script.SYNC_PID_FILE.relative_to(REPO_ROOT).as_posix()}"', sh)
+    # export-omit:end
 
     def test_meminfo(self):
         with tempfile.TemporaryDirectory() as d:
@@ -591,24 +598,27 @@ class StaticContractTests(unittest.TestCase):
                 tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
                 self.assertFalse(_imports_llm(tree), f"{rel} import 了 LLM 呼叫層")
 
+    # export-omit:begin
     def test_reuses_the_frozen_dataset(self):
         from test_eval_question_contract import DATASET
 
         self.assertEqual(rr.DATASET, DATASET)
+    # export-omit:end
 
     def test_profile_question_sets(self):
-        """有提供才用：目前的 profile 自帶凍結題集就比那一份；廷豐（題集留在 eval/）照舊用 rr.DATASET。"""
+        """有提供才用：目前的 profile 自帶凍結題集就比那一份；沿用 repo 內 eval/ 題集的 profile 照舊用 rr.DATASET。"""
         from test_eval_question_draft import NOW, _draft
 
         from eval import profile_eval as pe
         from eval import question_draft as qd
 
-        self.assertEqual(script.resolve_dataset(None, {}), rr.DATASET)
-        self.assertEqual(script.resolve_dataset("tingfong", {}), rr.DATASET.resolve())
+        bare = {"PROFILE_DIR": "tests/fixtures/profile_framework"}  # 沒有自帶題集的 profile  # export-omit
+        self.assertEqual(script.resolve_dataset(None, bare), rr.DATASET)  # export-omit
+        self.assertEqual(script.resolve_dataset("tingfong", {}), rr.DATASET.resolve())  # export-omit
         with tempfile.TemporaryDirectory() as td:
             profile = Path(td) / "demo"
             (profile / "eval").mkdir(parents=True)
-            self.assertEqual(script.resolve_dataset(None, {"PROFILE_DIR": str(profile)}), rr.DATASET)
+            self.assertEqual(script.resolve_dataset(None, {"PROFILE_DIR": str(profile)}), rr.DATASET)  # export-omit
             raw, manifest = qd.freeze(_draft(), draft_sha256="0" * 64, profile="demo", frozen_at=NOW)
             (profile / "eval" / pe.QUESTIONS_FILE).write_bytes(raw)
             (profile / "eval" / pe.MANIFEST_FILE).write_bytes(qd.dumps(manifest))
@@ -624,6 +634,14 @@ class StaticContractTests(unittest.TestCase):
             self.assertEqual(rc, script.EXIT_ERROR)
             self.assertEqual(write.call_args.args[2], rr.REASON_DATASET_INVALID)
 
+    def test_missing_default_set_is_a_clear_error(self):
+        """這份原始碼沒帶預設題集、profile 也沒有自己的題集：拒絕並說明改帶 --profile。"""
+        from eval import profile_eval as pe
+
+        with mock.patch.object(rr, "DATASET_REL", "eval/no-such-set.json"), \
+                self.assertRaisesRegex(pe.EvalProfileError, "--profile"):
+            script.resolve_dataset(None, {"PROFILE_DIR": "tests/fixtures/profile_framework"})
+
     def test_baseline_records_the_dataset_path(self):
         doc = rr.build_baseline(questions=QUESTIONS[:1], items_by_id={}, dataset_sha256=_DIGEST, k=10, dense_scan=400,
                                 captured_at=T0, corpus_cutoff=T0, corpus_reports=1,
@@ -634,6 +652,7 @@ class StaticContractTests(unittest.TestCase):
         self.assertTrue(os.environ["RETRIEVAL_REGRESSION_BASELINE"].startswith("/nonexistent/"))
         self.assertEqual(str(rr.baseline_path()), os.environ["RETRIEVAL_REGRESSION_BASELINE"])
 
+    # export-omit:begin
     def test_unit_files(self):
         systemd = REPO_ROOT / "deploy" / "systemd"
         service = (systemd / "report-mark-retrieval-regression.service").read_text(encoding="utf-8")
@@ -655,6 +674,7 @@ class StaticContractTests(unittest.TestCase):
         # 不撞 sync（00/3 整點起跑，實測約 20 分鐘）：不在 sync 小時的前 30 分鐘內。
         self.assertFalse(int(hh) % 3 == 0 and int(mm) < 30, cal)
         self.assertIn("Persistent=false", tlive)
+    # export-omit:end
 
 
 if __name__ == "__main__":

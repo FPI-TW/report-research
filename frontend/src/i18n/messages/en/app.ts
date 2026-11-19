@@ -949,6 +949,7 @@ const messages: Messages<typeof zh> = {
   // lib/branding.ts
   'lib.branding.thisPlatform': 'this platform',
   'lib.branding.researchIntelligence': 'Research Intelligence',
+  'i18n.defaultTimeZoneLabel': 'Taipei',
 
   // lib/displayTitle.ts
   'lib.displayTitle.report': 'Report',

@@ -946,6 +946,8 @@ const messages = {
   // lib/branding.ts
   'lib.branding.thisPlatform': '本平台',
   'lib.branding.researchIntelligence': '智能研報',
+  // 預設業務時區（Asia/Taipei）在 profile 沒給地名時的地名（src/i18n 的 timeZoneLabel）。
+  'i18n.defaultTimeZoneLabel': '台北',
 
   // lib/displayTitle.ts
   'lib.displayTitle.report': '報告',

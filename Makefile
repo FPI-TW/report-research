@@ -10,9 +10,11 @@ DB_NAME ?= research
 DB_PORT ?= 5436
 Q ?= AI 伺服器散熱需求
 MARKET ?=
+# export-omit:begin
 EDGE_COMPOSE ?= deploy/docker-compose.yml
 # 上傳掃描的 clamd：獨立 compose 專案（理由見該檔檔頭），不與邊緣共用。
 CLAMAV_COMPOSE ?= deploy/clamav/docker-compose.yml
+# export-omit:end
 # eval-compare 的預設容忍值；BASE/CAND 刻意沒有預設，兩份結果檔必須由呼叫者指名
 # （三套評測的形狀不同，猜錯就是拿 RAGAS 去比檢索）。
 TOL ?= 0.03
@@ -105,6 +107,7 @@ tag-info:  ## ④ 印出 LLM 標註步驟說明
 ingest:  ## ⑤ 切塊 + BGE-M3 嵌入 + upsert pgvector（首次下載模型 ~2-4GB）
 	uv run python scripts/run_ingest.py
 
+# export-omit:begin
 ingest-lowio:  ## ⑤b 離線全量導入：關 fsync 降 I/O（僅限「沒對外服務」時用；自動還原）
 	bash scripts/ingest_lowio.sh
 
@@ -114,6 +117,7 @@ restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中
 	  -c "ALTER SYSTEM RESET full_page_writes;" \
 	  -c "ALTER SYSTEM RESET synchronous_commit;" \
 	  -c "SELECT pg_reload_conf();"
+# export-omit:end
 
 align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 	uv run python scripts/align_findb_markets.py
@@ -211,6 +215,7 @@ eval-gate:  ## 上線驗收（PROFILE=… RESULT=…；0 通過／1 有未豁免
 	  exit 2; }
 	uv run python scripts/eval_gate.py --profile "$(PROFILE)" --result "$(RESULT)"
 
+# export-omit:begin
 # ───── 對外存取（Cloudflare Tunnel + nginx）─────
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）
 	@test -f deploy/.env || { echo "缺少 deploy/.env，請複製 deploy/.env.example 並填入 TUNNEL_TOKEN"; exit 1; }
@@ -244,6 +249,7 @@ up-clamav:  ## 啟動上傳掃描用的 clamd 容器（report-mark-clamav；首�
 # 刻意不帶 -v：病毒碼 named volume 留著，下次啟動不必重抓。停掉期間上傳只會停在隔離區、不放行。
 down-clamav:  ## 停掉 clamd 容器（保留病毒碼 volume；上傳會停在隔離區）
 	$(COMPOSE) -f $(CLAMAV_COMPOSE) down
+# export-omit:end
 
 # EICAR 要 FOUND、正常 PDF 要 OK（同一條 scan()：病毒碼過舊也算失敗）。EICAR 在執行期拼出來，不落地。
 # SMOKE_PDF＝改用一份真實 PDF；rc 0 通過／1 結果不符／2 clamd 連不上。
@@ -260,20 +266,24 @@ reset-db:  ## 清空 canonical 與向量表（保留 schema）
 clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 	rm -rf data/extracted data/tags data/*.json
 
+# export-omit:begin
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
+# export-omit:end
 
 # 只備「重建不回來」的九張表（qa_log / takeaway / signal / brief / review_state / app_user / admin_audit_log / user_scope / account_deletion）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh
 
+# export-omit:begin
 # 派生資產（摘要／摘錄／訊號）停更本來沒有任何訊號會亮：sync 殼把那幾段設成
 # best-effort（失敗只 log、不 exit），所以連續失敗永遠不會讓 unit 變紅 ⇒ OnFailure
 # 一次都不觸發。純 SQL、零 LLM、零寫入，rc 0＝新鮮／1＝停更／2＝查不到（DB 不可用，
 # 處置不同故刻意分流）。平時由 report-mark-freshness.timer 每日 08:30 跑。
 freshness:  ## 管線與批次停更偵測（純 SQL、零 LLM；rc 0 PASS／1 資產停更／2 DB 查不到／3 管線停跑）
 	uv run python scripts/check_batch_freshness.py
+# export-omit:end
 
 # 與 freshness 分工：那支量「批次有沒有在前進」，這支量「已產出的資料有沒有互相
 # 矛盾」——兩個不同的問題，同一種失效型態（壞掉了但沒人會回報）。
@@ -286,6 +296,7 @@ llm-blocked:  ## 列出 LLM 批次的跳過名單（唯讀、零 LLM；--all 連
 	uv run python scripts/llm_blocked.py
 
 # ───── 硬體用量量測（上雲選型）─────
+# export-omit:begin
 # 三支都刻意用 /usr/bin/python3 而非 uv run：量測工具不得相依 .venv——
 # 理由見 scripts/collect_resource_usage.py 的 docstring（2026-08-18 的中斷根因
 # 正是 venv 損毀，相依 .venv 的量測會與被監控的東西一起死）。
@@ -297,8 +308,18 @@ metrics-collect:  ## 前景取樣（用法：make metrics-collect DURATION=3600�
 
 metrics:  ## 分析取樣結果 → 分位數與上雲選型（用法：make metrics SINCE=24h）
 	/usr/bin/python3 scripts/analyze_resource_usage.py $(if $(SINCE),--since $(SINCE),)
+# export-omit:end
 
 # **這一支會真的消耗 LLM 額度**（每題打真實 /api/ask，一題含數次 LLM 呼叫），故預設題數與併發都最小。
 # 先 --dry-run 看計畫再拿掉；跑完照它印的指令用 --bench 框窗期換算單條成本。
 metrics-bench:  ## 受控負載壓測（會用掉 LLM 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
 	/usr/bin/python3 scripts/bench_load.py $(BENCH_ARGS)
+
+# export-omit:begin
+# ───── 交付打包（源頭 repo 專用，不隨交付物）─────
+# 從 commit 產出交給其他券商的框架原始碼並在暫存目錄驗證（docs/FRAMEWORK_EXPORT.md）。
+# 內容只取自 commit，不讀工作樹；輸出預設在 data/export/。例：make export EXPORT_ARGS="--commit v1.2 --frontend"
+.PHONY: export
+export:  ## 產出框架交付物並驗證（EXPORT_ARGS="--commit … --license … --frontend"）
+	uv run python scripts/export_framework.py $(EXPORT_ARGS)
+# export-omit:end

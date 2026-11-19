@@ -204,7 +204,7 @@ class CacheSourceTests(unittest.TestCase):
         self.assertEqual(got["tiers"]["1"]["tasks"]["tag"]["calls"], 2)
         self.assertEqual(got["tiers"]["2"]["tasks"]["summary"]["calls"], 1)
         self.assertEqual(got["tiers"]["3"]["tasks"]["summary"]["calls"], 1)
-        self.assertEqual(got["background"]["daily_token_limit"], 2_000_000)  # 廷豐 profile 的預設
+        self.assertEqual(got["background"]["daily_token_limit"], 2_000_000)  # 框架預設（預設 profile 沒有改）
 
     def test_main_rejects_bad_rates(self):
         with redirect_stderr(io.StringIO()) as err:

@@ -19,7 +19,7 @@ NULL 共用歷史），在開始串流**之前**回 404——SSE 一旦送出 20
 
 **每人每日配額**（Admin v2，`app/services/quota.py`）：通過驗證、參照檢查與 `queue_full()` 之後才計一次
 `ask`（排隊滿額被拒不扣次數），所以重新生成、編輯重問都算、`/api/ask/stop` 不算。超額時：影子模式照常放行
-（`usage_counter` 記 `ask_over`）；兩道開關都開才回 429 `quota_exceeded`，`Retry-After`＝距台北午夜的秒數。
+（`usage_counter` 記 `ask_over`）；兩道開關都開才回 429 `quota_exceeded`，`Retry-After`＝距業務時區午夜的秒數。
 配額計數寫不進 DB 時放行（費用控管不是安全邊界）。與 `_ASK_GATE` 互相獨立：閘門管全站同時幾題，配額管每人每天幾題。
 """
 import logging

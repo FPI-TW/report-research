@@ -226,6 +226,8 @@ _DEFAULT_K = getattr(_answer, "RETRIEVAL_K", 8)
 
 if __name__ == "__main__":
     args = _parse_args()
+    if not Path(args.queryset).is_file():
+        sys.exit(f"讀不到檢索標註集 {args.queryset}：以 --queryset 指定（這份原始碼沒有預設的標註集時必填）")
     asyncio.run(
         main(
             args.queryset, args.k, args.as_of, args.max_age_days, args.json, args.case

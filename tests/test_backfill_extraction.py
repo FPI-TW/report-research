@@ -304,6 +304,7 @@ class StoreTests(unittest.TestCase):
         self.assertIn("needs_review = true", src)
 
 
+# export-omit:begin
 class UnitContractTests(unittest.TestCase):
     def test_units_exist(self):
         self.assertTrue(SERVICE.is_file() and TIMER.is_file())
@@ -333,6 +334,7 @@ class UnitContractTests(unittest.TestCase):
     def test_sync_env_example_switches_extractor(self):
         env = SYSTEMD / "report-mark-sync.env.example"
         self.assertEqual(_directives(env, "EXTRACTOR"), ["pdfplumber"])
+# export-omit:end
 
 
 if __name__ == "__main__":

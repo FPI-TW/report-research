@@ -85,6 +85,7 @@ class CliArgTests(unittest.TestCase):
         self.assertIsNotNone(argparse)  # 佔位:僅確認 argparse 可用
 
 
+# export-omit:begin
 class SyncScriptWiringTests(unittest.TestCase):
     """同步腳本必須序列呼叫且帶 --hashes-file。"""
 
@@ -109,6 +110,7 @@ class SyncScriptWiringTests(unittest.TestCase):
         """守住本次修復的核心決策：排程不可用 --since-days（會靜默漏掉近九成）。"""
         i = self.src.index("extract_takeaways.py")
         self.assertNotIn("--since-days", self.src[i:i + 300])
+# export-omit:end
 
 
 if __name__ == "__main__":

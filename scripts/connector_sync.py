@@ -205,12 +205,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     from app.profile import get_profile
-    from app.services.backfill_tiers import recent_cutoff, today_taipei
+    from app.services.backfill_tiers import local_today, recent_cutoff
     from app.services.connectors import data_dir, due_specs
 
     profile = get_profile()
     specs = profile.connectors.enabled_specs()
-    cutoff = recent_cutoff(today_taipei(), profile.backfill.recent_months)
+    cutoff = recent_cutoff(local_today(), profile.backfill.recent_months)
     due, broken = due_specs(specs, force=args.force)
     directory = data_dir()
     directory.mkdir(parents=True, exist_ok=True)

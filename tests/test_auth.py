@@ -532,6 +532,7 @@ class EdgeSecretTrustTests(unittest.TestCase):
         self.assertFalse(auth.request_is_secure(req))
 
 
+# export-omit:begin
 class EdgeProxyConfigTests(unittest.TestCase):
     """app 端的 X-Edge-Secret 判定要成立，邊緣必須真的注入它。
 
@@ -562,6 +563,7 @@ class EdgeProxyConfigTests(unittest.TestCase):
         self.assertIn("REPORT_MARK_EDGE_SECRET", root)
         self.assertIn("REPORT_MARK_SESSION_EPOCH", root)
         self.assertIn("EDGE_SECRET=", edge)
+# export-omit:end
 
 
 class SlidingRenewalWiringTests(unittest.TestCase):

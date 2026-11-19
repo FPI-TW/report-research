@@ -137,7 +137,7 @@ class DeclaredLineageIdentityTests(unittest.TestCase):
         self.assertEqual(js.DECLARED_LINEAGE_PREFIX, JUDGE_LINEAGE_DECLARED_PREFIX)
 
     def test_builtin_and_legacy_identity_is_the_model_name(self):
-        """廷豐：沒有 judge_lineage 鍵的列，識別＝judge_model_of，判定與加入識別之前逐列相同。"""
+        """內建模型：沒有 judge_lineage 鍵的列，識別＝judge_model_of，判定與加入識別之前逐列相同。"""
         for ev in ({}, {"judge_model": "gpt-6-luna"}, {"judge_model": ""}, {"judge_model": 1},
                    {"judge_model": "gpt-6-luna", "judge_lineage": "gpt-6-luna-2026-11"}):
             with self.subTest(ev=ev):
@@ -173,7 +173,7 @@ class DeclaredLineageIdentityTests(unittest.TestCase):
         self.assertNotIn("judge_lineage", FaithfulnessResult(None, None).to_evaluation())
 
     def test_readers_bind_the_identity(self):
-        """讀分數的各處綁給 :judge_model 的是識別（內建模型＝模型名，廷豐不變）。"""
+        """讀分數的各處綁給 :judge_model 的是識別（內建模型＝模型名，與加入識別之前相同）。"""
         from app.services import analytics
         from web import stats_snapshot
         from web.routers import review

@@ -20,7 +20,7 @@
 
 **刻意不用 PyMuPDF**：AGPL-3.0／商用雙授權，而本站對外服務，AGPL 第 13 條的網路條款會被觸發（`pyproject.toml` 相依註解；`tests/test_license_guard.py` 守門）。也**不用 pypdf 的 layout 模式**：實測靜默吃掉最多 87% 字元。
 
-程式預設是 `pypdf`；部署主機在 sync 鏈的環境檔設 `EXTRACTOR=pdfplumber`（`deploy/systemd/report-mark-sync.env.example`）。批次不讀 repo 根 `.env`，**手動跑 `scripts/extract_all.py` 要自己帶 `EXTRACTOR=pdfplumber`**。`app/config.py` 的 `_extractor` 驗證器對未知值退回 `pypdf` 並警告，不讓 typo 靜默切換抽取路徑。
+程式預設是 `pypdf`；部署主機在 sync 鏈的環境檔設 `EXTRACTOR=pdfplumber`<!-- export-omit:begin -->（`deploy/systemd/report-mark-sync.env.example`）<!-- export-omit:end -->。批次不讀 repo 根 `.env`，**手動跑 `scripts/extract_all.py` 要自己帶 `EXTRACTOR=pdfplumber`**。`app/config.py` 的 `_extractor` 驗證器對未知值退回 `pypdf` 並警告，不讓 typo 靜默切換抽取路徑。
 
 ## 3. 文件模型 `Document` / `Page` / `Block`
 
@@ -99,14 +99,14 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 
 ## 8. golden set 與評測
 
-- 資料集 `eval/extraction_dataset.json`：21 份跨券商樣本，全部 `reviewed`。每案帶 `fields`（評等、目標價等欄位真值）、`order`（閱讀順序關鍵句）、`two_column`、`annotation_status`（`prefilled`／`draft`／`reviewed`）。其中 15 份是人工覆核；另外 6 份三欄版型（凱基美股個股 2、大摩 2、元大早報 2，`id` 以 `kgi-2344-`、`kgi-5289-`、`ms-`、`yuanta-morning-2024`／`20251231` 開頭）是模型草標、**另一個獨立模型**看覆核頁圖核對後改為 `reviewed`，不是人工——`annotator_notes` 以「AI 覆核」標明並列出改動與未決點，要升級為人工覆核時從那些未決點看起。已知歧義也寫在各案的 `annotator_notes`（大摩兩份沒有 Risk Reward 三欄頁；元大目次項要抄含頁碼的整行才唯一）。
+- 資料集 `eval/extraction_dataset.json`：21 份跨券商樣本，全部 `reviewed`。每案帶 `fields`（評等、目標價等欄位真值）、`order`（閱讀順序關鍵句）、`two_column`、`annotation_status`（`prefilled`／`draft`／`reviewed`）。其中 15 份是人工覆核；另外 6 份三欄版型（凱基美股個股 2、大摩 2、元大早報 2，`id` 以 `kgi-2344-`、`kgi-5289-`、`ms-`、`yuanta-morning-2024`／`20251231` 開頭）是模型草標、**另一個獨立模型**看覆核頁圖核對後改為 `reviewed`，不是人工——`annotator_notes` 以「AI 覆核」標明並列出改動與未決點，要升級為人工覆核時從那些未決點看起。已知歧義也寫在各案的 `annotator_notes`（大摩兩份沒有 Risk Reward 三欄頁；元大目次項要抄含頁碼的整行才唯一）。 <!-- export-omit -->
 - 覆核輔助 `scripts/review_extraction_golden.py`：把每頁渲染成圖、框出 `order` 片段並標序號，同時標出找不到與出現多處的片段。順序層必須純人工，人工的部分是「看」不是翻 PDF 找句子。
 - 評測 `scripts/eval_extraction.py`（唯讀，需 DB 取訊號；`--reviewed-only` 只吃覆核過的）：
   - `order_hit_rate`：句子經 `norm_for_match` 後在抽取文字裡找得到的比例。
   - `order_pair_acc`：命中句子兩兩配對，在抽取文字裡先後與 golden 一致的比例（另有 `order_pair_acc_within` 與 Kendall tau）。
   - 欄位 coverage 與 accuracy 分開看：只看 coverage 獎勵亂猜，只看 accuracy 獎勵什麼都不填。
   - 幻覺率：evidence span 錨不回原文的比例，`Anchor.method == "prefix"` 一律算錨不回。
-- 比較兩份結果用 `scripts/eval_compare.py`（指標方向已登錄在 `METRIC_SPECS`；覆核樣本數不同的兩份不給結論）。現行基準線是 `eval/baselines/` 裡 21 案的兩份：`extraction-pypdf-2026-09-18.json`（pypdf）與 `extraction-pdfplumber-2026-09-18.json`（版面層 v3）。
+- 比較兩份結果用 `scripts/eval_compare.py`（指標方向已登錄在 `METRIC_SPECS`；覆核樣本數不同的兩份不給結論）。<!-- export-omit:begin -->現行基準線是 `eval/baselines/` 裡 21 案的兩份：`extraction-pypdf-2026-09-18.json`（pypdf）與 `extraction-pdfplumber-2026-09-18.json`（版面層 v3）。<!-- export-omit:end -->
 - 21 案實測：pypdf 配對 0.820／tau 0.641 → v3 0.947／0.894 → v4 0.949／0.899，命中率三者皆 1.0，欄位層與幻覺率不變。**順序指標量不到 v4 修的東西**（數字切開、表格欄位、側欄數值歸屬都在同一句之內），v4 的依據是 §10 診斷 #10–#13 的抽樣數字；順序評測在這裡的角色是「沒有退化」。
 
 ## 9. 比對工具、回填與回滾
@@ -154,7 +154,7 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 | 每家券商一支 parser | 只會累積不會刪除 |
 | LLM 做 profiling 或評分 | 不可重現、成本不成比例 |
 | 修 `clean_extracted` 的 CJK 空白邏輯 | 表格改走 markdown 就不需要；且它與 `content_norm` 沒有耦合（後者對應 `norm_for_match`） |
-| 把 `is_admin` 與入庫閘不過的檔（廷豐 profile 下即 `is_research=false`，`doc_types.ingest_gate`）入庫 | 汙染檢索；改記 `extraction_log` |
+| 把 `is_admin` 與入庫閘不過的檔（框架預設下即 `is_research=false`，`doc_types.ingest_gate`）入庫 | 汙染檢索；改記 `extraction_log` |
 | 抽取評測進 CI | 需要 DB 與真實 PDF，且與定時同步互搶批次資源 |
 | 用 `images` 當圖區、用 pdfplumber 文字策略重抽可疑表格 | 前者把側欄底圖當圖、目標價整排消失；後者以字元定欄界，欄界落在被切開的數字中間（v4 實測，§4） |
 | 樣板段落從 `full_text` 拿掉 | 閱讀頁與摘錄錨點都建立在完整正典文字上；樣板只是不進 chunk（§12） |

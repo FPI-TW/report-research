@@ -1,0 +1,69 @@
+# 維運代理的 Service Catalog 範本：容器部署（deploy/compose/docker-compose.yml）的單機版。格式與驗證規則見
+# ops_agent/catalog.py，安裝見 docs/CONTAINER_DEPLOYMENT.md「維運代理（選配）」。
+#
+# 複製到 /opt/report-mark-ops/services.toml（root 擁有、0644）後依實際環境改：容器名、要列的服務、連線的 uid。
+# 改完先 `python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.toml --check` 再重啟代理。
+#
+# 容器一律唯讀（status、logs）：代理的寫入類 action（restart、run）只給 systemd unit，容器的重啟交給 compose 的
+# restart 策略。主機上另以 systemd 跑框架的批次時，才在這裡加 kind = "systemd" 的服務與寫入類 action，並把同一份
+# 授權寫進 deploy/ops-agent/10-report-mark-ops.rules（polkit）。
+#
+# 容器名＝<compose 專案名>-<服務>-1；compose 的專案名預設 report-mark（COMPOSE_PROJECT_NAME 可改）。
+
+schema = 1
+environment = "production"
+socket_path = "/run/report-mark-ops/agent.sock"
+
+[agent]
+# 只接受 web 容器的執行身分連線（映像的固定 UID 10001，見 deploy/container/Dockerfile）。
+allowed_uids = [10001]
+request_timeout = 15
+command_timeout = 8
+max_response_bytes = 262144
+max_log_lines = 1000
+max_log_age_hours = 168
+max_concurrent = 4
+restart_delay = 1.5
+systemctl = "/usr/bin/systemctl"
+journalctl = "/usr/bin/journalctl"
+docker = "/usr/bin/docker"
+
+[[services]]
+name = "web"
+kind = "container"
+container = "report-mark-web-1"
+tier = "critical"
+actions = ["status", "logs"]
+depends_on = ["postgres", "llm"]
+description = "Web（uvicorn :8097）"
+
+[[services]]
+name = "postgres"
+kind = "container"
+container = "report-mark-postgres-1"
+tier = "critical"
+actions = ["status", "logs"]
+description = "PostgreSQL＋pgvector"
+
+[[services]]
+name = "worker"
+kind = "container"
+container = "report-mark-worker-1"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["postgres", "llm"]
+description = "上傳 worker（掃毒、入庫成草稿）"
+
+[[services]]
+name = "scheduler"
+kind = "container"
+container = "report-mark-scheduler-1"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["postgres", "llm"]
+description = "排程（連接器輪詢、每日備份、稽核與資料健康）"
+
+[[externals]]
+name = "llm"
+tier = "critical"
+description = "LLM 端點（LLM_PROVIDER 指定的供應商）"

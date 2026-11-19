@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { z } from 'zod'
-import { getLocale, isLocale, subscribeLocale, t, type Locale } from '@/i18n'
+import { getLocale, isLocale, setTimeZone, subscribeLocale, t, type Locale, type TimeZoneSetting } from '@/i18n'
 
 /**
  * 執行期品牌（`GET /api/branding`，免登入；後端 `web/routers/branding.py`，設定來源 `app/profile.py`）。
@@ -16,6 +16,9 @@ import { getLocale, isLocale, subscribeLocale, t, type Locale } from '@/i18n'
  *
  * 名稱依介面語系挑（`[institution]` 的 `*_en`，沒給就用原名；profile 沒給名稱時是中性預設的譯名）：`Branding` 的三個
  * 名稱是 getter，讀的當下才依語系決定，切換語系不必重抓。`locale` 是 profile 的 `[locale]`（預設語系與開放的語系）。
+ *
+ * `timezone` 是 profile 的業務時區（`[locale].timezone` 與介面上的地名）：`setBranding()` 交給 `src/i18n` 的
+ * `setTimeZone`，日期格式化與「今天」都依它；沒抓到時是 `src/i18n` 的預設（Asia/Taipei）。
  */
 export const brandingResponseSchema = z.object({
   institution_name: z.string().optional(),
@@ -27,6 +30,11 @@ export const brandingResponseSchema = z.object({
   locale: z.object({
     default: z.string().optional(),
     available: z.array(z.string()).optional(),
+  }).optional(),
+  timezone: z.object({
+    name: z.string().optional(),
+    label: z.string().optional(),
+    label_en: z.string().optional(),
   }).optional(),
   logo_light_url: z.string().nullish(),
   logo_dark_url: z.string().nullish(),
@@ -51,6 +59,8 @@ export interface Branding {
   defaultLocale: Locale | null
   /** profile 開放的語系；null＝全部。 */
   availableLocales: Locale[] | null
+  /** profile 的業務時區；null＝沒抓到（`src/i18n` 用預設）。 */
+  timeZone: TimeZoneSetting | null
 }
 
 interface BrandNames { institutionName?: string; productName?: string; shortName?: string }
@@ -78,6 +88,7 @@ export const NEUTRAL_BRANDING: Branding = brandingWithNames({}, {}, {
   colorsDark: {},
   defaultLocale: null,
   availableLocales: null,
+  timeZone: null,
 })
 
 /**
@@ -129,6 +140,9 @@ export function fromResponse(raw: z.infer<typeof brandingResponseSchema>): Brand
     colorsDark: raw.colors?.dark ?? {},
     defaultLocale: isLocale(def) ? def : null,
     availableLocales: available.length ? available : null,
+    timeZone: raw.timezone?.name
+      ? { name: raw.timezone.name, label: raw.timezone.label, labelEn: raw.timezone.label_en }
+      : null,
   })
 }
 
@@ -196,9 +210,10 @@ function getSnapshot(): Branding {
   return current
 }
 
-/** 寫入 store（`loadBranding` 抓到時呼叫；測試也用它，傳 null 還原成中性預設）。 */
+/** 寫入 store 並同步業務時區（`loadBranding` 抓到時呼叫；測試也用它，傳 null 還原成中性預設）。 */
 export function setBranding(next: Branding | null): void {
   const value = next ?? NEUTRAL_BRANDING
+  setTimeZone(value.timeZone)
   if (value === current) return
   current = value
   listeners.forEach((l) => l())

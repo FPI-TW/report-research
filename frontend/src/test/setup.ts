@@ -32,9 +32,10 @@ if (!Element.prototype.releasePointerCapture) Element.prototype.releasePointerCa
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
 
 // 介面字典：正式環境依語系 lazy 載入（src/i18n/index.ts），測試一次同步登記全部，預設語系 zh-Hant。
-// 每題結束把語系切回 zh-Hant，並清掉偏好（localStorage 與 cookie），切換語系的測試不會污染下一題。
+// 每題結束把語系切回 zh-Hant、業務時區還原成預設，並清掉偏好（localStorage 與 cookie），切換語系或時區的測試
+// 不會污染下一題。
 import { afterEach } from 'vitest'
-import { registerMessages, setLocale } from '../i18n'
+import { registerMessages, setLocale, setTimeZone } from '../i18n'
 import zhApp from '../i18n/messages/zh-Hant/app'
 import zhAdmin from '../i18n/messages/zh-Hant/admin'
 import enApp from '../i18n/messages/en/app'
@@ -47,6 +48,7 @@ registerMessages('en', 'admin', enAdmin)
 
 afterEach(() => {
   setLocale('zh-Hant')
+  setTimeZone(null)
   try { localStorage.removeItem('tf.locale') } catch { /* ignore */ }
   document.cookie = 'tf_locale=; path=/; max-age=0'
 })

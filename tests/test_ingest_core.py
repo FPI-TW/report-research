@@ -333,6 +333,7 @@ class IngestOneTests(_IngestCase):
                     with self.assertRaises(type(exc)):
                         await self.run_one()
 
+    # export-omit:begin
     def test_kinds_are_the_sync_stats_keys_plus_two(self):
         """Outcome.kind 與 sync 的計數器鍵逐字相同（除了 missing／would_ingest），sync 直接拿它當鍵。"""
         from test_sync_new_reports import snr
@@ -342,6 +343,7 @@ class IngestOneTests(_IngestCase):
             "ingested", "skip_admin", "skip_scanned", "skip_exists", "skip_non_research",
         }
         self.assertEqual(set(ic.KINDS) - {"missing", "would_ingest"}, sync_keys)
+    # export-omit:end
 
 
 class MetadataTests(_IngestCase):

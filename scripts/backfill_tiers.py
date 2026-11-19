@@ -17,7 +17,7 @@
 下一批，直到沒有候選或碰到上限。
 
 - 第二層：沒有預設上限（範圍已經過估價與客戶簽字）；`--max-reports`、`--token-limit` 可再設上限。
-- 第三層：每台北日 `[backfill].daily_token_limit`、每輪 `[backfill].max_reports_per_round`（profile）；帳在
+- 第三層：每個業務日 `[backfill].daily_token_limit`、每輪 `[backfill].max_reports_per_round`（profile）；帳在
   `data/backfill/state.json`。到上限就停，下一輪（排程每小時）再續；換日歸零。以 `os.nice` 降低優先權。
   `--scheduled`（scheduler 的 `backfill-tiers` 工作）在 profile 的 `background_enabled = false` 時是 no-op。
 
@@ -190,7 +190,7 @@ def run_backfill(*, tier: int, fetch: Fetch, run: Run, chunk_size: int, max_repo
     out = Outcome()
     state = None
     if state_file is not None:
-        state = bt.load_state(state_file).for_day(today or bt.today_taipei())
+        state = bt.load_state(state_file).for_day(today or bt.local_today())
     seen: set[str] = set()
     spent = 0  # 本次執行的 token（dry-run 時是估計）
     while True:
@@ -373,7 +373,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from app.profile import get_profile
 
     bf = get_profile().backfill
-    today = bt.today_taipei()
+    today = bt.local_today()
     cutoff = bt.recent_cutoff(today, bf.recent_months)
     models = task_models()
     directory = bt.work_dir()

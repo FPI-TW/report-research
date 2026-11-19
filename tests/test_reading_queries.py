@@ -96,7 +96,7 @@ class SqlStructureTests(unittest.TestCase):
     def test_doc_sql_filters_by_doc_type(self):
         sql = _sql(queries._doc_sql())
         self.assertIn("FROM research.research_report", sql)
-        # 類型沒開閱讀的文件（廷豐 profile 下＝非研究檔）與查無同樣 404；不再直接寫 is_research
+        # 類型沒開閱讀的文件（預設 profile 下＝非研究檔）與查無同樣 404；不再直接寫 is_research
         self.assertIn("r.doc_type IN ('research')", sql)
         self.assertNotIn("is_research", sql)
 

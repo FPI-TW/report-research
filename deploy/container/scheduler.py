@@ -4,7 +4,9 @@
 `docs/CONTAINER_DEPLOYMENT.md` 的對照表）：
 
 - `JOBS`：進框架的排程。排程時間與對應 timer 的 OnCalendar 相同（同一個測試逐支換算比對），在容器的
-  `TZ`（預設 Asia/Taipei）下解讀。`default_enabled=False` 的要部署方明確開啟（理由寫在 note）。
+  `TZ` 下解讀，`TZ` 必須等於 profile 的業務時區 `[locale].timezone`（沒設時 entrypoint 以它補上、不同時拒絕啟動，
+  見 `deploy/container/entrypoint.py` 的 `resolve_tz`）：排程時間是業務時區的鐘點。`default_enabled=False` 的要
+  部署方明確開啟（理由寫在 note）。
   `unit=None` 的是**框架專屬**、沒有對應 timer 的工作（例如 `connectors`：systemd 主機的對應是 sync 殼，
   它屬主機層；`backfill-tiers`：首次導入的第三層背景補齊，由 profile 開），文件另有一張表對帳。
 - `WORKER_UNITS`：改由常駐的 `worker` 服務（迴圈）取代的 timer。

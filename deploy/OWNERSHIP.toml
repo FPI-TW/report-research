@@ -5,9 +5,12 @@
 #   framework      框架本身：任何 profile、任何部署形態（容器、自己的主機）都用得到。框架擁有的檔案不得出現
 #                  「廷豐」／tingfong（tests/test_framework_branding.py 掃描；例外逐條寫在那支測試的白名單）。
 #   tingfong_host  廷豐 profile 的主機層：廷豐兩台主機（辦公室主機＝測試環境、EC2＝正式環境）的 systemd unit、
-#                  sudoers、polkit、維運代理、主機信標、探針與事件、NAS 掛載、LINE bot 監看、sync 殼（NAS／R2
-#                  來源段）、對外邊緣（nginx、cloudflared）、AWS 基礎設施。框架的容器部署不用它們。
+#                  sudoers、polkit、維運代理的 unit 與 catalog、主機信標、探針與事件、NAS 掛載、LINE bot 監看、sync 殼（NAS／R2
+#                  來源段）、對外邊緣（nginx、cloudflared）、AWS 基礎設施。框架的容器部署不用它們。另含源頭 repo
+#                  自己的歸屬／交付清單（本檔、deploy/EXPORT.toml）與交付打包工具。
 #
+# framework 的檔案進交付給其他券商的原始碼，tingfong_host 的不進（scripts/export_framework.py，其他目錄的歸屬在
+# deploy/EXPORT.toml）。
 # 規則（tests/test_ownership.py 守）：
 # - 逐檔列出、不用萬用字元：新增檔案沒有歸類就紅，歸類是一個要寫下來的決定。
 # - 每個檔案只能出現在一類；列了但已不存在的檔案也紅（刪檔、改名時同步改這裡）。
@@ -15,11 +18,10 @@
 #   維運代理的安裝路徑、/etc/default 的範例、nginx include、腳本互相 source 的路徑），辦公室主機的主 checkout
 #   就是部署目錄，搬了就是改部署。
 # - 框架的腳本可以被主機層的 unit 呼叫（例如 db_backup.sh），反過來框架不得依賴主機層的檔案
-#   （容器排程 deploy/container/scheduler.py 的 JOBS 只呼叫 framework 的腳本，同一支測試對帳）。
+#   （容器排程 deploy/container/scheduler.py 的 JOBS 只呼叫 framework 的腳本；框架的 Python 不 import 主機層的
+#   腳本與 ops_agent 模組，同一支測試對帳）。
 [framework]
 files = [
-  # 本清單
-  "deploy/OWNERSHIP.toml",
   # 容器部署（映像、compose、排程與入口）與示範環境
   "deploy/compose/.env.example",
   "deploy/compose/docker-compose.yml",
@@ -31,6 +33,15 @@ files = [
   "deploy/demo/docker-compose.demo.yml",
   "deploy/demo/docker-compose.real-llm.yml",
   "deploy/demo/fake_llm.py",
+  # 維運代理的框架範本：systemd unit、容器部署的 Service Catalog、polkit 規則、讓 web 容器連到 socket 的 compose override
+  "deploy/ops-agent/10-report-mark-ops.rules",
+  "deploy/ops-agent/docker-compose.ops-agent.yml",
+  "deploy/ops-agent/report-mark-ops-agent.service",
+  "deploy/ops-agent/services.example.toml",
+  # clamd／freshclam 設定：框架 compose 的 clamav 服務唯讀掛載（deploy/compose/docker-compose.yml），主機層的
+  # 獨立 clamd 也用同一份
+  "deploy/clamav/conf/clamd.conf",
+  "deploy/clamav/conf/freshclam.conf",
   # 框架的批次、評測、維運與資料工具（sync_new_reports.py 是增量匯入的核心，連接器入庫與 sync 殼共用）
   "scripts/_claude_cli.py",
   "scripts/_claude_lock.py",
@@ -101,6 +112,15 @@ files = [
   "scripts/select_sample.py",
   "scripts/sync_new_reports.py",
   "scripts/tag_all_cli.py",
+  # 維運代理（標準庫、從 root 擁有的 /opt/report-mark-ops/ 執行；web 共用其中的協定、catalog 解析與日誌清洗）
+  "ops_agent/__init__.py",
+  "ops_agent/__main__.py",
+  "ops_agent/actions.py",
+  "ops_agent/backends.py",
+  "ops_agent/catalog.py",
+  "ops_agent/protocol.py",
+  "ops_agent/runner.py",
+  "ops_agent/server.py",
 ]
 
 [tingfong_host]
@@ -114,9 +134,7 @@ files = [
   "deploy/install_units.sh",
   # 廷豐 R2 bucket 的 CORS 設定
   "deploy/r2-cors-research.json",
-  # 辦公室主機的 ClamAV（獨立 compose 專案 report-mark-clamav；框架的 compose 另有 clamav 服務）
-  "deploy/clamav/conf/clamd.conf",
-  "deploy/clamav/conf/freshclam.conf",
+  # 辦公室主機的 ClamAV（獨立 compose 專案 report-mark-clamav；框架的 compose 另有 clamav 服務，共用 conf/）
   "deploy/clamav/docker-compose.yml",
   # EC2（正式環境）的 AWS 基礎設施（資源名沿用 staging 這個歷史命名）
   "deploy/aws/README.md",
@@ -126,7 +144,7 @@ files = [
   "deploy/aws/security.guard",
   "deploy/aws/staging-state-read-policy.json",
   "deploy/aws/verify-rds-connectivity.sh",
-  # 維運代理的服務清單（catalog）與 polkit
+  # 廷豐兩台主機的維運代理服務清單（catalog）與 polkit（框架的範本在 deploy/ops-agent/）
   "deploy/ops/services.dev.toml",
   "deploy/ops/services.prod.toml",
   "deploy/ops/services.staging.toml",
@@ -210,15 +228,6 @@ files = [
   "deploy/systemd/report-mark-upload.service",
   "deploy/systemd/report-mark-upload.timer",
   "deploy/systemd/report-mark-web.service",
-  # 維運代理（從 root 擁有的 /opt/report-mark-ops/ 執行）
-  "ops_agent/__init__.py",
-  "ops_agent/__main__.py",
-  "ops_agent/actions.py",
-  "ops_agent/backends.py",
-  "ops_agent/catalog.py",
-  "ops_agent/protocol.py",
-  "ops_agent/runner.py",
-  "ops_agent/server.py",
   # 健康探針、事件處理（P4／P5、Slack）與 oneshot 查驗
   "scripts/_health_streak.sh",
   "scripts/check_container_health.sh",
@@ -246,4 +255,8 @@ files = [
   "scripts/analyze_resource_usage.py",
   # 辦公室主機的容器 DB 專用（docker exec report-mark-postgres）
   "scripts/ingest_lowio.sh",
+  # 源頭 repo 的歸屬清單、交付清單與交付打包工具（不隨交付物）
+  "deploy/OWNERSHIP.toml",
+  "deploy/EXPORT.toml",
+  "scripts/export_framework.py",
 ]
